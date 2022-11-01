@@ -7,11 +7,8 @@ class duckCmd(cmd):
 
     def __init__(self, parser):
         self.parser = parser
-        self.parser.add_argument("name", type=str, nargs="?")
-        #self.parser.add_argument("url", type=str, nargs="?")
-        group = self.parser.add_mutually_exclusive_group()
-        group.add_argument("-d", "--definition", help="Check the definition")
-        group.add_argument("keywords", help="Query keywords", type=str, nargs="+")
+        self.parser.add_argument("-d", "--definition", help="Check the definition")
+        self.parser.add_argument("keywords", help="Query keywords", type=str, nargs="*")
         self.parser.set_defaults(func=self.update)
 
     async def update(self, bot):
