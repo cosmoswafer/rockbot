@@ -7,7 +7,7 @@ class duckCmd(cmd):
 
     def __init__(self, parser):
         self.parser = parser
-        self.parser.add_argument("-d", "--definition", help="Check the definition")
+        self.parser.add_argument("-d", "--definition", help="Check the definition", action="store_true")
         self.parser.add_argument("keywords", help="Query keywords", type=str, nargs="*")
         self.parser.set_defaults(func=self.update)
 
