@@ -10,6 +10,7 @@ from atomCmd.fuelCmd import fuelCmd
 from atomCmd.mantCmd import mantCmd
 from atomCmd.washCmd import washCmd
 from atomCmd.vdiCmd import vdiCmd
+from comnCmd.duckCmd import duckCmd
 
 from bot.bot import bot
 
@@ -44,7 +45,7 @@ class rock:
         self._fireRocket()
 
     def _crtCommands(self):
-        bot_cmds = {"count": countd, "gif": gifCmd}
+        bot_cmds = {"count": countd, "gif": gifCmd, "duck": duckCmd}
         atom_cmds = {"fuel":fuelCmd, "mant": mantCmd, "wash": washCmd, "vdi": vdiCmd}
         self._bot = cmdParser(bot_cmds)
         self._atom = cmdParser(atom_cmds)

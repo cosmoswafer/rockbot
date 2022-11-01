@@ -3,7 +3,7 @@
 import asyncio
 from cmdAbc import cmd
 
-class gifCmd(cmd):
+class duckCmd(cmd):
 
     def __init__(self, parser):
         self.parser = parser
