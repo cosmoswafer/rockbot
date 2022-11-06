@@ -15,8 +15,8 @@ class assetCmd(cmd):
         self.parser = parser
 
         self.subparser = self.parser.add_subparsers(dest="asset_cmd", help="Asset sub commands")
-        #self.subparser.required = True
-        self.add_parser = self.subparser.add_parser("add", help="Add new asset")
+        self.subparser.required = True
+        self.add_parser = self.subparser.add_parser("add",add_help=False help="Add new asset")
         self.add_parser.add_argument("--date" \
                 , type=datetime.date.fromisoformat \
                 , default=datetime.date.today().isoformat() \
@@ -27,8 +27,8 @@ class assetCmd(cmd):
         self.add_parser.add_argument("--acct", dest="acct", choices=["A","B","C"], help="Main account")
         self.add_parser.add_argument("--cat", dest="cat", type=str, help="Catagory")
 
-        self.delete_parser = self.subparser.add_parser("delete", help="Delete existing asset")
-        self.delete_parser.add_argument("asset_id", type=int, help="Asset id to be deleted")
+        self.delete_parser = self.subparser.add_parser("delete", add_help=False, help="Delete existing asset")
+        self.delete_parser.add_argument("asset_id", type=int, help="Asset id to be deleted", required=True)
 
         #self.parser.add_argument("--report", action="store_true", help="顯示報告")
 
