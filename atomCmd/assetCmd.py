@@ -41,11 +41,11 @@ class assetCmd(cmd):
 
     async def _asset(self, args):
         e = {
-            name: args.item,
-            price: args.price,
-            period: args.period,
-            account: args.acct,
-            catagory: args.cat
+            "name": args.item,
+            "price": args.price,
+            "period": args.period,
+            "account": args.acct,
+            "catagory": args.cat
         }
         return e
 
