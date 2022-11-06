@@ -16,7 +16,7 @@ class assetCmd(cmd):
 
         self.subparser = self.parser.add_subparsers(dest="asset_cmd", help="Asset sub commands")
         self.subparser.required = True
-        self.add_parser = self.subparser.add_parser("add",add_help=False help="Add new asset")
+        self.add_parser = self.subparser.add_parser("add",add_help=False, help="Add new asset")
         self.add_parser.add_argument("--date" \
                 , type=datetime.date.fromisoformat \
                 , default=datetime.date.today().isoformat() \
