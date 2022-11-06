@@ -20,7 +20,7 @@ class assetCmd(cmd):
                 , help="日期，ISO format, i.e. YYYY-MM-DD" )
         self.parser.add_argument("--item", dest="item", type=str, help="內容")
         self.parser.add_argument("--price", dest="price", type=float, help="價錢")
-        self.parser.add_argument("--period", dest="period", type=float, hepl="Deprecation period, in years"))
+        self.parser.add_argument("--period", dest="period", type=float, hepl="Deprecation period, in years")
         self.parser.add_argument("--acct", dest="acct", choices=["A","B","C"], hlep="Main account")
         self.parser.add_argument("--cat", dest="cat", type=str, help="Catagory")
         #self.parser.add_argument("--report", action="store_true", help="顯示報告")
