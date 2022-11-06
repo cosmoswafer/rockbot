@@ -28,11 +28,9 @@ class assetCmd(cmd):
         self.add_parser.add_argument("--cat", dest="cat", type=str, help="Catagory")
 
         self.delete_parser = self.subparser.add_parser("delete", help="Delete existing asset")
-        self.delte_parser.add_argument("asset_id", type=int, help="Asset id to be deleted")
-
+        self.delete_parser.add_argument("asset_id", type=int, help="Asset id to be deleted")
 
         #self.parser.add_argument("--report", action="store_true", help="顯示報告")
-        group = self.parser.add_mutually_exclusive_group()
 
         self.parser.set_defaults(func=self.update)
 
