@@ -45,4 +45,4 @@ class duckCmd(cmd):
         await bot.reply(await self._query(bot.args.keywords))
 
     async def _query(self, keywords):
-        return self.openai.submit(" ".join(keywords))
+        return await self.openai.submit(" ".join(keywords))
