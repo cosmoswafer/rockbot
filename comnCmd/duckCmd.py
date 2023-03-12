@@ -17,6 +17,7 @@ class OpenAi:
     def _new_message(self, message):
         pd = {**self.postdata}
         pd["messages"].append({**self.msg_template, "content": message})
+        return pd
 
     async def _post(self, data):
         async with aiohttp.ClientSession(headers=self.headers) as s:
