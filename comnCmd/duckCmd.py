@@ -20,7 +20,7 @@ class OpenAi:
 
     async def _post(self, data):
         async with aiohttp.ClientSession(headers=self.headers) as s:
-            async with s.post(self.chat_completions_api, data=self.data) as response:
+            async with s.post(self.chat_completions_api, data=data) as response:
                 text = await response.text()
                 return text
 
