@@ -1,15 +1,43 @@
 #!/usr/bin/env python
 
 import asyncio
+import aiohttp
 from cmdAbc import cmd
 
-class duckCmd(cmd):
 
-    def __init__(self, parser):
+class OpenAi:
+    chat_completions_api = "https://api.openai.com/v1/chat/completions"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer sk-REPLACED",
+    }
+    postdata = {"model": "gpt-3.5-turbo", "messages": []}
+    msg_template = {"role": "user", "content": ""}
+
+    def _new_message(self, message):
+        pd = {**self.postdata}
+        pd["messages"].append({**self.msg_template, "content": message})
+
+    async def _post(self, data):
+        async with aiohttp.ClientSession(headers=self.headers) as s:
+            async with s.post(self.chat_completions_api, data=self.data) as response:
+                text = await response.text()
+                return text
+
+    async def submit(self, message):
+        return await self._post(self._new_message(message))
+
+
+class duckCmd(cmd):
+    def __init__(self, parser, openai=OpenAi()):
         self.parser = parser
-        self.parser.add_argument("-d", "--definition", help="Check the definition", action="store_true")
+        self.parser.add_argument(
+            "-d", "--definition", help="Check the definition", action="store_true"
+        )
         self.parser.add_argument("keywords", help="Query keywords", type=str, nargs="*")
         self.parser.set_defaults(func=self.update)
+
+        self.openai = openai
 
     async def update(self, bot):
         if bot.args.definition:
@@ -17,4 +45,4 @@ class duckCmd(cmd):
         await bot.reply(await self._query(bot.args.keywords))
 
     async def _query(self, keywords):
-        return " ".join(keywords)
+        return self.openai.submit(" ".join(keywords))

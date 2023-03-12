@@ -4,6 +4,7 @@
 
  * websockets
  * aiosqlite
+ * aiohttp
 
 ## Database schema
 
