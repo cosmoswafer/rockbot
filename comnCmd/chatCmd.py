@@ -21,10 +21,10 @@ class OpenAi:
     async def _post(self, data):
         async with aiohttp.ClientSession(headers=self.headers) as s:
             async with s.post(self.chat_completions_api, json=data) as response:
-                text = await response.text()
-                return text
+                r = await response.json()
+                return r
 
-    def _parse_message(self, message):
+    def _parse_message(self, message: dict):
         return message["choices"][0]["message"]["content"]
 
     async def submit(self, message):
