@@ -28,7 +28,7 @@ class OpenAi:
         return message["choices"][0]["message"]["content"]
 
     async def submit(self, message):
-        return await self._parse_message(self._post(self._new_message(message)))
+        return self._parse_message(await self._post(self._new_message(message)))
 
 
 class chatCmd(cmd):
