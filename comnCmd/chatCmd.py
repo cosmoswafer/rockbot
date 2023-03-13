@@ -36,7 +36,7 @@ class OpenAi:
 
     def _compose_message(self, message, history=[]):
         pd = {**self.postdata}
-        pd["messages"] = history.append({**self.msg_template, "content": message})
+        pd["messages"] = [*history, {**self.msg_template, "content": message}]
         return pd
 
     def _compose_reply(self, reply):
@@ -47,6 +47,7 @@ class OpenAi:
         return reply["choices"][0]["message"]
 
     async def _post(self, data):
+        print("Sending the following request to openai:", data)
         async with aiohttp.ClientSession(headers=self.headers) as s:
             async with s.post(self.chat_completions_api, json=data) as response:
                 r = await response.json()
