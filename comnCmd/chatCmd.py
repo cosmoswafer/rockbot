@@ -82,6 +82,7 @@ class chatCmd(cmd):
 
     async def update(self, bot):
         if bot.args.clear_history:
+            self.openai.histories[bot.rid] = []
             await bot.reply("Clear and start a new chat")
         await bot.reply(await self._query(bot.rid, bot.args.keywords))
 
