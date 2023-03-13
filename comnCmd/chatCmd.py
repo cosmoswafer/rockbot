@@ -24,15 +24,18 @@ class OpenAi:
                 text = await response.text()
                 return text
 
+    def _parse_message(self, message):
+        return message["choices"][0]["message"]["content"]
+
     async def submit(self, message):
-        return await self._post(self._new_message(message))
+        return await self._parse_message(self._post(self._new_message(message)))
 
 
-class duckCmd(cmd):
+class chatCmd(cmd):
     def __init__(self, parser, openai=OpenAi()):
         self.parser = parser
         self.parser.add_argument(
-            "-d", "--definition", help="Check the definition", action="store_true"
+            "-r", "--clear-history", help="Clear the chat history", action="store_true"
         )
         self.parser.add_argument("keywords", help="Query keywords", type=str, nargs="*")
         self.parser.set_defaults(func=self.update)
@@ -40,10 +43,9 @@ class duckCmd(cmd):
         self.openai = openai
 
     async def update(self, bot):
-        if bot.args.definition:
-            await bot.reply("Definition")
+        if bot.args.clear_history:
+            await bot.reply("Clear and start a new chat")
         await bot.reply(await self._query(bot.args.keywords))
 
     async def _query(self, keywords):
-        # return await self.openai.submit(" ".join(keywords))
-        return " ".join(keywords)
+        return await self.openai.submit(" ".join(keywords))
