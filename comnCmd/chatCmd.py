@@ -27,10 +27,11 @@ class OpenAi:
 
     def _parse_message(self, message):
         print(message)
-        if r := message["choices"][0]["message"]["content"]:
-            return r
-        else:
+        try:
+            r = message["choices"][0]["message"]["content"]
+        except (KeyError, IndexError):
             return message
+        return trim(r)
 
     async def submit(self, message):
         r = await self._post(self._compose_message(message))
