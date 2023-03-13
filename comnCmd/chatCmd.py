@@ -61,9 +61,7 @@ class OpenAi:
         h = OpenAi.histories.get(rid, [])
         m = self._compose_message(message, h)
         r = await self._post(m)
-        # h.append(m["messages"][-1])
-        h = [*m["messages"], self._parse_reply(r)]
-        print("History:", h)
+        OpenAi.histories[rid] = [*m["messages"], self._parse_reply(r)]
         if t := self._parse_message(r):
             return t.strip()
         else:
