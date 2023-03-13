@@ -56,17 +56,17 @@ class OpenAi:
     def _parse_message(self, message):
         return message["choices"][0]["message"]["content"]
 
-    async def submit(self, rid, message):
+    async def submit(self, rid, message) -> str:
         h = self.histories.get(rid, [])
         m = self._compose_message(message, h)
         r = await self._post(m)
-        h.append(m)
-        h.append(self._parse_reply(r))
-        print(h)
+        # h.append(m["messages"][-1])
+        h = m["messages"].append(self._parse_reply(r))
+        print("History:", h)
         if t := self._parse_message(r):
             return t
         else:
-            return r
+            return str(r)
 
 
 class chatCmd(cmd):
