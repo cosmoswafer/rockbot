@@ -5,6 +5,22 @@ import aiohttp
 from cmdAbc import cmd
 
 
+def defJson(default_value={}):
+    def wrap(f):
+        def wrapped_f(*args, **kwargs):
+            try:
+                return f(*args, **kwargs)
+            except (KeyError, IndexError) as e:
+                print(
+                    f"No such item(s) in json data, return the default value: {default_value}, Exception: {e}"
+                )
+                return default_value
+
+        return wrapped_f
+
+    return wrap
+
+
 class OpenAi:
     chat_completions_api = "https://api.openai.com/v1/chat/completions"
     headers = {
@@ -13,11 +29,22 @@ class OpenAi:
     }
     postdata = {"model": "gpt-3.5-turbo", "messages": []}
     msg_template = {"role": "user", "content": ""}
+    rep_template = {"role": "assistant", "content": ""}
 
-    def _compose_message(self, message):
+    histories = {}
+    # TODO implemente the presistence history class
+
+    def _compose_message(self, message, history=[]):
         pd = {**self.postdata}
-        pd["messages"].append({**self.msg_template, "content": message})
+        pd["messages"] = history.append({**self.msg_template, "content": message})
         return pd
+
+    def _compose_reply(self, reply):
+        pass
+
+    @defJson()
+    def _parse_reply(self, reply):
+        return reply["choices"][0]["message"]
 
     async def _post(self, data):
         async with aiohttp.ClientSession(headers=self.headers) as s:
@@ -25,17 +52,21 @@ class OpenAi:
                 r = await response.json()
                 return r
 
+    @defJson()
     def _parse_message(self, message):
-        print(message)
-        try:
-            r = message["choices"][0]["message"]["content"]
-        except (KeyError, IndexError):
-            return message
-        return r.strip()
+        return message["choices"][0]["message"]["content"]
 
-    async def submit(self, message):
-        r = await self._post(self._compose_message(message))
-        return self._parse_message(r)
+    async def submit(self, rid, message):
+        h = self.histories.get(rid, [])
+        m = self._compose_message(message, h)
+        r = await self._post(m)
+        h.append(m)
+        h.append(self._parse_reply(r))
+        print(h)
+        if t := self._parse_message(r):
+            return t
+        else:
+            return r
 
 
 class chatCmd(cmd):
@@ -48,12 +79,11 @@ class chatCmd(cmd):
         self.parser.set_defaults(func=self.update)
 
         self.openai = openai
-        self.chat_histories = {}
 
     async def update(self, bot):
         if bot.args.clear_history:
             await bot.reply("Clear and start a new chat")
-        await bot.reply(await self._query(bot.args.keywords))
+        await bot.reply(await self._query(bot.rid, bot.args.keywords))
 
-    async def _query(self, keywords):
-        return await self.openai.submit(" ".join(keywords))
+    async def _query(self, rid, keywords):
+        return await self.openai.submit(rid, " ".join(keywords))
