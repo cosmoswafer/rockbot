@@ -31,7 +31,7 @@ class OpenAi:
             r = message["choices"][0]["message"]["content"]
         except (KeyError, IndexError):
             return message
-        return trim(r)
+        return r.strip()
 
     async def submit(self, message):
         r = await self._post(self._compose_message(message))
@@ -48,6 +48,7 @@ class chatCmd(cmd):
         self.parser.set_defaults(func=self.update)
 
         self.openai = openai
+        self.chat_histories = {}
 
     async def update(self, bot):
         if bot.args.clear_history:
