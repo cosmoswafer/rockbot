@@ -14,9 +14,10 @@ class OpenAi:
     postdata = {"model": "gpt-3.5-turbo", "messages": []}
     msg_template = {"role": "user", "content": ""}
 
-    def _new_message(self, message):
+    def _compose_message(self, message):
         pd = {**self.postdata}
         pd["messages"].append({**self.msg_template, "content": message})
+        return pd
 
     async def _post(self, data):
         async with aiohttp.ClientSession(headers=self.headers) as s:
@@ -24,11 +25,16 @@ class OpenAi:
                 r = await response.json()
                 return r
 
-    def _parse_message(self, message: dict):
-        return message["choices"][0]["message"]["content"]
+    def _parse_message(self, message):
+        print(message)
+        if r := message["choices"][0]["message"]["content"]:
+            return r
+        else:
+            return message
 
     async def submit(self, message):
-        return self._parse_message(await self._post(self._new_message(message)))
+        r = await self._post(self._compose_message(message))
+        return self._parse_message(r)
 
 
 class chatCmd(cmd):
