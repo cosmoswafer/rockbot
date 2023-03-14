@@ -47,7 +47,7 @@ class OpenAi:
         return reply["choices"][0]["message"]
 
     async def _post(self, data):
-        print("Sending the following request to openai:", data)
+        # print("Sending the following request to openai:", data)
         async with aiohttp.ClientSession(headers=self.headers) as s:
             async with s.post(self.chat_completions_api, json=data) as response:
                 r = await response.json()
