@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-import asyncio, datetime, shlex
+import asyncio, datetime
 from config import bot as conf
 from util.theArgParse import theArgParse
 from bot.RocketChatBot import RocketChatBot
@@ -79,7 +79,8 @@ class rock:
         args = None
 
         try:
-            args = cmd.parser.parse_args(shlex.split(txt))
+            # args = cmd.parser.parse_args(shlex.split(txt))
+            args = cmd.parser.parse_args(text.split(" "))
         except (theArgParse.ArgumentError, UserWarning) as e:
             args = None
             err_msg = str(e) + "\n" + cmd.parser.format_usage()
