@@ -88,4 +88,4 @@ class chatCmd(cmd):
 
     async def _query(self, bot, rid, keywords):
         # return await self.openai.submit(rid, " ".join(keywords))
-        await bot.reply(await self.openai.submit(rid, " ".join(keyword)))
+        await bot.reply(await self.openai.submit(rid, " ".join(keywords)))
