@@ -61,8 +61,8 @@ class OpenAi:
         h = OpenAi.histories.get(rid, [])
         m = self._compose_message(message, h)
         r = await self._post(m)
-        OpenAi.histories[rid] = [*m["messages"], self._parse_reply(r)]
         if t := self._parse_message(r):
+            OpenAi.histories[rid] = [*m["messages"], self._parse_reply(r)]
             return t.strip()
         else:
             return str(r)
@@ -83,7 +83,9 @@ class chatCmd(cmd):
         if bot.args.clear_history:
             OpenAi.histories[bot.rid] = []
             await bot.reply("Clear and start a new chat")
-        await bot.reply(await self._query(bot.rid, bot.args.keywords))
+        # await bot.reply(await self._query(bot.rid, bot.args.keywords))
+        asyncio.create_task(self._query(bot, bot.rid, bot.args.keywords))
 
-    async def _query(self, rid, keywords):
-        return await self.openai.submit(rid, " ".join(keywords))
+    async def _query(self, bot, rid, keywords):
+        # return await self.openai.submit(rid, " ".join(keywords))
+        await bot.reply(await self.openai.submit(rid, " ".join(keyword)))
