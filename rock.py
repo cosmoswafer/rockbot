@@ -80,7 +80,7 @@ class rock:
 
         try:
             # args = cmd.parser.parse_args(shlex.split(txt))
-            args = cmd.parser.parse_args(txt.split(" "))
+            args = cmd.parser.parse_args(txt.strip().split(" "))
         except (theArgParse.ArgumentError, UserWarning) as e:
             args = None
             err_msg = str(e) + "\n" + cmd.parser.format_usage()
