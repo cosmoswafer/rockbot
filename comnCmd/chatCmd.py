@@ -22,7 +22,7 @@ def defJson(default_value={}):
 
 
 class OpenAi:
-    chat_completions_api = "https://api.openai.com/v1/chat/completions"
+    chat_completions_api = "https://agent.evanora.top/v1/chat/completions"
     headers = {
         "Content-Type": "application/json",
         "Authorization": "Bearer sk-REPLACED",
