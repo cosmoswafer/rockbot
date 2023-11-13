@@ -27,7 +27,7 @@ class OpenAi:
         "Content-Type": "application/json",
         "Authorization": "Bearer sk-REPLACED",
     }
-    postdata = {"model": "gpt-4-32k", "messages": []}
+    postdata = {"model": "gpt-4-1106-preview", "messages": []}
     msg_template = {"role": "user", "content": ""}
     rep_template = {"role": "assistant", "content": ""}
 
