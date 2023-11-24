@@ -13,7 +13,8 @@
         "openai": {
             "url": "EDITME",
             "key": "EDITME",
-            "model": "EDITME"
+            "model": "EDITME",
+            "max_history": 10
         }
     }
 }

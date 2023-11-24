@@ -7,21 +7,11 @@ from bot.bot import bot
 from bot.chat import chatBot
 
 
-class botParser:
-    def __init__(self, chat_bot: chatBot):
-        self._chat = chat_bot
-
-    async def chat(self, msg_bot: bot) -> None:
-        await self._chat.update(msg_bot)
-
-
 class rock:
-    def __init__(self):
-        self._registerBot()
-        self._fireRocket()
+    def __init__(self, chat_bot: chatBot = None):
+        self._bot = chat_bot
 
-    def _registerBot(self):
-        self._bot = botParser(chatBot())
+        self._fireRocket()
 
     def _fireRocket(self):
         print(f"Connecting to {conf.server} as {conf.username}...")
@@ -42,4 +32,4 @@ class rock:
 
 
 if __name__ == "__main__":
-    rock().start()
+    rock(chatBot()).start()

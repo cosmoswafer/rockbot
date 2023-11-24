@@ -3,7 +3,7 @@
 import asyncio
 import aiohttp
 from config import openai as conf
-from cmdAbc import cmd
+from bot.chatAbc import chatABC
 
 
 def defJson(default_value={}):
@@ -69,27 +69,17 @@ class OpenAi:
             return str(r)
 
 
-class chatBot(cmd):
+class chatBot(chatABC):
     def __init__(self, openai=OpenAi()):
-        """
-        self.parser = parser
-        self.parser.add_argument(
-            "-r", "--clear-history", help="Clear the chat history", action="store_true"
-        )
-        self.parser.add_argument("keywords", help="Query keywords", type=str, nargs="*")
-        self.parser.set_defaults(func=self.update)
-        """
-
         self.openai = openai
 
-    async def update(self, bot):
-        """
-        if bot.args.clear_history:
-            OpenAi.histories[bot.rid] = []
-            await bot.reply("Clear and start a new chat")
-        # await bot.reply(await self._query(bot.rid, bot.args.keywords))
-        asyncio.create_task(self._query(bot, bot.rid, bot.args.keywords))
-        """
+    async def chat(self, bot):
+        if (
+            bot.rid in OpenAi.histories
+            and len(OpenAi.histories[bot.rid]) > conf.max_history
+        ):
+            # Remove the oldest message
+            OpenAi.histories[bot.rid].pop(0)
         asyncio.create_task(self._query(bot, bot.rid, bot.msg))
 
     async def _query(self, bot, rid, msg) -> None:
