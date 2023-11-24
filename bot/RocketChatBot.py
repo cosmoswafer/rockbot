@@ -187,4 +187,5 @@ class RocketChatBot:
 
 if __name__ == "__main__":
     rocket = RocketChatBot("botname", "password", server="hostname.com")
-    asyncio.run(rocket.start(None))
+    # asyncio.run(rocket.start(None))
+    RocketChatBot.launch(rocket)

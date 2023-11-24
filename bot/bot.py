@@ -3,9 +3,9 @@ class bot:
     Helper class for subscribers to send back messages.
     """
 
-    def __init__(self, rocket, args, rid):
+    def __init__(self, rocket, msg, rid):
         self.rocket = rocket
-        self.args = args
+        self.msg = msg
         self.rid = rid
         self.txt = ""
 
@@ -15,6 +15,3 @@ class bot:
     async def replyQ(self, msg):
         msg_q = f"```\n{msg}\n```"
         await self.rocket.sendMsg(self.rid, msg_q)
-
-
-

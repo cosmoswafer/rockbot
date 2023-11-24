@@ -1,13 +1,19 @@
-{"db":
-    {"data_dir": "/path/to/data"
-    ,"db_file": "filename.db"
-    ,"dbat_file": "sqlite.db"
-    ,"category": []
-    }
-,"bot":
-    {"username": "EDITME"
-    ,"password": "EDITME"
-    ,"server": "EDITME"
-    ,"debug": false
+{
+    "db": {
+        "data_dir": "/path/to/data",
+        "db_file": "filename.db",
+        "dbat_file": "sqlite.db",
+        "category": []
+    },
+    "bot": {
+        "username": "EDITME",
+        "password": "EDITME",
+        "server": "HOSTNAME",
+        "debug": false,
+        "openai": {
+            "url": "EDITME",
+            "key": "EDITME",
+            "model": "EDITME"
+        }
     }
 }
