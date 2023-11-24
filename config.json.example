@@ -9,12 +9,13 @@
         "username": "EDITME",
         "password": "EDITME",
         "server": "HOSTNAME",
-        "debug": false,
+        "debug": true,
         "openai": {
             "url": "EDITME",
             "key": "EDITME",
             "model": "EDITME",
-            "max_history": 10
+            "max_history": 10,
+            "debug": true
         }
     }
 }

@@ -45,7 +45,12 @@ class OpenAi:
 
     @defJson()
     def _parse_reply(self, reply):
-        return reply["choices"][0]["message"]
+        # return reply["choices"][0]["message"]
+        reply_content = reply["choices"][0]["message"]
+        if reply_content["role"] != "assistant":
+            # Patch the role
+            reply_content["role"] = "assistant"
+        return reply_content
 
     async def _post(self, data):
         # print("Sending the following request to openai:", data)
@@ -61,7 +66,11 @@ class OpenAi:
     async def submit(self, rid, message) -> str:
         h = OpenAi.histories.get(rid, [])
         m = self._compose_message(message, h)
+        if conf.debug:
+            print("OpenAi: Sending the following request to openai:", m)
         r = await self._post(m)
+        if conf.debug:
+            print("OpenAi: Received the following response from openai:", r)
         if t := self._parse_message(r):
             OpenAi.histories[rid] = [*m["messages"], self._parse_reply(r)]
             return t.strip()
@@ -78,8 +87,13 @@ class chatBot(chatABC):
             bot.rid in OpenAi.histories
             and len(OpenAi.histories[bot.rid]) > conf.max_history
         ):
+            if conf.debug:
+                print("chatBot: Removing the oldest message")
             # Remove the oldest message
             OpenAi.histories[bot.rid].pop(0)
+
+        if conf.debug:
+            print(f"chatBot incoming message: [{bot.rid}]{bot.msg}")
         asyncio.create_task(self._query(bot, bot.rid, bot.msg))
 
     async def _query(self, bot, rid, msg) -> None:
