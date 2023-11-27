@@ -68,7 +68,7 @@ class OpenAi:
             if conf.debug:
                 print("chatBot: Removing the old messages")
             # Strip the oldest message and keek the latest ten messages
-            OpenAi.histories[rid] = OpenAi.histories[rid][-10:]
+            OpenAi.histories[rid] = OpenAi.histories[rid][-1 * conf.max_history :]
 
         h = OpenAi.histories.get(rid, [])
 
