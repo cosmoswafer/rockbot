@@ -22,7 +22,7 @@ def defJson(default_value={}):
     return wrap
 
 
-async def retryA(times=3):
+def retryA(times=3):
     async def wrap(f):
         async def wrapped_f(*args, **kwargs):
             for i in range(times):
