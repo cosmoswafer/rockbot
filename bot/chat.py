@@ -22,9 +22,9 @@ def defJson(default_value={}):
     return wrap
 
 
-def retryA(times=3):
-    def wrap(f):
-        def wrapped_f(*args, **kwargs):
+async def retryA(times=3):
+    async def wrap(f):
+        async def wrapped_f(*args, **kwargs):
             for i in range(times):
                 try:
                     return await f(*args, **kwargs)
@@ -84,12 +84,29 @@ class OpenAi:
     def _parse_message(self, message):
         return message["choices"][0]["message"]["content"]
 
-    async def submit(self, rid, message) -> str:
-        if rid in OpenAi.histories and len(OpenAi.histories[rid]) > conf.max_history:
+    async def _cleanup_history(self, rid):
+        # Check maximum history size
+        if (
+            rid in OpenAi.histories
+            and len(OpenAi.histories[rid]) > conf.max_history_size
+        ):
             if conf.debug:
                 print("chatBot: Removing the old messages")
             # Strip the oldest message and keek the latest ten messages
             OpenAi.histories[rid] = OpenAi.histories[rid][-1 * conf.max_history :]
+
+        # Check maximum text length
+        if rid in OpenAi.histories:
+            while (
+                len("".join([m["content"] for m in OpenAi.histories[rid]]))
+                > conf.max_text_length
+            ):
+                if conf.debug:
+                    print("chatBot: Removing the oldest message")
+                OpenAi.histories[rid].pop()
+
+    async def submit(self, rid, message) -> str:
+        await self._cleanup_history(rid)
 
         h = OpenAi.histories.get(rid, [])
 
