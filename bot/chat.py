@@ -74,7 +74,8 @@ class OpenAi:
         async with aiohttp.ClientSession(headers=self.headers) as s:
             async with s.post(self.chat_completions_api, json=data) as response:
                 if response.status != 200:
-                    print(f"Response body: {await response.text()}")
+                    if conf.debug:
+                        print(f"Response body: {await response.text()}")
                     raise Exception(
                         f"Failed to post data to openai, status code: {response.status}"
                     )
