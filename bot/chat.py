@@ -23,13 +23,14 @@ def defJson(default_value={}):
 
 
 def retryA(times=3):
-    async def wrap(f):
+    def wrap(f):
         async def wrapped_f(*args, **kwargs):
             for i in range(times):
                 try:
                     return await f(*args, **kwargs)
                 except Exception as e:
                     print(f"Exception: {e}, retrying...")
+                    await asyncio.sleep(1)
             raise Exception(f"Failed after {times} times of retrying")
 
         return wrapped_f

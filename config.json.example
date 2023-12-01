@@ -14,7 +14,7 @@
             "url": "EDITME",
             "key": "EDITME",
             "model": "EDITME",
-            "max_history": 10,
+            "max_history_size": 10,
             "max_text_length": 999999,
             "debug": true
         }
