@@ -22,12 +22,12 @@ def defJson(default_value={}):
     return wrap
 
 
-def retry(times=3):
+def retryA(times=3):
     def wrap(f):
         def wrapped_f(*args, **kwargs):
             for i in range(times):
                 try:
-                    return f(*args, **kwargs)
+                    return await f(*args, **kwargs)
                 except Exception as e:
                     print(f"Exception: {e}, retrying...")
             raise Exception(f"Failed after {times} times of retrying")
@@ -67,7 +67,7 @@ class OpenAi:
             reply_content["role"] = "assistant"
         return reply_content
 
-    @retry()
+    @retryA()
     async def _post(self, data):
         # print("Sending the following request to openai:", data)
         async with aiohttp.ClientSession(headers=self.headers) as s:
