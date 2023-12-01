@@ -85,7 +85,14 @@ class OpenAi:
         return message["choices"][0]["message"]["content"]
 
     async def submit(self, rid, message) -> str:
+        if rid in OpenAi.histories and len(OpenAi.histories[rid]) > conf.max_history:
+            if conf.debug:
+                print("chatBot: Removing the old messages")
+            # Strip the oldest message and keek the latest ten messages
+            OpenAi.histories[rid] = OpenAi.histories[rid][-1 * conf.max_history :]
+
         h = OpenAi.histories.get(rid, [])
+
         m = self._compose_message(message, h)
         if conf.debug:
             print("OpenAi: Sending the following request to openai:", m)
@@ -104,15 +111,6 @@ class chatBot(chatABC):
         self.openai = openai
 
     async def chat(self, bot):
-        if (
-            bot.rid in OpenAi.histories
-            and len(OpenAi.histories[bot.rid]) > conf.max_history
-        ):
-            if conf.debug:
-                print("chatBot: Removing the oldest message")
-            # Remove the oldest message
-            OpenAi.histories[bot.rid].pop(0)
-
         if conf.debug:
             print(f"chatBot incoming message: [{bot.rid}]{bot.msg}")
         asyncio.create_task(self._query(bot, bot.rid, bot.msg))
