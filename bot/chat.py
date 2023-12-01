@@ -95,7 +95,7 @@ class OpenAi:
             if conf.debug:
                 print("chatBot: Removing the old messages")
             # Strip the oldest message and keek the latest ten messages
-            OpenAi.histories[rid] = OpenAi.histories[rid][-1 * conf.max_history :]
+            OpenAi.histories[rid] = OpenAi.histories[rid][-1 * conf.max_history_size :]
 
         # Check maximum text length
         if rid in OpenAi.histories:
