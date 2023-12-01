@@ -22,6 +22,21 @@ def defJson(default_value={}):
     return wrap
 
 
+def retry(times=3):
+    def wrap(f):
+        def wrapped_f(*args, **kwargs):
+            for i in range(times):
+                try:
+                    return f(*args, **kwargs)
+                except Exception as e:
+                    print(f"Exception: {e}, retrying...")
+            raise Exception(f"Failed after {times} times of retrying")
+
+        return wrapped_f
+
+    return wrap
+
+
 class OpenAi:
     chat_completions_api = conf.url
     headers = {
@@ -52,12 +67,18 @@ class OpenAi:
             reply_content["role"] = "assistant"
         return reply_content
 
+    @retry()
     async def _post(self, data):
         # print("Sending the following request to openai:", data)
         async with aiohttp.ClientSession(headers=self.headers) as s:
             async with s.post(self.chat_completions_api, json=data) as response:
-                r = await response.json()
-                return r
+                if response.status != 200:
+                    print(f"Response body: {await response.text()}")
+                    raise Exception(
+                        f"Failed to post data to openai, status code: {response.status}"
+                    )
+                else:
+                    return await response.json()
 
     @defJson()
     def _parse_message(self, message):
