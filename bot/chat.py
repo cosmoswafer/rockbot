@@ -68,7 +68,7 @@ class OpenAi:
             reply_content["role"] = "assistant"
         return reply_content
 
-    @retryA()
+    @retryA(5)
     async def _post(self, data):
         # print("Sending the following request to openai:", data)
         async with aiohttp.ClientSession(headers=self.headers) as s:
