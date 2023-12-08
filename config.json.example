@@ -11,7 +11,11 @@
         "server": "HOSTNAME",
         "debug": true,
         "openai": {
-            "url": "EDITME",
+            "url": {
+                "base": "https://host.name/ends/with/slash/",
+                "chat": "chat/end/point",
+                "draw": "draw/image/end/point"
+            },
             "key": "EDITME",
             "model": "EDITME",
             "max_history_size": 10,
