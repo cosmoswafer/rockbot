@@ -25,7 +25,7 @@ def retryA(times=3):
                     return await f(*args, **kwargs)
                 except Exception as e:
                     print(f"Exception: {e}, retrying...")
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(5)
             raise Exception(f"Failed after {times} times of retrying")
 
         return wrapped_f
