@@ -6,7 +6,7 @@ def defJson(default_value={}):
         def wrapped_f(*args, **kwargs):
             try:
                 return f(*args, **kwargs)
-            except (KeyError, IndexError) as e:
+            except (KeyError, IndexError, TypeError) as e:
                 print(
                     f"No such item(s) in json data, return the default value: {default_value}, Exception: {e}"
                 )

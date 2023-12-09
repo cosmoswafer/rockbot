@@ -5,6 +5,7 @@ from bot.openai import OpenAi
 class Test:
     chat_prompt = {
         "draw": "Please use the draw function to draw a picture of a cat.",
+        "show": "Please show me the picture you just drew.",
         "gpt4": "Hi there! Are you GPT-4?",
         "chat": "The following is a conversation with an AI assistant. The assistant is helpful, creative, clever, and very friendly.",
     }
@@ -13,8 +14,12 @@ class Test:
         self.openai = OpenAi()
 
     async def testAll(self):
+        """
         await self.testChat()
-        # await self.testDraw()
+        await self.testDraw()
+        """
+        await self.testChat("draw")
+        await self.testChat("show")
 
     async def testDraw(self):
         r = await self.openai.draw("Random image")
@@ -22,7 +27,7 @@ class Test:
         print("Image created: ", r["data"][0]["url"])
         print("Test Draw passed")
 
-    async def testChat(self):
+    async def testChat(self, prompt="gpt4"):
         r = await self.openai.submit("test", Test.chat_prompt["draw"])
         assert r
         print(r)

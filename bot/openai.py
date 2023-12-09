@@ -1,3 +1,4 @@
+import json
 import asyncio
 import aiohttp
 from urllib.parse import urljoin
@@ -74,12 +75,12 @@ class OpenAi:
         pass
 
     @defJson("")
-    def _patch_reply(self, reply_content):
+    def _patch_reply(self, reply_content, role="assistant"):
         # return reply["choices"][0]["message"]
         # reply_content = reply["choices"][0]["message"]
-        if reply_content["role"] != "assistant":
+        if reply_content["role"] != role:
             # Patch the role
-            reply_content["role"] = "assistant"
+            reply_content["role"] = role
         return reply_content
 
     @retryA(5)
@@ -97,8 +98,17 @@ class OpenAi:
                     return await response.json()
 
     @defJson("")
-    def _parse_message(self, message):
-        return message["choices"][0]["message"]["content"]
+    def _parse_draw_images(self, data: dict) -> str:
+        assert "created" in data and "data" in data, "Invalid response from openai"
+        return str(data["data"])
+
+    @defJson("")
+    def _parse_message(self, message, content_only=True):
+        return (
+            message["choices"][0]["message"]["content"]
+            if content_only
+            else message["choices"][0]["message"]
+        )
 
     def _parseMessageWithErrors(self, message: dict):
         return self._parse_message(message) or str(message)
@@ -135,7 +145,7 @@ class OpenAi:
         # return await self._parseImageFromDraw(r)
         return r
 
-    async def _postMessagesWithFunctions(self, messages: dict) -> (bool, str):
+    async def _postMessagesWithFunctions(self, messages: dict, user_id: str) -> str:
         example_calls = {
             "id": "chatcmpl-8TbC4VvqbExdYtZabYbsS8VBuWRuk",
             "object": "chat.completion",
@@ -168,18 +178,78 @@ class OpenAi:
             },
             "system_fingerprint": "fp_a24b4d720c",
         }
+        tool_calls_example = [
+            {
+                "id": "call_vTbb5TvamnPslOB5Gc0XVxoR",
+                "type": "function",
+                "function": {"name": "draw", "arguments": '{"prompt":"cat"}'},
+            }
+        ]
+        tool_calls_messages = {
+            "role": "tool",
+            "content": "http://xxxxxxxxxxxx.png",
+            "tool_call_id": "call_vTbb5TvamnPslOB5Gc0XVxoR",
+        }
 
         # r = self._parse_message(await self._post(self.chat_completions_api, messages))
         # while not (r := self._post(self.chat_completions_api, messages)):
         r = await self._post(self.chat_completions_api, messages)
-        while "tool_calls" in r and r["tool_calls"]:
-            for call in r["tool_calls"]:
-                if call["function"]["name"] == "draw":
-                    # function_results = await self.draw(call["parameters"]["prompt"])
-                    print("call", call)
+        t = self._parse_message(r, content_only=False)
+        print("Check tool calls", t["tool_calls"] if "tool_calls" in t else t)
+        function_call_messages = []
+        if not t or "tool_calls" not in t:
+            return r
 
-            r = await self._post(self.chat_completions_api, messages)
-        return True, r
+        for call in t["tool_calls"]:
+            if call["function"]["name"] == "draw":
+                # function_results = await self.draw(call["parameters"]["prompt"])
+                # print("call", call)
+
+                # Parse the function arguments
+                """
+                print("call function", call["function"]["name"])
+                print("call arguments", call["function"]["arguments"])
+                print("call id", call["id"])
+                """
+                function_name = call["function"]["name"]
+                function_arguments = json.loads(call["function"]["arguments"])
+                function_id = call["id"]
+                print(
+                    f'Call function {function_name} with prompt {function_arguments["prompt"]}'
+                )
+                function_call_messages.append(
+                    f'Called function "{function_name}" with prompt "{function_arguments["prompt"]}"'
+                )
+
+                # Run the function with the arguments
+                fr = await self.draw(function_arguments["prompt"])
+                print("function_results", fr)
+
+                # Compose the next message
+                messages["messages"].append(
+                    self._patch_reply(
+                        {
+                            **self.rep_template,
+                            "content": self._parse_draw_images(fr),
+                        },
+                        role="tool",
+                    )
+                )
+                # Append the function call result to the histories
+                OpenAi.histories[user_id] = [
+                    *messages["messages"],
+                    {
+                        "role": "tool",
+                        "content": self._parse_draw_images(fr),
+                        "tool_call_id": function_id,
+                    },
+                ]
+
+        """
+        r = await self._post(self.chat_completions_api, messages)
+        t = self._parse_message(r, content_only=False)
+        """
+        return "\n".join(function_call_messages)
 
     async def submit(self, user_id, message) -> str:
         await self._cleanup_history(user_id)
@@ -192,14 +262,14 @@ class OpenAi:
         if conf.debug:
             print("OpenAi: Sending the following request to openai:", m)
         """
-        r, c = await self._postMessagesWithFunctions(m)
+        r = await self._postMessagesWithFunctions(m, user_id)
 
         """
         if conf.debug:
             print("OpenAi: Received the following response from openai:", r)
         """
-        if t := self._parse_message(c):
-            OpenAi.histories[user_id] = [*m["messages"], self._patch_reply(c)]
+        if t := self._parse_message(r):
+            OpenAi.histories[user_id] = [*m["messages"], self._patch_reply(r)]
             return t.strip()
         else:
-            return str(c)
+            return str(r)
