@@ -6,7 +6,7 @@ from util.config import openai as conf
 from util.decorators import defJson, retryA
 
 
-class OpenAi:
+class ApiClient:
     chat_completions_api = urljoin(conf.url.base, conf.url.chat)
     draw_images_api = urljoin(conf.url.base, conf.url.draw)
     headers = {
@@ -22,6 +22,23 @@ class OpenAi:
         "n": 1,
         "size": "1024x1024",
     }
+
+    @retryA(5)
+    async def apiPost(self, url: str, data: dict) -> dict:
+        # print("Sending the following request to openai:", data)
+        async with aiohttp.ClientSession(headers=self.headers) as s:
+            async with s.post(url, json=data) as response:
+                if response.status != 200:
+                    if conf.debug:
+                        print(f"Response body: {await response.text()}")
+                    raise Exception(
+                        f"Failed to post data to openai, status code: {response.status}"
+                    )
+                else:
+                    return await response.json()
+
+
+class OpenAi(ApiClient):
     tools = [
         {
             "type": "function",
@@ -60,6 +77,7 @@ class OpenAi:
     ]
 
     histories = {}
+    # ONLY stores messages not the whole playload, in a list for each user id
     # TODO implemente the presistence history class
 
     def _compose_message(self, message, history=[]):
@@ -83,6 +101,7 @@ class OpenAi:
             reply_content["role"] = role
         return reply_content
 
+    """
     @retryA(5)
     async def _post(self, url: str, data: dict) -> dict:
         # print("Sending the following request to openai:", data)
@@ -96,6 +115,7 @@ class OpenAi:
                     )
                 else:
                     return await response.json()
+    """
 
     @defJson("")
     def _parse_draw_images(self, data: dict) -> str:
@@ -128,10 +148,13 @@ class OpenAi:
 
         # Check maximum text length
         if user_id in OpenAi.histories:
+            """
             while (
                 len("".join([m["content"] for m in OpenAi.histories[user_id]]))
                 > conf.max_text_length
             ):
+            """
+            while len(str(OpenAi.histories[user_id])) > conf.max_text_length:
                 if conf.debug:
                     print("chatBot: Removing the oldest message")
                 OpenAi.histories[user_id].pop()
@@ -141,7 +164,9 @@ class OpenAi:
         return data["data"][0]["url"]
 
     async def draw(self, prompt):
-        r = await self._post(self.draw_images_api, self.draw_data | {"prompt": prompt})
+        r = await self.apiPost(
+            self.draw_images_api, self.draw_data | {"prompt": prompt}
+        )
         # return await self._parseImageFromDraw(r)
         return r
 
@@ -193,7 +218,7 @@ class OpenAi:
 
         # r = self._parse_message(await self._post(self.chat_completions_api, messages))
         # while not (r := self._post(self.chat_completions_api, messages)):
-        r = await self._post(self.chat_completions_api, messages)
+        r = await self.apiPost(self.chat_completions_api, messages)
         t = self._parse_message(r, content_only=False)
         print("Check tool calls", t["tool_calls"] if "tool_calls" in t else t)
         function_call_messages = []
