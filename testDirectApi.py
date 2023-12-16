@@ -1,3 +1,4 @@
+import asyncio
 from bot.openai import ApiClient
 
 
@@ -22,17 +23,19 @@ class Test(ApiClient):
         - content: str
         - tool_call_id: str (optional for function calls)
         """
-        return postdata | {"messsages": messages}
+        return self.postdata | {"messsages": messages}
 
-    def testAll(self):
-        self.testPost()
+    async def testAll(self):
+        await self.testPost()
 
-    def testPost(self):
-        post_data = self.template_messsages["user1"]
-        r = self.apiPost(self.url, post_data)
+    async def testPost(self):
+        post_data = self._composePlayload([self.template_messsages["user2"]])
+        r = await self.apiPost(self.chat_completions_api, post_data)
         print(r)
         print("test passed")
 
 
 if __name__ == "__main__":
-    Test().testAll()
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(Test().testAll())
+    loop.close()
