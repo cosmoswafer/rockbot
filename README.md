@@ -2,9 +2,9 @@
 
 ## Python packages
 
- * websockets
- * aiosqlite
- * aiohttp
+- websockets
+- aiosqlite
+- aiohttp
 
 ## Database schema
 
@@ -19,7 +19,7 @@ CREATE TABLE wash (c FLOAT(7.2), d DATE, desc TEXT, void INT(1) default FALSE);
 Expense tables:
 
 ```sql
-CREATE TABLE expense 
+CREATE TABLE expense
     (purchase_date DATE
     ,item_name TEXT
     ,lifetime INT(5) --Unit: months
@@ -35,7 +35,7 @@ CREATE TABLE expense
 Gif database:
 
 ```sql
-CREATE TABLE gif 
+CREATE TABLE gif
     (name TEXT PRIMARY KEY
     ,url TEXT
     ,t TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -43,16 +43,16 @@ CREATE TABLE gif
     );
 ```
 
-## Implementation 
+## Implementation
 
-Nither library or framework, just a programming method to quickly implement a *minimalism* information system.
+Neither library nor framework, just a programming method to quickly implement a _minimalism_ information system.
 
 ### General technique
 
-* Python `argparse` application in bot commands
-* Python async programming
-* Dataclass and database conecting
-* Simple Bot logic
-* Test driven development
+- Python `argparse` application in bot commands
+- Python async programming
+- Dataclass and database connecting
+- Simple Bot logic
+- Test driven development
 
 ### Tricky points
