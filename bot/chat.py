@@ -8,11 +8,17 @@ from bot.openai import OpenAi
 class chatBot:
     def __init__(self, openai=OpenAi()):
         self.openai = openai
-        self.commands = {"clear": self.clear}
+        self.commands = {"help": self.help, "clear": self.clear}
 
-    async def clear(self, bot, room_id):
-        self.openai.histories[room_id] = []
+    async def clear(self, bot):
+        self.openai.histories[bot.room_id] = []
         await bot.reply("History cleared")
+
+    async def help(self, bot):
+        await bot.reply(
+            "Commands:\n"
+            + "\n".join([f"!{command}" for command in self.commands.keys()])
+        )
 
     async def chat(self, bot):
         if conf.debug:
