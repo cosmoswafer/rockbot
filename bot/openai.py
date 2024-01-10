@@ -3,7 +3,7 @@ import asyncio
 import aiohttp
 from urllib.parse import urljoin
 from util.config import openai as conf
-from util.decorators import defJson, retryA
+from util.decorators import defJson, retryA, retryStrA
 
 
 class ApiClient:
@@ -23,7 +23,7 @@ class ApiClient:
         "size": "1024x1024",
     }
 
-    @retryA(5)
+    @retryStrA(5, 3, "Failed to post data to openai, please check application log")
     async def apiPost(self, url: str, data: dict) -> dict:
         # print("Sending the following request to openai:", data)
         async with aiohttp.ClientSession(headers=self.headers) as s:
@@ -32,7 +32,7 @@ class ApiClient:
                     if conf.debug:
                         print(f"Response body: {await response.text()}")
                     raise Exception(
-                        f"Failed to post data to openai, status code: {response.status}"
+                        f"Failed to post data to openai, status code: {response.status} \n Response body: {await response.text()}"
                     )
                 else:
                     return await response.json()
@@ -143,7 +143,7 @@ class OpenAi(ApiClient):
                 print("chatBot: Removing the old messages")
             # Strip the oldest message and keek the latest ten messages
             OpenAi.histories[user_id] = OpenAi.histories[user_id][
-                -1 * conf.max_history_size :
+                -1 * conf.max_history_size:
             ]
 
         # Check maximum text length
