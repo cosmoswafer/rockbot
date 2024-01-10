@@ -92,17 +92,8 @@ class OpenAi(ApiClient):
     def _compose_reply(self, reply):
         pass
 
-    def _patch_reply(self, reply_content, role="assistant"):
-        # return reply["choices"][0]["message"]
-        # reply_content = reply["choices"][0]["message"]
-        if "role" not in reply_content:
-            print(
-                "Patching the role because it is not in the reply content",
-                reply_content,
-            )
-            # Patch the role
-            reply_content["role"] = role
-        elif reply_content["role"] != role:
+    def _patch_reply_role(self, reply_content, role="assistant"):
+        if reply_content["role"] != role:
             # Patch the role
             reply_content["role"] = role
         return reply_content
@@ -258,7 +249,7 @@ class OpenAi(ApiClient):
 
                 # Compose the next message
                 messages["messages"].append(
-                    self._patch_reply(
+                    self._patch_reply_role(
                         {
                             **self.rep_template,
                             "content": self._parse_draw_images(fr),
@@ -287,20 +278,23 @@ class OpenAi(ApiClient):
 
         h = OpenAi.histories.get(user_id, [])
 
-        m = self._compose_message(message, h)
+        post_msg = self._compose_message(message, h)
 
         """
         if conf.debug:
             print("OpenAi: Sending the following request to openai:", m)
         """
-        r = await self._postMessagesWithFunctions(m, user_id)
+        r = await self._postMessagesWithFunctions(post_msg, user_id)
 
         """
         if conf.debug:
             print("OpenAi: Received the following response from openai:", r)
         """
         if t := self._parse_message(r):
-            OpenAi.histories[user_id] = [*m["messages"], self._patch_reply(r)]
+            OpenAi.histories[user_id] = [
+                *post_msg["messages"],
+                self._patch_reply_role(self._parse_message(r, content_only=False)),
+            ]
             return t.strip()
         else:
             return str(r)
