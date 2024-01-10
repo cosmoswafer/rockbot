@@ -5,7 +5,7 @@ class bot:
 
     def __init__(self, rocket, msg, rid):
         self.rocket = rocket
-        self.msg = msg
+        self.msg = msg.strip()  # Trim the msg automatically
         self.rid = rid
         self.txt = ""
 
