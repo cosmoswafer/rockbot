@@ -47,21 +47,26 @@ def retryStrA(times, s):
     return wrap
 
 
-def retryStrA(time=3, sleep=5, default_str=""):
+def retryStrA(times=3, sleep=5, default_str=""):
     """
     Attempt to execute the function for several times, if failed, return the exception message as a string
     """
+
     def wrap(f):
         async def wrapped_f(*args, **kwargs):
             for i in range(times):
-                exception_message = ""
                 try:
                     return await f(*args, **kwargs)
                 except Exception as e:
-                    print(f"Exception: {e}, retrying...")
-                    await asyncio.sleep(sleep)
-                    exception_message = str(e)
-            return exception_message or default_str or f"Failed after {times} times of retrying"
+                    if i == times - 1:
+                        return (
+                            str(e)
+                            or default_str
+                            or f"Failed after {times} times of retrying"
+                        )
+                    else:
+                        print(f"Exception: {e}, retrying...")
+                        await asyncio.sleep(sleep)
 
         return wrapped_f
 
