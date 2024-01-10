@@ -92,11 +92,17 @@ class OpenAi(ApiClient):
     def _compose_reply(self, reply):
         pass
 
-    @defJson("")
     def _patch_reply(self, reply_content, role="assistant"):
         # return reply["choices"][0]["message"]
         # reply_content = reply["choices"][0]["message"]
-        if reply_content["role"] != role:
+        if "role" not in reply_content:
+            print(
+                "Patching the role because it is not in the reply content",
+                reply_content,
+            )
+            # Patch the role
+            reply_content["role"] = role
+        elif reply_content["role"] != role:
             # Patch the role
             reply_content["role"] = role
         return reply_content
@@ -143,7 +149,7 @@ class OpenAi(ApiClient):
                 print("chatBot: Removing the old messages")
             # Strip the oldest message and keek the latest ten messages
             OpenAi.histories[user_id] = OpenAi.histories[user_id][
-                -1 * conf.max_history_size:
+                -1 * conf.max_history_size :
             ]
 
         # Check maximum text length
@@ -220,7 +226,7 @@ class OpenAi(ApiClient):
         # while not (r := self._post(self.chat_completions_api, messages)):
         r = await self.apiPost(self.chat_completions_api, messages)
         t = self._parse_message(r, content_only=False)
-        print("Check tool calls", t["tool_calls"] if "tool_calls" in t else t)
+        # print("Check tool calls", t["tool_calls"] if "tool_calls" in t else t)
         function_call_messages = []
         if not t or "tool_calls" not in t:
             return r
