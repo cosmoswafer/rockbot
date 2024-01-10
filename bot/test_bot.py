@@ -22,7 +22,7 @@ class TestBot(unittest.IsolatedAsyncioTestCase):
         self.rocket.sendMsg.assert_called_once_with(self.rid, expected_msg_q)
 
     async def test_Bot_man(self):
-        b = bot(self.rocket, " !help", self.rid)
+        b = bot(self.rocket, "   !help", self.rid)
         assert b.msg == "!help"
 
 

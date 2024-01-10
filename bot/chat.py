@@ -28,7 +28,7 @@ class chatBot:
         if bot.msg.startswith("!"):
             command = bot.msg[1:].split(" ")[0]
             if command in self.commands:
-                await self.commands[command](bot, bot.rid)
+                await self.commands[command](bot)
         else:
             asyncio.create_task(self._query(bot, bot.rid, bot.msg))
 
