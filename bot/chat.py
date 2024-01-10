@@ -33,8 +33,12 @@ class chatBot:
         # Map commands
         if bot.msg.startswith("!"):
             command = bot.msg[1:].split(" ")[0]
-            if command in self.commands:
-                await self.commands[command](bot)
+            if (
+                command in self.commands.keys()
+            ):  # Fix: Access the keys of the commands dictionary
+                await self.commands[command]["fnc"](
+                    bot
+                )  # Fix: Call the function stored in the "fnc" key
         else:
             asyncio.create_task(self._query(bot, bot.rid, bot.msg))
 
