@@ -14,7 +14,7 @@ class chatBot:
         }
 
     async def clear(self, bot):
-        self.openai.histories[bot.room_id] = []
+        self.openai.histories[bot.rid] = []
         await bot.reply("History cleared")
 
     async def help(self, bot):
