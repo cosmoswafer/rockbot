@@ -8,6 +8,8 @@ class Test:
         "show": "Please show me the picture you just drew.",
         "gpt4": "Hi there! Are you GPT-4?",
         "chat": "The following is a conversation with an AI assistant. The assistant is helpful, creative, clever, and very friendly.",
+        "news": "Tell me the latest news in Technology.",
+        "weather": "What's the weather like today in Tokyo?",
     }
 
     def __init__(self):
@@ -17,9 +19,15 @@ class Test:
         """
         await self.testChat()
         await self.testDraw()
-        """
         await self.testChat("draw")
         await self.testChat("show")
+        await self.testChat("gpt4")
+        await self.testChat("chat")
+        """
+        await self.testChat("news")
+        await self.testChat("weather")
+
+        print("All test passed")
 
     async def testDraw(self):
         r = await self.openai.draw("Random image")
@@ -27,8 +35,14 @@ class Test:
         print("Image created: ", r["data"][0]["url"])
         print("Test Draw passed")
 
-    async def testChat(self, prompt="gpt4"):
+    async def testChatnDraw(self, prompt="gpt4"):
         r = await self.openai.submit("test", Test.chat_prompt["draw"])
+        assert r
+        print(r)
+        print("Test Chat passed")
+
+    async def testChat(self, prompt):
+        r = await self.openai.submit("test", Test.chat_prompt[prompt])
         assert r
         print(r)
         print("Test Chat passed")

@@ -13,11 +13,14 @@
         "openai": {
             "url": {
                 "base": "https://host.name/ends/with/slash/",
-                "chat": "chat/end/point",
-                "draw": "draw/image/end/point"
+                "chat": "v1/chat/completions",
+                "draw": "v1/images/generations"
             },
             "key": "EDITME",
-            "model": "EDITME",
+            "model": "gemini-pro",
+            "model_openai": "gpt-4-1106-preview",
+            "model_google": "gemini-pro",
+            "model_bing": "bing",
             "max_history_size": 10,
             "max_text_length": 999999,
             "debug": true

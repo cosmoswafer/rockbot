@@ -12,6 +12,7 @@ class ApiClient:
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {conf.key}",
+        "Accept": "application/json",
     }
     postdata = {"model": conf.model, "messages": []}
     msg_template = {"role": "user", "content": ""}
