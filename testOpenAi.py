@@ -25,6 +25,8 @@ class Test:
         await self.testChat("chat")
         """
         await self.testChat("news")
+        await self.testChat("gpt4")
+        await self.testChat("chat")
         await self.testChat("weather")
 
         print("All test passed")

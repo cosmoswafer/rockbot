@@ -274,6 +274,9 @@ class OpenAi(ApiClient):
         """
         return "\n".join(function_call_messages)
 
+    async def _postMessages(self, messages: dict, user_id: str) -> str:
+        return await self.apiPost(self.chat_completions_api, messages)
+
     async def submit(self, user_id, message) -> str:
         await self._cleanup_history(user_id)
 
@@ -285,7 +288,7 @@ class OpenAi(ApiClient):
         if conf.debug:
             print("OpenAi: Sending the following request to openai:", m)
         """
-        r = await self._postMessagesWithFunctions(post_msg, user_id)
+        r = await self._postMessages(post_msg, user_id)
 
         """
         if conf.debug:
