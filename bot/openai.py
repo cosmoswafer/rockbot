@@ -3,7 +3,7 @@ import asyncio
 import aiohttp
 from urllib.parse import urljoin
 from util.config import openai as conf
-from util.decorators import defJson, retryA
+from util.decorators import defJson, retryA, retryStrA
 
 
 class ApiClient:
@@ -24,7 +24,7 @@ class ApiClient:
         "size": "1024x1024",
     }
 
-    @retryA(5)
+    @retryStrA(5, 3, "Failed to post data to openai, please check application log")
     async def apiPost(self, url: str, data: dict) -> dict:
         # print("Sending the following request to openai:", data)
         async with aiohttp.ClientSession(headers=self.headers) as s:
@@ -33,7 +33,7 @@ class ApiClient:
                     if conf.debug:
                         print(f"Response body: {await response.text()}")
                     raise Exception(
-                        f"Failed to post data to openai, status code: {response.status}"
+                        f"Failed to post data to openai, status code: {response.status} \n Response body: {await response.text()}"
                     )
                 else:
                     return await response.json()
@@ -93,10 +93,7 @@ class OpenAi(ApiClient):
     def _compose_reply(self, reply):
         pass
 
-    @defJson("")
-    def _patch_reply(self, reply_content, role="assistant"):
-        # return reply["choices"][0]["message"]
-        # reply_content = reply["choices"][0]["message"]
+    def _patch_reply_role(self, reply_content, role="assistant"):
         if reply_content["role"] != role:
             # Patch the role
             reply_content["role"] = role
@@ -221,7 +218,7 @@ class OpenAi(ApiClient):
         # while not (r := self._post(self.chat_completions_api, messages)):
         r = await self.apiPost(self.chat_completions_api, messages)
         t = self._parse_message(r, content_only=False)
-        print("Check tool calls", t["tool_calls"] if "tool_calls" in t else t)
+        # print("Check tool calls", t["tool_calls"] if "tool_calls" in t else t)
         function_call_messages = []
         if not t or "tool_calls" not in t:
             return r
@@ -253,7 +250,7 @@ class OpenAi(ApiClient):
 
                 # Compose the next message
                 messages["messages"].append(
-                    self._patch_reply(
+                    self._patch_reply_role(
                         {
                             **self.rep_template,
                             "content": self._parse_draw_images(fr),
@@ -282,20 +279,23 @@ class OpenAi(ApiClient):
 
         h = OpenAi.histories.get(user_id, [])
 
-        m = self._compose_message(message, h)
+        post_msg = self._compose_message(message, h)
 
         """
         if conf.debug:
             print("OpenAi: Sending the following request to openai:", m)
         """
-        r = await self._postMessagesWithFunctions(m, user_id)
+        r = await self._postMessagesWithFunctions(post_msg, user_id)
 
         """
         if conf.debug:
             print("OpenAi: Received the following response from openai:", r)
         """
         if t := self._parse_message(r):
-            OpenAi.histories[user_id] = [*m["messages"], self._patch_reply(r)]
+            OpenAi.histories[user_id] = [
+                *post_msg["messages"],
+                self._patch_reply_role(self._parse_message(r, content_only=False)),
+            ]
             return t.strip()
         else:
             return str(r)
