@@ -131,18 +131,19 @@ class RocketChatBot:
         if sender_id == self.uid:
             return  # skip self message
 
-        if msg_txt.startswith(self._botname) and self._atbot:
+        if room_name and msg_txt.startswith(self._botname):
             # AT the bot in channels
             msg_no_at = msg_txt.replace(self._botname, "")
             await self._atbot(sender_name, room_name, room_id, msg_no_at)
         elif self._rooms and room_name and room_name in self._rooms:
             # Private responses for some specific rooms
             await self._rooms[room_name](sender_name, room_name, room_id, msg_txt)
-        else:
+        elif not room_name:
             # Direct message which is missing the room name
-            await self._atbot(sender_name, room_name or "DIRECT_MESSAGES", room_id, msg_txt)
-
-        # await self._rooms[room_name](sender_name, room_name, room_id, msg_txt)
+            await self._atbot(sender_name, "DIRECT_MESSAGES", room_id, msg_txt)
+        else:
+            # Keep slince for other cases
+            pass
 
     async def _rt_dispatch(self):
         if self.result:
