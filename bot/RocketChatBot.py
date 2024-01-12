@@ -102,6 +102,10 @@ class RocketChatBot:
     def _parse_room_name(self, json_data: dict) -> str:
         return json_data["fields"]["args"][1]["roomName"]
 
+    @defJson(False)
+    def _in_channels(self, json_data: dict) -> bool:
+        return len(json_data["fields"]["args"]) > 1
+
     @defJson("")
     def _parse_sender_name(self, json_data: dict) -> str:
         return json_data["fields"]["args"][0]["u"]["username"]
@@ -112,21 +116,8 @@ class RocketChatBot:
         msg_txt = self._parse_msg_txt(jds)
         room_id = self._parse_room_id(jds)
         sender_id = self._parse_sender_id(jds)
-        room_name = self._parse_room_name(jds)
+        room_name = self._parse_room_name(jds) if self._in_channels(jds) else ""
         sender_name = self._parse_sender_name(jds)
-
-        """
-        try:
-            msg_txt = jds["fields"]["args"][0]["msg"]
-            room_id = jds["fields"]["args"][0]["rid"]
-            sender_id = jds["fields"]["args"][0]["u"]["_id"]
-            room_name = jds["fields"]["args"][1]["roomName"]
-            sender_name = jds["fields"]["args"][0]["u"]["username"]
-        except (KeyError, IndexError) as e:
-            print(
-                "UNKNOW messages, probably from direct message and this is not supported so far."
-            )
-        """
 
         if sender_id == self.uid:
             return  # skip self message
