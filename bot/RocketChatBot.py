@@ -1,6 +1,10 @@
 #!/usr/bin/env python
 
-import concurrent.futures, asyncio, websockets, json
+import concurrent.futures
+import asyncio
+import websockets
+import json
+from util.decorators import defJson
 
 
 class RocketChatBot:
@@ -29,6 +33,7 @@ class RocketChatBot:
         self.cbdist["changed"] = self._cb_changed
 
         self._atbot = None
+        self._pmbot = None
         self._rooms = {}
 
     async def _wsLoop(self, ws):
@@ -81,15 +86,36 @@ class RocketChatBot:
         }
         await self._send2ws(json.dumps(payload))
 
-    async def _cb_changed(self):
-        msg_txt = ""
-        room_id = ""
-        sender_id = ""
-        room_name = ""
-        sender_name = ""
+    @defJson("")
+    def _parse_msg_txt(self, json_data: dict) -> str:
+        return json_data["fields"]["args"][0]["msg"]
 
+    @defJson("")
+    def _parse_room_id(self, json_data: dict) -> str:
+        return json_data["fields"]["args"][0]["rid"]
+
+    @defJson("")
+    def _parse_sender_id(self, json_data: dict) -> str:
+        return json_data["fields"]["args"][0]["u"]["_id"]
+
+    @defJson("")
+    def _parse_room_name(self, json_data: dict) -> str:
+        return json_data["fields"]["args"][1]["roomName"]
+
+    @defJson("")
+    def _parse_sender_name(self, json_data: dict) -> str:
+        return json_data["fields"]["args"][0]["u"]["username"]
+
+    async def _cb_changed(self):
         jds = json.loads(self.ds)
 
+        msg_txt = self._parse_msg_txt(jds)
+        room_id = self._parse_room_id(jds)
+        sender_id = self._parse_sender_id(jds)
+        room_name = self._parse_room_name(jds)
+        sender_name = self._parse_sender_name(jds)
+
+        """
         try:
             msg_txt = jds["fields"]["args"][0]["msg"]
             room_id = jds["fields"]["args"][0]["rid"]
@@ -100,18 +126,21 @@ class RocketChatBot:
             print(
                 "UNKNOW messages, probably from direct message and this is not supported so far."
             )
+        """
 
         if sender_id == self.uid:
             return  # skip self message
 
         if msg_txt.startswith(self._botname) and self._atbot:
+            # AT the bot in channels
             msg_no_at = msg_txt.replace(self._botname, "")
             await self._atbot(sender_name, room_name, room_id, msg_no_at)
         elif self._rooms and room_name and room_name in self._rooms:
+            # Private responses for some specific rooms
             await self._rooms[room_name](sender_name, room_name, room_id, msg_txt)
         else:
-            return
-            # TODO: Can't get the room name from direct messages
+            # Direct message which is missing the room name
+            await self._atbot(sender_name, room_name or "DIRECT_MESSAGES", room_id, msg_txt)
 
         # await self._rooms[room_name](sender_name, room_name, room_id, msg_txt)
 
