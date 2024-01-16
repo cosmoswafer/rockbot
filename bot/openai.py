@@ -242,20 +242,21 @@ class OpenAi(ApiClient):
                 print(
                     f'Call function {function_name} with prompt {function_arguments["prompt"]}'
                 )
-                function_call_messages.append(
-                    f'Called function "{function_name}" with prompt "{function_arguments["prompt"]}"'
-                )
+                # function_call_messages.append(
+                #    f'Called function "{function_name}" with prompt "{function_arguments["prompt"]}"'
+                # )
 
                 # Run the function with the arguments
                 fr = await self.draw(function_arguments["prompt"])
                 print("function_results", fr)
-                function_call_messages.append(
-                    f'The following is your results, plaes save it manually: "{fr["data"][0]["url"]}"'
-                )
+                # function_call_messages.append(
+                #    f'The following is your results, plaes save it manually: "{fr["data"][0]["url"]}"'
+                # )
                 # TODO Convert into markdown syntax
                 function_call_messages.append(
                     f'![{fr["data"][0]["revised_prompt"]}]({fr["data"][0]["url"]})'
                 )
+                function_call_messages.append("Please save it manually.")
 
                 """
                 # Compose the next message
