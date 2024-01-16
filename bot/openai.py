@@ -249,7 +249,15 @@ class OpenAi(ApiClient):
                 # Run the function with the arguments
                 fr = await self.draw(function_arguments["prompt"])
                 print("function_results", fr)
+                function_call_messages.append(
+                    f'The following is your results, plaes save it manually: "{fr["data"][0]["url"]}"'
+                )
+                # TODO Convert into markdown syntax
+                function_call_messages.append(
+                    f'![{fr["data"][0]["revised_prompt"]}]({fr["data"][0]["url"]})'
+                )
 
+                """
                 # Compose the next message
                 messages["messages"].append(
                     self._patch_reply_role(
@@ -269,6 +277,7 @@ class OpenAi(ApiClient):
                         "tool_call_id": function_id,
                     },
                 ]
+                """
 
         """
         r = await self._post(self.chat_completions_api, messages)
@@ -290,7 +299,8 @@ class OpenAi(ApiClient):
         if conf.debug:
             print("OpenAi: Sending the following request to openai:", m)
         """
-        r = await self._postMessages(post_msg, user_id)
+        # r = await self._postMessages(post_msg, user_id)
+        r = await self._postMessagesWithFunctions(post_msg, user_id)
 
         """
         if conf.debug:
