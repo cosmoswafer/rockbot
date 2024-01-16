@@ -35,8 +35,10 @@ class ApiClient:
                     raise Exception(
                         f"Failed to post data to openai, status code: {response.status} \n Response body: {await response.text()}"
                     )
-                else:
+                elif response.content_type == "application/json":
                     return await response.json()
+                else:
+                    return await response.text()
 
 
 class OpenAi(ApiClient):

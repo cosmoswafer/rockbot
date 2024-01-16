@@ -33,7 +33,7 @@ def retryA(times=3):
     return wrap
 
 
-def retryStrA(times, s):
+def retryStrA0(times, s):
     def wrap(f):
         async def wrapped_f(*args, **kwargs):
             try:
