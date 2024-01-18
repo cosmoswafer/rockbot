@@ -26,33 +26,72 @@ class ApiClient:
 
     @defJson("")
     def _parse_stream_delta_content(self, json: dict) -> str:
-        return json["choices"][0]["delta"]["content"]
+        return (
+            json["choices"][0]["delta"]["content"]
+            if json["choices"][0]["delta"]["content"] is not None
+            else ""
+        )
+
+    @defJson([])
+    def _parse_stream_delta_toolcalls(self, json: dict) -> list:
+        return (
+            json["choices"][0]["delta"]["tool_calls"]
+            if "tool_calls" in json["choices"][0]["delta"]
+            else []
+        )
 
     @defJson({})
     def _parse_stream_delta(self, json: dict) -> dict:
         return json["choices"][0]["delta"]
 
+    def _combine_stream_toolcalls(self, toolcalls: list, last_toolcalls: list) -> list:
+        return_toolcalls = [*last_toolcalls]
+        for tc in toolcalls:
+            if tc["index"] == len(return_toolcalls):
+                return_toolcalls.append(tc)
+                # ASSUMED index values are continuous increasing
+            else:
+                last_function_data = return_toolcalls[tc["index"]]["function"]
+                return_toolcalls[tc["index"]] |= {k: v for k, v in tc.items() if v}
+                return_toolcalls[tc["index"]]["function"] = last_function_data | {
+                    k: v for k, v in tc["function"].items() if k != "arguments"
+                }
+                return_toolcalls[tc["index"]]["function"]["arguments"] += tc[
+                    "function"
+                ]["arguments"]
+        return return_toolcalls
+
     def _combine_stream_json(self, jsonl: list) -> dict:
         # Combine the content of the stream json from openai stream api into one json
         delta_contents = []
+        delta_toolcalls = []
         r = {}
         for j in jsonl:
+            if conf.debug:
+                print("Combine stream json:", j)
             delta_contents.append(self._parse_stream_delta_content(j))
+            delta_toolcalls = self._combine_stream_toolcalls(
+                self._parse_stream_delta_toolcalls(j), delta_toolcalls
+            )
+            d = self._parse_stream_delta(j)
+            last_message = self._parse_message_dict(r)
+            message = {
+                **last_message,
+                **{k: v for k, v in d.items() if v},
+                "content": "".join(delta_contents),
+            }
+            if delta_toolcalls:
+                message["tool_calls"] = delta_toolcalls
             r = {
                 **r,
-                **j,
-                "choices": [
-                    {
-                        "message": {
-                            "role": "assistant",  # TODO hard coded role
-                            "content": "".join(delta_contents),
-                        }
-                    }
-                ],
+                **{k: v for k, v in j.items() if v},
+                "choices": [{"message": message}],
             }
+            if conf.debug:
+                print("Combined stream json:", r)
         return r
 
-    @retryStrA(5, 3, "Failed to post data to openai, please check application log")
+    @retryStrA(2, 15, "Failed to post data to openai, please check application log")
     async def apiPost(self, url: str, data: dict, use_stream=True) -> dict:
         if use_stream:
             data["stream"] = True
@@ -73,13 +112,13 @@ class ApiClient:
                             print("Stream line:", line)
                         if line.startswith(b"data:") and line[6:].strip() != b"[DONE]":
                             if conf.debug:
-                                print("Data line:", line)
+                                print("Data line:", line[6:])
                             r.append(json.loads(line[6:]))
                     return self._combine_stream_json(r)
                 elif response.content_type == "application/json":
                     return await response.json()
                 else:
-                    return await response.text()
+                    return await self._compose_response_from_text(response.text())
 
 
 class OpenAi(ApiClient):
@@ -163,13 +202,16 @@ class OpenAi(ApiClient):
         assert "created" in data and "data" in data, "Invalid response from openai"
         return str(data["data"])
 
+    def _compose_response_from_text(self, text):
+        return {"choices": [{"message": {"content": text}}]}
+
     @defJson("")
-    def _parse_message(self, message, content_only=True):
-        return (
-            message["choices"][0]["message"]["content"]
-            if content_only
-            else message["choices"][0]["message"]
-        )
+    def _parse_message(self, message) -> str:
+        return message["choices"][0]["message"]["content"]
+
+    @defJson({})
+    def _parse_message_dict(self, message) -> dict:
+        return message["choices"][0]["message"]
 
     def _parseMessageWithErrors(self, message: dict):
         return self._parse_message(message) or str(message)
@@ -206,7 +248,7 @@ class OpenAi(ApiClient):
 
     async def draw(self, prompt):
         r = await self.apiPost(
-            self.draw_images_api, self.draw_data | {"prompt": prompt}
+            self.draw_images_api, self.draw_data | {"prompt": prompt}, False
         )
         # return await self._parseImageFromDraw(r)
         return r
@@ -262,7 +304,7 @@ class OpenAi(ApiClient):
         # r = self._parse_message(await self._post(self.chat_completions_api, messages))
         # while not (r := self._post(self.chat_completions_api, messages)):
         r = await self.apiPost(self.chat_completions_api, messages)
-        t = self._parse_message(r, content_only=False)
+        t = self._parse_message_dict(r)
         # print("Check tool calls", t["tool_calls"] if "tool_calls" in t else t)
         function_call_messages = []
         if not t or "tool_calls" not in t:
@@ -300,33 +342,11 @@ class OpenAi(ApiClient):
                     f'![{fr["data"][0]["revised_prompt"]}]({fr["data"][0]["url"]})'
                 )
                 function_call_messages.append("Please save it manually.")
-
-                """
-                # Compose the next message
-                messages["messages"].append(
-                    self._patch_reply_role(
-                        {
-                            **self.rep_template,
-                            "content": self._parse_draw_images(fr),
-                        },
-                        role="tool",
-                    )
+            else:
+                function_call_messages.append(
+                    f'Unknown function "{call["function"]["name"]}" with arguments "{call["function"]["arguments"]}"'
                 )
-                # Append the function call result to the histories
-                OpenAi.histories[user_id] = [
-                    *messages["messages"],
-                    {
-                        "role": "tool",
-                        "content": self._parse_draw_images(fr),
-                        "tool_call_id": function_id,
-                    },
-                ]
-                """
 
-        """
-        r = await self._post(self.chat_completions_api, messages)
-        t = self._parse_message(r, content_only=False)
-        """
         return "\n".join(function_call_messages)
 
     async def _postMessages(self, messages: dict, user_id: str) -> str:
@@ -353,7 +373,7 @@ class OpenAi(ApiClient):
         if t := self._parse_message(r):
             OpenAi.histories[user_id] = [
                 *post_msg["messages"],
-                self._patch_reply_role(self._parse_message(r, content_only=False)),
+                self._patch_reply_role(self._parse_message_dict(r)),
             ]
             return t.strip()
         else:

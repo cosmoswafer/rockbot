@@ -10,6 +10,7 @@ class Test:
         "chat": "The following is a conversation with an AI assistant. The assistant is helpful, creative, clever, and very friendly.",
         "news": "Tell me the latest news in Technology.",
         "weather": "What's the weather like today in Tokyo?",
+        "test1": "請根據以下內容畫一幅插圖： 在遙遠的大森林裡，動物們和睦共處，這裡住著許多快樂的居民。這個故事講述的是森林中的七天，主角是一群可愛的動物：聰明的猴子米米、胖嘟嘟的肥豬波波、活潑的猴子寶寶吉吉、歌聲優美的金絲雀佳佳、勤勞的哈奇士蟻族、和藹的大笨象艾利。",
     }
 
     def __init__(self):
@@ -17,17 +18,8 @@ class Test:
 
     async def testAll(self):
         await self.testChat("chat")
-        # await self.testChat("draw")
-        # await self.testChat("show")
-        # await self.testChat("gpt4")
-        """
-        await self.testChat()
-        await self.testDraw()
-        await self.testChat("news")
-        await self.testChat("gpt4")
-        await self.testChat("chat")
         await self.testChat("weather")
-        """
+        await self.testChat("draw")
 
         print("All test passed")
 
