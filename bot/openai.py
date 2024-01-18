@@ -75,7 +75,7 @@ class ApiClient:
                 self._parse_stream_delta_toolcalls(j), delta_toolcalls
             )
             d = self._parse_stream_delta(j)
-            last_message = self._parse_message_dict(r)
+            last_message = self._parse_message_dict(r) if r else {}
             message = {
                 **last_message,
                 **{k: v for k, v in d.items() if v},
@@ -92,8 +92,8 @@ class ApiClient:
                 print("Combined stream json:", r)
         return r
 
-    @retryStrA(2, 15, "Failed to post data to openai, please check application log")
-    async def apiPost(self, url: str, data: dict, use_stream=True) -> dict:
+    @retryA(2, 15)
+    async def apiPostNetworking(self, url: str, data: dict, use_stream=True) -> dict:
         if use_stream:
             data["stream"] = True
 
@@ -101,11 +101,15 @@ class ApiClient:
         async with aiohttp.ClientSession(headers=self.headers) as s:
             async with s.post(url, json=data) as response:
                 if response.status != 200:
-                    if conf.debug:
-                        print(f"Response body: {await response.text()}")
-                    raise Exception(
-                        f"Failed to post data to openai, status code: {response.status} \n Response body: {await response.text()}"
+                    print(
+                        f"Networking error, status code: {response.status} Response body: {await response.text()}"
                     )
+                    return {
+                        "type": "error",
+                        "data": await response.text(),
+                        "status": response.status,
+                        "message": "Failed to post data to openai",
+                    }
                 elif response.content_type == "text/event-stream":
                     r = []
                     async for line in response.content:
@@ -115,11 +119,18 @@ class ApiClient:
                             if conf.debug:
                                 print("Data line:", line[6:])
                             r.append(json.loads(line[6:]))
-                    return self._combine_stream_json(r)
+                    return {"type": "stream", "data": r}
                 elif response.content_type == "application/json":
                     return await response.json()
                 else:
                     return await self._compose_response_from_text(response.text())
+
+    async def apiPost(self, url: str, data: dict, use_stream=True) -> dict:
+        r = await self.apiPostNetworking(url, data, use_stream)
+        if "type" in r and r["type"] == "stream":
+            return self._combine_stream_json(r["data"])
+        else:
+            return r
 
 
 class OpenAi(ApiClient):
@@ -204,7 +215,7 @@ class OpenAi(ApiClient):
         return str(data["data"])
 
     def _compose_response_from_text(self, text):
-        return {"choices": [{"message": {"content": text}}]}
+        return {"choices": [{"message": {"role": "dummy", "content": text}}]}
 
     @defJson("")
     def _parse_message(self, message) -> str:
