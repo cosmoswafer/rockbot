@@ -253,7 +253,7 @@ class OpenAi(ApiClient):
         # return await self._parseImageFromDraw(r)
         return r
 
-    async def _postMessagesWithFunctions(self, messages: dict, user_id: str) -> str:
+    async def _postMessagesWithFunctions(self, messages: dict, user_id: str) -> dict:
         """
         example_calls = {
             "id": "chatcmpl-8TbC4VvqbExdYtZabYbsS8VBuWRuk",
@@ -347,7 +347,7 @@ class OpenAi(ApiClient):
                     f'Unknown function "{call["function"]["name"]}" with arguments "{call["function"]["arguments"]}"'
                 )
 
-        return "\n".join(function_call_messages)
+        return self._compose_response_from_text("\n".join(function_call_messages))
 
     async def _postMessages(self, messages: dict, user_id: str) -> str:
         return await self.apiPost(self.chat_completions_api, messages)
