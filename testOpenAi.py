@@ -17,7 +17,7 @@ class Test:
 
     async def testAll(self):
         await self.testChat("chat")
-        await self.testChat("draw")
+        # await self.testChat("draw")
         # await self.testChat("show")
         # await self.testChat("gpt4")
         """

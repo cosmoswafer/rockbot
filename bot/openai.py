@@ -24,8 +24,39 @@ class ApiClient:
         "size": "1024x1024",
     }
 
+    @defJson("")
+    def _parse_stream_delta_content(self, json: dict) -> str:
+        return json["choices"][0]["delta"]["content"]
+
+    @defJson({})
+    def _parse_stream_delta(self, json: dict) -> dict:
+        return json["choices"][0]["delta"]
+
+    def _combine_stream_json(self, jsonl: list) -> dict:
+        # Combine the content of the stream json from openai stream api into one json
+        delta_contents = []
+        r = {}
+        for j in jsonl:
+            delta_contents.append(self._parse_stream_delta_content(j))
+            r = {
+                **r,
+                **j,
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",  # TODO hard coded role
+                            "content": "".join(delta_contents),
+                        }
+                    }
+                ],
+            }
+        return r
+
     @retryStrA(5, 3, "Failed to post data to openai, please check application log")
-    async def apiPost(self, url: str, data: dict) -> dict:
+    async def apiPost(self, url: str, data: dict, use_stream=True) -> dict:
+        if use_stream:
+            data["stream"] = True
+
         # print("Sending the following request to openai:", data)
         async with aiohttp.ClientSession(headers=self.headers) as s:
             async with s.post(url, json=data) as response:
@@ -35,6 +66,16 @@ class ApiClient:
                     raise Exception(
                         f"Failed to post data to openai, status code: {response.status} \n Response body: {await response.text()}"
                     )
+                elif response.content_type == "text/event-stream":
+                    r = []
+                    async for line in response.content:
+                        if conf.debug:
+                            print("Stream line:", line)
+                        if line.startswith(b"data:") and line[6:].strip() != b"[DONE]":
+                            if conf.debug:
+                                print("Data line:", line)
+                            r.append(json.loads(line[6:]))
+                    return self._combine_stream_json(r)
                 elif response.content_type == "application/json":
                     return await response.json()
                 else:
@@ -171,6 +212,7 @@ class OpenAi(ApiClient):
         return r
 
     async def _postMessagesWithFunctions(self, messages: dict, user_id: str) -> str:
+        """
         example_calls = {
             "id": "chatcmpl-8TbC4VvqbExdYtZabYbsS8VBuWRuk",
             "object": "chat.completion",
@@ -215,6 +257,7 @@ class OpenAi(ApiClient):
             "content": "http://xxxxxxxxxxxx.png",
             "tool_call_id": "call_vTbb5TvamnPslOB5Gc0XVxoR",
         }
+        """
 
         # r = self._parse_message(await self._post(self.chat_completions_api, messages))
         # while not (r := self._post(self.chat_completions_api, messages)):
