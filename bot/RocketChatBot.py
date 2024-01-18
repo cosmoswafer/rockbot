@@ -104,7 +104,10 @@ class RocketChatBot:
 
     @defJson(False)
     def _in_channels(self, json_data: dict) -> bool:
-        return len(json_data["fields"]["args"]) > 1
+        return (
+            len(json_data["fields"]["args"]) > 1
+            and "roonName" in json_data["fields"]["args"][1]
+        )
 
     @defJson("")
     def _parse_sender_name(self, json_data: dict) -> str:
