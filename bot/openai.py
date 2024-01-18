@@ -3,7 +3,7 @@ import asyncio
 import aiohttp
 from urllib.parse import urljoin
 from util.config import openai as conf
-from util.decorators import defJson, retryA, retryStrA
+from util.decorators import defJson, retryA
 
 
 class ApiClient:
