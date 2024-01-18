@@ -28,7 +28,8 @@ class ApiClient:
     def _parse_stream_delta_content(self, json: dict) -> str:
         return (
             json["choices"][0]["delta"]["content"]
-            if json["choices"][0]["delta"]["content"] is not None
+            if "content" in json["choices"][0]["delta"]
+            and json["choices"][0]["delta"]["content"] is not None
             else ""
         )
 
