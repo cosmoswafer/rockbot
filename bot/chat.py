@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 import asyncio
-from config import openai as conf
+from util.config import openai as conf
 from bot.openai import OpenAi
 
 

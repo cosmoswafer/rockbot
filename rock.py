@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 import asyncio, datetime
-from config import bot as conf
+from util.config import bot as conf
 from bot.RocketChatBot import RocketChatBot
 from bot.bot import bot
 from bot.chat import chatBot
