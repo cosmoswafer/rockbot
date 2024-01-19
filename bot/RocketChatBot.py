@@ -106,7 +106,7 @@ class RocketChatBot:
     def _in_channels(self, json_data: dict) -> bool:
         return (
             len(json_data["fields"]["args"]) > 1
-            and "roonName" in json_data["fields"]["args"][1]
+            and "roomName" in json_data["fields"]["args"][1]
         )
 
     @defJson("")
@@ -121,19 +121,23 @@ class RocketChatBot:
         sender_id = self._parse_sender_id(jds)
         room_name = self._parse_room_name(jds) if self._in_channels(jds) else ""
         sender_name = self._parse_sender_name(jds)
+        logger.debug(f"Processing message on changed: room_name: {room_name}")
 
         if sender_id == self.uid:
             return  # skip self message
 
         if room_name and msg_txt.startswith(self._botname):
             # AT the bot in channels
+            logger.debug(f"AT the bot in channels: {room_name}")
             msg_no_at = msg_txt.replace(self._botname, "")
             await self._atbot(sender_name, room_name, room_id, msg_no_at)
         elif self._rooms and room_name and room_name in self._rooms:
             # Private responses for some specific rooms
+            logger.debug(f"Private responses for the specific room: {room_name}")
             await self._rooms[room_name](sender_name, room_name, room_id, msg_txt)
         elif not room_name:
             # Direct message which is missing the room name
+            logger.debug(f"Direct message from {sender_name}")
             await self._atbot(sender_name, "DIRECT_MESSAGES", room_id, msg_txt)
         else:
             # Keep slince for other cases
