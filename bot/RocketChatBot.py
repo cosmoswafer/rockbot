@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+from util.logger import logger
 import concurrent.futures
 import asyncio
 import websockets
@@ -43,8 +44,7 @@ class RocketChatBot:
 
     async def _wsIncoming(self, ws):
         self.ds = await ws.recv()
-        if self._debug:
-            print("WS<<<", self.ds)
+        logger.debug(f"WS<<< {self.ds}")
         await self._dispatch_ds(self.ds)
 
     async def connect(self):
@@ -66,7 +66,7 @@ class RocketChatBot:
             cb = self.cbdist[self.msg]
 
         if cb:
-            # print("Call ", cb.__name__)
+            logger.debug(f"Call {cb.__name__}")
             await cb()
 
     async def _cb_ping(self):
@@ -143,10 +143,10 @@ class RocketChatBot:
         if self.result:
             rt = self.result
             if "id" in rt and "token" in rt:
-                print("Login successful!")
-                print("ID: ", rt["id"])
+                logger.info("Login successful!")
+                logger.info(f'ID: {rt["id"]}')
                 self.uid = rt["id"]
-                print("Token: ", rt["token"])
+                logger.info(f'Token: {rt["token"]}')
                 await self._gologin()
             self.result = {}
 
@@ -166,8 +166,7 @@ class RocketChatBot:
         if not self._ws:
             return  # Supposed the porgram will exist if it loses the websocket connection
 
-        if self._debug:
-            print("WS>>>", data)
+        logger.debug(f"WS>>> {data}")
         await self._ws.send(data)
 
     async def sendMsg(self, rid, msg):
@@ -196,7 +195,7 @@ class RocketChatBot:
         """
         # self._rooms.append({"name": room, "cb": cb})
         if room in self._rooms:
-            print(
+            logger.info(
                 f"{room} call back already exists and will be overridden by the new cb!"
             )
         self._rooms[room] = cb
@@ -206,7 +205,7 @@ class RocketChatBot:
         try:
             asyncio.run(rocket.connect())
         except KeyboardInterrupt:
-            print("Quit the bot now...")
+            logger.info("Quit the bot now...")
 
 
 if __name__ == "__main__":

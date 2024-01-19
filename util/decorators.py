@@ -1,16 +1,45 @@
+from util.logger import logger
 import asyncio
 import traceback
 
 
-def defJson(default_value={}, source_flag=""):
+def defJson(default_value, source_flag=""):
+    """
+    A decorator factory that creates a decorator to handle specific exceptions in functions that process JSON data.
+
+    When applied to a function, the decorator will catch `KeyError`, `IndexError`, and `TypeError` exceptions
+    that typically occur when accessing non-existent keys or indices in JSON data. If such an exception is caught,
+    the function logs the exception with a debug and info level, along with an optional source flag for easier
+    identification of the context. After logging, it returns a predefined default value.
+
+    Parameters:
+    - default_value: The value to return if an exception is caught. This value should be chosen to indicate
+      a failed operation in a way that is compatible with the normal return type of the decorated function.
+    - source_flag (str, optional): A string that can be used to indicate the source or context where the exception
+      occurred. This helps in debugging by providing additional information in the log messages.
+
+    Returns:
+    - A decorator function that can be applied to any function that requires exception handling for JSON data processing.
+
+    Usage example:
+    ```
+    @defJson(default_value=None, source_flag="data_loader")
+    def get_data(json_data, key):
+        return json_data[key]
+
+    json_data = {"name": "Alice"}
+    print(get_data(json_data, "name"))  # Output: Alice
+    print(get_data(json_data, "age"))   # Output: None (and logs the exception with the default value)
+    ```
+    """
+
     def wrap(f):
         def wrapped_f(*args, **kwargs):
             try:
                 return f(*args, **kwargs)
             except (KeyError, IndexError, TypeError) as e:
-                if source_flag:
-                    print("Exception in", source_flag)
-                print(
+                logger.debug(f"Exception in {source_flag}")
+                logger.info(
                     f"No such item(s) in json data, return the default value: {default_value}, Exception: {e}"
                 )
                 return default_value
@@ -42,59 +71,9 @@ def retryA(times=3, cooldown_time=5):
                 try:
                     return await f(*args, **kwargs)
                 except Exception as e:
-                    print(f"Exception: {e}, retrying...")
+                    logger.debug(f"Exception: {e}, retrying...")
                     await asyncio.sleep(cooldown_time)
             raise Exception(f"Failed after {times} times of retrying")
-
-        return wrapped_f
-
-    return wrap
-
-
-def retryStrA0(times, s):
-    def wrap(f):
-        async def wrapped_f(*args, **kwargs):
-            try:
-                return await f(*args, **kwargs)
-            except Exception as e:
-                print(f"Exception: {e}, return {s}")
-                return s
-
-        return wrapped_f
-
-    return wrap
-
-
-def retryStrA(times=3, sleep=5, default_str=""):
-    """
-    Attempt to execute the function for several times, if failed, return the exception message as a string
-
-    Args:
-        times (int): The number of times to retry the function execution. Default is 3.
-        sleep (int): The number of seconds to sleep between retries. Default is 5.
-        default_str (str): The default string to return if all retries fail. Default is an empty string.
-
-    Returns:
-        str: The exception message as a string if all retries fail, or the result of the function execution.
-
-    """
-
-    def wrap(f):
-        async def wrapped_f(*args, **kwargs):
-            for i in range(times):
-                try:
-                    return await f(*args, **kwargs)
-                except Exception as e:
-                    if i == times - 1:
-                        traceback.print_exc()
-                        return (
-                            str(e)
-                            or default_str
-                            or f"Failed after {times} times of retrying"
-                        )
-                    else:
-                        print(f"Exception: {e}, retrying...")
-                        await asyncio.sleep(sleep)
 
         return wrapped_f
 

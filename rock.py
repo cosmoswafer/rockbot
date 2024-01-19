@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+from util.logger import logger
 import asyncio, datetime
 from util.config import bot as conf
 from bot.RocketChatBot import RocketChatBot
@@ -14,7 +15,7 @@ class rock:
         self._fireRocket()
 
     def _fireRocket(self):
-        print(f"Connecting to {conf.server} as {conf.username}...")
+        logger.info(f"Connecting to {conf.server} as {conf.username}...")
         self.rocket = RocketChatBot(
             conf.username, conf.password, server=conf.server, debug=conf.debug
         )

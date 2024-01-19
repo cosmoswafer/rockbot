@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+from util.logger import logger
 import asyncio
 from util.config import openai as conf
 from bot.openai import OpenAi
@@ -27,8 +28,7 @@ class chatBot:
         await bot.reply(f"Commands:\n{commands}")
 
     async def chat(self, bot):
-        if conf.debug:
-            print(f"chatBot incoming message: [{bot.rid}]{bot.msg}")
+        logger.debug(f"chatBot incoming message: [{bot.rid}]{bot.msg}")
 
         # Map commands
         if bot.msg.startswith("!"):

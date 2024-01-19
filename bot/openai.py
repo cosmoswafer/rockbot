@@ -1,3 +1,4 @@
+from util.logger import logger
 import json
 import asyncio
 import aiohttp
@@ -68,8 +69,7 @@ class ApiClient:
         delta_toolcalls = []
         r = {}
         for j in jsonl:
-            if conf.debug:
-                print("Combine stream json:", j)
+            logger.debug("Combine stream json:", j)
             delta_contents.append(self._parse_stream_delta_content(j))
             delta_toolcalls = self._combine_stream_toolcalls(
                 self._parse_stream_delta_toolcalls(j), delta_toolcalls
@@ -88,8 +88,7 @@ class ApiClient:
                 **{k: v for k, v in j.items() if v},
                 "choices": [{"message": message}],
             }
-            if conf.debug:
-                print("Combined stream json:", r)
+            logger.debug("Combined stream json:", r)
         return r
 
     @retryA(2, 15)
@@ -97,11 +96,11 @@ class ApiClient:
         if use_stream:
             data["stream"] = True
 
-        # print("Sending the following request to openai:", data)
+        logger.debug("Sending the following request to openai:", data)
         async with aiohttp.ClientSession(headers=self.headers) as s:
             async with s.post(url, json=data) as response:
                 if response.status != 200:
-                    print(
+                    logger.warning(
                         f"Networking error, status code: {response.status} Response body: {await response.text()}"
                     )
                     return {
@@ -113,11 +112,9 @@ class ApiClient:
                 elif response.content_type == "text/event-stream":
                     r = []
                     async for line in response.content:
-                        if conf.debug:
-                            print("Stream line:", line)
+                        logger.debug(f"Stream line: {line}")
                         if line.startswith(b"data:") and line[6:].strip() != b"[DONE]":
-                            if conf.debug:
-                                print("Data line:", line[6:])
+                            logger.debug(f"Data line: {line[6:]}")
                             r.append(json.loads(line[6:]))
                     return {"type": "stream", "data": r}
                 elif response.content_type == "application/json":
@@ -193,22 +190,6 @@ class OpenAi(ApiClient):
             reply_content["role"] = role
         return reply_content
 
-    """
-    @retryA(5)
-    async def _post(self, url: str, data: dict) -> dict:
-        # print("Sending the following request to openai:", data)
-        async with aiohttp.ClientSession(headers=self.headers) as s:
-            async with s.post(url, json=data) as response:
-                if response.status != 200:
-                    if conf.debug:
-                        print(f"Response body: {await response.text()}")
-                    raise Exception(
-                        f"Failed to post data to openai, status code: {response.status}"
-                    )
-                else:
-                    return await response.json()
-    """
-
     @defJson("")
     def _parse_draw_images(self, data: dict) -> str:
         assert "created" in data and "data" in data, "Invalid response from openai"
@@ -234,8 +215,7 @@ class OpenAi(ApiClient):
             user_id in OpenAi.histories
             and len(OpenAi.histories[user_id]) > conf.max_history_size
         ):
-            if conf.debug:
-                print("chatBot: Removing the old messages")
+            logger.debug("chatBot: Removing the old messages")
             # Strip the oldest message and keek the latest ten messages
             OpenAi.histories[user_id] = OpenAi.histories[user_id][
                 -1 * conf.max_history_size :
@@ -250,8 +230,7 @@ class OpenAi(ApiClient):
             ):
             """
             while len(str(OpenAi.histories[user_id])) > conf.max_text_length:
-                if conf.debug:
-                    print("chatBot: Removing the oldest message")
+                logger.debug("chatBot: Removing the oldest message")
                 OpenAi.histories[user_id].pop()
 
     @defJson("")
@@ -317,7 +296,7 @@ class OpenAi(ApiClient):
         # while not (r := self._post(self.chat_completions_api, messages)):
         r = await self.apiPost(self.chat_completions_api, messages)
         t = self._parse_message_dict(r)
-        # print("Check tool calls", t["tool_calls"] if "tool_calls" in t else t)
+        logger.debug(f'Check tool calls {t["tool_calls"] if "tool_calls" in t else t}')
         function_call_messages = []
         if not t or "tool_calls" not in t:
             return r
@@ -328,15 +307,10 @@ class OpenAi(ApiClient):
                 # print("call", call)
 
                 # Parse the function arguments
-                """
-                print("call function", call["function"]["name"])
-                print("call arguments", call["function"]["arguments"])
-                print("call id", call["id"])
-                """
                 function_name = call["function"]["name"]
                 function_arguments = json.loads(call["function"]["arguments"])
                 function_id = call["id"]
-                print(
+                logger.debug(
                     f'Call function {function_name} with prompt {function_arguments["prompt"]}'
                 )
                 # function_call_messages.append(
@@ -345,7 +319,7 @@ class OpenAi(ApiClient):
 
                 # Run the function with the arguments
                 fr = await self.draw(function_arguments["prompt"])
-                print("function_results", fr)
+                logger.debug(f"function_results {fr}")
                 # function_call_messages.append(
                 #    f'The following is your results, plaes save it manually: "{fr["data"][0]["url"]}"'
                 # )
@@ -371,17 +345,9 @@ class OpenAi(ApiClient):
 
         post_msg = self._compose_message(message, h)
 
-        """
-        if conf.debug:
-            print("OpenAi: Sending the following request to openai:", m)
-        """
         # r = await self._postMessages(post_msg, user_id)
         r = await self._postMessagesWithFunctions(post_msg, user_id)
 
-        """
-        if conf.debug:
-            print("OpenAi: Received the following response from openai:", r)
-        """
         if t := self._parse_message(r):
             OpenAi.histories[user_id] = [
                 *post_msg["messages"],
