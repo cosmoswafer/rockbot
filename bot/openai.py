@@ -58,6 +58,8 @@ class ApiClient:
                 return_toolcalls[tc["index"]]["function"] = last_function_data | {
                     k: v for k, v in tc["function"].items() if k != "arguments"
                 }
+                if "arguments" not in return_toolcalls[tc["index"]]["function"]:
+                    return_toolcalls[tc["index"]]["function"]["arguments"] = ""
                 return_toolcalls[tc["index"]]["function"]["arguments"] += (
                     tc["function"]["arguments"] if "arguments" in tc["function"] else ""
                 )
