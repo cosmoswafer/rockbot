@@ -58,9 +58,9 @@ class ApiClient:
                 return_toolcalls[tc["index"]]["function"] = last_function_data | {
                     k: v for k, v in tc["function"].items() if k != "arguments"
                 }
-                return_toolcalls[tc["index"]]["function"]["arguments"] += tc[
-                    "function"
-                ]["arguments"]
+                return_toolcalls[tc["index"]]["function"]["arguments"] += (
+                    tc["function"]["arguments"] if "arguments" in tc["function"] else ""
+                )
         return return_toolcalls
 
     def _combine_stream_json(self, jsonl: list) -> dict:
