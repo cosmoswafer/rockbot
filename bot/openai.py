@@ -137,23 +137,6 @@ class OpenAi(ApiClient):
         {
             "type": "function",
             "function": {
-                "name": "get_current_weather",
-                "description": "Get the current weather",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "location": {
-                            "type": "string",
-                            "description": "The city and state, e.g. San Francisco, CA",
-                        },
-                    },
-                    "required": ["location"],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
                 "name": "draw",
                 "description": "Draw a image using OpenAI's DALL-E 3 model with the given prompt",
                 "parameters": {
@@ -162,6 +145,14 @@ class OpenAi(ApiClient):
                         "prompt": {
                             "type": "string",
                             "description": "The prompt to draw the image",
+                        },
+                        "quality": {
+                            "type": "string",
+                            "description": "The quality of the image that will be generated. `hd` creates images with finer details and greater consistency across the image. Defaults to `standard`.",
+                        },
+                        "style": {
+                            "type": "string",
+                            "description": "The style of the generated images. Must be one of `vivid` or `natural`. Vivid causes the model to lean towards generating hyper-real and dramatic images. Natural causes the model to produce more natural, less hyper-real looking images.",
                         },
                     },
                     "required": ["prompt"],
