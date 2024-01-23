@@ -341,7 +341,7 @@ class OpenAi(ApiClient):
                 if t := self._parse_draw_function_result(fr):
                     function_call_messages.append(t)
                 else:
-                    function_call_messages.append(self._parse_message(fr))
+                    function_call_messages.append(str(fr))
                 function_call_messages.append("Please save it manually.")
             else:
                 function_call_messages.append(
