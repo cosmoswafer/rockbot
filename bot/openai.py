@@ -46,6 +46,7 @@ class ApiClient:
     def _parse_stream_delta(self, json: dict) -> dict:
         return json["choices"][0]["delta"]
 
+    @defJson([])
     def _combine_stream_toolcalls(self, toolcalls: list, last_toolcalls: list) -> list:
         return_toolcalls = [*last_toolcalls]
         for tc in toolcalls:
@@ -65,6 +66,7 @@ class ApiClient:
                 )
         return return_toolcalls
 
+    @defJson({})
     def _combine_stream_json(self, jsonl: list) -> dict:
         # Combine the content of the stream json from openai stream api into one json
         delta_contents = []
@@ -98,7 +100,7 @@ class ApiClient:
         if use_stream:
             data["stream"] = True
 
-        logger.debug("Sending the following request to openai:", data)
+        logger.debug(f"Sending the following request to openai: {data}")
         async with aiohttp.ClientSession(headers=self.headers) as s:
             async with s.post(url, json=data) as response:
                 if response.status != 200:
@@ -154,8 +156,12 @@ class OpenAi(ApiClient):
                             "type": "string",
                             "description": "The style of the generated images. Must be one of `vivid` or `natural`. Vivid causes the model to lean towards generating hyper-real and dramatic images. Natural causes the model to produce more natural, less hyper-real looking images.",
                         },
+                        "size": {
+                            "type": "string",
+                            "description": "The size of the generated images. Must be one of 1024x1024, 1792x1024, or 1024x1792.",
+                        },
                     },
-                    "required": ["prompt"],
+                    "required": ["prompt", "quality", "style"],
                 },
             },
         },
@@ -193,13 +199,13 @@ class OpenAi(ApiClient):
 
     @defJson("")
     def _parse_message(self, message) -> str:
-        return message["choices"][0]["message"]["content"]
+        return self._parse_message_dict(message)["content"]
 
     @defJson({})
     def _parse_message_dict(self, message) -> dict:
         return message["choices"][0]["message"]
 
-    def _parseMessageWithErrors(self, message: dict):
+    def _parse_message_with_errors(self, message: dict):
         return self._parse_message(message) or str(message)
 
     async def _cleanup_history(self, user_id):
@@ -227,17 +233,28 @@ class OpenAi(ApiClient):
                 OpenAi.histories[user_id].pop()
 
     @defJson("")
-    async def _parseImageFromDraw(self, data):
-        return data["data"][0]["url"]
+    def _parse_draw_function_result(self, json_data: dict) -> str:
+        revised_prompt = json_data["data"][0]["revised_prompt"]
+        image_url = json_data["data"][0]["url"]
+        return f"![{revised_prompt}]({image_url})"
 
-    async def draw(self, prompt):
+    async def draw(self, prompt: str, quality: str, style: str, size: str) -> dict:
+        style_options = ["vivid", "natural"]
+        size_options = ["1024x1024", "1792x1024", "1024x1792"]
         r = await self.apiPost(
-            self.draw_images_api, self.draw_data | {"prompt": prompt}, False
+            self.draw_images_api,
+            self.draw_data
+            | {
+                "prompt": prompt,
+                "quality": quality,
+                "style": style if style in style_options else style_options[0],
+                "size": size if size in size_options else size_options[0],
+            },
+            False,
         )
-        # return await self._parseImageFromDraw(r)
         return r
 
-    async def _postMessagesWithFunctions(self, messages: dict, user_id: str) -> dict:
+    async def postMessagesWithFunctions(self, messages: dict, user_id: str) -> dict:
         """
         example_calls = {
             "id": "chatcmpl-8TbC4VvqbExdYtZabYbsS8VBuWRuk",
@@ -285,8 +302,6 @@ class OpenAi(ApiClient):
         }
         """
 
-        # r = self._parse_message(await self._post(self.chat_completions_api, messages))
-        # while not (r := self._post(self.chat_completions_api, messages)):
         r = await self.apiPost(self.chat_completions_api, messages)
         t = self._parse_message_dict(r)
         logger.debug(f'Check tool calls {t["tool_calls"] if "tool_calls" in t else t}')
@@ -295,6 +310,7 @@ class OpenAi(ApiClient):
             return r
 
         for call in t["tool_calls"]:
+            # ASUMED tools calls has all valid arguments
             if call["function"]["name"] == "draw":
                 # function_results = await self.draw(call["parameters"]["prompt"])
                 # print("call", call)
@@ -304,22 +320,28 @@ class OpenAi(ApiClient):
                 function_arguments = json.loads(call["function"]["arguments"])
                 function_id = call["id"]
                 logger.debug(
-                    f'Call function {function_name} with prompt {function_arguments["prompt"]}'
+                    f"Call function {function_name} with arguments {function_arguments}"
                 )
                 # function_call_messages.append(
                 #    f'Called function "{function_name}" with prompt "{function_arguments["prompt"]}"'
                 # )
 
                 # Run the function with the arguments
-                fr = await self.draw(function_arguments["prompt"])
+                fr = await self.draw(
+                    function_arguments["prompt"],
+                    function_arguments["quality"],
+                    function_arguments["style"],
+                    function_arguments["size"] if "size" in function_arguments else "",
+                )
                 logger.debug(f"function_results {fr}")
                 # function_call_messages.append(
                 #    f'The following is your results, plaes save it manually: "{fr["data"][0]["url"]}"'
                 # )
                 # TODO Convert into markdown syntax
-                function_call_messages.append(
-                    f'![{fr["data"][0]["revised_prompt"]}]({fr["data"][0]["url"]})'
-                )
+                if t := self._parse_draw_function_result(fr):
+                    function_call_messages.append(t)
+                else:
+                    function_call_messages.append(self._parse_message(fr))
                 function_call_messages.append("Please save it manually.")
             else:
                 function_call_messages.append(
@@ -328,9 +350,6 @@ class OpenAi(ApiClient):
 
         return self._compose_response_from_text("\n".join(function_call_messages))
 
-    async def _postMessages(self, messages: dict, user_id: str) -> str:
-        return await self.apiPost(self.chat_completions_api, messages)
-
     async def submit(self, user_id, message) -> str:
         await self._cleanup_history(user_id)
 
@@ -338,8 +357,7 @@ class OpenAi(ApiClient):
 
         post_msg = self._compose_message(message, h)
 
-        # r = await self._postMessages(post_msg, user_id)
-        r = await self._postMessagesWithFunctions(post_msg, user_id)
+        r = await self.postMessagesWithFunctions(post_msg, user_id)
 
         if t := self._parse_message(r):
             OpenAi.histories[user_id] = [

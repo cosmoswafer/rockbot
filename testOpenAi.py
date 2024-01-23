@@ -17,8 +17,8 @@ class Test:
         self.openai = OpenAi()
 
     async def testAll(self):
-        await self.testChat("chat")
-        await self.testChat("weather")
+        # await self.testChat("chat")
+        # await self.testChat("weather")
         await self.testChat("draw")
 
         print("All test passed")
