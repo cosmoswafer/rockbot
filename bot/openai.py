@@ -340,7 +340,9 @@ class OpenAi(ApiClient):
                 # TODO Convert into markdown syntax
                 if t := self._parse_draw_function_result(fr):
                     function_call_messages.append(t)
-                    function_call_messages.append("Please save it manually.")
+                    function_call_messages.append(
+                        "The image URL provided above is available for only a few minutes. Please save it manually."
+                    )
                 else:
                     function_call_messages.append(str(fr))
                     function_call_messages.append("Error on function calling.")
