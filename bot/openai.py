@@ -158,7 +158,7 @@ class OpenAi(ApiClient):
                         },
                         "size": {
                             "type": "string",
-                            "description": "The size of the generated images. Must be one of 1024x1024, 1792x1024, or 1024x1792.",
+                            "description": "The size of the generated images. Must be one of 1024x1024(square), 1792x1024(landscape), or 1024x1792(portrait).",
                         },
                     },
                     "required": ["prompt", "quality", "style"],
