@@ -340,9 +340,10 @@ class OpenAi(ApiClient):
                 # TODO Convert into markdown syntax
                 if t := self._parse_draw_function_result(fr):
                     function_call_messages.append(t)
+                    function_call_messages.append("Please save it manually.")
                 else:
                     function_call_messages.append(str(fr))
-                function_call_messages.append("Please save it manually.")
+                    function_call_messages.append("Error on function calling.")
             else:
                 function_call_messages.append(
                     f'Unknown function "{call["function"]["name"]}" with arguments "{call["function"]["arguments"]}"'
