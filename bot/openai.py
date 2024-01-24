@@ -96,6 +96,31 @@ class ApiClient:
         return r
 
     @retryA(2, 15)
+    async def apiGet(self, url: str) -> dict:
+        async with aiohttp.ClientSession(self.headers) as session:
+            async with session.get(url) as response:
+                if response.status == 307:
+                    logger.debug(
+                        "Networking redirect to: ", response.headers["Location"]
+                    )
+                    return self.apiGet(response.headers["Location"])
+                elif response.status != 200:
+                    logger.warning(
+                        f"Networking error, status code: {response.status} Response body: {await response.text()}"
+                    )
+                    return {
+                        "type": "error",
+                        "url": url,
+                        "data": await response.text(),
+                        "status": response.status,
+                        "message": "Failed to get data from openai",
+                    }
+                elif response.content_type == "application/json":
+                    return await response.json()
+                else:
+                    return await self._compose_response_from_text(response.text())
+
+    @retryA(2, 15)
     async def apiPostNetworking(self, url: str, data: dict, use_stream=True) -> dict:
         if use_stream:
             data["stream"] = True
@@ -103,7 +128,12 @@ class ApiClient:
         logger.debug(f"Sending the following request to openai: {data}")
         async with aiohttp.ClientSession(headers=self.headers) as s:
             async with s.post(url, json=data) as response:
-                if response.status != 200:
+                if response.status == 307:
+                    logger.debug(
+                        "Networking redirect to: ", response.headers["Location"]
+                    )
+                    return self.apiGet(response.headers["Location"])
+                elif response.status != 200:
                     logger.warning(
                         f"Networking error, status code: {response.status} Response body: {await response.text()}"
                     )
