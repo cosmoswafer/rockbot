@@ -237,7 +237,7 @@ class OpenAi(ApiClient):
     def _parse_draw_function_result(self, json_data: dict) -> str:
         revised_prompt = json_data["data"][0]["revised_prompt"]
         image_url = json_data["data"][0]["url"]
-        return f"Revised prompt: [{revised_prompt}]({image_url})"
+        return f"Image url: [{revised_prompt}]({image_url})"
         # return f"![{revised_prompt}]({image_url})"
 
     async def draw(self, prompt: str, quality: str, style: str, size: str) -> dict:
