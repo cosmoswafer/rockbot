@@ -162,7 +162,7 @@ class OpenAi(ApiClient):
                             "description": "The size of the generated images. Must be one of 1024x1024(square), 1792x1024(landscape), or 1024x1792(portrait).",
                         },
                     },
-                    "required": ["prompt", "quality", "style"],
+                    "required": ["prompt"],
                 },
             },
         },
@@ -241,6 +241,7 @@ class OpenAi(ApiClient):
         # return f"![{revised_prompt}]({image_url})"
 
     async def draw(self, prompt: str, quality: str, style: str, size: str) -> dict:
+        quality_options = ["standard", "hd"]
         style_options = ["vivid", "natural"]
         size_options = ["1024x1024", "1792x1024", "1024x1792"]
         r = await self.apiPost(
@@ -248,7 +249,9 @@ class OpenAi(ApiClient):
             self.draw_data
             | {
                 "prompt": prompt,
-                "quality": quality,
+                "quality": quality
+                if quality in quality_options
+                else quality_options[0],
                 "style": style if style in style_options else style_options[0],
                 "size": size if size in size_options else size_options[0],
             },
@@ -331,8 +334,12 @@ class OpenAi(ApiClient):
                 # Run the function with the arguments
                 fr = await self.draw(
                     function_arguments["prompt"],
-                    function_arguments["quality"],
-                    function_arguments["style"],
+                    function_arguments["quality"]
+                    if "quality" in function_arguments
+                    else "",
+                    function_arguments["style"]
+                    if "style" in function_arguments
+                    else "",
                     function_arguments["size"] if "size" in function_arguments else "",
                 )
                 logger.debug(f"function_results {fr}")
