@@ -1,0 +1,31 @@
+{
+  "db": {
+    "data_dir": "/path/to/data",
+    "db_file": "filename.db",
+    "dbat_file": "sqlite.db",
+    "category": []
+  },
+  "bot": {
+    "username": "EDITME",
+    "password": "EDITME",
+    "server": "HOSTNAME",
+    "debug": true,
+    "openai": {
+      "url": {
+        "base": "https://host.name/ends/without/slash",
+        "chat": "chat/completions",
+        "draw": "images/generations"
+      },
+      "key": "EDITME",
+      "model": "gpt-4-turbo-preview",
+      "models": {
+        "openai": "gpt-4-turbo-preview",
+        "google": "gemini-pro",
+        "bing": "bing"
+      },
+      "max_history_size": 10,
+      "max_text_length": 999999,
+      "debug": true
+    }
+  }
+}
