@@ -8,8 +8,8 @@ from util.decorators import defJson, retryA
 
 
 class ApiClient:
-    chat_completions_api = f"{conf.url.base}/{conf.url.chat}"
-    draw_images_api = f"{conf.url.base}/{conf.url.draw}"
+    chat_completions_api = f"{conf.url.base.rstrip('/')}/{conf.url.chat}"
+    draw_images_api = f"{conf.url.base.rstrip('/')}/{conf.url.draw}"
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {conf.key}",
