@@ -2,14 +2,13 @@ from util.logger import logger
 import json
 import asyncio
 import aiohttp
-from urllib.parse import urljoin
 from util.config import openai as conf
 from util.decorators import defJson, retryA
 
 
 class ApiClient:
-    chat_completions_api = f"{conf.url.base.rstrip('/')}/{conf.url.chat}"
-    draw_images_api = f"{conf.url.base.rstrip('/')}/{conf.url.draw}"
+    chat_completions_api = f"{conf.url.base.rstrip('/')}/{conf.url.chat.lstrip('/')}"
+    draw_images_api = f"{conf.url.base.rstrip('/')}/{conf.url.draw.lstrip('/')}"
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {conf.key}",
