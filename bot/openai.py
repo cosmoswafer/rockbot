@@ -174,7 +174,7 @@ class OpenAi(ApiClient):
     def _compose_message(self, message, history=[]):
         pd = {**self.postdata}
 
-        if OpenAi.tools:
+        if OpenAi.tools and conf.tools:
             pd["tools"] = OpenAi.tools
 
         pd["messages"] = [*history, {**self.msg_template, "content": message}]
