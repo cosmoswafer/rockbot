@@ -11,6 +11,7 @@ class chatBot:
         self.openai = openai
         self.commands = {
             "help": {"fnc": self.help, "desc": "Display available commands"},
+            "model": {"fnc": self.model, "desc": "Change AI model"},
             "clear": {"fnc": self.clear, "desc": "Clear chat history"},
         }
 
@@ -24,8 +25,23 @@ class chatBot:
                 f"!{command}: {self.commands[command]['desc']}"
                 for command in self.commands.keys()
             ]
+            + ["All available models:"]
+            + [f"{model_name}" for _, model_name in conf.models.items()]
         )
         await bot.reply(f"Commands:\n{commands}")
+
+    async def model(self, bot):
+        _, default_model = next(iter(conf.models.items()))
+        if len(bot.msg.split(" ")) >= 2:
+            model_id = bot.msg.split(" ")[1]
+            model_name = (
+                conf.models[model_id] if model_id in conf.models else default_model
+            )
+        else:
+            model_name = conf.model
+        if model_name != conf.model:
+            conf.model = model_name
+        await bot.reply("Using model: " + model_name)
 
     async def chat(self, bot):
         logger.debug(f"chatBot incoming message: [{bot.rid}]{bot.msg}")
