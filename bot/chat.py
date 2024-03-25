@@ -26,23 +26,24 @@ class chatBot:
                 for command in self.commands.keys()
             ]
             + ["All available models:"]
-            + [f"{model_name}" for _, model_name in conf.models.__dict__.items()]
+            + [f"{model_id}" for model_id, _ in conf.models.__dict__.items()]
         )
         await bot.reply(f"Commands:\n{commands}")
 
     async def model(self, bot):
         model_dict = conf.models.__dict__
-        _, default_model = next(iter(model_dict.items()))
+        default_model, _ = next(iter(model_dict.items()))
         if len(bot.msg.split(" ")) >= 2:
             model_id = bot.msg.split(" ")[1]
             model_name = (
                 model_dict[model_id] if model_id in model_dict else default_model
             )
         else:
+            model_id = ""
             model_name = conf.model
         if model_name != conf.model:
             conf.model = model_name
-        await bot.reply("Using model: " + model_name)
+        await bot.reply(f"Using model {model_id}:{model_name}")
 
     async def chat(self, bot):
         logger.debug(f"chatBot incoming message: [{bot.rid}]{bot.msg}")
