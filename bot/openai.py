@@ -172,7 +172,8 @@ class OpenAi(ApiClient):
     # TODO implemente the presistence history class
 
     def _compose_message(self, message, history=[]):
-        pd = {**self.postdata}
+        pd = {**self.postdata} | {"model": conf.model}
+        logger.debug(f"Using model: {pd['model']}")
 
         if OpenAi.tools and conf.tools:
             pd["tools"] = OpenAi.tools
