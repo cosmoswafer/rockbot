@@ -43,7 +43,7 @@ class chatBot:
             model_name = conf.model
         if model_name != conf.model:
             conf.model = model_name
-        await bot.reply(f"Using model {model_id}:{model_name}")
+        await bot.reply(f"Using model {model_id}:{model_name} => {conf.model}")
 
     async def chat(self, bot):
         logger.debug(f"chatBot incoming message: [{bot.rid}]{bot.msg}")
