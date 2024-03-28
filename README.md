@@ -5,6 +5,7 @@
 ```bash
 python3 -m venv venv
 venv/bin/pip install -r requirements.txt
+copy config.example.json config.json
 venv/bin/python rock.py
 ```
 
