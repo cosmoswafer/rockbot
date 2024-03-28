@@ -1,5 +1,13 @@
 # Rocket Chat bot with sqlite database
 
+## Quickstart
+
+```bash
+python3 -m venv venv
+venv/bin/pip install -r requirements.txt
+venv/bin/python rock.py
+```
+
 ## Python packages
 
 - websockets
