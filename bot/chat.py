@@ -38,13 +38,13 @@ class chatBot:
         default_model, _ = next(iter(model_dict.items()))
         if len(bot.msg.split(" ")) >= 2:
             model_id = bot.msg.split(" ")[1]
-            model_name = (
+            model_code = (
                 model_dict[model_id] if model_id in model_dict else default_model
             )
         else:
             model_id = ""
             model_code = conf.model
-        if model_name != conf.model:
+        if model_code != conf.model:
             conf.model = model_code
         await bot.reply(f"Using model {model_id}:{model_code} => {conf.model}")
 
