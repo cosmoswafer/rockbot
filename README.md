@@ -11,9 +11,9 @@ venv/bin/python rock.py
 
 ## Python packages
 
-- websockets
-- aiosqlite
-- aiohttp
+See [requirements.in](requirements.in) for details.
+
+
 
 ## Database schema
 
