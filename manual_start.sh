@@ -16,10 +16,9 @@ function start_bg_python
     else
         echo "Python script: $python_script"
     fi
-    echo "Python script: $python_script"
 
     python_interpreter=$(which python3)
-    if [ -d "$2" && -x "$2/bin/python" ]
+    if [ -d "$2" ] && [ -x "$2/bin/python" ]
     then
         python_interpreter="$PYTHON_VENV/bin/python"
     fi
