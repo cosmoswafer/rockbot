@@ -20,7 +20,7 @@ function start_bg_python
     python_interpreter=$(which python3)
     if [ -d "$2" ] && [ -x "$2/bin/python" ]
     then
-        python_interpreter="$PYTHON_VENV/bin/python"
+        python_interpreter="$2/bin/python"
     fi
     echo "Python interpreter: $python_interpreter"
 
