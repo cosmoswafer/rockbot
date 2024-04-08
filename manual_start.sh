@@ -56,6 +56,7 @@ function start_bg_python
 export -f start_bg_python
 
 [ -f "stop_$PYTHON_SCRIPT" ] && rm -vf "stop_$PYTHON_SCRIPT"
+[ -f nohup.out ] && rm -vf nohup.out
 nohup bash -c "start_bg_python $PYTHON_SCRIPT" &
 ps -ef | grep python | grep "$PYTHON_SCRIPT"
 
