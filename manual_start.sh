@@ -57,7 +57,7 @@ export -f start_bg_python
 
 [ -f "stop_$PYTHON_SCRIPT" ] && rm -vf "stop_$PYTHON_SCRIPT"
 [ -f nohup.out ] && rm -vf nohup.out
-nohup bash -c "start_bg_python $PYTHON_SCRIPT" &
+nohup bash -c "start_bg_python $PYTHON_SCRIPT $PYTHON_VENV" &
 ps -ef | grep python | grep "$PYTHON_SCRIPT"
 
 echo "To kill the background process: touch stop_$PYTHON_SCRIPT && kill <pid>"
