@@ -50,7 +50,7 @@ function start_bg_python
         break
     fi
 
-    sleep 1
+    sleep 5
     done
 }
 export -f start_bg_python
