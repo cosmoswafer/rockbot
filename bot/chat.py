@@ -17,7 +17,7 @@ class chatBot:
 
     async def clear(self, bot):
         self.openai.histories[bot.rid] = []
-        await bot.reply("History cleared")
+        await bot.reply(f"History cleared, current model: {conf.model}")
 
     async def help(self, bot):
         commands = "\n".join(
