@@ -53,8 +53,8 @@ class chatBot:
         history_size = len(self.openai.histories[bot.rid]) if bot.rid in self.openai.histories else 0
         history_len = len(str(self.openai.histories[bot.rid])) if bot.rid in self.openai.histories else 0
         await bot.reply(
-            f"Current history size/limit: {history_size}/{conf.max_history_size} "
-            f"({history_len}/{conf.max_text_length} characters)" 
+            f"Current history size/limit: **{history_size}**/{conf.max_history_size} "
+            f"(**{history_len}**/{conf.max_text_length} characters)" 
         )
 
     async def chat(self, bot):
