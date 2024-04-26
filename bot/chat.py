@@ -50,10 +50,10 @@ class chatBot:
         await bot.reply(f"Using model {model_id}:{model_code} => {conf.model}")
 
     async def history(self, bot):
-        history_size = len(self.openai.histories[bot.rid])
-        history_len = len(str(self.openai.histories[bot.rid]))
+        history_size = len(self.openai.histories[bot.rid]) if bot.rid in self.openai.histories else 0
+        history_len = len(str(self.openai.histories[bot.rid])) if bot.rid in self.openai.histories else 0
         await bot.reply(
-            f"Current history size: {history_size} ({history_len} characters)"
+            f"Current history size: {history_size} ({history_len} characters)\n" 
             f"Hard limit: {conf.max_history_size} or {conf.max_text_length} characters"
         )
 
