@@ -12,6 +12,7 @@ class chatBot:
         self.commands = {
             "help": {"fnc": self.help, "desc": "Display available commands"},
             "model": {"fnc": self.model, "desc": "Switch AI model"},
+            "history": {"fnc": self.history, "desc": "Display chat history statictics"},
             "clear": {"fnc": self.clear, "desc": "Clear chat history"},
         }
 
@@ -47,6 +48,13 @@ class chatBot:
         if model_code != conf.model:
             conf.model = model_code
         await bot.reply(f"Using model {model_id}:{model_code} => {conf.model}")
+
+    async def history(self, bot):
+        history_size = len(self.openai.histories[bot.rid])
+        history_len = len(str(self.openai.histories[bot.rid]))
+        await bot.reply(
+            f"History size: {history_size} ({history_len} characters)"
+        )
 
     async def chat(self, bot):
         logger.debug(f"chatBot incoming message: [{bot.rid}]{bot.msg}")
