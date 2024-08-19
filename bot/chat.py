@@ -21,7 +21,6 @@ class chatBot:
         if len(bot.msg.split(" ")) >= 2:
             model_id = bot.msg.split(" ")[1]
             await self._switch_model(model_id)
-            self.model(bot)
         await bot.reply(f"History cleared, current model: {conf.model}")
 
     async def help(self, bot):
@@ -48,19 +47,12 @@ class chatBot:
             conf.model = model_code
 
     async def model(self, bot):
-        model_dict = conf.models.__dict__
-        default_model, _ = next(iter(model_dict.items()))
+        model_code = conf.model
+        model_id = model_code
         if len(bot.msg.split(" ")) >= 2:
             model_id = bot.msg.split(" ")[1]
-            model_code = (
-                model_dict[model_id] if model_id in model_dict else default_model
-            )
-        else:
-            model_id = ""
-            model_code = conf.model
-        if model_code != conf.model:
-            conf.model = model_code
-        await bot.reply(f"Using model {model_id}:{model_code} => {conf.model}")
+            await self._switch_model(model_id)
+        await bot.reply(f"Using model {model_id} => {conf.model}")
 
     async def history(self, bot):
         history_size = len(self.openai.histories[bot.rid]) if bot.rid in self.openai.histories else 0
