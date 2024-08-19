@@ -21,6 +21,7 @@ class chatBot:
         if len(bot.msg.split(" ")) >= 2:
             model_id = bot.msg.split(" ")[1]
             self._switch_model(model_id)
+            self.model(self, bot)
         await bot.reply(f"History cleared, current model: {conf.model}")
 
     async def help(self, bot):
