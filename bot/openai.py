@@ -104,13 +104,11 @@ class ApiClient:
         
         # Configure proxy if environment variable is set
         proxy = os.environ.get('PROXY')
-        client_kwargs = {'headers': self.headers}
         if proxy:
-            client_kwargs['proxy'] = proxy
             logger.debug(f"Using proxy: {proxy}")
 
-        async with aiohttp.ClientSession(**client_kwargs) as s:
-            async with s.post(url, json=data) as response:
+        async with aiohttp.ClientSession(headers=self.headers) as s:
+            async with s.post(url, json=data, proxy=proxy) as response:
                 if response.status != 200:
                     # TODO Raise exception to retry, or use json response to check the error
                     logger.warning(
