@@ -4,6 +4,7 @@ import asyncio
 import aiohttp
 from util.config import openai as conf
 from util.decorators import defJson, retryA
+import os
 
 
 class ApiClient:
@@ -100,7 +101,15 @@ class ApiClient:
             data["stream"] = True
 
         logger.debug(f"Sending the following request to openai: {data}")
-        async with aiohttp.ClientSession(headers=self.headers) as s:
+        
+        # Configure proxy if environment variable is set
+        proxy = os.environ.get('PROXY')
+        client_kwargs = {'headers': self.headers}
+        if proxy:
+            client_kwargs['proxy'] = proxy
+            logger.debug(f"Using proxy: {proxy}")
+
+        async with aiohttp.ClientSession(**client_kwargs) as s:
             async with s.post(url, json=data) as response:
                 if response.status != 200:
                     # TODO Raise exception to retry, or use json response to check the error
