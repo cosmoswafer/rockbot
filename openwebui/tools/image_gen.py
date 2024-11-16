@@ -31,29 +31,30 @@ class Tools:
             default="https://api.replicate.com/v1/predictions",
             description="Base URL for the Replicate API",
         )
-        REPLICATE_MODEL_NAME_URL: str = Field(
-            default="https://api.replicate.com/v1/models/black-forest-labs/flux-1.1-pro/predictions",
-            description="Replicate Model prediction API url",
+        REPLICATE_MODEL_NAME: str = Field(
+            default="black-forest-labs/flux-1.1-pro",
+            description="Replicate Model prediction name",
         )
 
-    def __init__(self):
-        """
-        Initialize the Pipe class with default values and environment variables.
-        """
-        self.type = "manifold"
-        self.id = "FLUX_1_1_PRO"
-        self.name = "FLUX.1.1-pro: "
-        self.valves = self.Valves(
-            REPLICATE_API_TOKEN=os.getenv("REPLICATE_API_TOKEN", ""),
-            REPLICATE_API_BASE_URL=os.getenv(
-                "REPLICATE_API_BASE_URL",
-                "https://api.replicate.com/v1/predictions",
-            ),
-            REPLICATE_MODEL_NAME_URL=os.getenv(
-                "REPLICATE_MODEL_NAME_URL",
-                "https://api.replicate.com/v1/models/black-forest-labs/flux-1.1-pro/predictions",
-            ),
-        )
+        def __init__(self):
+            """
+            Initialize the Pipe class with default values and environment variables.
+            """
+            self.type = "manifold"
+            self.id = "FLUX_1_1_PRO"
+            self.name = "FLUX.1.1-pro: "
+            self.valves = self.Valves(
+                REPLICATE_API_TOKEN=os.getenv("REPLICATE_API_TOKEN", ""),
+                REPLICATE_API_BASE_URL=os.getenv(
+                    "REPLICATE_API_BASE_URL",
+                    "https://api.replicate.com/v1/predictions",
+                ),
+                REPLICATE_MODEL_NAME=os.getenv(
+                    "REPLICATE_MODEL_NAME",
+                    "black-forest-labs/flux-1.1-pro",
+                ),
+            )
+
     def __init__(self):
         pass
 

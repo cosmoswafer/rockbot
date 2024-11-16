@@ -14,6 +14,7 @@ import os
 from typing import Any, Dict, Generator, Iterator, List, Union
 import requests
 import base64
+import json
 from open_webui.utils.misc import get_last_user_message
 from pydantic import BaseModel, Field
 
@@ -39,6 +40,9 @@ class Pipe:
             default="https://api.replicate.com/v1/models/black-forest-labs/flux-1.1-pro-ultra/predictions",
             description="Replicate Model prediction API url",
         )
+        REPLICATE_MODEL_DEF_INPUT: str = Field(
+            default="", description="Replicate Model prediction API input json"
+        )
 
     def __init__(self):
         """
@@ -56,6 +60,10 @@ class Pipe:
             REPLICATE_MODEL_NAME_URL=os.getenv(
                 "REPLICATE_MODEL_NAME_URL",
                 "https://api.replicate.com/v1/models/black-forest-labs/flux-1.1-pro-ultra/predictions",
+            ),
+            REPLICATE_MODEL_DEF_INPUT=os.getenv(
+                "REPLICATE_MODEL_DEF_INPUT",
+                "",
             ),
         )
 
@@ -125,6 +133,11 @@ class Pipe:
 
         prompt = get_last_user_message(body["messages"])
 
+        def_input = {}
+        try:
+            def_input = json.loads(self.valves.REPLICATE_MODEL_DEF_INPUT)
+        except json.JSONDecodeError:
+            pass
         # Replicate-specific payload
         payload = {
             # "input": {"prompt": prompt, "prompt_upsampling": True},
@@ -132,7 +145,8 @@ class Pipe:
                 "prompt": prompt,
                 "aspect_ratio": "1:1",
                 "output_format": "png",
-                "safety_tolerance": 6
+                "safety_tolerance": 6,
+                **def_input
             },
         }
 
