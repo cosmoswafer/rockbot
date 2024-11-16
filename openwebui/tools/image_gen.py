@@ -11,12 +11,49 @@ import os
 import requests
 from datetime import datetime
 from typing import Callable
+from pydantic import BaseModel, Field
 
-from open_webui.apps.images.main import image_generations, GenerateImageForm
+#from open_webui.apps.images.main import image_generations, GenerateImageForm
 from open_webui.apps.webui.models.users import Users
 
 
 class Tools:
+
+    class Valves(BaseModel):
+        """
+        Pydantic model for storing API keys and base URLs.
+        """
+
+        REPLICATE_API_TOKEN: str = Field(
+            default="", description="Your API Token for Replicate"
+        )
+        REPLICATE_API_BASE_URL: str = Field(
+            default="https://api.replicate.com/v1/predictions",
+            description="Base URL for the Replicate API",
+        )
+        REPLICATE_MODEL_NAME_URL: str = Field(
+            default="https://api.replicate.com/v1/models/black-forest-labs/flux-1.1-pro/predictions",
+            description="Replicate Model prediction API url",
+        )
+
+    def __init__(self):
+        """
+        Initialize the Pipe class with default values and environment variables.
+        """
+        self.type = "manifold"
+        self.id = "FLUX_1_1_PRO"
+        self.name = "FLUX.1.1-pro: "
+        self.valves = self.Valves(
+            REPLICATE_API_TOKEN=os.getenv("REPLICATE_API_TOKEN", ""),
+            REPLICATE_API_BASE_URL=os.getenv(
+                "REPLICATE_API_BASE_URL",
+                "https://api.replicate.com/v1/predictions",
+            ),
+            REPLICATE_MODEL_NAME_URL=os.getenv(
+                "REPLICATE_MODEL_NAME_URL",
+                "https://api.replicate.com/v1/models/black-forest-labs/flux-1.1-pro/predictions",
+            ),
+        )
     def __init__(self):
         pass
 

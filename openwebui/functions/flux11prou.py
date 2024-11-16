@@ -10,10 +10,10 @@ environment_variables: REPLICATE_API_TOKEN
 supported providers: replicate.com
 """
 
-import base64
 import os
 from typing import Any, Dict, Generator, Iterator, List, Union
 import requests
+import base64
 from open_webui.utils.misc import get_last_user_message
 from pydantic import BaseModel, Field
 
@@ -36,7 +36,7 @@ class Pipe:
             description="Base URL for the Replicate API",
         )
         REPLICATE_MODEL_NAME_URL: str = Field(
-            default="https://api.replicate.com/v1/models/black-forest-labs/flux-1.1-pro/predictions",
+            default="https://api.replicate.com/v1/models/black-forest-labs/flux-1.1-pro-ultra/predictions",
             description="Replicate Model prediction API url",
         )
 
@@ -55,7 +55,7 @@ class Pipe:
             ),
             REPLICATE_MODEL_NAME_URL=os.getenv(
                 "REPLICATE_MODEL_NAME_URL",
-                "https://api.replicate.com/v1/models/black-forest-labs/flux-1.1-pro/predictions",
+                "https://api.replicate.com/v1/models/black-forest-labs/flux-1.1-pro-ultra/predictions",
             ),
         )
 
@@ -97,12 +97,12 @@ class Pipe:
                 # Replicate returns a URL directly
                 image_url = prediction["output"]
                 # Download the image and convert to base64
-                # img_response = requests.get(image_url)
-                # img_response.raise_for_status()
-                # content_type = img_response.headers.get("Content-Type", "image/jpeg")
-                # image_base64 = base64.b64encode(img_response.content).decode("utf-8")
-                # return f"![Image](data:{content_type};base64,{image_base64})\n`GeneratedImage.{content_type.split('/')[-1]}`"
-                return f"![Image]({image_url})"
+                img_response = requests.get(image_url)
+                img_response.raise_for_status()
+                content_type = img_response.headers.get("Content-Type", "image/jpeg")
+                image_base64 = base64.b64encode(img_response.content).decode("utf-8")
+                return f"![Image](data:{content_type};base64,{image_base64})\n`GeneratedImage.{content_type.split('/')[-1]}`"
+                #return f"![Image]({image_url})"
             err_json["completed_prediction"] = img_response
 
             return "Error: Image generation failed" + err_json
@@ -127,7 +127,13 @@ class Pipe:
 
         # Replicate-specific payload
         payload = {
-            "input": {"prompt": prompt, "prompt_upsampling": True},
+            # "input": {"prompt": prompt, "prompt_upsampling": True},
+            "input": {
+                "prompt": prompt,
+                "aspect_ratio": "1:1",
+                "output_format": "png",
+                "safety_tolerance": 6
+            },
         }
 
         try:
