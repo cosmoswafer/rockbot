@@ -52,7 +52,8 @@ class FluxDraw:
 
         if prediction["status"] == "succeeded":
             image_url = prediction["output"]
-            return await self._fetch_img(image_url)
+            #return await self._fetch_img(image_url)
+            return f"![{prompt}]({image_url})"
         else:
             return f"Error: {err_json}"
 
