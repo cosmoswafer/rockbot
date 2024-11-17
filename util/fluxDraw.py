@@ -1,3 +1,4 @@
+from util.logger import logger
 from typing import Any, Dict
 import aiohttp
 import base64
@@ -22,6 +23,7 @@ class FluxDraw:
     async def drawApi(self, payload: Dict[str, Any]) -> str:
         err_json = {}
 
+        logger.debug(f"Calling function draw api with payload: {payload}")
         prediction_id = ""
         async with aiohttp.ClientSession(headers=self.headers) as s:
             async with s.post(self.model_name_url, json=payload) as response:
@@ -46,6 +48,7 @@ class FluxDraw:
             return f"Error: {err_json}"
 
     async def _fetch_img(self, url: str) -> str:
+        logger.debug(f"Fetching image from url: {url}")
         async with aiohttp.ClientSession(headers=self.headers) as s:
             async with s.get(url) as response:
                 content_type = response.headers.get("content-type", "image/png")
