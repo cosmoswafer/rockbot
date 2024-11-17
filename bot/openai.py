@@ -324,8 +324,8 @@ class OpenAi(ApiClient):
         for call in t["tool_calls"]:
             # ASUMED tools calls has all valid arguments
             if call["function"]["name"] == "draw":
-                function_results = await self.draw(call["parameters"]["prompt"])
-                print("call", call)
+                # function_results = await self.draw(call["parameters"]["prompt"])
+                # print("call", call)
 
                 # Parse the function arguments
                 function_name = call["function"]["name"]
@@ -341,18 +341,13 @@ class OpenAi(ApiClient):
                 # Run the function with the arguments
                 fr = await self.draw(
                     function_arguments["prompt"],
-                    function_arguments["quality"]
-                    if "quality" in function_arguments
-                    else "",
-                    function_arguments["style"]
-                    if "style" in function_arguments
-                    else "",
-                    function_arguments["size"] if "size" in function_arguments else "",
+                    function_arguments["aspect_ratio"] if "aspect_ratio" in function_arguments else "",
                 )
                 logger.debug(f"function_results {fr}")
                 # function_call_messages.append(
                 #    f'The following is your results, plaes save it manually: "{fr["data"][0]["url"]}"'
                 # )
+                """
                 # TODO Convert into markdown syntax
                 if t := self._parse_draw_function_result(fr):
                     function_call_messages.append(t)
@@ -362,6 +357,8 @@ class OpenAi(ApiClient):
                 else:
                     function_call_messages.append(str(fr))
                     function_call_messages.append("Error on function calling.")
+                """
+                function_call_messages.append(fr)
             else:
                 function_call_messages.append(
                     f'Unknown function "{call["function"]["name"]}" with arguments "{call["function"]["arguments"]}"'
