@@ -5,7 +5,7 @@ import base64
 
 class FluxDraw:
     input_def_args = {
-        "aspect_ratio": "1:1",
+        # "aspect_ratio": "1:1",
         "output_format": "png",
         "safety_tolerance": 6,
     }
@@ -25,7 +25,9 @@ class FluxDraw:
         payload = {
             "input": {
                 "prompt": prompt,
-                "aspect_ratio": aspect_ratio,
+                "aspect_ratio": aspect_ratio
+                if aspect_ratio in ["1:1", "2:3", "3:2", "9:16", "16:9"]
+                else "1:1",
                 **self.input_def_args,
             }
         }
