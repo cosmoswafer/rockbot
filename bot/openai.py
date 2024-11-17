@@ -154,7 +154,7 @@ class OpenAi(ApiClient):
                     "properties": {
                         "prompt": {
                             "type": "string",
-                            "description": "The prompt to draw the image",
+                            "description": "The prompt to draw the image, only accepts English text, other langauges should be translated into English.",
                         },
                         "aspect_ratio": {
                             "type": "string",
