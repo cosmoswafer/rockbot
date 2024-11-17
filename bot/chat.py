@@ -14,7 +14,16 @@ class chatBot:
             "model": {"fnc": self.model, "desc": "Switch AI model"},
             "history": {"fnc": self.history, "desc": "Display chat history statictics"},
             "clear": {"fnc": self.clear, "desc": "Clear chat history"},
+            "tools": {"fnc": self.tools, "desc": "Enable/Disable tools"},
         }
+
+    async def tools(self, bot):
+        if len(bot.msg.split(" ")) >= 2:
+            if bot.msg.split(" ")[1] == "enable":
+                OpenAi.tools = True
+            elif bot.msg.split(" ")[1] == "disable":
+                OpenAi.tools = False
+        await bot.reply(f"Tools {OpenAi.tools if OpenAi.tools else 'disabled'}")
 
     async def clear(self, bot):
         self.openai.histories[bot.rid] = []
