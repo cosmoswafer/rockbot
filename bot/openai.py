@@ -1,9 +1,9 @@
 from util.logger import logger
 import json
-import asyncio
 import aiohttp
 from util.config import openai as conf
-from util.decorators import defJson, retryA
+from util.decorators import defJson
+from util.fluxDraw import FluxDraw
 import os
 
 
@@ -19,10 +19,10 @@ class ApiClient:
     msg_template = {"role": "user", "content": ""}
     rep_template = {"role": "assistant", "content": ""}
     draw_data = {
-        "model": "dall-e-3",
+        #"model": "dall-e-3",
         "prompt": "a photo of a happy corgi puppy sitting and facing forward, studio light, longshot",
-        "n": 1,
-        "size": "1024x1024",
+        "output_format": "png",
+        "safety_tolerance": 6
     }
 
     @defJson("")
@@ -101,9 +101,9 @@ class ApiClient:
             data["stream"] = True
 
         logger.debug(f"Sending the following request to openai: {data}")
-        
+
         # Configure proxy if environment variable is set
-        proxy = os.environ.get('PROXY')
+        proxy = os.environ.get("PROXY")
         if proxy:
             logger.debug(f"Using proxy: {proxy}")
 
@@ -142,12 +142,13 @@ class ApiClient:
 
 
 class OpenAi(ApiClient):
+    flux = FluxDraw.FromConfig(conf.draw)
     tools = [
         {
             "type": "function",
             "function": {
                 "name": "draw",
-                "description": "Draw a image using OpenAI's DALL-E 3 model with the given prompt",
+                "description": "Draw an image using Flux 1.1 pro ultra model with the given prompt",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -155,20 +156,12 @@ class OpenAi(ApiClient):
                             "type": "string",
                             "description": "The prompt to draw the image",
                         },
-                        "quality": {
+                        "aspect_ratio": {
                             "type": "string",
-                            "description": "The quality of the image that will be generated. `hd` creates images with finer details and greater consistency across the image. Defaults to `standard`.",
+                            "description": "The aspect ratio of the image that will be generated. Must be one of `1:1`(square), `2:3`(portrait), `3:2`(landscape), `9:16`(portrait) or `16:9`(landscape).",
                         },
-                        "style": {
-                            "type": "string",
-                            "description": "The style of the generated images. Must be one of `vivid` or `natural`. Vivid causes the model to lean towards generating hyper-real and dramatic images. Natural causes the model to produce more natural, less hyper-real looking images.",
-                        },
-                        "size": {
-                            "type": "string",
-                            "description": "The size of the generated images. Must be one of 1024x1024(square), 1792x1024(landscape), or 1024x1792(portrait).",
-                        },
+                        "required": ["prompt"],
                     },
-                    "required": ["prompt"],
                 },
             },
         },
@@ -247,24 +240,31 @@ class OpenAi(ApiClient):
         return f"Image url: [{revised_prompt}]({image_url})"
         # return f"![{revised_prompt}]({image_url})"
 
-    async def draw(self, prompt: str, quality: str, style: str, size: str) -> dict:
-        quality_options = ["standard", "hd"]
-        style_options = ["vivid", "natural"]
-        size_options = ["1024x1024", "1792x1024", "1024x1792"]
+    async def draw_v_openai(self, prompt: str, aspect_ratio: str) -> dict:
+        aspect_ratio_options = ["1:1", "2:3", "3:2", "9:16", "16:9"]
         r = await self.apiPost(
             self.draw_images_api,
             self.draw_data
             | {
                 "prompt": prompt,
-                "quality": quality
-                if quality in quality_options
-                else quality_options[0],
-                "style": style if style in style_options else style_options[0],
-                "size": size if size in size_options else size_options[0],
+                "aspect_ratio": aspect_ratio
+                if aspect_ratio in aspect_ratio_options
+                else aspect_ratio_options[0],
             },
             False,
         )
         return r
+    
+    async def draw(self, prompt: str, aspect_ratio: str) -> str:
+        aspect_ratio_options = ["1:1", "2:3", "3:2", "9:16", "16:9"]
+        r = await self.flux.drawApi(self.draw_data | {
+            "prompt": prompt,
+            "aspect_ratio": aspect_ratio
+            if aspect_ratio in aspect_ratio_options
+            else aspect_ratio_options[0],
+        })
+        return r
+
 
     async def postMessagesWithFunctions(self, messages: dict, user_id: str) -> dict:
         """
@@ -324,8 +324,8 @@ class OpenAi(ApiClient):
         for call in t["tool_calls"]:
             # ASUMED tools calls has all valid arguments
             if call["function"]["name"] == "draw":
-                # function_results = await self.draw(call["parameters"]["prompt"])
-                # print("call", call)
+                function_results = await self.draw(call["parameters"]["prompt"])
+                print("call", call)
 
                 # Parse the function arguments
                 function_name = call["function"]["name"]
