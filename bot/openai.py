@@ -257,12 +257,7 @@ class OpenAi(ApiClient):
     
     async def draw(self, prompt: str, aspect_ratio: str) -> str:
         aspect_ratio_options = ["1:1", "2:3", "3:2", "9:16", "16:9"]
-        r = await self.flux.drawApi(self.draw_data | {
-            "prompt": prompt,
-            "aspect_ratio": aspect_ratio
-            if aspect_ratio in aspect_ratio_options
-            else aspect_ratio_options[0],
-        })
+        r = await self.flux.drawApi(prompt, aspect_ratio)
         return r
 
 

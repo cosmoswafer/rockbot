@@ -1,13 +1,13 @@
 from util.logger import logger
-from typing import Any, Dict
 import aiohttp
 import base64
 
+
 class FluxDraw:
     input_def_args = {
-       "aspect_ratio": "1:1",
-       "output_format": "png",
-       "safety_tolerance": 6
+        "aspect_ratio": "1:1",
+        "output_format": "png",
+        "safety_tolerance": 6,
     }
 
     def __init__(self, api_token: str, api_base_url: str, model_name_url: str):
@@ -20,8 +20,15 @@ class FluxDraw:
             "Content-Type": "application/json",
         }
 
-    async def drawApi(self, payload: Dict[str, Any]) -> str:
+    async def drawApi(self, prompt: str, aspect_ratio: str) -> str:
         err_json = {}
+        payload = {
+            "input": {
+                "prompt": prompt,
+                "aspect_ratio": aspect_ratio,
+                **self.input_def_args,
+            }
+        }
 
         logger.debug(f"Calling function draw api with payload: {payload}")
         prediction_id = ""
@@ -54,9 +61,7 @@ class FluxDraw:
                 content_type = response.headers.get("content-type", "image/png")
                 image_base64 = base64.b64encode(await response.read()).decode("utf-8")
                 return f"![Image](data:{content_type};base64,{image_base64})\n`GeneratedImage.{content_type.split('/')[-1]}`"
-    
+
     @staticmethod
     def FromConfig(config):
         return FluxDraw(config.api_key, config.base_url, config.model_url)
-
-    
