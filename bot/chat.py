@@ -20,10 +20,10 @@ class chatBot:
     async def tools(self, bot):
         if len(bot.msg.split(" ")) >= 2:
             if bot.msg.split(" ")[1] == "enable":
-                OpenAi.tools = True
+                conf.tools = True
             elif bot.msg.split(" ")[1] == "disable":
-                OpenAi.tools = False
-        await bot.reply(f"Tools {OpenAi.tools if OpenAi.tools else 'disabled'}")
+                conf.tools = False
+        await bot.reply(f"Tools {'enabled' if conf.tools else 'disabled'}")
 
     async def clear(self, bot):
         self.openai.histories[bot.rid] = []
