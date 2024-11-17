@@ -19,7 +19,7 @@ class FluxDraw:
             "Content-Type": "application/json",
         }
 
-    def drawApi(self, payload: Dict[str, Any]) -> str:
+    async def drawApi(self, payload: Dict[str, Any]) -> str:
         err_json = {}
 
         prediction_id = ""
@@ -41,11 +41,11 @@ class FluxDraw:
 
         if prediction["status"] == "succeeded":
             image_url = prediction["output"]
-            return self._fetch_img(image_url)
+            return await self._fetch_img(image_url)
         else:
             return f"Error: {err_json}"
 
-    def _fetch_img(self, url: str) -> str:
+    async def _fetch_img(self, url: str) -> str:
         async with aiohttp.ClientSession(headers=self.headers) as s:
             async with s.get(url) as response:
                 content_type = response.headers.get("content-type", "image/png")
