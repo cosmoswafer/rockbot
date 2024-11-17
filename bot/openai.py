@@ -19,10 +19,10 @@ class ApiClient:
     msg_template = {"role": "user", "content": ""}
     rep_template = {"role": "assistant", "content": ""}
     draw_data = {
-        #"model": "dall-e-3",
+        # "model": "dall-e-3",
         "prompt": "a photo of a happy corgi puppy sitting and facing forward, studio light, longshot",
         "output_format": "png",
-        "safety_tolerance": 6
+        "safety_tolerance": 6,
     }
 
     @defJson("")
@@ -160,8 +160,8 @@ class OpenAi(ApiClient):
                             "type": "string",
                             "description": "The aspect ratio of the image that will be generated. Must be one of `1:1`(square), `2:3`(portrait), `3:2`(landscape), `9:16`(portrait) or `16:9`(landscape).",
                         },
-                        "required": ["prompt"],
                     },
+                    "required": ["prompt"],
                 },
             },
         },
@@ -254,12 +254,11 @@ class OpenAi(ApiClient):
             False,
         )
         return r
-    
+
     async def draw(self, prompt: str, aspect_ratio: str) -> str:
         aspect_ratio_options = ["1:1", "2:3", "3:2", "9:16", "16:9"]
         r = await self.flux.drawApi(prompt, aspect_ratio)
         return r
-
 
     async def postMessagesWithFunctions(self, messages: dict, user_id: str) -> dict:
         """
@@ -336,7 +335,9 @@ class OpenAi(ApiClient):
                 # Run the function with the arguments
                 fr = await self.draw(
                     function_arguments["prompt"],
-                    function_arguments["aspect_ratio"] if "aspect_ratio" in function_arguments else "",
+                    function_arguments["aspect_ratio"]
+                    if "aspect_ratio" in function_arguments
+                    else "",
                 )
                 logger.debug(f"function_results {fr}")
                 # function_call_messages.append(
