@@ -2,6 +2,7 @@
 import os
 import time
 import json
+import argparse
 from datetime import datetime
 from pathlib import Path
 
@@ -195,23 +196,37 @@ def download_prediction(prediction):
         )
 
 
+def parse_args():
+    """Parse command line arguments"""
+    parser = argparse.ArgumentParser(description='Download Replicate predictions')
+    parser.add_argument(
+        '--all-pages',
+        action='store_true',
+        default=False,
+        help='Download predictions from all pages (default: only first page)'
+    )
+    return parser.parse_args()
+
 def main():
-    # Get download log
+    args = parse_args()
     download_log = get_download_log()
 
     print("Starting download of predictions...")
 
     # Start with an empty string cursor for first page
-    cursor = ...
+    cursor = ""
+    page_count = 0
+    
     while True:
+        page_count += 1
         # Get predictions with pagination
-        predictions = replicate.predictions.list(cursor=cursor)
+        page = replicate.predictions.list(cursor=cursor)
         
-        # Break if no more predictions
-        if not predictions:
+        # Break if no predictions in this page
+        if not page.items:
             break
             
-        for prediction in predictions:
+        for prediction in page.items:
             # Check if prediction is already completely downloaded
             prediction_files = download_log[download_log['prediction_id'] == prediction.id]
             if not prediction_files.empty and all(prediction_files['status'] == 'finished'):
@@ -226,10 +241,10 @@ def main():
                 print(f"Error downloading prediction {prediction.id}: {str(e)}")
         
         # Get cursor for next page
-        cursor = predictions.next
+        cursor = page.next
         
-        # Break if no more pages
-        if not cursor:
+        # Break if no more pages or if we only want the first page
+        if not cursor or (not args.all_pages and page_count >= 1):
             break
         
         print(f"Moving to next page...")
