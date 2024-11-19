@@ -18,192 +18,200 @@ load_dotenv()
 if not os.getenv("REPLICATE_API_TOKEN"):
     raise ValueError("Please set REPLICATE_API_TOKEN in .env file")
 
+
 def get_download_log():
     """Initialize or load download log CSV file"""
     # Create downloads directory if it doesn't exist
     os.makedirs("replicate_downloads", exist_ok=True)
-    
+
     log_file = Path("replicate_downloads/download_log.csv")
     if not log_file.exists():
-        df = pd.DataFrame(columns=[
-            'prediction_id', 
-            'filename',
-            'prediction_created_at',
-            'download_datetime',
-            'status'
-        ])
+        df = pd.DataFrame(
+            columns=[
+                "prediction_id",
+                "filename",
+                "prediction_created_at",
+                "download_datetime",
+                "status",
+            ]
+        )
         df.to_csv(log_file, index=False)
     return pd.read_csv(log_file)
+
 
 def update_download_log(prediction_id, filename, prediction_created_at, status):
     """Update the download log with new entry"""
     log_file = Path("replicate_downloads/download_log.csv")
     df = pd.read_csv(log_file)
-    
+
     # Check if entry exists
-    mask = (df['prediction_id'] == prediction_id) & (df['filename'] == filename)
+    mask = (df["prediction_id"] == prediction_id) & (df["filename"] == filename)
     new_row = {
-        'prediction_id': prediction_id,
-        'filename': filename,
-        'prediction_created_at': prediction_created_at,
-        'download_datetime': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        'status': status
+        "prediction_id": prediction_id,
+        "filename": filename,
+        "prediction_created_at": prediction_created_at,
+        "download_datetime": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "status": status,
     }
-    
+
     if mask.any():
         # Update existing entry
         df.loc[mask] = pd.Series(new_row)
     else:
         # Add new entry
         df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
-    
+
     df.to_csv(log_file, index=False)
+
 
 def download_prediction(prediction):
     """Download the output files from a prediction"""
     if not prediction.output:
-        print("Prediction has no output")
+        # print("Prediction has no output")
         # Add this new code to log predictions with no output as 'removed'
         update_download_log(
             prediction_id=prediction.id,
-            filename='no_output',
+            filename="no_output",
             prediction_created_at=prediction.created_at,
-            status='removed'
+            status="removed",
         )
         return
-    
+
     # Create downloads directory if it doesn't exist
     os.makedirs("replicate_downloads", exist_ok=True)
-    
+
     # Create subdirectory with prediction ID
     download_dir = f"replicate_downloads/{prediction.id}"
     os.makedirs(download_dir, exist_ok=True)
-    
+
     # Handle different output types
     if isinstance(prediction.output, str):
         try:
-            if prediction.output.startswith('http'):
+            if prediction.output.startswith("http"):
                 response = requests.get(prediction.output)
-                filename = prediction.output.split('/')[-1]
+                filename = prediction.output.split("/")[-1]
                 filepath = f"{download_dir}/{filename}"
-                with open(filepath, 'wb') as f:
+                with open(filepath, "wb") as f:
                     f.write(response.content)
                 # Verify file is not corrupted
                 if os.path.getsize(filepath) > 0:
-                    status = 'finished'
+                    status = "finished"
                 else:
-                    status = 'corrupted'
+                    status = "corrupted"
             else:
                 # Text output
-                filename = 'output.txt'
+                filename = "output.txt"
                 filepath = f"{download_dir}/{filename}"
-                with open(filepath, 'w') as f:
+                with open(filepath, "w") as f:
                     f.write(prediction.output)
-                status = 'finished'
-            
+                status = "finished"
+
             update_download_log(
                 prediction_id=prediction.id,
                 filename=filename,
                 prediction_created_at=prediction.created_at,
-                status=status
+                status=status,
             )
-            
+
         except Exception as e:
             print(f"Error downloading {prediction.output}: {str(e)}")
             update_download_log(
                 prediction_id=prediction.id,
-                filename=filename if 'filename' in locals() else 'unknown',
+                filename=filename if "filename" in locals() else "unknown",
                 prediction_created_at=prediction.created_at,
-                status='corrupted'
+                status="corrupted",
             )
-    
+
     elif isinstance(prediction.output, list):
         for i, item in enumerate(prediction.output):
             try:
-                if isinstance(item, str) and item.startswith('http'):
+                if isinstance(item, str) and item.startswith("http"):
                     response = requests.get(item)
-                    filename = item.split('/')[-1]
+                    filename = item.split("/")[-1]
                     filepath = f"{download_dir}/{filename}"
-                    with open(filepath, 'wb') as f:
+                    with open(filepath, "wb") as f:
                         f.write(response.content)
-                    status = 'finished' if os.path.getsize(filepath) > 0 else 'corrupted'
+                    status = (
+                        "finished" if os.path.getsize(filepath) > 0 else "corrupted"
+                    )
                 elif isinstance(item, dict):
-                    filename = f'output_{i}.json'
+                    filename = f"output_{i}.json"
                     filepath = f"{download_dir}/{filename}"
-                    with open(filepath, 'w', encoding='utf-8') as f:
+                    with open(filepath, "w", encoding="utf-8") as f:
                         json.dump(item, f, indent=2, ensure_ascii=False)
-                    status = 'finished'
+                    status = "finished"
                 else:
-                    filename = f'output_{i}.txt'
+                    filename = f"output_{i}.txt"
                     filepath = f"{download_dir}/{filename}"
-                    with open(filepath, 'w') as f:
+                    with open(filepath, "w") as f:
                         f.write(str(item))
-                    status = 'finished'
-                
+                    status = "finished"
+
                 update_download_log(
                     prediction_id=prediction.id,
                     filename=filename,
                     prediction_created_at=prediction.created_at,
-                    status=status
+                    status=status,
                 )
-                
+
             except Exception as e:
                 print(f"Error downloading item {i} from {prediction.id}: {str(e)}")
                 update_download_log(
                     prediction_id=prediction.id,
-                    filename=filename if 'filename' in locals() else f'unknown_{i}',
+                    filename=filename if "filename" in locals() else f"unknown_{i}",
                     prediction_created_at=prediction.created_at,
-                    status='corrupted'
+                    status="corrupted",
                 )
     elif isinstance(prediction.output, dict):
         try:
-            filename = 'output.json'
+            filename = "output.json"
             filepath = f"{download_dir}/{filename}"
-            with open(filepath, 'w', encoding='utf-8') as f:
+            with open(filepath, "w", encoding="utf-8") as f:
                 json.dump(prediction.output, f, indent=2, ensure_ascii=False)
-            status = 'finished'
-            
+            status = "finished"
+
             update_download_log(
                 prediction_id=prediction.id,
                 filename=filename,
                 prediction_created_at=prediction.created_at,
-                status=status
+                status=status,
             )
         except Exception as e:
             print(f"Error saving JSON output from {prediction.id}: {str(e)}")
             update_download_log(
                 prediction_id=prediction.id,
-                filename='output.json',
+                filename="output.json",
                 prediction_created_at=prediction.created_at,
-                status='corrupted'
+                status="corrupted",
             )
     else:
         print("Unknown output type")
         print(prediction.output)
         update_download_log(
             prediction_id=prediction.id,
-            filename='unknown',
+            filename="unknown",
             prediction_created_at=prediction.created_at,
-            status='unknown'
+            status="unknown",
         )
+
 
 def main():
     # Get download log
     download_log = get_download_log()
-    
+
     print("Starting download of predictions...")
-    
+
     # Start with an empty string cursor for first page
-    cursor = ""
+    cursor = ...
     while True:
         # Get predictions with pagination
-        page = replicate.predictions.list(cursor=cursor)
+        predictions = replicate.predictions.list(cursor=cursor)
         
-        # Break if no predictions in this page
-        if not page.items:
+        # Break if no more predictions
+        if not predictions:
             break
             
-        for prediction in page.items:
+        for prediction in predictions:
             # Check if prediction is already completely downloaded
             prediction_files = download_log[download_log['prediction_id'] == prediction.id]
             if not prediction_files.empty and all(prediction_files['status'] == 'finished'):
@@ -218,7 +226,7 @@ def main():
                 print(f"Error downloading prediction {prediction.id}: {str(e)}")
         
         # Get cursor for next page
-        cursor = page.next
+        cursor = predictions.next
         
         # Break if no more pages
         if not cursor:
@@ -227,6 +235,7 @@ def main():
         print(f"Moving to next page...")
     
     print("Download complete!")
+
 
 if __name__ == "__main__":
     main()
