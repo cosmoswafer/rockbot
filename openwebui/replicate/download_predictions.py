@@ -229,7 +229,7 @@ def main():
         for prediction in predictions:
             # Check if prediction is already completely downloaded
             prediction_files = download_log[download_log['prediction_id'] == prediction.id]
-            if not prediction_files.empty and all(prediction_files['status'] == 'finished'):
+            if not prediction_files.empty and (all(prediction_files['status'] == 'finished') or all(prediction_files['status'] == 'removed')):
                 print(f"Skipping already downloaded prediction {prediction.id}")
                 continue
                 
