@@ -220,13 +220,13 @@ def main():
     while True:
         page_count += 1
         # Get predictions with pagination
-        page = replicate.predictions.list() if not cursor else replicate.predictions.list(cursor=cursor)
+        predictions = replicate.predictions.list() if not cursor else replicate.predictions.list(cursor=cursor)
         
         # Break if no predictions in this page
-        if not page.items:
+        if not predictions:
             break
             
-        for prediction in page.items:
+        for prediction in predictions:
             # Check if prediction is already completely downloaded
             prediction_files = download_log[download_log['prediction_id'] == prediction.id]
             if not prediction_files.empty and all(prediction_files['status'] == 'finished'):
@@ -241,7 +241,7 @@ def main():
                 print(f"Error downloading prediction {prediction.id}: {str(e)}")
         
         # Get cursor for next page
-        cursor = page.next
+        cursor = predictions.next
         
         # Break if no more pages or if we only want the first page
         if not cursor or (not args.all_pages and page_count >= 1):
