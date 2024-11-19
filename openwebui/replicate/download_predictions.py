@@ -63,6 +63,13 @@ def download_prediction(prediction):
     """Download the output files from a prediction"""
     if not prediction.output:
         print("Prediction has no output")
+        # Add this new code to log predictions with no output as 'removed'
+        update_download_log(
+            prediction_id=prediction.id,
+            filename='no_output',
+            prediction_created_at=prediction.created_at,
+            status='removed'
+        )
         return
     
     # Create downloads directory if it doesn't exist
