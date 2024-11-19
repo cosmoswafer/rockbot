@@ -1,0 +1,4 @@
+replicate
+requests 
+pandas
+python-dotenv

@@ -1,11 +1,14 @@
+# Standard library modules
 import os
+import time
+from datetime import datetime
+from pathlib import Path
+
+# Third-party modules
 import replicate
 import requests
-import time
 import pandas as pd
-from datetime import datetime
 from dotenv import load_dotenv
-from pathlib import Path
 
 # Load environment variables from .env file
 load_dotenv()
