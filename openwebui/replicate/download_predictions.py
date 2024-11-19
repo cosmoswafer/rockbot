@@ -2,8 +2,10 @@ import os
 import replicate
 import requests
 import time
+import pandas as pd
 from datetime import datetime
 from dotenv import load_dotenv
+from pathlib import Path
 
 # Load environment variables from .env file
 load_dotenv()
@@ -11,6 +13,44 @@ load_dotenv()
 # Replicate API token should be set in .env file
 if not os.getenv("REPLICATE_API_TOKEN"):
     raise ValueError("Please set REPLICATE_API_TOKEN in .env file")
+
+def get_download_log():
+    """Initialize or load download log CSV file"""
+    log_file = Path("replicate_downloads/download_log.csv")
+    if not log_file.exists():
+        df = pd.DataFrame(columns=[
+            'prediction_id', 
+            'filename',
+            'prediction_created_at',
+            'download_datetime',
+            'status'
+        ])
+        df.to_csv(log_file, index=False)
+    return pd.read_csv(log_file)
+
+def update_download_log(prediction_id, filename, prediction_created_at, status):
+    """Update the download log with new entry"""
+    log_file = Path("replicate_downloads/download_log.csv")
+    df = pd.read_csv(log_file)
+    
+    # Check if entry exists
+    mask = (df['prediction_id'] == prediction_id) & (df['filename'] == filename)
+    new_row = {
+        'prediction_id': prediction_id,
+        'filename': filename,
+        'prediction_created_at': prediction_created_at,
+        'download_datetime': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        'status': status
+    }
+    
+    if mask.any():
+        # Update existing entry
+        df.loc[mask] = pd.Series(new_row)
+    else:
+        # Add new entry
+        df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+    
+    df.to_csv(log_file, index=False)
 
 def download_prediction(prediction):
     """Download the output files from a prediction"""
@@ -27,36 +67,91 @@ def download_prediction(prediction):
     
     # Handle different output types
     if isinstance(prediction.output, str):
-        # Single URL or text output
-        if prediction.output.startswith('http'):
-            response = requests.get(prediction.output)
-            filename = prediction.output.split('/')[-1]
-            with open(f"{download_dir}/{filename}", 'wb') as f:
-                f.write(response.content)
-        else:
-            # Text output
-            with open(f"{download_dir}/output.txt", 'w') as f:
-                f.write(prediction.output)
+        try:
+            if prediction.output.startswith('http'):
+                response = requests.get(prediction.output)
+                filename = prediction.output.split('/')[-1]
+                filepath = f"{download_dir}/{filename}"
+                with open(filepath, 'wb') as f:
+                    f.write(response.content)
+                # Verify file is not corrupted
+                if os.path.getsize(filepath) > 0:
+                    status = 'finished'
+                else:
+                    status = 'corrupted'
+            else:
+                # Text output
+                filename = 'output.txt'
+                filepath = f"{download_dir}/{filename}"
+                with open(filepath, 'w') as f:
+                    f.write(prediction.output)
+                status = 'finished'
+            
+            update_download_log(
+                prediction_id=prediction.id,
+                filename=filename,
+                prediction_created_at=prediction.created_at,
+                status=status
+            )
+            
+        except Exception as e:
+            print(f"Error downloading {prediction.output}: {str(e)}")
+            update_download_log(
+                prediction_id=prediction.id,
+                filename=filename if 'filename' in locals() else 'unknown',
+                prediction_created_at=prediction.created_at,
+                status='corrupted'
+            )
     
     elif isinstance(prediction.output, list):
-        # Multiple outputs
         for i, item in enumerate(prediction.output):
-            if isinstance(item, str) and item.startswith('http'):
-                response = requests.get(item)
-                filename = item.split('/')[-1]
-                with open(f"{download_dir}/{filename}", 'wb') as f:
-                    f.write(response.content)
-            else:
-                with open(f"{download_dir}/output_{i}.txt", 'w') as f:
-                    f.write(str(item))
+            try:
+                if isinstance(item, str) and item.startswith('http'):
+                    response = requests.get(item)
+                    filename = item.split('/')[-1]
+                    filepath = f"{download_dir}/{filename}"
+                    with open(filepath, 'wb') as f:
+                        f.write(response.content)
+                    status = 'finished' if os.path.getsize(filepath) > 0 else 'corrupted'
+                else:
+                    filename = f'output_{i}.txt'
+                    filepath = f"{download_dir}/{filename}"
+                    with open(filepath, 'w') as f:
+                        f.write(str(item))
+                    status = 'finished'
+                
+                update_download_log(
+                    prediction_id=prediction.id,
+                    filename=filename,
+                    prediction_created_at=prediction.created_at,
+                    status=status
+                )
+                
+            except Exception as e:
+                print(f"Error downloading item {i} from {prediction.id}: {str(e)}")
+                update_download_log(
+                    prediction_id=prediction.id,
+                    filename=filename if 'filename' in locals() else f'unknown_{i}',
+                    prediction_created_at=prediction.created_at,
+                    status='corrupted'
+                )
 
 def main():
+    # Get download log
+    download_log = get_download_log()
+    
     # Get all predictions
     predictions = replicate.predictions.list()
     
-    print("Starting download of all predictions...")
+    print("Starting download of predictions...")
     
     for prediction in predictions:
+        # Check if prediction is already completely downloaded
+        prediction_files = download_log[download_log['prediction_id'] == prediction.id]
+        if not prediction_files.empty and all(prediction_files['status'] == 'finished'):
+            print(f"Skipping already downloaded prediction {prediction.id}")
+            continue
+            
         try:
             print(f"Downloading prediction {prediction.id}...")
             download_prediction(prediction)
