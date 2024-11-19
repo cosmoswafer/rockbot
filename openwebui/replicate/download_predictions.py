@@ -220,7 +220,7 @@ def main():
     while True:
         page_count += 1
         # Get predictions with pagination
-        page = replicate.predictions.list(cursor=cursor)
+        page = replicate.predictions.list() if not cursor else replicate.predictions.list(cursor=cursor)
         
         # Break if no predictions in this page
         if not page.items:
