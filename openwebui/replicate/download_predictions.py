@@ -3,9 +3,14 @@ import replicate
 import requests
 import time
 from datetime import datetime
+from dotenv import load_dotenv
 
-# Set your Replicate API token
-os.environ["REPLICATE_API_TOKEN"] = "your_api_token_here"
+# Load environment variables from .env file
+load_dotenv()
+
+# Replicate API token should be set in .env file
+if not os.getenv("REPLICATE_API_TOKEN"):
+    raise ValueError("Please set REPLICATE_API_TOKEN in .env file")
 
 def download_prediction(prediction):
     """Download the output files from a prediction"""
