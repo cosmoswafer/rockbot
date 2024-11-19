@@ -184,24 +184,40 @@ def main():
     # Get download log
     download_log = get_download_log()
     
-    # Get all predictions
-    predictions = replicate.predictions.list()
-    
     print("Starting download of predictions...")
     
-    for prediction in predictions:
-        # Check if prediction is already completely downloaded
-        prediction_files = download_log[download_log['prediction_id'] == prediction.id]
-        if not prediction_files.empty and all(prediction_files['status'] == 'finished'):
-            print(f"Skipping already downloaded prediction {prediction.id}")
-            continue
+    # Initialize cursor as None for first page
+    cursor = None
+    while True:
+        # Get predictions with pagination
+        predictions = replicate.predictions.list(cursor=cursor)
+        
+        # Break if no more predictions
+        if not predictions:
+            break
             
-        try:
-            print(f"Downloading prediction {prediction.id}...")
-            download_prediction(prediction)
-            time.sleep(1)  # Add small delay to avoid rate limiting
-        except Exception as e:
-            print(f"Error downloading prediction {prediction.id}: {str(e)}")
+        for prediction in predictions:
+            # Check if prediction is already completely downloaded
+            prediction_files = download_log[download_log['prediction_id'] == prediction.id]
+            if not prediction_files.empty and all(prediction_files['status'] == 'finished'):
+                print(f"Skipping already downloaded prediction {prediction.id}")
+                continue
+                
+            try:
+                print(f"Downloading prediction {prediction.id}...")
+                download_prediction(prediction)
+                time.sleep(1)  # Add small delay to avoid rate limiting
+            except Exception as e:
+                print(f"Error downloading prediction {prediction.id}: {str(e)}")
+        
+        # Get cursor for next page
+        cursor = predictions.next_page
+        
+        # Break if no more pages
+        if not cursor:
+            break
+        
+        print(f"Moving to next page...")
     
     print("Download complete!")
 
