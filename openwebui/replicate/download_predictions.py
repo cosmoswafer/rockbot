@@ -19,6 +19,9 @@ if not os.getenv("REPLICATE_API_TOKEN"):
 
 def get_download_log():
     """Initialize or load download log CSV file"""
+    # Create downloads directory if it doesn't exist
+    os.makedirs("replicate_downloads", exist_ok=True)
+    
     log_file = Path("replicate_downloads/download_log.csv")
     if not log_file.exists():
         df = pd.DataFrame(columns=[
