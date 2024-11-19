@@ -68,9 +68,8 @@ def download_prediction(prediction):
     # Create downloads directory if it doesn't exist
     os.makedirs("replicate_downloads", exist_ok=True)
     
-    # Create subdirectory with timestamp and prediction ID
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    download_dir = f"replicate_downloads/{timestamp}_{prediction.id}"
+    # Create subdirectory with prediction ID
+    download_dir = f"replicate_downloads/{prediction.id}"
     os.makedirs(download_dir, exist_ok=True)
     
     # Handle different output types
