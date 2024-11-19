@@ -1,6 +1,7 @@
 # Standard library modules
 import os
 import time
+import json
 from datetime import datetime
 from pathlib import Path
 
@@ -120,6 +121,12 @@ def download_prediction(prediction):
                     with open(filepath, 'wb') as f:
                         f.write(response.content)
                     status = 'finished' if os.path.getsize(filepath) > 0 else 'corrupted'
+                elif isinstance(item, dict):
+                    filename = f'output_{i}.json'
+                    filepath = f"{download_dir}/{filename}"
+                    with open(filepath, 'w', encoding='utf-8') as f:
+                        json.dump(item, f, indent=2, ensure_ascii=False)
+                    status = 'finished'
                 else:
                     filename = f'output_{i}.txt'
                     filepath = f"{download_dir}/{filename}"
@@ -142,6 +149,28 @@ def download_prediction(prediction):
                     prediction_created_at=prediction.created_at,
                     status='corrupted'
                 )
+    elif isinstance(prediction.output, dict):
+        try:
+            filename = 'output.json'
+            filepath = f"{download_dir}/{filename}"
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(prediction.output, f, indent=2, ensure_ascii=False)
+            status = 'finished'
+            
+            update_download_log(
+                prediction_id=prediction.id,
+                filename=filename,
+                prediction_created_at=prediction.created_at,
+                status=status
+            )
+        except Exception as e:
+            print(f"Error saving JSON output from {prediction.id}: {str(e)}")
+            update_download_log(
+                prediction_id=prediction.id,
+                filename='output.json',
+                prediction_created_at=prediction.created_at,
+                status='corrupted'
+            )
     else:
         print("Unknown output type")
         print(prediction.output)
