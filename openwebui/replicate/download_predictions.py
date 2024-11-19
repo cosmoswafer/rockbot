@@ -186,8 +186,8 @@ def main():
     
     print("Starting download of predictions...")
     
-    # Initialize cursor as None for first page
-    cursor = None
+    # Start with an empty string cursor for first page
+    cursor = ""
     while True:
         # Get predictions with pagination
         predictions = replicate.predictions.list(cursor=cursor)
