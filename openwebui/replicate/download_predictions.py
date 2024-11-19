@@ -61,6 +61,7 @@ def update_download_log(prediction_id, filename, prediction_created_at, status):
 def download_prediction(prediction):
     """Download the output files from a prediction"""
     if not prediction.output:
+        print("Prediction has no output")
         return
     
     # Create downloads directory if it doesn't exist
@@ -141,6 +142,15 @@ def download_prediction(prediction):
                     prediction_created_at=prediction.created_at,
                     status='corrupted'
                 )
+    else:
+        print("Unknown output type")
+        print(prediction.output)
+        update_download_log(
+            prediction_id=prediction.id,
+            filename='unknown',
+            prediction_created_at=prediction.created_at,
+            status='unknown'
+        )
 
 def main():
     # Get download log
