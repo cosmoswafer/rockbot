@@ -193,15 +193,13 @@ def download_prediction(prediction):
 def parse_args():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(description='Download Replicate predictions')
-    # Create mutually exclusive group
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument(
+    parser.add_argument(
         '--all-pages',
         action='store_true',
         default=False,
         help='Download predictions from all pages (default: only first page)'
     )
-    group.add_argument(
+    parser.add_argument(
         '--stop-latest',
         action='store_true',
         default=False,
