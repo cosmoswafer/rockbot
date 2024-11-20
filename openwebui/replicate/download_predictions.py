@@ -127,8 +127,6 @@ def update_download_log(prediction_id, filename, prediction_created_at, status):
 def download_prediction(prediction):
     """Download the output files from a prediction"""
     if not prediction.output:
-        # print("Prediction has no output")
-        # Add this new code to log predictions with no output as 'removed'
         update_download_log(
             prediction_id=prediction.id,
             filename="no_output",
@@ -137,121 +135,58 @@ def download_prediction(prediction):
         )
         return
 
-    # Create downloads directory if it doesn't exist
+    # Create download directories
     os.makedirs("replicate_downloads", exist_ok=True)
-
-    # Create subdirectory with prediction ID
     download_dir = f"replicate_downloads/{prediction.id}"
     os.makedirs(download_dir, exist_ok=True)
 
-    # Handle different output types
-    if isinstance(prediction.output, str):
-        try:
-            if prediction.output.startswith("http"):
-                response = requests.get(prediction.output)
-                filename = prediction.output.split("/")[-1]
-                filepath = f"{download_dir}/{filename}"
-                with open(filepath, "wb") as f:
-                    f.write(response.content)
-                # Verify file is not corrupted
-                if os.path.getsize(filepath) > 0:
-                    status = "finished"
-                else:
-                    status = "corrupted"
-            else:
-                # Text output
-                filename = "output.txt"
-                filepath = f"{download_dir}/{filename}"
-                with open(filepath, "w") as f:
-                    f.write(prediction.output)
-                status = "finished"
-
+    try:
+        if isinstance(prediction.output, str):
+            filename, status = handle_string_output(prediction.output, download_dir)
             update_download_log(
                 prediction_id=prediction.id,
                 filename=filename,
                 prediction_created_at=prediction.created_at,
                 status=status,
             )
-
-        except Exception as e:
-            print(f"Error downloading {prediction.output}: {str(e)}")
-            update_download_log(
-                prediction_id=prediction.id,
-                filename=filename if "filename" in locals() else "unknown",
-                prediction_created_at=prediction.created_at,
-                status="corrupted",
-            )
-
-    elif isinstance(prediction.output, list):
-        for i, item in enumerate(prediction.output):
-            try:
-                if isinstance(item, str) and item.startswith("http"):
-                    response = requests.get(item)
-                    filename = item.split("/")[-1]
-                    filepath = f"{download_dir}/{filename}"
-                    with open(filepath, "wb") as f:
-                        f.write(response.content)
-                    status = (
-                        "finished" if os.path.getsize(filepath) > 0 else "corrupted"
-                    )
-                elif isinstance(item, dict):
-                    filename = f"output_{i}.json"
-                    filepath = f"{download_dir}/{filename}"
-                    with open(filepath, "w", encoding="utf-8") as f:
-                        json.dump(item, f, indent=2, ensure_ascii=False)
-                    status = "finished"
-                else:
-                    filename = f"output_{i}.txt"
-                    filepath = f"{download_dir}/{filename}"
-                    with open(filepath, "w") as f:
-                        f.write(str(item))
-                    status = "finished"
-
+            
+        elif isinstance(prediction.output, list):
+            results = handle_list_output(prediction.output, download_dir)
+            for filename, status in results:
                 update_download_log(
                     prediction_id=prediction.id,
                     filename=filename,
                     prediction_created_at=prediction.created_at,
                     status=status,
                 )
-
-            except Exception as e:
-                print(f"Error downloading item {i} from {prediction.id}: {str(e)}")
-                update_download_log(
-                    prediction_id=prediction.id,
-                    filename=filename if "filename" in locals() else f"unknown_{i}",
-                    prediction_created_at=prediction.created_at,
-                    status="corrupted",
-                )
-    elif isinstance(prediction.output, dict):
-        try:
-            filename = "output.json"
-            filepath = f"{download_dir}/{filename}"
-            with open(filepath, "w", encoding="utf-8") as f:
-                json.dump(prediction.output, f, indent=2, ensure_ascii=False)
-            status = "finished"
-
+                
+        elif isinstance(prediction.output, dict):
+            filename, status = handle_dict_output(prediction.output, download_dir)
             update_download_log(
                 prediction_id=prediction.id,
                 filename=filename,
                 prediction_created_at=prediction.created_at,
                 status=status,
             )
-        except Exception as e:
-            print(f"Error saving JSON output from {prediction.id}: {str(e)}")
+            
+        else:
+            print(f"Unknown output type: {type(prediction.output)}")
+            print(prediction.output)
             update_download_log(
                 prediction_id=prediction.id,
-                filename="output.json",
+                filename="unknown",
                 prediction_created_at=prediction.created_at,
-                status="corrupted",
+                status="unknown",
             )
-    else:
-        print("Unknown output type")
-        print(prediction.output)
+            
+    except Exception as e:
+        print(f"Error processing prediction {prediction.id}: {str(e)}")
+        filename = getattr(e, 'filename', 'unknown')
         update_download_log(
             prediction_id=prediction.id,
-            filename="unknown",
+            filename=filename,
             prediction_created_at=prediction.created_at,
-            status="unknown",
+            status="corrupted",
         )
 
 
