@@ -205,6 +205,12 @@ def parse_args():
         default=False,
         help='Download predictions from all pages (default: only first page)'
     )
+    parser.add_argument(
+        '--stop-latest',
+        action='store_true',
+        default=False,
+        help='Stop when reaching the latest downloaded prediction (status: finished or removed)'
+    )
     return parser.parse_args()
 
 def main():
@@ -231,6 +237,9 @@ def main():
             prediction_files = download_log[download_log['prediction_id'] == prediction.id]
             if not prediction_files.empty and (all(prediction_files['status'] == 'finished') or all(prediction_files['status'] == 'removed')):
                 print(f"Skipping already downloaded prediction {prediction.id}")
+                if args.stop_latest:
+                    print("Reached latest downloaded prediction, stopping as requested...")
+                    return  # Exit the function entirely
                 continue
                 
             try:
