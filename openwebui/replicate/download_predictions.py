@@ -19,6 +19,65 @@ load_dotenv()
 if not os.getenv("REPLICATE_API_TOKEN"):
     raise ValueError("Please set REPLICATE_API_TOKEN in .env file")
 
+def save_file(filepath, content, mode="w"):
+    """Save content to a file with specified mode (binary or text)"""
+    with open(filepath, mode) as f:
+        f.write(content)
+    return os.path.getsize(filepath) > 0
+
+def download_url(url, download_dir):
+    """Download content from a URL and save it to a file in the specified directory"""
+    response = requests.get(url)
+    filename = url.split("/")[-1]
+    filepath = f"{download_dir}/{filename}"
+    if save_file(filepath, response.content, mode="wb"):
+        return filename, "finished"
+    else:
+        return filename, "corrupted"
+
+def handle_string_output(output, download_dir):
+    """Handle string-type output"""
+    if output.startswith("http"):
+        return download_url(output, download_dir)
+    else:
+        filename = "output.txt"
+        filepath = f"{download_dir}/{filename}"
+        if save_file(filepath, output, mode="w"):
+            return filename, "finished"
+        else:
+            return filename, "corrupted"
+
+def handle_list_output(output_list, download_dir):
+    """Handle list-type output"""
+    results = []
+    for i, item in enumerate(output_list):
+        if isinstance(item, str) and item.startswith("http"):
+            results.append(download_url(item, download_dir))
+        elif isinstance(item, dict):
+            filename = f"output_{i}.json"
+            filepath = f"{download_dir}/{filename}"
+            if save_file(filepath, json.dumps(item, indent=2, ensure_ascii=False), mode="w"):
+                results.append((filename, "finished"))
+            else:
+                results.append((filename, "corrupted"))
+        else:
+            filename = f"output_{i}.txt"
+            filepath = f"{download_dir}/{filename}"
+            if save_file(filepath, str(item), mode="w"):
+                results.append((filename, "finished"))
+            else:
+                results.append((filename, "corrupted"))
+    return results
+
+def handle_dict_output(output_dict, download_dir):
+    """Handle dictionary-type output"""
+    filename = "output.json"
+    filepath = f"{download_dir}/{filename}"
+    if save_file(filepath, json.dumps(output_dict, indent=2, ensure_ascii=False), mode="w"):
+        return filename, "finished"
+    else:
+        return filename, "corrupted"
+
 
 def get_download_log():
     """Initialize or load download log CSV file"""
