@@ -3,6 +3,7 @@ import os
 import time
 import json
 import argparse
+import shutil
 from datetime import datetime
 from pathlib import Path
 
@@ -14,6 +15,9 @@ from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()
+
+# Supported image extensions
+IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.webp')
 
 # Replicate API token should be set in .env file
 if not os.getenv("REPLICATE_API_TOKEN"):
