@@ -79,6 +79,28 @@ def handle_dict_output(output_dict, download_dir):
         return filename, "corrupted"
 
 
+def copy_images_to_downloads(prediction_id, download_dir):
+    """Copy images from prediction directory to main downloads directory"""
+    prediction_dir = Path(download_dir) / prediction_id
+    if not prediction_dir.exists():
+        return
+        
+    main_downloads = Path("replicate_downloads")
+    
+    for root, _, files in os.walk(prediction_dir):
+        for file in files:
+            if file.lower().endswith(IMAGE_EXTENSIONS):
+                file_path = Path(root) / file
+                # Create new filename to avoid conflicts
+                new_filename = f"{prediction_id}_{file}"
+                dest_path = main_downloads / new_filename
+                
+                try:
+                    shutil.copy2(file_path, dest_path)
+                    print(f"Copied image: {file} -> {new_filename}")
+                except Exception as e:
+                    print(f"Error copying image {file}: {str(e)}")
+
 def get_download_log():
     """Initialize or load download log CSV file"""
     # Create downloads directory if it doesn't exist
@@ -134,6 +156,63 @@ def download_prediction(prediction):
             status="removed",
         )
         return
+
+    # Create download directories
+    os.makedirs("replicate_downloads", exist_ok=True)
+    download_dir = f"replicate_downloads/{prediction.id}"
+    os.makedirs(download_dir, exist_ok=True)
+
+    try:
+        if isinstance(prediction.output, str):
+            filename, status = handle_string_output(prediction.output, download_dir)
+            update_download_log(
+                prediction_id=prediction.id,
+                filename=filename,
+                prediction_created_at=prediction.created_at,
+                status=status,
+            )
+            
+        elif isinstance(prediction.output, list):
+            results = handle_list_output(prediction.output, download_dir)
+            for filename, status in results:
+                update_download_log(
+                    prediction_id=prediction.id,
+                    filename=filename,
+                    prediction_created_at=prediction.created_at,
+                    status=status,
+                )
+                
+        elif isinstance(prediction.output, dict):
+            filename, status = handle_dict_output(prediction.output, download_dir)
+            update_download_log(
+                prediction_id=prediction.id,
+                filename=filename,
+                prediction_created_at=prediction.created_at,
+                status=status,
+            )
+            
+        else:
+            print(f"Unknown output type: {type(prediction.output)}")
+            print(prediction.output)
+            update_download_log(
+                prediction_id=prediction.id,
+                filename="unknown",
+                prediction_created_at=prediction.created_at,
+                status="unknown",
+            )
+            
+        # Copy any downloaded images to main directory
+        copy_images_to_downloads(prediction.id, "replicate_downloads")
+        
+    except Exception as e:
+        print(f"Error processing prediction {prediction.id}: {str(e)}")
+        filename = getattr(e, 'filename', 'unknown')
+        update_download_log(
+            prediction_id=prediction.id,
+            filename=filename,
+            prediction_created_at=prediction.created_at,
+            status="corrupted",
+        )
 
     # Create download directories
     os.makedirs("replicate_downloads", exist_ok=True)
