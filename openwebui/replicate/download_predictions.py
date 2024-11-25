@@ -29,81 +29,59 @@ def save_file(filepath, content, mode="w"):
         f.write(content)
     return os.path.getsize(filepath) > 0
 
-def download_url(url, download_dir):
+def download_url(url, download_dir, prediction_id):
     """Download content from a URL and save it to a file in the specified directory"""
     response = requests.get(url)
     filename = url.split("/")[-1]
-    filepath = f"{download_dir}/{filename}"
+    filepath = f"{download_dir}/{prediction_id}_{filename}"
     if save_file(filepath, response.content, mode="wb"):
         return filename, "finished"
     else:
         return filename, "corrupted"
 
-def handle_string_output(output, download_dir):
+def handle_string_output(output, download_dir, prediction_id):
     """Handle string-type output"""
     if output.startswith("http"):
-        return download_url(output, download_dir)
+        return download_url(output, download_dir, prediction_id)
     else:
         filename = "output.txt"
-        filepath = f"{download_dir}/{filename}"
+        filepath = f"{download_dir}/{prediction_id}_{filename}"
         if save_file(filepath, output, mode="w"):
             return filename, "finished"
         else:
             return filename, "corrupted"
 
-def handle_list_output(output_list, download_dir):
+def handle_list_output(output_list, download_dir, prediction_id):
     """Handle list-type output"""
     results = []
     for i, item in enumerate(output_list):
         if isinstance(item, str) and item.startswith("http"):
-            results.append(download_url(item, download_dir))
+            results.append(download_url(item, download_dir, prediction_id))
         elif isinstance(item, dict):
             filename = f"output_{i}.json"
-            filepath = f"{download_dir}/{filename}"
+            filepath = f"{download_dir}/{prediction_id}_{filename}"
             if save_file(filepath, json.dumps(item, indent=2, ensure_ascii=False), mode="w"):
                 results.append((filename, "finished"))
             else:
                 results.append((filename, "corrupted"))
         else:
             filename = f"output_{i}.txt"
-            filepath = f"{download_dir}/{filename}"
+            filepath = f"{download_dir}/{prediction_id}_{filename}"
             if save_file(filepath, str(item), mode="w"):
                 results.append((filename, "finished"))
             else:
                 results.append((filename, "corrupted"))
     return results
 
-def handle_dict_output(output_dict, download_dir):
+def handle_dict_output(output_dict, download_dir, prediction_id):
     """Handle dictionary-type output"""
     filename = "output.json"
-    filepath = f"{download_dir}/{filename}"
+    filepath = f"{download_dir}/{prediction_id}_{filename}"
     if save_file(filepath, json.dumps(output_dict, indent=2, ensure_ascii=False), mode="w"):
         return filename, "finished"
     else:
         return filename, "corrupted"
 
-
-def copy_images_to_downloads(prediction_id, download_dir):
-    """Copy images from prediction directory to main downloads directory"""
-    prediction_dir = Path(download_dir) / prediction_id
-    if not prediction_dir.exists():
-        return
-        
-    main_downloads = Path("replicate_downloads")
-    
-    for root, _, files in os.walk(prediction_dir):
-        for file in files:
-            if file.lower().endswith(IMAGE_EXTENSIONS):
-                file_path = Path(root) / file
-                # Create new filename to avoid conflicts
-                new_filename = f"{prediction_id}_{file}"
-                dest_path = main_downloads / new_filename
-                
-                try:
-                    shutil.copy2(file_path, dest_path)
-                    print(f"Copied image: {file} -> {new_filename}")
-                except Exception as e:
-                    print(f"Error copying image {file}: {str(e)}")
 
 def get_download_log():
     """Initialize or load download log CSV file"""
@@ -163,12 +141,13 @@ def download_prediction(prediction):
 
     # Create download directories
     os.makedirs("replicate_downloads", exist_ok=True)
-    download_dir = f"replicate_downloads/{prediction.id}"
-    os.makedirs(download_dir, exist_ok=True)
+    #download_dir = f"replicate_downloads/{prediction.id}"
+    #os.makedirs(download_dir, exist_ok=True)
+    download_dir = "replicate_downloads"
 
     try:
         if isinstance(prediction.output, str):
-            filename, status = handle_string_output(prediction.output, download_dir)
+            filename, status = handle_string_output(prediction.output, download_dir, prediction.id)
             update_download_log(
                 prediction_id=prediction.id,
                 filename=filename,
@@ -177,7 +156,7 @@ def download_prediction(prediction):
             )
             
         elif isinstance(prediction.output, list):
-            results = handle_list_output(prediction.output, download_dir)
+            results = handle_list_output(prediction.output, download_dir, prediction.id)
             for filename, status in results:
                 update_download_log(
                     prediction_id=prediction.id,
@@ -187,7 +166,7 @@ def download_prediction(prediction):
                 )
                 
         elif isinstance(prediction.output, dict):
-            filename, status = handle_dict_output(prediction.output, download_dir)
+            filename, status = handle_dict_output(prediction.output, download_dir, prediction.id)
             update_download_log(
                 prediction_id=prediction.id,
                 filename=filename,
@@ -204,9 +183,6 @@ def download_prediction(prediction):
                 prediction_created_at=prediction.created_at,
                 status="unknown",
             )
-            
-        # Copy any downloaded images to main directory
-        copy_images_to_downloads(prediction.id, "replicate_downloads")
         
     except Exception as e:
         print(f"Error processing prediction {prediction.id}: {str(e)}")
@@ -218,59 +194,6 @@ def download_prediction(prediction):
             status="corrupted",
         )
 
-    # Create download directories
-    os.makedirs("replicate_downloads", exist_ok=True)
-    download_dir = f"replicate_downloads/{prediction.id}"
-    os.makedirs(download_dir, exist_ok=True)
-
-    try:
-        if isinstance(prediction.output, str):
-            filename, status = handle_string_output(prediction.output, download_dir)
-            update_download_log(
-                prediction_id=prediction.id,
-                filename=filename,
-                prediction_created_at=prediction.created_at,
-                status=status,
-            )
-            
-        elif isinstance(prediction.output, list):
-            results = handle_list_output(prediction.output, download_dir)
-            for filename, status in results:
-                update_download_log(
-                    prediction_id=prediction.id,
-                    filename=filename,
-                    prediction_created_at=prediction.created_at,
-                    status=status,
-                )
-                
-        elif isinstance(prediction.output, dict):
-            filename, status = handle_dict_output(prediction.output, download_dir)
-            update_download_log(
-                prediction_id=prediction.id,
-                filename=filename,
-                prediction_created_at=prediction.created_at,
-                status=status,
-            )
-            
-        else:
-            print(f"Unknown output type: {type(prediction.output)}")
-            print(prediction.output)
-            update_download_log(
-                prediction_id=prediction.id,
-                filename="unknown",
-                prediction_created_at=prediction.created_at,
-                status="unknown",
-            )
-            
-    except Exception as e:
-        print(f"Error processing prediction {prediction.id}: {str(e)}")
-        filename = getattr(e, 'filename', 'unknown')
-        update_download_log(
-            prediction_id=prediction.id,
-            filename=filename,
-            prediction_created_at=prediction.created_at,
-            status="corrupted",
-        )
 
 
 def parse_args():
