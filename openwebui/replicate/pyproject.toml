@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "replicate-downloader"
+version = "0.1.0"
+description = "A script to download predictions from Replicate"
+authors = [
+    { name="Your Name", email="your.email@example.com" }
+]
+dependencies = [
+    "replicate",
+    "requests",
+    "pandas",
+    "python-dotenv"
+]
