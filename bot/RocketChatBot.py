@@ -173,6 +173,15 @@ class RocketChatBot:
         logger.debug(f"WS>>> {data}")
         await self._ws.send(data)
 
+    async def notifyTyping(self, rid, typing):
+        payload = {
+            "msg": "method",
+            "method": "stream-notify-room",
+            "id": "42",
+            "params": [rid + "/typing", self._username, typing],
+        }
+        await self._send2ws(json.dumps(payload))
+
     async def sendMsg(self, rid, msg):
         payload = {
             "msg": "method",

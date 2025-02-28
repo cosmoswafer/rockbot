@@ -87,4 +87,6 @@ class chatBot:
             asyncio.create_task(self._query(bot, bot.rid, bot.msg))
 
     async def _query(self, bot, rid, msg) -> None:
+        await bot.typing(True)
         await bot.reply(await self.openai.submit(rid, msg))
+        await bot.typing(False)

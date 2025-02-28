@@ -9,6 +9,9 @@ class bot:
         self.rid = rid
         self.txt = ""
 
+    async def typing(self, state: bool):
+        await self.rocket.notifyTyping(self.rid, state)
+
     async def reply(self, msg):
         await self.rocket.sendMsg(self.rid, msg)
 
