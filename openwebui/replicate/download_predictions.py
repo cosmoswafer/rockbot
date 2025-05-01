@@ -154,7 +154,7 @@ def download_prediction(prediction):
                 prediction_created_at=prediction.created_at,
                 status=status,
             )
-            
+
         elif isinstance(prediction.output, list):
             results = handle_list_output(prediction.output, download_dir, prediction.id)
             for filename, status in results:
@@ -164,7 +164,7 @@ def download_prediction(prediction):
                     prediction_created_at=prediction.created_at,
                     status=status,
                 )
-                
+
         elif isinstance(prediction.output, dict):
             filename, status = handle_dict_output(prediction.output, download_dir, prediction.id)
             update_download_log(
@@ -173,7 +173,7 @@ def download_prediction(prediction):
                 prediction_created_at=prediction.created_at,
                 status=status,
             )
-            
+
         else:
             print(f"Unknown output type: {type(prediction.output)}")
             print(prediction.output)
@@ -183,7 +183,7 @@ def download_prediction(prediction):
                 prediction_created_at=prediction.created_at,
                 status="unknown",
             )
-        
+
     except Exception as e:
         print(f"Error processing prediction {prediction.id}: {str(e)}")
         filename = getattr(e, 'filename', 'unknown')
@@ -200,10 +200,10 @@ def parse_args():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(description='Download Replicate predictions')
     parser.add_argument(
-        '--all-pages',
-        action='store_true',
-        default=False,
-        help='Download predictions from all pages (default: only first page)'
+        '--max-pages',
+        type=int,
+        default=100,
+        help='Maximum number of pages to download (default: 100)'
     )
     parser.add_argument(
         '--stop-latest',
@@ -222,16 +222,16 @@ def main():
     # Start with an empty string cursor for first page
     cursor = ""
     page_count = 0
-    
+
     while True:
         page_count += 1
         # Get predictions with pagination
         predictions = replicate.predictions.list() if not cursor else replicate.predictions.list(cursor=cursor)
-        
+
         # Break if no predictions in this page
         if not predictions:
             break
-            
+
         for prediction in predictions:
             # Check if prediction is already completely downloaded
             prediction_files = download_log[download_log['prediction_id'] == prediction.id]
@@ -241,23 +241,23 @@ def main():
                     print("Reached latest downloaded prediction, stopping as requested...")
                     return  # Exit the function entirely
                 continue
-                
+
             try:
                 print(f"Downloading prediction {prediction.id}...")
                 download_prediction(prediction)
                 time.sleep(1)  # Add small delay to avoid rate limiting
             except Exception as e:
                 print(f"Error downloading prediction {prediction.id}: {str(e)}")
-        
+
         # Get cursor for next page
         cursor = predictions.next
-        
+
         # Break if no more pages or if we only want the first page
-        if not cursor or (not args.all_pages and page_count >= 1):
+        if not cursor or page_count >= args.max_pages:
             break
-        
+
         print(f"Moving to next page...")
-    
+
     print("Download complete!")
 
 
