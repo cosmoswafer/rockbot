@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Supported image extensions
-IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.webp')
+IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.webp', '.png')
 
 # Replicate API token should be set in .env file
 if not os.getenv("REPLICATE_API_TOKEN"):
