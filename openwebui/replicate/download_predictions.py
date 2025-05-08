@@ -18,6 +18,7 @@ load_dotenv()
 
 # Supported image extensions
 IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.webp', '.png')
+DOWNLOAD_LOG_FILENAME = "download_log.csv"
 
 # Replicate API token should be set in .env file
 if not os.getenv("REPLICATE_API_TOKEN"):
@@ -85,10 +86,7 @@ def handle_dict_output(output_dict, download_dir, prediction_id):
 
 def get_download_log():
     """Initialize or load download log CSV file"""
-    # Create downloads directory if it doesn't exist
-    os.makedirs("replicate_downloads", exist_ok=True)
-
-    log_file = Path("replicate_downloads/download_log.csv")
+    log_file = Path("download_log.csv")
     if not log_file.exists():
         df = pd.DataFrame(
             columns=[
@@ -105,11 +103,9 @@ def get_download_log():
 
 def update_download_log(prediction_id, filename, prediction_created_at, status):
     """Update the download log with new entry"""
-    log_file = Path("replicate_downloads/download_log.csv")
+    log_file = Path("download_log.csv")
     df = pd.read_csv(log_file)
 
-    # Check if entry exists
-    mask = (df["prediction_id"] == prediction_id) & (df["filename"] == filename)
     new_row = {
         "prediction_id": prediction_id,
         "filename": filename,
@@ -118,11 +114,11 @@ def update_download_log(prediction_id, filename, prediction_created_at, status):
         "status": status,
     }
 
+    # Check if entry exists and update, otherwise add new entry
+    mask = (df["prediction_id"] == prediction_id) & (df["filename"] == filename)
     if mask.any():
-        # Update existing entry
         df.loc[mask] = pd.Series(new_row)
     else:
-        # Add new entry
         df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
 
     df.to_csv(log_file, index=False)
