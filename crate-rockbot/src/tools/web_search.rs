@@ -5,30 +5,41 @@ use crate::error::{Result, RockBotError};
 use crate::tool::Tool;
 
 pub struct WebSearchTool {
-    api_key: String,
+    api_key: Option<String>,
     http_client: reqwest::Client,
 }
 
 impl WebSearchTool {
     pub fn new(api_key: impl Into<String>) -> Self {
+        let key = api_key.into();
+        let key = if key.is_empty() { None } else { Some(key) };
         Self {
-            api_key: api_key.into(),
+            api_key: key,
             http_client: reqwest::Client::new(),
         }
     }
 
     pub fn with_client(api_key: impl Into<String>, client: reqwest::Client) -> Self {
+        let key = api_key.into();
+        let key = if key.is_empty() { None } else { Some(key) };
         Self {
-            api_key: api_key.into(),
+            api_key: key,
             http_client: client,
         }
     }
 
     async fn search_exa(&self, query: &str) -> Result<String> {
+        let api_key = self.api_key.as_deref().ok_or_else(|| {
+            RockBotError::Provider(
+                "web_search requires EXA_API_KEY to be set. Configure it in your environment."
+                    .into(),
+            )
+        })?;
+
         let response = self
             .http_client
             .post("https://api.exa.ai/search")
-            .header("x-api-key", &self.api_key)
+            .header("x-api-key", api_key)
             .header("Content-Type", "application/json")
             .json(&serde_json::json!({
                 "query": query,

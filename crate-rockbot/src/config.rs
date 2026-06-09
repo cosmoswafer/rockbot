@@ -1,11 +1,16 @@
 use serde::Deserialize;
 use std::collections::HashMap;
+use webdav::WebDavConfig;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AppConfig {
     pub rocketchat: RocketChatSection,
     #[serde(default)]
     pub providers: Vec<ProviderConfig>,
+    #[serde(default)]
+    pub tools: Vec<ToolServiceConfig>,
+    #[serde(default)]
+    pub webdav: Option<WebDavConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -42,6 +47,12 @@ fn default_max_text_length() -> usize {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct ToolServiceConfig {
+    pub name: String,
+    pub api_key: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct ProviderConfig {
     pub name: String,
     pub api_key: String,
@@ -60,6 +71,7 @@ impl AppConfig {
     pub fn from_file(path: &str) -> crate::error::Result<Self> {
         let content = std::fs::read_to_string(path)?;
         let config: Self = toml::from_str(&content)?;
+        config.validate()?;
         Ok(config)
     }
 
@@ -68,8 +80,19 @@ impl AppConfig {
         Ok(config)
     }
 
+    pub fn validate(&self) -> crate::error::Result<()> {
+        let provider_name = &self.rocketchat.model.default_provider;
+        self.find_provider(provider_name)
+            .ok_or_else(|| crate::error::RockBotError::ProviderNotFound(provider_name.clone()))?;
+        Ok(())
+    }
+
     pub fn find_provider(&self, name: &str) -> Option<&ProviderConfig> {
         self.providers.iter().find(|p| p.name == name)
+    }
+
+    pub fn find_tool(&self, name: &str) -> Option<&ToolServiceConfig> {
+        self.tools.iter().find(|t| t.name == name)
     }
 
     pub fn resolve_model(&self, provider_name: &str, model_alias: &str) -> Option<String> {
@@ -83,5 +106,12 @@ impl ProviderConfig {
         let base = self.base_url.trim_end_matches('/');
         let path = self.chat_path.as_deref().unwrap_or("/chat/completions");
         format!("{}{}", base, path)
+    }
+
+    pub fn validate_api_key(&self) -> crate::error::Result<()> {
+        if self.api_key.is_empty() || self.api_key == "EDITME" {
+            return Err(crate::error::RockBotError::MissingApiKey(self.name.clone()));
+        }
+        Ok(())
     }
 }

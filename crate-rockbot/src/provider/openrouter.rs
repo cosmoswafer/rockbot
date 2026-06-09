@@ -24,14 +24,9 @@ impl std::fmt::Debug for OpenRouterProvider {
 
 impl OpenRouterProvider {
     pub fn new(config: &ProviderConfig, model: impl Into<String>) -> Result<Self> {
+        config.validate_api_key()?;
         let api_key = config.api_key.clone();
-        if api_key.is_empty() || api_key == "EDITME" {
-            return Err(RockBotError::MissingApiKey(config.name.clone()));
-        }
-
-        let base_url = config.base_url.trim_end_matches('/').to_string();
-        let chat_path = config.chat_path.as_deref().unwrap_or("/chat/completions");
-        let full_url = format!("{}{}", base_url, chat_path);
+        let full_url = config.chat_url();
 
         Ok(Self {
             api_key,
@@ -46,14 +41,9 @@ impl OpenRouterProvider {
         model: impl Into<String>,
         client: reqwest::Client,
     ) -> Result<Self> {
+        config.validate_api_key()?;
         let api_key = config.api_key.clone();
-        if api_key.is_empty() || api_key == "EDITME" {
-            return Err(RockBotError::MissingApiKey(config.name.clone()));
-        }
-
-        let base_url = config.base_url.trim_end_matches('/').to_string();
-        let chat_path = config.chat_path.as_deref().unwrap_or("/chat/completions");
-        let full_url = format!("{}{}", base_url, chat_path);
+        let full_url = config.chat_url();
 
         Ok(Self {
             api_key,

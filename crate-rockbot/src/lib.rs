@@ -7,7 +7,7 @@ pub mod tool;
 pub mod tools;
 pub mod types;
 
-pub use config::AppConfig;
+pub use config::{AppConfig, ProviderConfig};
 pub use error::{Result, RockBotError};
 pub use harness::AgentHarness;
 pub use memory::{ConversationHistory, MemoryManager, RoomState};

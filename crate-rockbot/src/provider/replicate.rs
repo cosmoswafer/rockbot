@@ -19,16 +19,11 @@ impl std::fmt::Debug for ReplicateProvider {
 
 impl ReplicateProvider {
     pub fn new(config: &ProviderConfig, model: impl Into<String>) -> Result<Self> {
-        let api_key = config.api_key.clone();
-        if api_key.is_empty() || api_key == "EDITME" {
-            return Err(RockBotError::MissingApiKey(config.name.clone()));
-        }
-
-        let base_url = config.base_url.trim_end_matches('/').to_string();
+        config.validate_api_key()?;
 
         Ok(Self {
-            api_key,
-            base_url,
+            api_key: config.api_key.clone(),
+            base_url: config.base_url.trim_end_matches('/').to_string(),
             model: model.into(),
             http_client: reqwest::Client::new(),
         })
@@ -39,16 +34,11 @@ impl ReplicateProvider {
         model: impl Into<String>,
         client: reqwest::Client,
     ) -> Result<Self> {
-        let api_key = config.api_key.clone();
-        if api_key.is_empty() || api_key == "EDITME" {
-            return Err(RockBotError::MissingApiKey(config.name.clone()));
-        }
-
-        let base_url = config.base_url.trim_end_matches('/').to_string();
+        config.validate_api_key()?;
 
         Ok(Self {
-            api_key,
-            base_url,
+            api_key: config.api_key.clone(),
+            base_url: config.base_url.trim_end_matches('/').to_string(),
             model: model.into(),
             http_client: client,
         })

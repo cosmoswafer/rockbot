@@ -161,6 +161,83 @@ reasoner = "deepseek-reasoner"
 }
 
 #[test]
+fn test_tool_config_deserialize() {
+    let toml = r#"
+[rocketchat.server]
+url = "test.example.com"
+username = "bot"
+password = "secret"
+debug = false
+
+[rocketchat.model]
+default_provider = "openrouter"
+default_model = "deepseek"
+max_history_size = 12
+max_text_length = 50000
+
+[[providers]]
+name = "openrouter"
+api_key = "sk-or-v1-test"
+base_url = "https://openrouter.ai/api/v1"
+
+[providers.models]
+deepseek = "deepseek/deepseek-v3.2:online"
+
+[[tools]]
+name = "exa"
+api_key = "exa-key-123"
+"#;
+    let config = AppConfig::from_str(toml).unwrap();
+    assert_eq!(config.tools.len(), 1);
+    assert_eq!(config.tools[0].name, "exa");
+    assert_eq!(config.tools[0].api_key, "exa-key-123");
+}
+
+#[test]
+fn test_find_tool() {
+    let toml = r#"
+[rocketchat.server]
+url = "test.example.com"
+username = "bot"
+password = "secret"
+debug = false
+
+[rocketchat.model]
+default_provider = "openrouter"
+default_model = "deepseek"
+max_history_size = 12
+max_text_length = 50000
+
+[[providers]]
+name = "openrouter"
+api_key = "sk-or-v1-test"
+base_url = "https://openrouter.ai/api/v1"
+
+[providers.models]
+deepseek = "deepseek/deepseek-v3.2:online"
+
+[[tools]]
+name = "exa"
+api_key = "exa-key-123"
+
+[[tools]]
+name = "vision"
+api_key = "vis-key-456"
+"#;
+    let config = AppConfig::from_str(toml).unwrap();
+
+    let exa = config.find_tool("exa");
+    assert!(exa.is_some());
+    assert_eq!(exa.unwrap().api_key, "exa-key-123");
+
+    let vision = config.find_tool("vision");
+    assert!(vision.is_some());
+    assert_eq!(vision.unwrap().api_key, "vis-key-456");
+
+    assert!(config.find_tool("nonexistent").is_none());
+}
+
+#[test]
 fn test_provider_chat_url_default() {
     let config = ProviderConfig {
         name: "test".into(),

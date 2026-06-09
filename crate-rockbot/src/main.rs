@@ -10,7 +10,6 @@ use rockbot::harness::AgentHarness;
 use rockbot::provider::{AiProvider, DeepSeekProvider, OpenRouterProvider};
 use rockbot::tool::ToolRegistry;
 use rockbot::tools::{VisionTool, WebFetchTool, WebSearchTool};
-use webdav::WebDavConfig;
 
 fn setup_logging() {
     let subscriber = FmtSubscriber::builder()
@@ -46,7 +45,7 @@ fn main() {
 
     let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
     rt.block_on(async {
-        if let Err(e) = run_bot(config, config_path).await {
+        if let Err(e) = run_bot(config).await {
             error!("Bot exited with error: {}", e);
             std::process::exit(1);
         }
@@ -54,7 +53,7 @@ fn main() {
     });
 }
 
-async fn run_bot(config: AppConfig, config_path: String) -> Result<(), Box<dyn std::error::Error>> {
+async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     let provider: Box<dyn AiProvider> = {
         let provider_name = &config.rocketchat.model.default_provider;
         let model_alias = &config.rocketchat.model.default_model;
@@ -87,26 +86,30 @@ async fn run_bot(config: AppConfig, config_path: String) -> Result<(), Box<dyn s
         }
     };
 
-    let webdav = {
-        match WebDavConfig::from_file(&config_path) {
-            Ok(cfg) => {
-                info!("WebDAV config loaded");
-                Some(cfg.create_client()?)
-            }
-            Err(_) => {
-                warn!("No WebDAV config found, running without persistent storage");
-                None
-            }
+    let webdav = match &config.webdav {
+        Some(cfg) => {
+            info!("WebDAV config loaded");
+            Some(cfg.create_client()?)
+        }
+        None => {
+            warn!("No WebDAV config found, running without persistent storage");
+            None
         }
     };
+
+    let exa_key = config
+        .find_tool("exa")
+        .map(|t| t.api_key.clone())
+        .or_else(|| env::var("EXA_API_KEY").ok())
+        .unwrap_or_default();
 
     let mut harness = AgentHarness::new(config, provider, webdav);
 
     let mut tool_registry = ToolRegistry::new();
-    let exa_key = env::var("EXA_API_KEY").unwrap_or_default();
-    if !exa_key.is_empty() {
-        tool_registry.register(Box::new(WebSearchTool::new(&exa_key)));
-        tool_registry.register(Box::new(WebFetchTool::with_exa_key(&exa_key)));
+    let has_exa = !exa_key.is_empty();
+    tool_registry.register(Box::new(WebSearchTool::new(exa_key.clone())));
+    if has_exa {
+        tool_registry.register(Box::new(WebFetchTool::with_exa_key(exa_key)));
     } else {
         tool_registry.register(Box::new(WebFetchTool::new()));
     }
