@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Once};
 
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::Mutex;
@@ -12,6 +12,8 @@ use crate::error::{Result, RocketChatError};
 use crate::types::{IncomingMessage, MessageFilter};
 
 const SUBSCRIPTION_ID: &str = "ABCROCK";
+
+static INIT_CRYPTO: Once = Once::new();
 
 type WsStream =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
@@ -121,6 +123,10 @@ impl RocketChatClient {
         F: Fn(IncomingMessage, MessageSender) -> Fut + Send + Sync + 'static,
         Fut: std::future::Future<Output = ()> + Send + 'static,
     {
+        INIT_CRYPTO.call_once(|| {
+            let _ = rustls::crypto::ring::default_provider().install_default();
+        });
+
         let handler = Arc::new(handler);
         let uri = self.config.ws_uri()?;
         info!("Connecting to {}", uri);

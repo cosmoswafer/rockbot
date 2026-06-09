@@ -12,7 +12,10 @@ pub enum RocketChatError {
     Io(#[from] std::io::Error),
 
     #[error("Config error: {0}")]
-    Config(#[from] toml::de::Error),
+    Config(String),
+
+    #[error("Missing config section: {0}")]
+    MissingConfig(String),
 
     #[error("Invalid URL: {0}")]
     InvalidUrl(String),
@@ -36,6 +39,18 @@ pub enum RocketChatError {
 impl From<tokio_tungstenite::tungstenite::Error> for RocketChatError {
     fn from(e: tokio_tungstenite::tungstenite::Error) -> Self {
         RocketChatError::WebSocket(Box::new(e))
+    }
+}
+
+impl From<toml::de::Error> for RocketChatError {
+    fn from(e: toml::de::Error) -> Self {
+        RocketChatError::Config(e.to_string())
+    }
+}
+
+impl From<toml::ser::Error> for RocketChatError {
+    fn from(e: toml::ser::Error) -> Self {
+        RocketChatError::Config(e.to_string())
     }
 }
 

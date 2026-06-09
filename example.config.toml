@@ -1,11 +1,12 @@
-[rocketchat]
+[rocketchat.server]
 url = "your-server.example.com"
 username = "EDITME"
 password = "EDITME"
 debug = false
+
+[rocketchat.model]
 default_provider = "deepseek"
 default_model = "deepseek-v4-flash"
-tools = false
 max_history_size = 12
 max_text_length = 50000
 

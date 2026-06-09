@@ -13,14 +13,15 @@ use std::collections::HashMap;
 #[test]
 fn test_config_from_example_toml() {
     let toml_content = r#"
-[rocketchat]
+[rocketchat.server]
 url = "your-server.example.com"
 username = "bot"
 password = "secret"
 debug = false
+
+[rocketchat.model]
 default_provider = "openrouter"
 default_model = "deepseek"
-tools = false
 max_history_size = 12
 max_text_length = 50000
 
@@ -45,10 +46,10 @@ reasoner = "deepseek-reasoner"
 "#;
     let config = AppConfig::from_str(toml_content).unwrap();
 
-    assert_eq!(config.rocketchat.default_provider, "openrouter");
-    assert_eq!(config.rocketchat.default_model, "deepseek");
-    assert_eq!(config.rocketchat.max_history_size, 12);
-    assert_eq!(config.rocketchat.max_text_length, 50000);
+    assert_eq!(config.rocketchat.model.default_provider, "openrouter");
+    assert_eq!(config.rocketchat.model.default_model, "deepseek");
+    assert_eq!(config.rocketchat.model.max_history_size, 12);
+    assert_eq!(config.rocketchat.model.max_text_length, 50000);
 
     assert_eq!(config.providers.len(), 2);
 
@@ -74,14 +75,15 @@ reasoner = "deepseek-reasoner"
 #[test]
 fn test_config_find_provider() {
     let toml = r#"
-[rocketchat]
+[rocketchat.server]
 url = "test.example.com"
 username = "bot"
 password = "secret"
 debug = false
+
+[rocketchat.model]
 default_provider = "openrouter"
 default_model = "deepseek"
-tools = false
 max_history_size = 12
 max_text_length = 50000
 
@@ -111,14 +113,15 @@ chat = "deepseek-chat"
 #[test]
 fn test_config_resolve_model() {
     let toml = r#"
-[rocketchat]
+[rocketchat.server]
 url = "test.example.com"
 username = "bot"
 password = "secret"
 debug = false
+
+[rocketchat.model]
 default_provider = "openrouter"
 default_model = "deepseek"
-tools = false
 max_history_size = 12
 max_text_length = 50000
 

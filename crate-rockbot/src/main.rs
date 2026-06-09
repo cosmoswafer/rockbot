@@ -56,8 +56,8 @@ fn main() {
 
 async fn run_bot(config: AppConfig, config_path: String) -> Result<(), Box<dyn std::error::Error>> {
     let provider: Box<dyn AiProvider> = {
-        let provider_name = &config.rocketchat.default_provider;
-        let model_alias = &config.rocketchat.default_model;
+        let provider_name = &config.rocketchat.model.default_provider;
+        let model_alias = &config.rocketchat.model.default_model;
 
         let provider_config = config
             .find_provider(provider_name)
@@ -127,17 +127,17 @@ async fn run_bot(config: AppConfig, config_path: String) -> Result<(), Box<dyn s
 
     let bot_name = {
         let h = harness.lock().await;
-        format!("@{}", h.config().rocketchat.username)
+        format!("@{}", h.config().rocketchat.server.username)
     };
 
     let rocketchat_config = {
         let h = harness.lock().await;
         rocketchat::RocketChatConfig {
             server: rocketchat::config::ServerConfig {
-                url: h.config().rocketchat.url.clone(),
-                username: h.config().rocketchat.username.clone(),
-                password: h.config().rocketchat.password.clone(),
-                debug: h.config().rocketchat.debug,
+                url: h.config().rocketchat.server.url.clone(),
+                username: h.config().rocketchat.server.username.clone(),
+                password: h.config().rocketchat.server.password.clone(),
+                debug: h.config().rocketchat.server.debug,
                 use_tls: true,
             },
         }

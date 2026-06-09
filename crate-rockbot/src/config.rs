@@ -10,15 +10,23 @@ pub struct AppConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct RocketChatSection {
+    pub server: ServerConfig,
+    pub model: ModelConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ServerConfig {
     pub url: String,
     pub username: String,
     pub password: String,
     #[serde(default)]
     pub debug: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ModelConfig {
     pub default_provider: String,
     pub default_model: String,
-    #[serde(default)]
-    pub tools: bool,
     #[serde(default = "default_max_history_size")]
     pub max_history_size: usize,
     #[serde(default = "default_max_text_length")]

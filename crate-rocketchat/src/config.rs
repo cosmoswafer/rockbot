@@ -23,9 +23,17 @@ fn default_true() -> bool {
 
 impl RocketChatConfig {
     /// Load configuration from a TOML file path.
+    /// Expects the server config under a `[rocketchat.server]` section.
     pub fn from_file(path: &str) -> Result<Self, crate::error::RocketChatError> {
         let content = std::fs::read_to_string(path)?;
-        let config: Self = toml::from_str(&content)?;
+        let table: toml::Table = toml::from_str(&content)?;
+        let rocketchat = table
+            .get("rocketchat")
+            .ok_or_else(|| crate::error::RocketChatError::MissingConfig(
+                "missing [rocketchat] section in config".into()
+            ))?;
+        let rc_str = toml::to_string(rocketchat)?;
+        let config: Self = toml::from_str(&rc_str)?;
         Ok(config)
     }
 

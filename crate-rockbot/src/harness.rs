@@ -36,8 +36,8 @@ impl AgentHarness {
         provider: Box<dyn AiProvider>,
         webdav: Option<WebDavClient>,
     ) -> Self {
-        let max_chars = config.rocketchat.max_text_length;
-        let max_history = config.rocketchat.max_history_size;
+        let max_chars = config.rocketchat.model.max_text_length;
+        let max_history = config.rocketchat.model.max_history_size;
         let config = Arc::new(config);
         Self {
             config,
@@ -216,15 +216,15 @@ impl AgentHarness {
     fn resolve_model(&self) -> String {
         self.config
             .resolve_model(
-                &self.config.rocketchat.default_provider,
-                &self.config.rocketchat.default_model,
+                &self.config.rocketchat.model.default_provider,
+                &self.config.rocketchat.model.default_model,
             )
             .unwrap_or_else(|| {
                 warn!(
                     "Model alias '{}' not found for provider '{}', using raw model name",
-                    self.config.rocketchat.default_model, self.config.rocketchat.default_provider
+                    self.config.rocketchat.model.default_model, self.config.rocketchat.model.default_provider
                 );
-                self.config.rocketchat.default_model.clone()
+                self.config.rocketchat.model.default_model.clone()
             })
     }
 
@@ -339,14 +339,15 @@ mod tests {
     fn make_test_config() -> AppConfig {
         AppConfig::from_str(
             r#"
-[rocketchat]
+[rocketchat.server]
 url = "test.example.com"
 username = "bot"
 password = "secret"
 debug = false
+
+[rocketchat.model]
 default_provider = "mock"
 default_model = "chat"
-tools = false
 max_history_size = 12
 max_text_length = 50000
 
