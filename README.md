@@ -133,6 +133,7 @@ See [memory management DFD](_dfds/memory.md) for the full pipeline.
 | [RocketChat](_dfds/rocketchat.md) | 1 | Auth, WebSocket, message filtering |
 | [AI Provider](_dfds/base/ai-provider.md) | 1 | Trait abstraction, vision payloads |
 | [Memory](_dfds/memory.md) | 1 | History, summarization, archival |
+| [Knowledge](_dfds/knowledge.md) | 1 | Fact extraction from memory, indexed `.md` storage, context injection |
 | [WebDAV](_dfds/tools/webdav.md) | 1 | NextCloud storage operations |
 
 ## Crate: `rocketchat`
