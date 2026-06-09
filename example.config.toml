@@ -29,11 +29,11 @@ base_url = "https://api.replicate.com/v1/predictions"
 [providers.models]
 flux-1.1-pro-ultra = "black-forest-labs/flux-1.1-pro-ultra"
 
-[webdav]
-url = "https://cloud.example.com/remote.php/dav/files/EDITME"
-username = "EDITME"
-password = "EDITME"
-root = "rockbot"
+[rocketchat.model]
+default_provider = "deepseek"
+default_model = "deepseek-v4-flash"
+max_history_size = 12
+max_text_length = 50000
 
 [rocketchat.server]
 url = "your-server.example.com"
@@ -41,8 +41,8 @@ username = "EDITME"
 password = "EDITME"
 debug = false
 
-[rocketchat.model]
-default_provider = "deepseek"
-default_model = "deepseek-v4-flash"
-max_history_size = 12
-max_text_length = 50000
+[webdav]
+url = "https://cloud.example.com/remote.php/dav/files/EDITME"
+username = "EDITME"
+password = "EDITME"
+root = "rockbot"
