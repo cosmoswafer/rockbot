@@ -28,7 +28,7 @@ sequenceDiagram
 
     B->>RC: {"msg":"connect","version":"1","support":["1"]}
     RC-->>B: {"msg":"connected"}
-    B->>RC: {"msg":"method","method":"login","params":[{user,{digest,algorithm:"sha-256"}}]}
+    B->>RC: {"msg":"method","method":"login","params":[{user,password}]}
     RC-->>B: {"msg":"result","result":{"id":"...","token":"..."}}
     B->>RC: {"msg":"sub","name":"stream-room-messages","params":["__my_messages__",false]}
     RC-->>B: {"msg":"ready","subs":["ABCROCK"]}
@@ -50,7 +50,7 @@ The dispatch table (`cbdist`) routes every incoming server frame by its
 
 | `msg`       | Handler           | Behavior |
 |-------------|-------------------|----------|
-| `connected` | `_cb_connected`   | Sends `login` method; password hashed with SHA-256 as `{digest, algorithm}` per the [Rocket.Chat realtime login spec](https://web.archive.org/web/20220728050012/https://developer.rocket.chat/reference/api/realtime-api/method-calls/login) |
+| `connected` | `_cb_connected`   | Sends `login` method with username and plaintext password (line 84); the [official spec](https://web.archive.org/web/20220728050012/https://developer.rocket.chat/reference/api/realtime-api/method-calls/login) requires SHA-256 digest — our client relies on the server accepting plaintext |
 | `result`    | `_rt_dispatch`    | Extracts `id` (stored as `self.uid`) and `token`; triggers `_gologin()` to subscribe |
 | `ready`     | *(not handled)*   | Server confirms subscription is active (`"subs":["ABCROCK"]`); ignored silently |
 | `nosub`     | *(not handled)*   | Server reports subscription loss; passes through uncaught |
@@ -106,7 +106,7 @@ flowchart TB
 |--------------|----------------|
 | Transport    | `websockets` library over `wss://`; single persistent connection |
 | Handshake    | DDP `{"msg":"connect","version":"1","support":["1"]}`; server responds `{"msg":"connected"}` |
-| Auth         | `{"msg":"method","method":"login"}` with username and SHA-256 hashed password: `{"password":{"digest":"<hex>","algorithm":"sha-256"}}` |
+| Auth         | `{"msg":"method","method":"login"}` with username and plaintext password (`self._password`); the official API spec requires `{"password":{"digest":"<sha256>","algorithm":"sha-256"}}` — this client does **not** hash the password |
 | Keepalive    | Reactive only: responds to server `ping` with `pong`; no proactive heartbeat or watchdog timer |
 | Subscription | `{"msg":"sub","name":"stream-room-messages","params":["__my_messages__",false]}` — the `false` flag selects DDP delta mode (only `changed` events, no `added` for existing messages) |
 | Send         | `{"msg":"method","method":"sendMessage","params":[{rid, msg}]}`; optional `tmid` for threading is available in the DDP API but not exposed by `sendMsg()` |
@@ -124,7 +124,7 @@ flowchart TD
 
     CONNECT -->|"DDP connect"| RC["Rocket.Chat\n(DDP over WebSocket)"]
     RC -->|"msg: connected"| AUTH
-    AUTH -->|"login + sha256(password)"| RC
+    AUTH -->|"login + plaintext password"| RC
     RC -->|"msg: result {id, token}"| AUTH
     AUTH -->|"store uid"| SUB
     SUB -->|"msg: sub stream-room-messages"| RC
@@ -141,13 +141,15 @@ The login payload (`_cb_connected` at `RocketChatBot.py:75`):
     "id": "42",
     "params": [{
         "user": { "username": "rockbot" },
-        "password": {
-            "digest": "<sha256 hex hash>",
-            "algorithm": "sha-256"
-        }
+        "password": "plaintext-password"
     }]
 }
 ```
+
+> The [official realtime API login spec](https://web.archive.org/web/20220728050012/https://developer.rocket.chat/reference/api/realtime-api/method-calls/login)
+> requires the password to be sent as `{"password":{"digest":"<sha256>","algorithm":"sha-256"}}`.
+> Our client passes it as a plain string and relies on the server accepting
+> plaintext credentials (many self-hosted instances do).
 
 The server responds with an auth result containing the user id, token, and
 optional `tokenExpires` date (not consumed by this client):
