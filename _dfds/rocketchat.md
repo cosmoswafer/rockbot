@@ -2,8 +2,8 @@
 
 ## 1. Purpose
 
-Standalone reusable crate (`rocketchat`) that manages the full lifecycle of a
-RocketChat connection: REST authentication, WebSocket event streaming, message
+Python module (`RocketChatBot`) that manages the full lifecycle of a
+RocketChat connection: WebSocket authentication, event streaming, message
 parsing/filtering, and reply delivery. Only DMs and @mentions are forwarded to
 the agent.
 
@@ -19,7 +19,6 @@ the agent.
 flowchart TD
     CFG[ServerConfig]
     AUTH(Authenticate)
-    SESSION[(SessionStore)]
     CONNECT(ConnectWebSocket)
     STREAM(StreamEvents)
     PARSE(ParseEvent)
@@ -28,17 +27,14 @@ flowchart TD
     SEND(SendReply)
     BOT_USER[BotUserId]
     HARNESS[Agent Loop]
-    RC_API[RocketChat REST API]
     RC_WS[RocketChat WebSocket]
 
     CFG -->|"credentials"| AUTH
-    AUTH -->|"login request"| RC_API
-    RC_API -->|"auth token + userId"| AUTH
-    AUTH -->|"session"| SESSION
+    CONNECT -->|"ws upgrade + connect msg"| RC_WS
+    RC_WS -->|"connected event"| AUTH
+    AUTH -->|"login method"| RC_WS
+    RC_WS -->|"result {id, token}"| AUTH
     AUTH -->|"userId"| BOT_USER
-    SESSION -->|"auth token"| CONNECT
-    CONNECT -->|"ws:// upgrade"| RC_WS
-    RC_WS -->|"connected"| STREAM
     RC_WS -->|"raw JSON frame"| STREAM
     STREAM -->|"JSON event"| PARSE
     BOT_USER -->|"bot user id"| FILTER
@@ -46,31 +42,27 @@ flowchart TD
     FILTER -->|"IncomingMessage"| DISPATCH
     DISPATCH -->|"message"| HARNESS
     HARNESS -->|"BotReply"| SEND
-    SEND -->|"POST /chat.sendMessage"| RC_API
-    RC_API -->|"delivery status"| SEND
+    SEND -->|"sendMessage method"| RC_WS
 ```
 
 ### 2b. Error Handling & Fallbacks
+
+The Python implementation has minimal internal error recovery — any WebSocket
+exception propagates uncaught and terminates the process. External restart is
+provided by the shell wrapper (`manual_start.sh`) with a fixed 5s delay and
+retry counter.
 
 ```mermaid
 flowchart TD
     AUTH(Authenticate)
     CONNECT(ConnectWebSocket)
     STREAM(StreamEvents)
-    REAUTH(ReAuthenticate)
-    RECONNECT(ReconnectWs)
-    BACKOFF(ExponentialBackoff)
-    RC_API[RocketChat REST API]
-    RC_WS[RocketChat WebSocket]
+    RESTART[Shell Restart Wrapper]
 
-    AUTH -->|"401 / invalid credentials"| BACKOFF
-    CONNECT -->|"connection refused"| BACKOFF
-    STREAM -->|"ws closed / error"| RECONNECT
-    BACKOFF -->|"retry delay"| REAUTH
-    REAUTH -->|"new token"| RC_API
-    RECONNECT -->|"ws:// upgrade"| RC_WS
-    STREAM -->|"ping"| RC_WS
-    RC_WS -->|"pong"| STREAM
+    AUTH -->|"exception"| RESTART
+    CONNECT -->|"exception"| RESTART
+    STREAM -->|"exception"| RESTART
+    RESTART -.->|"fixed 5s delay"| CONNECT
 ```
 
 ### 2c. Message Filter Deep Dive
@@ -95,6 +87,46 @@ flowchart TD
     BOT_ID -->|"id"| CHECK_AT
 ```
 
+### 2d. Ping/Pong Keepalive Deep Dive
+
+The RocketChat server periodically sends `{"msg": "ping"}` to keep the
+WebSocket alive. The bot responds immediately with `{"msg": "pong"}`. This
+diagram decomposes the `StreamEvents` (STREAM) process from Level 1, showing
+the internal dispatch that routes frames by `msg` field.
+
+```mermaid
+flowchart TD
+    WS[RocketChat WebSocket]
+    RECV(ReceiveFrame)
+    PARSE(ParseJson)
+    ROUTE(RouteByMsgField)
+    CMD[(DispatchTable)]
+    PONG(RespondPong)
+    FORWARD(ForwardChanged)
+
+    WS -->|"raw frame"| RECV
+    RECV -->|"frame string"| PARSE
+    PARSE -->|"json object"| ROUTE
+    CMD -->|"msg → callback mapping"| ROUTE
+    ROUTE -->|"msg == ping"| PONG
+    PONG -->|"{msg: pong}"| WS
+    ROUTE -->|"msg == changed"| FORWARD
+    FORWARD -->|"RawEvent"| PARSE_PROC[ParseEvent]
+```
+
+**Dispatch table** — the `cbdist` dict maps each `msg` value to a callback:
+
+| `msg` value    | Callback         | Action                            |
+| -------------- | ---------------- | --------------------------------- |
+| `"ping"`       | `_cb_ping`       | Send `{"msg": "pong"}`            |
+| `"connected"`  | `_cb_connected`  | Send login method                 |
+| `"result"`     | `_rt_dispatch`   | Extract userId, subscribe to room |
+| `"changed"`    | `_cb_changed`    | Forward to ParseEvent             |
+
+Note: the bot does **not** proactively send pings or monitor ping intervals —
+it only responds to server-initiated pings. A missing server ping will not be
+detected; a WebSocket error will propagate uncaught (see 2b).
+
 ## 3. Data Structures
 
 #### `IncomingMessage`
@@ -116,13 +148,12 @@ flowchart TD
 | `text`      | `String` | Reply content (Markdown supported)     |
 | `thread_id` | `Option<String>` | Reply in thread if set         |
 
-#### `SessionStore`
+#### `DispatchTable`
 
-| Field        | Type     | Notes                               |
-| ------------ | -------- | ----------------------------------- |
-| `auth_token` | `String` | X-Auth-Token from login             |
-| `user_id`    | `String` | Bot user ID                         |
-| `ws_url`     | `String` | Resolved WebSocket URL              |
+| Field    | Type         | Notes                             |
+| -------- | ------------ | --------------------------------- |
+| `msg`    | `String`     | WS frame type (key)               |
+| `cb`     | `Callable`   | Async callback (value)            |
 
 #### `RawEvent`
 
