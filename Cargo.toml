@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/rocketchat"]
+members = ["crates/rocketchat", "crates/rockbot", "crates/webdav"]
 resolver = "3"
 
 [workspace.package]

@@ -3,9 +3,13 @@
 ## 1. Purpose
 
 Thin abstraction over HTTP-based WebDAV (NextCloud) providing typed
-read/write/list/mkdir operations. All bot state — configuration backups, memory
+read/write/list/mkdir/delete operations. All bot state — configuration backups, memory
 archives, and image assets — is stored remotely; the bot never writes to local
 disk. Each room gets its own directory subtree.
+
+The client targets NextCloud's WebDAV API at the path:
+`{base_url}/remote.php/dav/files/{username}`. Authentication uses HTTP Basic Auth
+with an app password (generated via NextCloud's personal security settings).
 
 - Upstream: [Configuration Management](config.md) provides `WebDavConfig`
 - Upstream: [Memory Management](memory.md) stores and retrieves `.md` archives
@@ -24,6 +28,7 @@ flowchart TD
     WRITE(WriteFile)
     LIST(ListDirectory)
     MKDIR(EnsureDirectory)
+    DELETE(DeleteFile)
     HTTP(HttpClient)
     NC[(NextCloud WebDAV)]
 
@@ -33,10 +38,12 @@ flowchart TD
     RESOLVE -->|"put request"| WRITE
     RESOLVE -->|"propfind request"| LIST
     RESOLVE -->|"mkcol request"| MKDIR
+    RESOLVE -->|"delete request"| DELETE
     READ -->|"GET"| HTTP
     WRITE -->|"PUT with body"| HTTP
     LIST -->|"PROPFIND depth=1"| HTTP
     MKDIR -->|"MKCOL"| HTTP
+    DELETE -->|"DELETE"| HTTP
     HTTP -->|"http request"| NC
     NC -->|"response"| HTTP
     HTTP -->|"response body / status"| RESOLVE
@@ -54,6 +61,7 @@ flowchart TD
     ERR_NET[Error: Network Unreachable]
     MKDIR(EnsureDirectory)
     WRITE(WriteFile)
+    AUTO_MKCOL[AutoCreateParents]
 
     HTTP -.->|"401 unauthorized"| AUTH_REFRESH
     AUTH_REFRESH -.->|"refreshed auth"| RETRY
@@ -62,6 +70,8 @@ flowchart TD
     RETRY -.->|"retries exhausted"| ERR_NET
     WRITE -.->|"parent dir missing"| MKDIR
     MKDIR -.->|"mkcol success"| WRITE
+    WRITE -.->|"X-NC-WebDAV-AutoMkcol: 1"| AUTO_MKCOL
+    AUTO_MKCOL -.->|"nc32+ auto-created parents"| HTTP
 ```
 
 ### 2c. Directory Structure Deep Dive
@@ -121,9 +131,29 @@ flowchart TD
 
 #### `WebDavPath`
 
-| Method           | Returns    | Notes                                    |
-| ---------------- | ---------- | ---------------------------------------- |
-| `room_dir(id)`   | `String`   | `/{root}/{room_id}/`                     |
-| `memory_dir(id)` | `String`   | `/{root}/{room_id}/memory/`              |
-| `image_path(id, name)` | `String` | `/{root}/{room_id}/images/{name}`  |
-| `archive_path(id, seq)` | `String` | `/{root}/{room_id}/memory/{seq}_summary.md` |
+| Method                  | Returns    | Notes                                    |
+| ----------------------- | ---------- | ---------------------------------------- |
+| `room_dir(id)`          | `String`   | `/{root}/{room_id}/`                     |
+| `memory_dir(id)`        | `String`   | `/{root}/{room_id}/memory/`              |
+| `image_dir(id)`         | `String`   | `/{root}/{room_id}/images/`              |
+| `workspace_dir(id)`     | `String`   | `/{root}/{room_id}/workspace/`           |
+| `image_path(id, name)`  | `String`   | `/{root}/{room_id}/images/{name}`        |
+| `archive_path(id, seq)` | `String`   | `/{root}/{room_id}/memory/{seq:06}_summary.md` |
+| `room_path(id, file)`   | `String`   | `/{root}/{room_id}/{file_path}`          |
+| `config_backup_path(f)` | `String`   | `/{root}/config/{filename}/`             |
+
+## 4. NextCloud API Reference
+
+| DFD Operation      | HTTP Method | NextCloud Endpoint                        | Notes                                |
+| ------------------ | ----------- | ----------------------------------------- | ------------------------------------ |
+| ReadFile           | `GET`       | `{base}/files/{user}/{path}`              | Returns raw file bytes               |
+| WriteFile          | `PUT`       | `{base}/files/{user}/{path}`              | Overwrites existing files            |
+| WriteFileAutoMkcol | `PUT`       | `{base}/files/{user}/{path}`              | Set `X-NC-WebDAV-AutoMkcol: 1` header |
+| ListDirectory      | `PROPFIND`  | `{base}/files/{user}/{path}`              | `Depth: 1` for children              |
+| EnsureDirectory    | `MKCOL`     | `{base}/files/{user}/{path}`              | Returns 405 if exists                |
+| Delete             | `DELETE`    | `{base}/files/{user}/{path}`              | Recursive for folders                |
+| Exists             | `PROPFIND`  | `{base}/files/{user}/{path}`              | `Depth: 0` — 207 = exists, 404 = no  |
+
+The `X-NC-WebDAV-AutoMkcol` header (available since NextCloud 32) instructs the
+server to automatically create any missing parent directories when uploading a
+file, eliminating the need for explicit MKDIR fallback steps.
