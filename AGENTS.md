@@ -18,6 +18,17 @@ example.config.toml   # template for config; real config.toml is gitignored
 ## Runtime
 
 - Use `./tmp/` for runtime temporary files (logs, state, etc.). Never use `/tmp/` or other system-wide temp directories.
+- Start the bot in background:
+
+  ```bash
+  nohup ./target/release/rockbot > ./tmp/rockbot.log 2>&1 &
+  ```
+
+- Restart the bot:
+
+  ```bash
+  pkill -f './target/release/rockbot' 2>/dev/null; sleep 1; nohup ./target/release/rockbot > ./tmp/rockbot.log 2>&1 &
+  ```
 
 ## Build & test
 
