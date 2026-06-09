@@ -12,7 +12,6 @@ touching local disk.
 
 ```mermaid
 flowchart LR
-    User[User]
     RC[RocketChat Server]
     AI[AI Provider]
     NC[NextCloud WebDAV]
@@ -21,10 +20,8 @@ flowchart LR
     ImgGen[Image Generation API]
     Bot(("RockBot"))
 
-    User -->|"chat message"| RC
     RC -->|"DM / @mention event"| Bot
     Bot -->|"bot reply"| RC
-    RC -->|"bot reply"| User
 
     Bot -->|"chat completion request"| AI
     AI -->|"completion + tool calls"| Bot

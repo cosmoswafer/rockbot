@@ -20,12 +20,11 @@ flowchart TD
     AGENT[Agent]
     BUILD(BuildRequest)
     ROUTE(RouteProvider)
-    PROVIDER{AiProvider trait}
+    SELECT{SelectProvider}
     OPENROUTER(OpenRouter)
     DEEPSEEK(DeepSeek)
     HTTP(SendHttpRequest)
     PARSE(ParseResponse)
-    AGENT_OUT[CompletionResult]
     PROVIDER_API[Provider HTTP API]
 
     AGENT -->|"ChatRequest"| BUILD
@@ -37,8 +36,7 @@ flowchart TD
     HTTP -->|"HTTP POST"| PROVIDER_API
     PROVIDER_API -->|"JSON response body"| HTTP
     HTTP -->|"raw bytes"| PARSE
-    PARSE -->|"CompletionResult"| AGENT_OUT
-    AGENT_OUT -->|"text + tool_calls"| AGENT
+    PARSE -->|"text + tool_calls"| AGENT
 ```
 
 ### 2b. Error Handling & Fallbacks
@@ -49,42 +47,42 @@ flowchart TD
     PARSE(ParseResponse)
     RATE(RateLimitBackoff)
     RETRY(RetryWithBackoff)
-    ERR_API[Error: API Unreachable]
-    ERR_PARSE[Error: Malformed Response]
-    ERR_AUTH[Error: Invalid API Key]
+    REPORT_API(ReportApiError)
+    REPORT_PARSE(ReportParseError)
+    REPORT_AUTH(ReportAuthError)
     AGENT[Agent Loop]
 
     HTTP -->|"429 Too Many Requests"| RATE
     RATE -->|"wait + retry"| RETRY
     HTTP -->|"5xx Server Error"| RETRY
-    RETRY -->|"max retries exceeded"| ERR_API
-    HTTP -->|"401 Unauthorized"| ERR_AUTH
-    PARSE -->|"invalid JSON"| ERR_PARSE
-    ERR_API -->|"error"| AGENT
-    ERR_AUTH -->|"error"| AGENT
-    ERR_PARSE -->|"error"| AGENT
+    RETRY -->|"max retries exceeded"| REPORT_API
+    HTTP -->|"401 Unauthorized"| REPORT_AUTH
+    PARSE -->|"invalid JSON"| REPORT_PARSE
+    REPORT_API -->|"API unreachable"| AGENT
+    REPORT_AUTH -->|"invalid API key"| AGENT
+    REPORT_PARSE -->|"malformed response"| AGENT
 ```
 
 ### 2c. Vision Payload Deep Dive
 
 ```mermaid
 flowchart TD
-    MSG[ChatMessage]
+    AGENT[Agent]
     CHECK(CheckContentType)
     TEXT_ONLY(FormatTextContent)
     MULTI(FormatMultipartContent)
-    IMG_URL(ImageUrlPart)
-    IMG_B64(ImageBase64Part)
-    REQ[ProviderRequest]
+    BUILD_URL(BuildImageUrl)
+    BUILD_B64(BuildImageBase64)
+    REQUEST[(ChatRequest)]
 
-    MSG -->|"message"| CHECK
+    AGENT -->|"ChatMessage"| CHECK
     CHECK -->|"text only"| TEXT_ONLY
     CHECK -->|"text + image"| MULTI
-    CHECK -->|"image from WebDAV"| IMG_B64
-    TEXT_ONLY -->|"content string"| REQ
-    MULTI -->|"content array"| REQ
-    IMG_URL -->|"{type: image_url, url}"| MULTI
-    IMG_B64 -->|"{type: image_url, base64}"| MULTI
+    CHECK -->|"image from WebDAV"| BUILD_B64
+    TEXT_ONLY -->|"content string"| REQUEST
+    MULTI -->|"content array"| REQUEST
+    BUILD_URL -->|"{type: image_url, url}"| MULTI
+    BUILD_B64 -->|"{type: image_url, base64}"| MULTI
 ```
 
 ## 3. Data Structures
