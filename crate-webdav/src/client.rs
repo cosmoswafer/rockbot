@@ -1,5 +1,5 @@
 use base64::Engine;
-use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
+use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 use url::Url;
 
 use crate::error::{Result, WebDavError};
@@ -35,8 +35,11 @@ impl WebDavClient {
             base.push('/');
         }
 
-        let encoded = base64::engine::general_purpose::STANDARD
-            .encode(format!("{}:{}", username.as_ref(), password.as_ref()));
+        let encoded = base64::engine::general_purpose::STANDARD.encode(format!(
+            "{}:{}",
+            username.as_ref(),
+            password.as_ref()
+        ));
         let auth_header = format!("Basic {encoded}");
 
         let client = reqwest::Client::builder()
@@ -67,20 +70,14 @@ impl WebDavClient {
 
     pub async fn read_file(&self, path: &str) -> Result<Vec<u8>> {
         let url = self.full_url(path)?;
-        let response = self
-            .client
-            .get(url)
-            .headers(self.headers())
-            .send()
-            .await?;
+        let response = self.client.get(url).headers(self.headers()).send().await?;
 
         self.handle_fetch_response(response).await
     }
 
     pub async fn read_file_to_string(&self, path: &str) -> Result<String> {
         let bytes = self.read_file(path).await?;
-        String::from_utf8(bytes)
-            .map_err(|e| WebDavError::XmlParse(format!("Invalid UTF-8: {e}")))
+        String::from_utf8(bytes).map_err(|e| WebDavError::XmlParse(format!("Invalid UTF-8: {e}")))
     }
 
     pub async fn write_file(&self, path: &str, content: impl Into<bytes::Bytes>) -> Result<()> {
@@ -94,7 +91,8 @@ impl WebDavClient {
             .send()
             .await?;
 
-        self.handle_status_discard(response, |s| s == 201 || s == 204 || s == 200).await
+        self.handle_status_discard(response, |s| s == 201 || s == 204 || s == 200)
+            .await
     }
 
     pub async fn list_directory(&self, path: &str) -> Result<Vec<WebDavEntry>> {
@@ -173,7 +171,8 @@ impl WebDavClient {
             .send()
             .await?;
 
-        self.handle_status(response, |s| s == 204 || s == 200 || s == 404).await?;
+        self.handle_status(response, |s| s == 204 || s == 200 || s == 404)
+            .await?;
         Ok(())
     }
 
@@ -220,7 +219,8 @@ impl WebDavClient {
             .send()
             .await?;
 
-        self.handle_status_discard(response, |s| s == 201 || s == 204 || s == 200).await
+        self.handle_status_discard(response, |s| s == 201 || s == 204 || s == 200)
+            .await
     }
 
     async fn handle_status_discard<F: Fn(u16) -> bool>(
@@ -241,16 +241,11 @@ impl WebDavClient {
         }
     }
 
-    async fn handle_fetch_response(
-        &self,
-        response: reqwest::Response,
-    ) -> Result<Vec<u8>> {
+    async fn handle_fetch_response(&self, response: reqwest::Response) -> Result<Vec<u8>> {
         match response.status().as_u16() {
             200 | 207 => Ok(response.bytes().await?.to_vec()),
             401 => Err(WebDavError::AuthFailed("Invalid credentials".into())),
-            404 => Err(WebDavError::NotFound(format!(
-                "Path not found"
-            ))),
+            404 => Err(WebDavError::NotFound("Path not found".to_string())),
             status => {
                 let body = response.text().await.unwrap_or_default();
                 Err(WebDavError::UnexpectedStatus { status, body })
@@ -273,10 +268,7 @@ impl WebDavClient {
         match status {
             401 => Err(WebDavError::AuthFailed("Invalid credentials".into())),
             404 => Err(WebDavError::NotFound(body)),
-            _ => Err(WebDavError::UnexpectedStatus {
-                status,
-                body,
-            }),
+            _ => Err(WebDavError::UnexpectedStatus { status, body }),
         }
     }
 
@@ -291,28 +283,18 @@ impl WebDavClient {
                 .trim_start_matches('/')
                 .to_string();
 
-            let name = href
-                .rsplit('/')
-                .next()
-                .unwrap_or(&href)
-                .to_string();
+            let name = href.rsplit('/').next().unwrap_or(&href).to_string();
 
             if name.is_empty() {
                 continue;
             }
 
-            let prop = response
-                .propstats
-                .first()
-                .map(|ps| &ps.prop);
+            let prop = response.propstats.first().map(|ps| &ps.prop);
 
             if let Some(prop) = prop {
                 let is_dir = prop.resourcetype.collection.is_some();
                 let size = prop.getcontentlength.unwrap_or(0);
-                let modified = prop
-                    .getlastmodified
-                    .clone()
-                    .unwrap_or_default();
+                let modified = prop.getlastmodified.clone().unwrap_or_default();
 
                 entries.push(WebDavEntry {
                     name,

@@ -12,16 +12,17 @@ cd rockbot
 cp example.config.toml config.toml
 # edit config.toml with your RocketChat, provider, and WebDAV credentials
 cargo build --release
-./target/release/rocketchat          # uses ./config.toml
-./target/release/rocketchat -c /path/to.toml
+./target/release/rockbot               # uses ./config.toml (full bot)
+./target/release/rocketchat            # debug binary (connect + log events)
 ```
 
 ### Prerequisites
 
 - Rust 1.85+ (edition 2024)
 - A RocketChat server with WebSocket support enabled
-- A NextCloud instance with WebDAV access
+- A NextCloud instance with WebDAV access (optional — bot runs without it)
 - An API key for OpenRouter, DeepSeek, or Replicate
+- An Exa API key (optional, for web search)
 
 ## Architecture
 
@@ -34,16 +35,25 @@ rockbot/
 │   ├── src/ddp.rs              # DDP message construction
 │   ├── src/types.rs            # message parsing and filtering
 │   └── src/main.rs             # debug binary (connect + log events)
-├── crate-rockbot/              # bot library (no binary yet)
+├── crate-rockbot/              # bot library + application binary
+│   ├── src/main.rs             # main bot binary
+│   ├── src/harness.rs          # agent loop, context building, tool dispatch
+│   ├── src/memory.rs           # per-room conversation history, archiving
 │   ├── src/config.rs           # TOML config loading
+│   ├── src/tool.rs             # Tool trait, ToolRegistry, ToolResult
+│   ├── src/tools/              # tool implementations
+│   │   ├── web_search.rs       # Exa search API
+│   │   ├── web_fetch.rs        # URL fetcher with HTML→Markdown
+│   │   └── vision.rs           # image download and analysis
 │   ├── src/provider/           # AiProvider trait + implementations
-│   │   ├── openrouter.rs       # OpenRouter API client
 │   │   ├── deepseek.rs         # DeepSeek API client
+│   │   ├── openrouter.rs       # OpenRouter API client
+│   │   ├── replicate.rs        # Replicate image generation
 │   │   └── mod.rs              # trait definition
 │   └── src/types.rs            # ChatMessage, ChatRequest, CompletionResult, ToolDef
 ├── crate-webdav/               # WebDAV client for NextCloud storage
 │   └── src/client.rs           # GET, PUT, PROPFIND, MKCOL, DELETE
-└── _dfds/                      # data flow diagrams (planned architecture)
+└── _dfds/                      # data flow diagrams
 ```
 
 ### Key design decisions
@@ -55,18 +65,19 @@ rockbot/
 | **`AiProvider` trait** | Single interface for OpenRouter, DeepSeek, and Replicate; add new providers by implementing one trait |
 | **TOML array-of-tables config** | `[[providers]]` syntax supports multiple AI backends with per-provider model aliases |
 | **Per-room memory** | Each channel and DM has isolated in-memory history and its own WebDAV archive directory |
+| **`Tool` trait with `ToolRegistry`** | Tools are dynamically registered; the agent loop queries the provider, executes tool calls, and feeds results back |
 | **Minimal dependencies** | `tokio`, `reqwest`, `serde`, `toml`, `async-trait` — no heavy frameworks |
 
 ## Configuration
 
 Copy `example.config.toml` to `config.toml` and fill in your credentials. The
-config has four sections:
+config has three sections:
 
 | Section | Purpose |
 | ------- | ------- |
 | `[rocketchat]` | Server URL, credentials, default AI provider/model, history limits |
 | `[[providers]]` | AI backend definitions (OpenRouter, DeepSeek, Replicate) with API keys and model aliases |
-| `[webdav]` | NextCloud WebDAV endpoint, credentials, storage root path |
+| `[webdav]` | NextCloud WebDAV endpoint, credentials, storage root path (optional) |
 
 See `example.config.toml` for the full annotated template.
 
@@ -74,39 +85,44 @@ See `example.config.toml` for the full annotated template.
 
 ```bash
 cargo build --release
-./target/release/rocketchat                     # uses ./config.toml
-./target/release/rocketchat -c /path/to.toml    # custom config path
+./target/release/rockbot                     # uses ./config.toml (full agent bot)
+./target/release/rockbot -c /path/to.toml    # custom config path
+./target/release/rocketchat                  # debug binary (connect + log events)
+./target/release/rocketchat -c /path/to.toml
 ```
 
 Run all tests:
 ```bash
 cargo test                          # unit + integration (no server needed)
 cargo test -- --ignored             # real integration tests (needs credentials)
-cargo test -p rocketchat            # single crate
+cargo test -p rockbot               # single crate
 ```
 
-The `rocketchat` debug binary connects to a RocketChat server and logs incoming
-events. It also responds to built-in commands (`!ping`, `!echo`, `!help`). The
-full agentic bot binary (`rockbot`) is not yet implemented in Rust.
+### Environment variables
 
-## Agentic Flow (planned)
+| Variable | Purpose |
+| -------- | ------- |
+| `EXA_API_KEY` | API key for the web_search tool (Exa search API) |
 
-The bot will run a loop: receive message → build context → query AI → execute
+## Agentic Flow
+
+The bot runs a loop: receive message → build context → query AI → execute
 tool calls → feed results back → repeat until final reply.
 
-**Planned tools:**
+### Available tools
 
 | Tool | Description |
 | ---- | ----------- |
 | `web_search` | Search the web via Exa API and return ranked results |
 | `web_fetch` | Fetch a URL and optionally convert HTML to clean Markdown |
-| `vision` | Download an image from WebDAV and send it to the AI provider for analysis |
-| `infograph` | Generate an infographic image from a text prompt, stored on WebDAV |
-| `anime` | Generate a Japanese anime-style image from a text prompt, stored on WebDAV |
+| `vision` | Download an image from a URL and report metadata |
 
-See [agent loop DFD](_dfds/agent-harness.md) for the full loop design.
+### Image generation (via Replicate)
 
-## Memory Management (planned)
+The `ReplicateProvider` supports creating predictions and polling for results.
+Image generation tools (`infograph`, `anime`) are planned.
+
+## Memory Management
 
 Each room accumulates conversation history in local memory. When the character
 count exceeds a threshold, the oldest messages are summarized by the AI
@@ -116,10 +132,57 @@ provider into a `.md` file and archived to the room's WebDAV directory:
 {webdav.root}/{room_id}/memory/000001_summary.md
 ```
 
-Archives are loaded back on startup to seed context. If WebDAV is unreachable,
-archiving is deferred and the oldest messages are truncated as a fallback.
+If WebDAV is unreachable, archiving is deferred and the oldest messages are
+truncated as a fallback.
 
-See [memory management DFD](_dfds/memory.md) for the full pipeline.
+## Crate: `rocketchat`
+
+Standalone, reusable RocketChat client library. Handles authentication, WebSocket
+connection, ping/pong keepalive, and message parsing/filtering.
+
+```rust
+use rocketchat::{RocketChatClient, MessageSender, IncomingMessage, MessageFilter};
+
+let config = RocketChatConfig::from_file("config.toml")?;
+let mut client = RocketChatClient::new(config);
+client.connect_and_run(|msg, sender| async move {
+    if msg.is_dm {
+        sender.reply("Hello!").await.ok();
+    }
+}).await?;
+```
+
+## Crate: `webdav`
+
+Async WebDAV client for NextCloud storage. Supports directory listing, file
+upload/download, folder creation, and deletion.
+
+```rust
+use webdav::{WebDavConfig, WebDavClient};
+
+let config = WebDavConfig::from_file("config.toml")?;
+let client = config.create_client()?;
+client.write_file("/rockbot/test.txt", b"Hello!").await?;
+let content = client.read_file_to_string("/rockbot/test.txt").await?;
+```
+
+## Crate: `rockbot`
+
+Library crate providing the bot's core types, AI provider abstraction, tool
+system, memory management, and agent harness. Three providers are implemented
+(`DeepSeekProvider`, `OpenRouterProvider`, `ReplicateProvider`). The `AiProvider`
+trait makes it straightforward to add new backends.
+
+```rust
+use rockbot::provider::{AiProvider, DeepSeekProvider};
+use rockbot::harness::AgentHarness;
+use rockbot::tool::ToolRegistry;
+
+let config = AppConfig::from_file("config.toml")?;
+let provider = DeepSeekProvider::new(&config.find_provider("deepseek").unwrap(), "deepseek-chat")?;
+let mut harness = AgentHarness::new(config, Box::new(provider), None);
+let reply = harness.process_message("room1", "general", false, "user", "Hello").await?;
+```
 
 ## Data Flow Diagrams
 
@@ -134,56 +197,6 @@ See [memory management DFD](_dfds/memory.md) for the full pipeline.
 | [Memory](_dfds/memory.md) | 1 | History, summarization, archival |
 | [Knowledge](_dfds/tools/knowledge.md) | 1 | Fact extraction from memory, indexed `.md` storage, context injection |
 | [WebDAV](_dfds/tools/webdav.md) | 1 | NextCloud storage operations |
-
-## Crate: `rocketchat`
-
-Standalone, reusable RocketChat client library. Handles authentication, WebSocket
-reconnection with exponential backoff, ping/pong keepalive, and message
-parsing/filtering.
-
-```rust
-use rocketchat::{RocketChatClient, MessageSender, IncomingMessage, MessageFilter};
-
-let mut client = RocketChatClient::connect(config).await?;
-let user_id = client.user_id().to_string();
-
-while let Some(msg) = client.next_message().await? {
-    if msg.is_dm_or_mention(&user_id) {
-        client.send_message(&msg.room_id, "Hello!").await?;
-    }
-}
-```
-
-## Crate: `webdav`
-
-Async WebDAV client for NextCloud storage. Supports directory listing, file
-upload/download, folder creation, and deletion.
-
-```rust
-use webdav::WebDavClient;
-
-let client = WebDavClient::new(config)?;
-client.put("/rockbot/notes/hello.txt", b"Hello, WebDAV!").await?;
-let entries = client.list("/rockbot/notes/").await?;
-```
-
-## Crate: `rockbot`
-
-Library crate providing the bot's core types and AI provider abstraction. Two
-providers are implemented (`OpenRouterProvider`, `DeepSeekProvider`), with a
-third (`ReplicateProvider`) for image generation planned. The `AiProvider` trait
-makes it straightforward to add new backends.
-
-```rust
-use rockbot::provider::{AiProvider, DeepSeekProvider};
-use rockbot::types::ChatRequest;
-
-let provider = DeepSeekProvider::from_config(&config)?;
-let result = provider.complete(ChatRequest {
-    messages: vec![/* ... */],
-    ..Default::default()
-}).await?;
-```
 
 ## License
 

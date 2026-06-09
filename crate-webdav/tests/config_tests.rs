@@ -9,7 +9,10 @@ password = "app-secret"
 root = "rockbot"
 "#;
     let cfg = WebDavConfig::from_str(toml).expect("should parse");
-    assert_eq!(cfg.url, "https://cloud.example.com/remote.php/dav/files/botuser");
+    assert_eq!(
+        cfg.url,
+        "https://cloud.example.com/remote.php/dav/files/botuser"
+    );
     assert_eq!(cfg.username, "botuser");
     assert_eq!(cfg.password, "app-secret");
     assert_eq!(cfg.root, "rockbot");

@@ -31,19 +31,31 @@ pub(crate) struct PropStat {
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
 pub(crate) struct Prop {
-    #[serde(rename = "getlastmodified", default, deserialize_with = "deserialize_opt_string")]
+    #[serde(
+        rename = "getlastmodified",
+        default,
+        deserialize_with = "deserialize_opt_string"
+    )]
     pub getlastmodified: Option<String>,
 
     #[serde(rename = "getcontentlength", default)]
     pub getcontentlength: Option<u64>,
 
-    #[serde(rename = "getcontenttype", default, deserialize_with = "deserialize_opt_string")]
+    #[serde(
+        rename = "getcontenttype",
+        default,
+        deserialize_with = "deserialize_opt_string"
+    )]
     pub getcontenttype: Option<String>,
 
     #[serde(rename = "resourcetype", default)]
     pub resourcetype: ResourceType,
 
-    #[serde(rename = "getetag", default, deserialize_with = "deserialize_opt_string")]
+    #[serde(
+        rename = "getetag",
+        default,
+        deserialize_with = "deserialize_opt_string"
+    )]
     pub getetag: Option<String>,
 }
 
@@ -68,7 +80,11 @@ where
             f.write_str("a string")
         }
         fn visit_str<E: de::Error>(self, v: &str) -> std::result::Result<Self::Value, E> {
-            if v.is_empty() { Ok(None) } else { Ok(Some(v.to_string())) }
+            if v.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(v.to_string()))
+            }
         }
         fn visit_string<E: de::Error>(self, v: String) -> std::result::Result<Self::Value, E> {
             if v.is_empty() { Ok(None) } else { Ok(Some(v)) }

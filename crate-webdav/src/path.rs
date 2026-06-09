@@ -26,7 +26,12 @@ impl WebDavPath {
     }
 
     pub fn image_path(&self, room_id: &str, name: &str) -> String {
-        format!("/{}/{}/images/{}", self.root, room_id, name.trim_start_matches('/'))
+        format!(
+            "/{}/{}/images/{}",
+            self.root,
+            room_id,
+            name.trim_start_matches('/')
+        )
     }
 
     pub fn archive_path(&self, room_id: &str, seq: u64) -> String {
@@ -34,7 +39,11 @@ impl WebDavPath {
     }
 
     pub fn config_backup_path(&self, filename: &str) -> String {
-        format!("/{}/config/{}/", self.root, filename.trim_start_matches('/'))
+        format!(
+            "/{}/config/{}/",
+            self.root,
+            filename.trim_start_matches('/')
+        )
     }
 
     pub fn room_path(&self, room_id: &str, file_path: &str) -> String {
@@ -68,16 +77,31 @@ mod tests {
     #[test]
     fn test_image_path() {
         let p = WebDavPath::new("rockbot");
-        assert_eq!(p.image_path("general", "photo.png"), "/rockbot/general/images/photo.png");
-        assert_eq!(p.image_path("general", "/subdir/photo.png"), "/rockbot/general/images/subdir/photo.png");
+        assert_eq!(
+            p.image_path("general", "photo.png"),
+            "/rockbot/general/images/photo.png"
+        );
+        assert_eq!(
+            p.image_path("general", "/subdir/photo.png"),
+            "/rockbot/general/images/subdir/photo.png"
+        );
     }
 
     #[test]
     fn test_archive_path() {
         let p = WebDavPath::new("rockbot");
-        assert_eq!(p.archive_path("general", 1), "/rockbot/general/memory/000001_summary.md");
-        assert_eq!(p.archive_path("general", 42), "/rockbot/general/memory/000042_summary.md");
-        assert_eq!(p.archive_path("general", 999999), "/rockbot/general/memory/999999_summary.md");
+        assert_eq!(
+            p.archive_path("general", 1),
+            "/rockbot/general/memory/000001_summary.md"
+        );
+        assert_eq!(
+            p.archive_path("general", 42),
+            "/rockbot/general/memory/000042_summary.md"
+        );
+        assert_eq!(
+            p.archive_path("general", 999999),
+            "/rockbot/general/memory/999999_summary.md"
+        );
     }
 
     #[test]
@@ -95,13 +119,22 @@ mod tests {
     #[test]
     fn test_config_backup_path() {
         let p = WebDavPath::new("rockbot");
-        assert_eq!(p.config_backup_path("config_backup.toml"), "/rockbot/config/config_backup.toml/");
+        assert_eq!(
+            p.config_backup_path("config_backup.toml"),
+            "/rockbot/config/config_backup.toml/"
+        );
     }
 
     #[test]
     fn test_room_path() {
         let p = WebDavPath::new("rockbot");
-        assert_eq!(p.room_path("general", "notes.txt"), "/rockbot/general/notes.txt");
-        assert_eq!(p.room_path("general", "/notes.txt"), "/rockbot/general/notes.txt");
+        assert_eq!(
+            p.room_path("general", "notes.txt"),
+            "/rockbot/general/notes.txt"
+        );
+        assert_eq!(
+            p.room_path("general", "/notes.txt"),
+            "/rockbot/general/notes.txt"
+        );
     }
 }

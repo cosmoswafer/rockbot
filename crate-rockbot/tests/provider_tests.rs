@@ -1,9 +1,9 @@
 use rockbot::config::{AppConfig, ProviderConfig};
-use rockbot::error::{RockBotError, Result};
+use rockbot::error::{Result, RockBotError};
 use rockbot::provider::{AiProvider, DeepSeekProvider, OpenRouterProvider};
 use rockbot::types::{
-    ChatMessage, ChatRequest, CompletionResult, ContentPart, FinishReason,
-    ImageUrlPayload, MessageContent, Role, ThinkingConfig, ToolCall, ToolDef, UsageInfo,
+    ChatMessage, ChatRequest, CompletionResult, ContentPart, FinishReason, ImageUrlPayload,
+    MessageContent, Role, ThinkingConfig, ToolCall, ToolDef, UsageInfo,
 };
 
 use std::collections::HashMap;
@@ -56,13 +56,19 @@ reasoner = "deepseek-reasoner"
     assert_eq!(openrouter.name, "openrouter");
     assert_eq!(openrouter.base_url, "https://openrouter.ai/api/v1");
     assert_eq!(openrouter.chat_path.as_deref(), Some("/chat/completions"));
-    assert_eq!(openrouter.models.get("deepseek").unwrap(), "deepseek/deepseek-v3.2:online");
+    assert_eq!(
+        openrouter.models.get("deepseek").unwrap(),
+        "deepseek/deepseek-v3.2:online"
+    );
 
     let deepseek = &config.providers[1];
     assert_eq!(deepseek.name, "deepseek");
     assert_eq!(deepseek.base_url, "https://api.deepseek.com/v1");
     assert_eq!(deepseek.models.get("chat").unwrap(), "deepseek-chat");
-    assert_eq!(deepseek.models.get("reasoner").unwrap(), "deepseek-reasoner");
+    assert_eq!(
+        deepseek.models.get("reasoner").unwrap(),
+        "deepseek-reasoner"
+    );
 }
 
 #[test]
@@ -162,7 +168,10 @@ fn test_provider_chat_url_default() {
         draw_path: None,
         models: HashMap::new(),
     };
-    assert_eq!(config.chat_url(), "https://api.example.com/chat/completions");
+    assert_eq!(
+        config.chat_url(),
+        "https://api.example.com/chat/completions"
+    );
 }
 
 #[test]
@@ -190,7 +199,10 @@ fn test_provider_chat_url_trailing_slash() {
         draw_path: None,
         models: HashMap::new(),
     };
-    assert_eq!(config.chat_url(), "https://api.example.com/chat/completions");
+    assert_eq!(
+        config.chat_url(),
+        "https://api.example.com/chat/completions"
+    );
 }
 
 // ─── Types Tests ─────────────────────────────────────────────────────────────
@@ -226,11 +238,7 @@ fn test_chat_message_tool() {
 #[test]
 fn test_chat_message_assistant_with_tool_calls() {
     let tc = ToolCall::new("call_1", "get_weather", r#"{"location":"Beijing"}"#);
-    let msg = ChatMessage::assistant_with_tool_calls(
-        "",
-        vec![tc],
-        Some("Let me think...".into()),
-    );
+    let msg = ChatMessage::assistant_with_tool_calls("", vec![tc], Some("Let me think...".into()));
     assert_eq!(msg.role, Role::Assistant);
     assert!(msg.tool_calls.is_some());
     assert_eq!(msg.reasoning_content, Some("Let me think...".into()));
@@ -257,7 +265,10 @@ fn test_tool_def_new() {
         }),
     );
     assert_eq!(td.function.name, "get_weather");
-    assert_eq!(td.function.description.as_deref(), Some("Get the weather for a location"));
+    assert_eq!(
+        td.function.description.as_deref(),
+        Some("Get the weather for a location")
+    );
     assert!(td.function.parameters.is_some());
 }
 
@@ -358,22 +369,13 @@ fn test_finish_reason_serde() {
 
 #[test]
 fn test_role_serde() {
-    assert_eq!(
-        serde_json::to_string(&Role::System).unwrap(),
-        r#""system""#
-    );
+    assert_eq!(serde_json::to_string(&Role::System).unwrap(), r#""system""#);
     assert_eq!(
         serde_json::to_string(&Role::Assistant).unwrap(),
         r#""assistant""#
     );
-    assert_eq!(
-        serde_json::to_string(&Role::User).unwrap(),
-        r#""user""#
-    );
-    assert_eq!(
-        serde_json::to_string(&Role::Tool).unwrap(),
-        r#""tool""#
-    );
+    assert_eq!(serde_json::to_string(&Role::User).unwrap(), r#""user""#);
+    assert_eq!(serde_json::to_string(&Role::Tool).unwrap(), r#""tool""#);
 }
 
 #[test]
@@ -484,7 +486,9 @@ fn test_error_display() {
     let err = RockBotError::AuthFailed("bad key".into());
     assert_eq!(format!("{}", err), "Authentication failed: bad key");
 
-    let err = RockBotError::RateLimited { retry_after: Some(30) };
+    let err = RockBotError::RateLimited {
+        retry_after: Some(30),
+    };
     assert!(format!("{}", err).contains("Rate limited"));
 
     let err = RockBotError::MissingApiKey("openrouter".into());
@@ -540,8 +544,7 @@ fn test_deepseek_provider_with_client() {
         models: HashMap::new(),
     };
     let client = reqwest::Client::new();
-    let provider =
-        DeepSeekProvider::with_client(&config, "deepseek-v4-pro", client).unwrap();
+    let provider = DeepSeekProvider::with_client(&config, "deepseek-v4-pro", client).unwrap();
     assert_eq!(provider.model_name(), "deepseek-v4-pro");
 }
 

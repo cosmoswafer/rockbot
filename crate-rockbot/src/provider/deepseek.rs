@@ -3,9 +3,7 @@ use async_trait::async_trait;
 use crate::config::ProviderConfig;
 use crate::error::{Result, RockBotError};
 use crate::provider::AiProvider;
-use crate::types::{
-    ChatRequest, CompletionResult, FinishReason, ToolCall, UsageInfo,
-};
+use crate::types::{ChatRequest, CompletionResult, FinishReason, ToolCall, UsageInfo};
 
 pub struct DeepSeekProvider {
     api_key: String,
@@ -108,9 +106,7 @@ impl DeepSeekProvider {
             .ok_or(RockBotError::NoChoices)?;
 
         let choice = choices.first().ok_or(RockBotError::NoChoices)?;
-        let message = choice
-            .get("message")
-            .ok_or(RockBotError::EmptyResponse)?;
+        let message = choice.get("message").ok_or(RockBotError::EmptyResponse)?;
 
         let finish = choice
             .get("finish_reason")
@@ -179,11 +175,9 @@ impl DeepSeekProvider {
                 status,
                 body: extract_error_message(body),
             },
-            _ => RockBotError::Provider(format!(
-                "HTTP {}: {}",
-                status,
-                extract_error_message(body)
-            )),
+            _ => {
+                RockBotError::Provider(format!("HTTP {}: {}", status, extract_error_message(body)))
+            }
         }
     }
 }

@@ -1,5 +1,6 @@
 pub mod deepseek;
 pub mod openrouter;
+pub mod replicate;
 
 use async_trait::async_trait;
 
@@ -16,3 +17,4 @@ pub trait AiProvider: Send + Sync {
 
 pub use deepseek::DeepSeekProvider;
 pub use openrouter::OpenRouterProvider;
+pub use replicate::ReplicateProvider;

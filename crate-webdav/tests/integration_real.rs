@@ -124,7 +124,10 @@ async fn test_real_exists() {
 
     client.ensure_directory_all(&dir).await.ok();
 
-    let exists = client.exists(&dir).await.expect("Failed to check existence");
+    let exists = client
+        .exists(&dir)
+        .await
+        .expect("Failed to check existence");
     assert!(exists, "Directory should exist after creation");
 
     client.delete(&dir).await.ok();

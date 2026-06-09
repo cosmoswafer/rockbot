@@ -70,9 +70,7 @@ impl OpenRouterProvider {
             .ok_or(RockBotError::NoChoices)?;
 
         let choice = choices.first().ok_or(RockBotError::NoChoices)?;
-        let message = choice
-            .get("message")
-            .ok_or(RockBotError::EmptyResponse)?;
+        let message = choice.get("message").ok_or(RockBotError::EmptyResponse)?;
 
         let finish = choice
             .get("finish_reason")
@@ -131,10 +129,7 @@ impl OpenRouterProvider {
         match status {
             401 => RockBotError::AuthFailed(msg),
             429 => RockBotError::RateLimited { retry_after: None },
-            500 | 502 | 503 => RockBotError::ServerError {
-                status,
-                body: msg,
-            },
+            500 | 502 | 503 => RockBotError::ServerError { status, body: msg },
             _ => RockBotError::Provider(format!("HTTP {}: {}", status, msg)),
         }
     }

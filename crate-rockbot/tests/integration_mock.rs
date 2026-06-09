@@ -1,9 +1,7 @@
 use rockbot::config::ProviderConfig;
 use rockbot::error::RockBotError;
 use rockbot::provider::{AiProvider, DeepSeekProvider};
-use rockbot::types::{
-    ChatMessage, ChatRequest, FinishReason, ThinkingConfig, ToolDef,
-};
+use rockbot::types::{ChatMessage, ChatRequest, FinishReason, ThinkingConfig, ToolDef};
 use std::collections::HashMap;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};

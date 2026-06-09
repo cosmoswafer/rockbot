@@ -16,7 +16,9 @@ toml = "0.8"
 thiserror = "2"
 async-trait = "0.1"
 tracing = "0.1"
-webdav = { path = "../webdav" }
+tracing-subscriber = "0.3"
+webdav = { path = "../crate-webdav" }
+rocketchat = { path = "../crate-rocketchat" }
 
 [dev-dependencies]
 tokio-test = "0.4"
