@@ -1,10 +1,9 @@
 /// Integration tests that connect to a real RocketChat server.
 /// These tests require a valid `config.toml` in the workspace root.
 /// Run with: `cargo test --test integration_real -- --ignored`
-
 use rocketchat::{IncomingMessage, MessageSender, RocketChatClient};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 fn config_path() -> String {
@@ -27,8 +26,8 @@ fn config_path() -> String {
 #[ignore = "requires a running RocketChat server and valid config.toml"]
 async fn test_config_toml_exists_and_parses() {
     let path = config_path();
-    let config = rocketchat::RocketChatConfig::from_file(&path)
-        .expect("Failed to parse config.toml");
+    let config =
+        rocketchat::RocketChatConfig::from_file(&path).expect("Failed to parse config.toml");
 
     assert!(!config.server.url.is_empty());
     assert!(!config.server.username.is_empty());
@@ -40,8 +39,8 @@ async fn test_config_toml_exists_and_parses() {
 #[ignore = "requires a running RocketChat server and valid config.toml"]
 async fn test_connect_and_receive_events() {
     let path = config_path();
-    let mut client = RocketChatClient::from_config_file(&path)
-        .expect("Failed to create client from config");
+    let mut client =
+        RocketChatClient::from_config_file(&path).expect("Failed to create client from config");
     client.register_room("general");
 
     let received = Arc::new(AtomicUsize::new(0));
@@ -53,9 +52,14 @@ async fn test_connect_and_receive_events() {
             let count = received_clone.clone();
             async move {
                 let n = count.fetch_add(1, Ordering::SeqCst);
-                eprintln!("Received message #{}: {} from {} in {}: {}",
-                    n, msg.msg_id.unwrap_or_default(),
-                    msg.sender_name, msg.room_name, msg.text);
+                eprintln!(
+                    "Received message #{}: {} from {} in {}: {}",
+                    n,
+                    msg.msg_id.unwrap_or_default(),
+                    msg.sender_name,
+                    msg.room_name,
+                    msg.text
+                );
 
                 // Auto-reply to test roundtrip
                 let reply = format!("Echo: {}", msg.text);
@@ -90,8 +94,8 @@ async fn test_connect_and_receive_events() {
 #[ignore = "requires a running RocketChat server and valid config.toml"]
 async fn test_send_message_and_verify() {
     let path = config_path();
-    let config = rocketchat::RocketChatConfig::from_file(&path)
-        .expect("Failed to parse config.toml");
+    let config =
+        rocketchat::RocketChatConfig::from_file(&path).expect("Failed to parse config.toml");
 
     // Test that the WS URI is correctly formed
     let uri = config.ws_uri().unwrap();

@@ -1,9 +1,9 @@
 [workspace]
 members = ["crates/rocketchat"]
-resolver = "2"
+resolver = "3"
 
 [workspace.package]
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 license = "MIT"
-rust-version = "1.75"
+rust-version = "1.85"
