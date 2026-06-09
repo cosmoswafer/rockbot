@@ -2,12 +2,14 @@
 
 ## 1. Purpose
 
-Core agentic loop that receives an `IncomingMessage`, assembles context (system
-prompt + conversation history + tool definitions), queries the AI provider,
-executes any tool calls, feeds results back, and loops until a final text reply
-is produced. Each room/DM has its own conversation context.
+Core agentic loop that receives an `IncomingMessage` and per-room context from
+the harness, assembles context (system prompt + conversation history + tool
+definitions), queries the AI provider, executes any tool calls, feeds results
+back, and loops until a final text reply is produced. Each room/DM has its own
+conversation context.
 
-- Upstream: [RocketChat Connection](rocketchat.md) provides `IncomingMessage`
+- Upstream: [Agent Harness](agent-harness.md) provides `IncomingMessage` and
+  per-room `AgentContext`
 - Upstream: [Memory Management](memory.md) provides conversation history
 - Downstream: [AI Provider](ai-provider.md) receives `ChatRequest` and returns
   `CompletionResult`
@@ -19,7 +21,7 @@ is produced. Each room/DM has its own conversation context.
 
 ```mermaid
 flowchart TD
-    MSG[IncomingMessage]
+    HARNESS[Agent Harness]
     CTX(BuildContext)
     MEM[MemoryManager]
     HIST[ConversationHistory]
@@ -31,16 +33,15 @@ flowchart TD
     TOOL_RESULT[ToolResult]
     APPEND(AppendToolResult)
     REPLY(BotReply)
-    RC_SEND[RocketChat SendReply]
 
-    MSG -->|"message + room_id"| CTX
+    HARNESS -->|"message + room_id"| CTX
     MEM -->|"history for room"| CTX
     TOOLS_DEF -->|"tool definitions"| CTX
     CTX -->|"system prompt + history + tools"| REQ
     REQ -->|"ChatRequest"| AI
     AI -->|"CompletionResult"| CHECK
     CHECK -->|"no tool calls"| REPLY
-    REPLY -->|"BotReply"| RC_SEND
+    REPLY -->|"BotReply"| HARNESS
     CHECK -->|"tool_calls[]"| EXEC
     EXEC -->|"ToolResult"| TOOL_RESULT
     TOOL_RESULT -->|"result message"| APPEND
@@ -57,13 +58,13 @@ flowchart TD
     ERR_AI(ErrorReply)
     MAX_LOOP{MaxIterations?}
     TRUNC(TruncateAndSummarize)
-    RC_SEND[RocketChat SendReply]
+    HARNESS[Agent Harness]
     REQ(ChatRequest)
 
     EXEC -->|"tool execution failed"| ERR_TOOL
     ERR_TOOL -->|"error as tool result"| REQ
     AI -->|"API error"| ERR_AI
-    ERR_AI -->|"fallback message"| RC_SEND
+    ERR_AI -->|"fallback message"| HARNESS
     REQ -->|"loop count"| MAX_LOOP
     MAX_LOOP -->|"exceeded"| TRUNC
     TRUNC -->|"summarized context"| REQ

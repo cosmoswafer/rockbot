@@ -128,6 +128,7 @@ See [memory management DFD](_dfds/memory.md) for the full pipeline.
 | Diagram | Level | Description |
 | ------- | ----- | ----------- |
 | [Context](_dfds/context-diagram.md) | 0 | System boundary and external entities |
+| [Agent Harness](_dfds/agent-harness.md) | 1 | Application runtime, lifecycle, per-room routing |
 | [Config](_dfds/config.md) | 1 | TOML loading and JSON migration |
 | [RocketChat](_dfds/rocketchat.md) | 1 | Auth, WebSocket, message filtering |
 | [AI Provider](_dfds/ai-provider.md) | 1 | Trait abstraction, vision payloads |

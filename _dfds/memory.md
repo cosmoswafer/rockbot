@@ -9,7 +9,8 @@ room's WebDAV directory. On startup, recent archives are loaded back to seed
 context.
 
 - Upstream: [Configuration Management](config.md) provides `MemoryConfig`
-- Upstream: [Agent Orchestration](agent.md) reads/writes history per room
+- Upstream: [Agent Harness](agent-harness.md) loads archives on startup and
+  triggers per-room history operations after each message
 - Downstream: [WebDAV Storage](webdav.md) persists `.md` archive files
 - Downstream: [AI Provider](ai-provider.md) is called to generate summaries
 

@@ -8,8 +8,8 @@ parsing/filtering, and reply delivery. Only DMs and @mentions are forwarded to
 the agent.
 
 - Upstream: [Configuration Management](config.md) provides `ServerConfig`
-- Downstream: [Agent Orchestration](agent.md) receives filtered `IncomingMessage`
-  events and sends replies via `send_message`
+- Downstream: [Agent Harness](agent-harness.md) receives filtered
+  `IncomingMessage` events; consumes `BotReply` for delivery to RocketChat
 
 ## 2. Diagram
 
@@ -27,7 +27,7 @@ flowchart TD
     DISPATCH(DispatchMessage)
     SEND(SendReply)
     BOT_USER[BotUserId]
-    AGENT[Agent]
+    HARNESS[Agent Harness]
     RC_API[RocketChat REST API]
     RC_WS[RocketChat WebSocket]
 
@@ -44,8 +44,8 @@ flowchart TD
     BOT_USER -->|"bot user id"| FILTER
     PARSE -->|"RawEvent"| FILTER
     FILTER -->|"IncomingMessage"| DISPATCH
-    DISPATCH -->|"message"| AGENT
-    AGENT -->|"BotReply"| SEND
+    DISPATCH -->|"message"| HARNESS
+    HARNESS -->|"BotReply"| SEND
     SEND -->|"POST /chat.sendMessage"| RC_API
     RC_API -->|"delivery status"| SEND
 ```

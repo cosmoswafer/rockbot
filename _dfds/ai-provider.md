@@ -8,6 +8,8 @@ provider-specific headers, model naming, and vision payload formatting. Supports
 streaming responses and tool/function calling.
 
 - Upstream: [Configuration Management](config.md) provides `AiConfig`
+- Upstream: [Agent Harness](agent-harness.md) selects the provider via
+  `AppConfig` on startup
 - Downstream: [Agent Orchestration](agent.md) calls `complete()` with message
   history and tool definitions
 
