@@ -24,8 +24,26 @@ fn setup_logging() {
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 }
 
+fn print_usage() {
+    eprintln!("Usage: rockbot [CONFIG_PATH]");
+    eprintln!();
+    eprintln!("Arguments:");
+    eprintln!("  CONFIG_PATH  Path to TOML config file (default: config.toml)");
+    eprintln!();
+    eprintln!("Environment variables:");
+    eprintln!("  CONFIG_FILE  Override config path (takes precedence over CLI arg)");
+    eprintln!("  EXA_API_KEY  API key for web search/fetch tools");
+}
+
 fn main() {
     setup_logging();
+
+    if let Some(arg) = env::args().nth(1) {
+        if arg == "-h" || arg == "--help" {
+            print_usage();
+            std::process::exit(0);
+        }
+    }
 
     let config_path = env::var("CONFIG_FILE").ok()
         .or_else(|| env::args().nth(1))
