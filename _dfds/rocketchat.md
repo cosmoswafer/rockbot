@@ -8,7 +8,7 @@ parsing/filtering, and reply delivery. Only DMs and @mentions are forwarded to
 the agent.
 
 - Upstream: [Configuration Management](config.md) provides `ServerConfig`
-- Downstream: [Agent Harness](agent-harness.md) receives filtered
+- Downstream: [Agent Loop](agent-harness.md) receives filtered
   `IncomingMessage` events; consumes `BotReply` for delivery to RocketChat
 
 ## 2. Diagram
@@ -27,7 +27,7 @@ flowchart TD
     DISPATCH(DispatchMessage)
     SEND(SendReply)
     BOT_USER[BotUserId]
-    HARNESS[Agent Harness]
+    HARNESS[Agent Loop]
     RC_API[RocketChat REST API]
     RC_WS[RocketChat WebSocket]
 

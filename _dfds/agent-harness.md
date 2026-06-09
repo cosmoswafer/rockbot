@@ -2,18 +2,18 @@
 
 ## 1. Purpose
 
-The agent loop — the core event-driven pipeline that receives incoming messages
-from RocketChat, builds per-room context (system prompt + conversation history +
-tool definitions), interacts with the AI provider in a tool-calling loop, and
-returns replies. This IS the agent: a single loop that routes messages, maintains
-per-room state, and orchestrates LLM interaction.
+The core tool-calling loop: receives a `ChatRequest` (system prompt +
+conversation history + tool definitions), sends it to the AI provider, executes
+any returned tool calls, feeds results back, and loops until a final text reply
+is produced. This IS the agent: the loop that orchestrates LLM interaction and
+tool execution.
 
-- Downstream: [RocketChat Connection](rocketchat.md) produces `IncomingMessage`
-  events and consumes `BotReply` for delivery
-- Downstream: [Memory Management](memory.md) provides `ConversationHistory` per
-  room and receives new messages for archival
+- Upstream: [Agent Orchestrator](agent-orchestrator.md) feeds `IncomingMessage`
+  into the loop and consumes `BotReply`
 - Downstream: [AI Provider](ai-provider.md) receives `ChatRequest` and returns
   `CompletionResult` with tool calls or final text
+- Downstream: [Memory Management](memory.md) provides `ConversationHistory` per
+  room and receives new messages for archival
 - Downstream: [WebDAV Storage](webdav.md) persists generated image assets
 
 ## 2. Diagram
@@ -48,22 +48,18 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    INIT(InitializeSystems)
-    RC_CONNECT[RocketChat Connection]
-    RECONNECT(ReconnectWithBackoff)
-    SHUTDOWN(GracefulShutdown)
-    SIG[OS Signals]
     AI[AiProvider]
-    FALLBACK(FallbackReply)
+    TOOL_EXEC(ExecuteTool)
+    MAX_LOOP{MaxIterations?}
+    FALLBACK(SendFallbackReply)
+    TRUNC(TruncateAndSummarize)
     REPLY[BotReply]
 
-    INIT -->|"connection failed"| RECONNECT
-    RC_CONNECT -->|"WebSocket closed"| RECONNECT
-    RECONNECT -->|"exponential backoff"| RC_CONNECT
-    RECONNECT -->|"max retries"| SHUTDOWN
-    SIG -->|"SIGTERM / SIGINT"| SHUTDOWN
-    AI -->|"API error"| FALLBACK
+    AI -.->|"API error"| FALLBACK
+    TOOL_EXEC -.->|"execution failed"| FALLBACK
     FALLBACK -->|"error message"| REPLY
+    MAX_LOOP -.->|"exceeded"| TRUNC
+    TRUNC -->|"summarized context back to loop"| REPLY
 ```
 
 ### 2c. LLM Interaction Deep Dive
@@ -209,41 +205,7 @@ flowchart TD
     INACT -->|"generated image"| DAV_IMG
 ```
 
-### 2g. Startup Sequence
-
-```mermaid
-flowchart TD
-    START["main()"]
-    CFG(LoadConfig)
-    MIGRATE{Legacy JSON?}
-    TOML["config.toml"]
-    JSON["config.json"]
-    VALIDATE(ValidateConfig)
-    LOGIN(LoginRocketChat)
-    CONNECT(ConnectWebSocket)
-    DAV[(WebDAV)]
-    LIST_MEM(ListMemoryArchives)
-    SEED(SeedAllRooms)
-    LOOP[Agent Loop]
-    CFG_STORE[(AppConfig)]
-
-    START -->|"config path"| CFG
-    CFG -->|"load TOML"| TOML
-    CFG -->|"check legacy"| MIGRATE
-    MIGRATE -->|"found"| JSON
-    JSON -->|"migrate"| TOML
-    TOML -->|"raw config"| VALIDATE
-    VALIDATE -->|"AppConfig"| CFG_STORE
-    CFG_STORE -->|"server section"| LOGIN
-    LOGIN -->|"auth token"| CONNECT
-    CONNECT -->|"connected"| DAV
-    CFG_STORE -->|"WebDAV credentials"| DAV
-    DAV -->|"PROPFIND"| LIST_MEM
-    LIST_MEM -->|"archive list"| SEED
-    SEED -->|"ready"| LOOP
-```
-
-### 2h. Tool Definitions
+### 2g. Tool Definitions
 
 | Tool Name     | Description                                      | Arguments                          |
 | ------------- | ------------------------------------------------ | ---------------------------------- |
@@ -254,34 +216,6 @@ flowchart TD
 | `anime`       | _(planned)_ Generate a Japanese anime-style image | `prompt: string`                  |
 
 ## 3. Data Structures
-
-#### `HarnessState`
-
-| Field       | Type                       | Notes                                       |
-| ----------- | -------------------------- | ------------------------------------------- |
-| `config`    | `Arc<AppConfig>`           | Immutable configuration shared across subsystems |
-| `rooms`     | `HashMap<String, RoomState>` | Per-room state map (room_id → state)     |
-| `client`    | `rocketchat::Client`       | RocketChat connection handle                |
-| `memory`    | `MemoryManager`            | Per-room conversation history               |
-| `webdav`    | `WebDavClient`             | WebDAV handle for persistent storage        |
-
-#### `RoomState`
-
-| Field      | Type                | Notes                                      |
-| ---------- | ------------------- | ------------------------------------------ |
-| `room_id`  | `String`            | RocketChat room/channel identifier         |
-| `is_dm`    | `bool`              | True if direct message room                |
-| `history`  | `ConversationHistory`| In-memory message buffer for this room     |
-| `webdav_root` | `String`         | `/{root}/{room_id}/` path prefix           |
-
-#### `LifecycleSignal`
-
-| Variant    | Fields             | Notes                                      |
-| ---------- | ------------------ | ------------------------------------------ |
-| `Startup`  | —                  | Bot is initializing                        |
-| `Running`  | —                  | Main event loop active                     |
-| `Shutdown` | `exit_code: i32`   | Graceful shutdown triggered                |
-| `Reconnect`| `attempt: u32`     | WebSocket reconnection in progress         |
 
 #### `AgentContext`
 
