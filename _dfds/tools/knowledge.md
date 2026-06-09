@@ -8,15 +8,15 @@ stores them as indexed `.md` files on WebDAV. Two extraction triggers: explicit
 initialization, knowledge entries are loaded into the agent context to inform
 the LLM about user preferences, project context, and past decisions.
 
-- Upstream: [Memory Management](memory.md) provides `ConversationHistory` as
+- Upstream: [Memory Management](../memory.md) provides `ConversationHistory` as
   extraction source
-- Upstream: [Configuration Management](base/config.md) provides
+- Upstream: [Configuration Management](../base/config.md) provides
   `KnowledgeConfig`
-- Downstream: [WebDAV Storage](tools/webdav.md) persists `.md` files and
+- Downstream: [WebDAV Storage](webdav.md) persists `.md` files and
   `index.md`
-- Downstream: [AI Provider](base/ai-provider.md) is called for extraction
+- Downstream: [AI Provider](../base/ai-provider.md) is called for extraction
   synthesis
-- Downstream: [Agent Harness](agent-harness.md) loads knowledge entries into
+- Downstream: [Agent Harness](../agent-harness.md) loads knowledge entries into
   `BuildContext` on room init
 
 ## 2. Diagram
@@ -184,7 +184,7 @@ Single `index.md` file listing all entries in a room's knowledge directory.
 
 ### `KnowledgeConfig`
 
-Appended to `AppConfig` in [Configuration Management](base/config.md).
+Appended to `AppConfig` in [Configuration Management](../base/config.md).
 
 | Field                 | Type   | Notes                                     |
 | --------------------- | ------ | ----------------------------------------- |
