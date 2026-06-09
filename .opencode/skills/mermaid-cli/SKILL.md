@@ -8,76 +8,77 @@ description: Use ONLY when asked to validate, check, parse, or fix Mermaid diagr
 ## Purpose
 
 Validate Mermaid diagram blocks in `.md` files against the official Mermaid
-parser (`mermaid.parse()`). Uses a `jsdom`-backed Node.js script so no
-headless browser (Chrome/Puppeteer) is needed.
+parser (`mermaid.parse()`). Uses Deno with `npm:` specifiers — no npm install
+or headless browser needed. Dependencies are pulled and cached automatically on
+first run.
 
-- Setup: one-time npm install of `mermaid` + `jsdom` in a temp workdir.
-- Validate: extract ` ```mermaid` blocks from `.md` files and run
-  `mermaid.parse()` on each.
+- Validate: `deno run -A --node-modules-dir=auto validate.js [directory]`
 - Fix: interpret parse errors to correct common syntax mistakes.
 
 ## Run validation
 
-1. Install dependencies (once per environment):
+The `validate.js` script is bundled with this skill. Run it directly from the
+skill directory:
 
-   ```bash
-   mkdir -p /tmp/opencode/mermaid_validate
-   cd /tmp/opencode/mermaid_validate
-   npm init -y --silent 2>&1
-   npm install mermaid jsdom 2>&1 | tail -3
-   ```
+```bash
+deno run -A --node-modules-dir=auto \
+  /home/claw/rockbot/.opencode/skills/mermaid-cli/validate.js \
+  /home/claw/rockbot/_dfds
+```
 
-2. Create the validation script (see [validate.js](#validatejs)).
+First run downloads + caches `mermaid` and `jsdom` automatically. Subsequent
+runs use the cache.
 
-3. Run:
-
-   ```bash
-   node /tmp/opencode/mermaid_validate/validate.js
-   ```
-
-   Exit code is non-zero on any parse failure.
+Pass any directory containing `.md` files. The script extracts every
+` ```mermaid` block, runs `mermaid.parse()` on each, and exits non-zero on
+any parse failure.
 
 ## validate.js
 
-Write this to `/tmp/opencode/mermaid_validate/validate.js`, updating the
-`dfdsDir` path to point at the target directory:
+The canonical script lives at
+`.opencode/skills/mermaid-cli/validate.js`. It uses Deno's `npm:` specifiers so
+zero local dependencies are required:
 
 ```js
-import { JSDOM } from 'jsdom';
-import fs from 'fs';
-import path from 'path';
+import { JSDOM } from "npm:jsdom";
+import fs from "node:fs";
+import path from "node:path";
 
-const dom = new JSDOM('<!DOCTYPE html><html><body><div id="mermaid-root"></div></body></html>', {
-  url: 'http://localhost',
-  pretendToBeVisual: true,
-});
+const targetDir = Deno.args[0] || Deno.cwd();
 
-global.window = dom.window;
-global.document = dom.window.document;
-global.HTMLElement = dom.window.HTMLElement;
-global.HTMLDivElement = dom.window.HTMLDivElement;
-global.SVGElement = dom.window.SVGElement || class {};
-global.getComputedStyle = dom.window.getComputedStyle;
-global.requestAnimationFrame = dom.window.requestAnimationFrame || (cb => setTimeout(cb, 0));
-global.cancelAnimationFrame = dom.window.cancelAnimationFrame || clearTimeout;
-if (!global.CSSStyleSheet) global.CSSStyleSheet = class {};
+const dom = new JSDOM(
+  '<!DOCTYPE html><html><body><div id="mermaid-root"></div></body></html>',
+  { url: "http://localhost", pretendToBeVisual: true },
+);
 
-const mermaid = (await import('mermaid')).default;
-mermaid.initialize({ startOnLoad: false, securityLevel: 'loose' });
+globalThis.window = dom.window;
+globalThis.document = dom.window.document;
+globalThis.HTMLElement = dom.window.HTMLElement;
+globalThis.HTMLDivElement = dom.window.HTMLDivElement;
+globalThis.SVGElement = dom.window.SVGElement || class {};
+globalThis.getComputedStyle = dom.window.getComputedStyle;
+globalThis.requestAnimationFrame = dom.window.requestAnimationFrame ||
+  ((cb) => setTimeout(cb, 0));
+globalThis.cancelAnimationFrame = dom.window.cancelAnimationFrame ||
+  clearTimeout;
 
-// --- EDIT THIS ---
-const dfdsDir = '/path/to/your/_dfds';  // or any dir with .md files
-// -----------------
+const mermaid = (await import("npm:mermaid")).default;
+mermaid.initialize({ startOnLoad: false, securityLevel: "loose" });
 
-const files = fs.readdirSync(dfdsDir).filter(f => f.endsWith('.md')).sort();
+const files = [...Deno.readDirSync(targetDir)]
+  .filter((e) => e.isFile && e.name.endsWith(".md"))
+  .map((e) => e.name)
+  .sort();
+
 let total = 0, errors = 0;
 
 for (const fname of files) {
-  const content = fs.readFileSync(path.join(dfdsDir, fname), 'utf-8');
+  const content = fs.readFileSync(path.join(targetDir, fname), "utf-8");
   const re = /```mermaid\n([\s\S]*?)```/g;
   let match, i = 0;
   while ((match = re.exec(content)) !== null) {
-    const block = match[1].trim(), firstLine = block.split('\n')[0].trim();
+    const block = match[1].trim();
+    const firstLine = block.split("\n")[0].trim();
     total++;
     try {
       await mermaid.parse(block);
@@ -85,14 +86,15 @@ for (const fname of files) {
     } catch (err) {
       errors++;
       console.log(`FAIL ${fname} [block ${i}]  (${firstLine})`);
-      for (const line of (err.message || String(err)).split('\n').slice(0, 5))
+      for (const line of (err.message || String(err)).split("\n").slice(0, 5))
         console.log(`     ${line.trim().slice(0, 120)}`);
     }
     i++;
   }
 }
+
 console.log(`\nTotal: ${errors} errors / ${total} blocks`);
-process.exit(errors > 0 ? 1 : 0);
+Deno.exit(errors > 0 ? 1 : 0);
 ```
 
 ## Common syntax errors
@@ -167,16 +169,21 @@ use it to identify which character is being misinterpreted.
 
 ## Troubleshooting
 
-**`ReferenceError: window is not defined`**
+**`deno run` fails with "Could not find a matching package"**
 
-Mermaid's ESM entry point accesses `window` during import. Ensure all jsdom
-globals (`window`, `document`, `HTMLElement`, etc.) are set before the
-`import('mermaid')` call. If a Node.js getter error appears (e.g. `navigator`
-in Node 22+), omit that global and add `SVGElement` and `CSSStyleSheet`
-fallbacks as shown in the script above.
+Add `--node-modules-dir=auto` to let Deno auto-resolve `npm:` packages:
 
-**Browser / Puppeteer errors**
+```bash
+deno run -A --node-modules-dir=auto validate.js _dfds
+```
 
-If using `mmdc` (the CLI renderer) instead of this validation script, it
-requires a headless Chrome binary and `libnspr4` system library. The
-`parse()` approach described here avoids this entirely.
+**First-run latency**
+
+The initial run downloads mermaid + jsdom + their transitive dependencies
+(~200 packages) to the Deno cache. Subsequent runs are instant.
+
+**`mmdc` (the Mermaid CLI renderer)**
+
+Avoid `@mermaid-js/mermaid-cli` for validation — it requires a headless Chrome
+binary and `libnspr4` system library. The `mermaid.parse()` approach here
+neither.
