@@ -231,6 +231,6 @@ flowchart TD
 | ------------- | ------------------------------------------------ | ---------------------------------- |
 | `web_search`  | Search the web using Exa                         | `query: string`                    |
 | `web_fetch`   | Fetch a URL, optionally as markdown              | `url: string, markdown: bool`      |
-| `vision`      | Describe or analyze an image                     | `url: string, prompt: string`      |
+| `vision`      | Download an image and report metadata _(true vision — sending image data to AI provider — is planned)_ | `url: string, prompt: string`      |
 | `infograph`   | _(planned)_ Generate an infographic image        | `prompt: string`                   |
 | `anime`       | _(planned)_ Generate a Japanese anime-style image | `prompt: string`                  |

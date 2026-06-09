@@ -4,7 +4,7 @@
 
 Configurable `AiProvider` trait abstracting over OpenAI-compatible chat
 completion APIs. Concrete implementations for OpenRouter and DeepSeek handle
-provider-specific headers, model naming, and vision payload formatting. Supports
+provider-specific headers, model naming, and vision payload formatting _(planned — types exist but no production code constructs image content parts)_. Supports
 streaming responses and tool/function calling.
 
 - Upstream: [Configuration Management](config.md) provides `AiConfig`
