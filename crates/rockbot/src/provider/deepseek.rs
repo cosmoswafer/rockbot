@@ -1,0 +1,537 @@
+use async_trait::async_trait;
+
+use crate::config::ProviderConfig;
+use crate::error::{Result, RockBotError};
+use crate::provider::AiProvider;
+use crate::types::{
+    ChatRequest, CompletionResult, FinishReason, ToolCall, UsageInfo,
+};
+
+pub struct DeepSeekProvider {
+    api_key: String,
+    base_url: String,
+    model: String,
+    #[allow(dead_code)]
+    http_client: reqwest::Client,
+}
+
+impl std::fmt::Debug for DeepSeekProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DeepSeekProvider")
+            .field("base_url", &self.base_url)
+            .field("model", &self.model)
+            .finish()
+    }
+}
+
+impl DeepSeekProvider {
+    pub fn new(config: &ProviderConfig, model: impl Into<String>) -> Result<Self> {
+        let api_key = config.api_key.clone();
+        if api_key.is_empty() || api_key == "EDITME" {
+            return Err(RockBotError::MissingApiKey(config.name.clone()));
+        }
+
+        let base_url = config.base_url.trim_end_matches('/').to_string();
+        let chat_path = config.chat_path.as_deref().unwrap_or("/chat/completions");
+        let full_url = format!("{}{}", base_url, chat_path);
+
+        Ok(Self {
+            api_key,
+            base_url: full_url,
+            model: model.into(),
+            http_client: reqwest::Client::new(),
+        })
+    }
+
+    pub fn with_client(
+        config: &ProviderConfig,
+        model: impl Into<String>,
+        client: reqwest::Client,
+    ) -> Result<Self> {
+        let api_key = config.api_key.clone();
+        if api_key.is_empty() || api_key == "EDITME" {
+            return Err(RockBotError::MissingApiKey(config.name.clone()));
+        }
+
+        let base_url = config.base_url.trim_end_matches('/').to_string();
+        let chat_path = config.chat_path.as_deref().unwrap_or("/chat/completions");
+        let full_url = format!("{}{}", base_url, chat_path);
+
+        Ok(Self {
+            api_key,
+            base_url: full_url,
+            model: model.into(),
+            http_client: client,
+        })
+    }
+
+    pub(crate) fn build_request_body(&self, request: &ChatRequest) -> serde_json::Value {
+        let mut body = serde_json::json!({
+            "model": request.model,
+            "messages": request.messages,
+            "stream": request.stream,
+        });
+
+        if let Some(ref tools) = request.tools {
+            body["tools"] = serde_json::to_value(tools).unwrap();
+        }
+
+        if let Some(ref tool_choice) = request.tool_choice {
+            body["tool_choice"] = tool_choice.clone();
+        }
+
+        if let Some(ref thinking) = request.thinking {
+            body["thinking"] = serde_json::json!({
+                "type": thinking.thinking_type
+            });
+        }
+
+        if let Some(ref effort) = request.reasoning_effort {
+            body["reasoning_effort"] = serde_json::Value::String(effort.clone());
+        }
+
+        if let Some(temp) = request.temperature {
+            body["temperature"] = serde_json::json!(temp);
+        }
+
+        if let Some(max_tok) = request.max_tokens {
+            body["max_tokens"] = serde_json::json!(max_tok);
+        }
+
+        body
+    }
+
+    pub(crate) fn parse_response_body(body: &serde_json::Value) -> Result<CompletionResult> {
+        let choices = body
+            .get("choices")
+            .and_then(|c| c.as_array())
+            .ok_or(RockBotError::NoChoices)?;
+
+        let choice = choices.first().ok_or(RockBotError::NoChoices)?;
+        let message = choice
+            .get("message")
+            .ok_or(RockBotError::EmptyResponse)?;
+
+        let finish = choice
+            .get("finish_reason")
+            .and_then(|f| f.as_str())
+            .map(|s| match s {
+                "stop" => FinishReason::Stop,
+                "length" => FinishReason::Length,
+                "tool_calls" => FinishReason::ToolUse,
+                "content_filter" => FinishReason::ContentFilter,
+                "insufficient_system_resource" => FinishReason::InsufficientSystemResource,
+                _ => FinishReason::Error,
+            })
+            .unwrap_or(FinishReason::Error);
+
+        let text = message
+            .get("content")
+            .and_then(|c| c.as_str())
+            .map(String::from);
+
+        let reasoning_content = message
+            .get("reasoning_content")
+            .and_then(|r| r.as_str())
+            .map(String::from);
+
+        let tool_calls: Vec<ToolCall> = message
+            .get("tool_calls")
+            .and_then(|t| t.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|tc| serde_json::from_value(tc.clone()).ok())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let usage = body.get("usage").and_then(|u| {
+            Some(UsageInfo {
+                prompt_tokens: u.get("prompt_tokens")?.as_u64()?,
+                completion_tokens: u.get("completion_tokens")?.as_u64()?,
+                total_tokens: u.get("total_tokens")?.as_u64()?,
+            })
+        });
+
+        Ok(CompletionResult {
+            text,
+            tool_calls,
+            finish,
+            reasoning_content,
+            usage,
+        })
+    }
+
+    pub(crate) fn map_http_error(status: u16, body: &str) -> RockBotError {
+        match status {
+            400 => {
+                let msg = extract_error_message(body);
+                RockBotError::InvalidRequest(msg)
+            }
+            401 => RockBotError::AuthFailed(extract_error_message(body)),
+            402 => RockBotError::InsufficientBalance,
+            422 => {
+                let msg = extract_error_message(body);
+                RockBotError::InvalidParameters(msg)
+            }
+            429 => RockBotError::RateLimited { retry_after: None },
+            500 | 502 | 503 => RockBotError::ServerError {
+                status,
+                body: extract_error_message(body),
+            },
+            _ => RockBotError::Provider(format!(
+                "HTTP {}: {}",
+                status,
+                extract_error_message(body)
+            )),
+        }
+    }
+}
+
+fn extract_error_message(body: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| {
+            v.get("error")
+                .and_then(|e| e.get("message"))
+                .and_then(|m| m.as_str())
+                .map(String::from)
+        })
+        .unwrap_or_else(|| body.to_string())
+}
+
+#[async_trait]
+impl AiProvider for DeepSeekProvider {
+    async fn complete(&self, request: ChatRequest) -> Result<CompletionResult> {
+        let body = self.build_request_body(&request);
+
+        let response = self
+            .http_client
+            .post(&self.base_url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let status_code = status.as_u16();
+            let body = response.text().await.unwrap_or_default();
+            return Err(Self::map_http_error(status_code, &body));
+        }
+
+        let response_body: serde_json::Value = response.json().await?;
+        Self::parse_response_body(&response_body)
+    }
+
+    fn provider_name(&self) -> &str {
+        "deepseek"
+    }
+
+    fn model_name(&self) -> &str {
+        &self.model
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{ChatMessage, ThinkingConfig, ToolDef};
+
+    #[test]
+    fn test_build_request_body_minimal() {
+        let provider = DeepSeekProvider {
+            api_key: "test-key".into(),
+            base_url: "https://api.deepseek.com/v1/chat/completions".into(),
+            model: "deepseek-v4-pro".into(),
+            http_client: reqwest::Client::new(),
+        };
+
+        let request = ChatRequest {
+            model: "deepseek-v4-pro".into(),
+            messages: vec![ChatMessage::user("Hello")],
+            tools: None,
+            stream: false,
+            temperature: None,
+            max_tokens: None,
+            thinking: None,
+            reasoning_effort: None,
+            tool_choice: None,
+        };
+
+        let body = provider.build_request_body(&request);
+        assert_eq!(body["model"], "deepseek-v4-pro");
+        assert_eq!(body["stream"], false);
+        assert_eq!(body["messages"][0]["role"], "user");
+        assert_eq!(body["messages"][0]["content"], "Hello");
+    }
+
+    #[test]
+    fn test_build_request_body_with_options() {
+        let provider = DeepSeekProvider {
+            api_key: "test-key".into(),
+            base_url: "https://api.deepseek.com/v1/chat/completions".into(),
+            model: "deepseek-v4-flash".into(),
+            http_client: reqwest::Client::new(),
+        };
+
+        let request = ChatRequest {
+            model: "deepseek-v4-flash".into(),
+            messages: vec![
+                ChatMessage::system("You are helpful"),
+                ChatMessage::user("Hi"),
+            ],
+            tools: Some(vec![ToolDef::new(
+                "get_weather",
+                "Get weather",
+                serde_json::json!({"type": "object", "properties": {}}),
+            )]),
+            stream: false,
+            temperature: Some(0.7),
+            max_tokens: Some(2048),
+            thinking: Some(ThinkingConfig::enabled()),
+            reasoning_effort: Some("high".into()),
+            tool_choice: None,
+        };
+
+        let body = provider.build_request_body(&request);
+        assert_eq!(body["model"], "deepseek-v4-flash");
+        let temp = body["temperature"].as_f64().unwrap();
+        assert!((temp - 0.7).abs() < 0.001, "temperature was {temp}");
+        assert_eq!(body["max_tokens"], 2048);
+        assert_eq!(body["thinking"]["type"], "enabled");
+        assert_eq!(body["reasoning_effort"], "high");
+        assert!(body["tools"].is_array());
+        assert_eq!(body["tools"][0]["function"]["name"], "get_weather");
+    }
+
+    #[test]
+    fn test_parse_response_simple() {
+        let json = serde_json::json!({
+            "id": "chat-123",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "Hello! How can I help?"
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 5,
+                "total_tokens": 15
+            }
+        });
+
+        let result = DeepSeekProvider::parse_response_body(&json).unwrap();
+        assert_eq!(result.text, Some("Hello! How can I help?".into()));
+        assert_eq!(result.finish, FinishReason::Stop);
+        assert!(result.tool_calls.is_empty());
+        assert!(result.reasoning_content.is_none());
+        assert_eq!(result.usage.unwrap().total_tokens, 15);
+    }
+
+    #[test]
+    fn test_parse_response_with_tool_calls() {
+        let json = serde_json::json!({
+            "id": "chat-456",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_001",
+                        "type": "function",
+                        "function": {
+                            "name": "get_weather",
+                            "arguments": "{\"location\": \"Beijing\"}"
+                        }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        });
+
+        let result = DeepSeekProvider::parse_response_body(&json).unwrap();
+        assert_eq!(result.text, None);
+        assert_eq!(result.finish, FinishReason::ToolUse);
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].id, "call_001");
+        assert_eq!(result.tool_calls[0].function.name, "get_weather");
+    }
+
+    #[test]
+    fn test_parse_response_with_reasoning() {
+        let json = serde_json::json!({
+            "id": "chat-789",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "The answer is 42.",
+                    "reasoning_content": "Let me think about this carefully..."
+                },
+                "finish_reason": "stop"
+            }]
+        });
+
+        let result = DeepSeekProvider::parse_response_body(&json).unwrap();
+        assert_eq!(result.text, Some("The answer is 42.".into()));
+        assert_eq!(
+            result.reasoning_content,
+            Some("Let me think about this carefully...".into())
+        );
+    }
+
+    #[test]
+    fn test_parse_response_no_choices() {
+        let json = serde_json::json!({});
+        let result = DeepSeekProvider::parse_response_body(&json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_extract_error_message() {
+        let body = r#"{"error": {"message": "Invalid API key"}}"#;
+        assert_eq!(extract_error_message(body), "Invalid API key");
+    }
+
+    #[test]
+    fn test_extract_error_message_plain() {
+        assert_eq!(extract_error_message("plain error"), "plain error");
+    }
+
+    #[test]
+    fn test_map_http_error_401() {
+        let err = DeepSeekProvider::map_http_error(401, r#"{"error": {"message": "Bad key"}}"#);
+        match err {
+            RockBotError::AuthFailed(msg) => assert_eq!(msg, "Bad key"),
+            _ => panic!("Expected AuthFailed"),
+        }
+    }
+
+    #[test]
+    fn test_map_http_error_429() {
+        let err = DeepSeekProvider::map_http_error(429, "");
+        match err {
+            RockBotError::RateLimited { .. } => {}
+            _ => panic!("Expected RateLimited"),
+        }
+    }
+
+    #[test]
+    fn test_map_http_error_500() {
+        let err = DeepSeekProvider::map_http_error(500, "Internal error");
+        match err {
+            RockBotError::ServerError { status, .. } => assert_eq!(status, 500),
+            _ => panic!("Expected ServerError"),
+        }
+    }
+
+    #[test]
+    fn test_new_missing_api_key() {
+        let config = ProviderConfig {
+            name: "deepseek".into(),
+            api_key: "EDITME".into(),
+            base_url: "https://api.deepseek.com/v1".into(),
+            basecf_url: None,
+            chat_path: None,
+            draw_path: None,
+            models: std::collections::HashMap::new(),
+        };
+        let result = DeepSeekProvider::new(&config, "deepseek-chat");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_new_empty_api_key() {
+        let config = ProviderConfig {
+            name: "deepseek".into(),
+            api_key: "".into(),
+            base_url: "https://api.deepseek.com/v1".into(),
+            basecf_url: None,
+            chat_path: None,
+            draw_path: None,
+            models: std::collections::HashMap::new(),
+        };
+        let result = DeepSeekProvider::new(&config, "deepseek-chat");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_chat_url_default() {
+        let config = ProviderConfig {
+            name: "deepseek".into(),
+            api_key: "sk-valid".into(),
+            base_url: "https://api.deepseek.com/v1".into(),
+            basecf_url: None,
+            chat_path: None,
+            draw_path: None,
+            models: std::collections::HashMap::new(),
+        };
+        let provider = DeepSeekProvider::new(&config, "deepseek-chat").unwrap();
+        assert_eq!(
+            provider.base_url,
+            "https://api.deepseek.com/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn test_chat_url_custom_path() {
+        let config = ProviderConfig {
+            name: "custom".into(),
+            api_key: "sk-valid".into(),
+            base_url: "https://custom.api.com".into(),
+            basecf_url: None,
+            chat_path: Some("/v2/chat".into()),
+            draw_path: None,
+            models: std::collections::HashMap::new(),
+        };
+        let provider = DeepSeekProvider::new(&config, "model").unwrap();
+        assert_eq!(provider.base_url, "https://custom.api.com/v2/chat");
+    }
+
+    #[test]
+    fn test_provider_name_and_model() {
+        let config = ProviderConfig {
+            name: "deepseek".into(),
+            api_key: "sk-valid".into(),
+            base_url: "https://api.deepseek.com/v1".into(),
+            basecf_url: None,
+            chat_path: None,
+            draw_path: None,
+            models: std::collections::HashMap::new(),
+        };
+        let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();
+        assert_eq!(provider.provider_name(), "deepseek");
+        assert_eq!(provider.model_name(), "deepseek-v4-pro");
+    }
+
+    #[test]
+    fn test_build_request_thinking_disabled() {
+        let provider = DeepSeekProvider {
+            api_key: "test-key".into(),
+            base_url: "https://api.deepseek.com/v1/chat/completions".into(),
+            model: "deepseek-v4-flash".into(),
+            http_client: reqwest::Client::new(),
+        };
+
+        let request = ChatRequest {
+            model: "deepseek-v4-flash".into(),
+            messages: vec![ChatMessage::user("Hello")],
+            tools: None,
+            stream: false,
+            temperature: None,
+            max_tokens: None,
+            thinking: Some(ThinkingConfig::disabled()),
+            reasoning_effort: None,
+            tool_choice: None,
+        };
+
+        let body = provider.build_request_body(&request);
+        assert_eq!(body["thinking"]["type"], "disabled");
+    }
+}
