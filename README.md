@@ -106,7 +106,7 @@ calls → feed results back → repeat until final reply.
 | `infograph` | _(planned)_ Generate an infographic image from a text prompt, stored on WebDAV |
 | `anime` | _(planned)_ Generate a Japanese anime-style image from a text prompt, stored on WebDAV |
 
-See [agent orchestration DFD](_dfds/agent.md) for the full loop.
+See [agent loop DFD](_dfds/agent-harness.md) for the full loop.
 
 ## Memory Management
 
@@ -128,11 +128,10 @@ See [memory management DFD](_dfds/memory.md) for the full pipeline.
 | Diagram | Level | Description |
 | ------- | ----- | ----------- |
 | [Context](_dfds/context-diagram.md) | 0 | System boundary and external entities |
-| [Agent Harness](_dfds/agent-harness.md) | 1 | Application runtime, lifecycle, per-room routing |
+| [Agent Loop](_dfds/agent-harness.md) | 1 | Agent event loop, LLM interaction, tool execution, per-room routing |
 | [Config](_dfds/config.md) | 1 | TOML loading and JSON migration |
 | [RocketChat](_dfds/rocketchat.md) | 1 | Auth, WebSocket, message filtering |
 | [AI Provider](_dfds/ai-provider.md) | 1 | Trait abstraction, vision payloads |
-| [Agent](_dfds/agent.md) | 1 | Agentic loop, tool execution |
 | [Memory](_dfds/memory.md) | 1 | History, summarization, archival |
 | [WebDAV](_dfds/webdav.md) | 1 | NextCloud storage operations |
 

@@ -8,10 +8,8 @@ provider-specific headers, model naming, and vision payload formatting. Supports
 streaming responses and tool/function calling.
 
 - Upstream: [Configuration Management](config.md) provides `AiConfig`
-- Upstream: [Agent Harness](agent-harness.md) selects the provider via
-  `AppConfig` on startup
-- Downstream: [Agent Orchestration](agent.md) calls `complete()` with message
-  history and tool definitions
+- Downstream: [Agent Loop](agent-harness.md) calls `complete()` with `ChatRequest`
+  (message history + tool definitions) and receives `CompletionResult`
 
 ## 2. Diagram
 
@@ -54,7 +52,7 @@ flowchart TD
     ERR_API[Error: API Unreachable]
     ERR_PARSE[Error: Malformed Response]
     ERR_AUTH[Error: Invalid API Key]
-    AGENT[Agent]
+    AGENT[Agent Loop]
 
     HTTP -->|"429 Too Many Requests"| RATE
     RATE -->|"wait + retry"| RETRY

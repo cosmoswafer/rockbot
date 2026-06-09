@@ -1,54 +1,47 @@
-# Agent Harness
+# Agent Loop
 
 ## 1. Purpose
 
-Top-level application runtime that initializes all subsystems, runs the main
-event loop, routes incoming messages through the agentic pipeline, and manages
-the bot lifecycle — startup, per-room state coordination, shutdown, and
-reconnection.
+The agent loop — the core event-driven pipeline that receives incoming messages
+from RocketChat, builds per-room context (system prompt + conversation history +
+tool definitions), interacts with the AI provider in a tool-calling loop, and
+returns replies. This IS the agent: a single loop that routes messages, maintains
+per-room state, and orchestrates LLM interaction.
 
-- Downstream: [RocketChat Connection](rocketchat.md) receives `AppConfig` and
-  produces `IncomingMessage` events; consumes `BotReply` for delivery
-- Downstream: [Agent Orchestration](agent.md) receives per-room `AgentContext`
-  and returns `BotReply`
-- Downstream: [Memory Management](memory.md) provides conversation history per
-  room, triggered on startup (load archives) and after each message
-- Downstream: [AI Provider](ai-provider.md), [Configuration Management](config.md),
-  [WebDAV Storage](webdav.md) — consumed indirectly through the subsystems above
+- Downstream: [RocketChat Connection](rocketchat.md) produces `IncomingMessage`
+  events and consumes `BotReply` for delivery
+- Downstream: [Memory Management](memory.md) provides `ConversationHistory` per
+  room and receives new messages for archival
+- Downstream: [AI Provider](ai-provider.md) receives `ChatRequest` and returns
+  `CompletionResult` with tool calls or final text
+- Downstream: [WebDAV Storage](webdav.md) persists generated image assets
 
 ## 2. Diagram
 
-### 2a. Happy Flow (Main Success Path)
+### 2a. Agent Loop (Main Success Path)
 
 ```mermaid
 flowchart TD
-    CFG[(AppConfig)]
-    INIT(InitializeSystems)
-    RC_CONNECT[RocketChat Connection]
-    MEM_SEED(SeedMemory)
+    RC[RocketChat]
     EVT[IncomingMessage]
     ROUTE(RouteByRoom)
     CTX(BuildContext)
     MEM[(ConversationHistory)]
     TOOLS_DEF[(ToolRegistry)]
-    AGENT(Agent Loop)
+    INTERACT(InteractWithAi)
+    AI[AiProvider]
     REPLY[BotReply]
-    SEND(SendReply)
-    RC_API[RocketChat sendMessage]
 
-    CFG -->|"config slices"| INIT
-    INIT -->|"startup"| RC_CONNECT
-    INIT -->|"load archives"| MEM_SEED
-    RC_CONNECT -->|"connected"| EVT
-    MEM_SEED -->|"seed history"| MEM
-    EVT -->|"IncomingMessage"| ROUTE
-    ROUTE -->|"message + room_id"| CTX
+    RC -->|"DM / @mention"| EVT
+    EVT -->|"message + room_id"| ROUTE
+    ROUTE -->|"routed message"| CTX
     MEM -->|"history for room"| CTX
     TOOLS_DEF -->|"tool definitions"| CTX
-    CTX -->|"AgentContext"| AGENT
-    AGENT -->|"BotReply"| REPLY
-    REPLY -->|"reply"| SEND
-    SEND -->|"sendMessage"| RC_API
+    CTX -->|"ChatRequest"| INTERACT
+    INTERACT -->|"ChatRequest"| AI
+    AI -->|"CompletionResult"| INTERACT
+    INTERACT -->|"BotReply"| REPLY
+    REPLY -->|"reply"| RC
 ```
 
 ### 2b. Error Handling & Fallbacks
@@ -60,24 +53,133 @@ flowchart TD
     RECONNECT(ReconnectWithBackoff)
     SHUTDOWN(GracefulShutdown)
     SIG[OS Signals]
-    AGENT_ERR[Agent Error]
+    AI[AiProvider]
     FALLBACK(FallbackReply)
-    SEND(SendReply)
-    RC_ERR[RocketChat Disconnect]
+    REPLY[BotReply]
 
     INIT -->|"connection failed"| RECONNECT
-    RC_CONNECT -->|"WebSocket closed"| RC_ERR
-    RC_ERR -->|"exponential backoff"| RECONNECT
+    RC_CONNECT -->|"WebSocket closed"| RECONNECT
+    RECONNECT -->|"exponential backoff"| RC_CONNECT
     RECONNECT -->|"max retries"| SHUTDOWN
     SIG -->|"SIGTERM / SIGINT"| SHUTDOWN
-    AGENT_ERR -->|"agent loop failed"| FALLBACK
-    FALLBACK -->|"error message"| SEND
+    AI -->|"API error"| FALLBACK
+    FALLBACK -->|"error message"| REPLY
 ```
 
-### 2c. Per-Room State Routing
+### 2c. LLM Interaction Deep Dive
+
+Level 2 decomposition of `InteractWithAi`: the tool-calling loop that queries the
+AI provider, executes any tool calls, feeds results back, and loops until a final
+text reply is produced.
+
+```mermaid
+flowchart TD
+    REQ[ChatRequest]
+    AI[AiProvider]
+    CHECK{HasToolCalls?}
+    EXEC(ExecuteTool)
+    RESULT[ToolResult]
+    APPEND(AppendToolResult)
+    REPLY[BotReply]
+    MAX_LOOP{MaxIterations?}
+    TRUNC(TruncateAndSummarize)
+
+    REQ -->|"messages + tools"| AI
+    AI -->|"CompletionResult"| CHECK
+    CHECK -->|"no tool calls"| REPLY
+    REPLY -->|"BotReply"| INTERACT
+    CHECK -->|"tool_calls[]"| EXEC
+    EXEC -->|"ToolResult"| RESULT
+    RESULT -->|"tool result message"| APPEND
+    APPEND -->|"updated messages"| REQ
+    REQ -->|"loop count"| MAX_LOOP
+    MAX_LOOP -->|"exceeded"| TRUNC
+    TRUNC -->|"summarized context"| REQ
+    EXEC -.->|"execution failed"| RESULT
+    AI -.->|"API error"| REPLY
+```
+
+### 2d. Tool Execution Deep Dive
+
+```mermaid
+flowchart TD
+    CALL[ToolCall]
+    REG{ToolRegistry}
+    EXA(ExaSearch)
+    FETCH(WebFetch)
+    VISION(VisionAnalyze)
+    INFOGRAPH(InfographGen)
+    ANIME(AnimeGen)
+    RESULT[ToolResult]
+    EXA_API[Exa API]
+    WEB_URL[Remote URL]
+    WEBDAV_IMG[WebDAV Image]
+    IMG_API[Image Generation API]
+    WEBDAV_STORE[WebDAV images/]
+
+    CALL -->|"name"| REG
+    REG -->|"web_search"| EXA
+    REG -->|"web_fetch"| FETCH
+    REG -->|"vision"| VISION
+    REG -->|"infograph"| INFOGRAPH
+    REG -->|"anime"| ANIME
+    EXA -->|"search query"| EXA_API
+    EXA_API -->|"results"| EXA
+    EXA -->|"formatted results"| RESULT
+    FETCH -->|"HTTP GET"| WEB_URL
+    WEB_URL -->|"HTML"| FETCH
+    FETCH -->|"markdown text"| RESULT
+    VISION -->|"download image"| WEBDAV_IMG
+    WEBDAV_IMG -->|"image bytes"| VISION
+    VISION -->|"image description"| RESULT
+    INFOGRAPH -->|"infograph prompt"| IMG_API
+    IMG_API -->|"image bytes"| INFOGRAPH
+    INFOGRAPH -->|"PUT image.png"| WEBDAV_STORE
+    WEBDAV_STORE -->|"image URL"| INFOGRAPH
+    INFOGRAPH -->|"image URL"| RESULT
+    ANIME -->|"anime prompt"| IMG_API
+    IMG_API -->|"image bytes"| ANIME
+    ANIME -->|"PUT image.png"| WEBDAV_STORE
+    WEBDAV_STORE -->|"image URL"| ANIME
+    ANIME -->|"image URL"| RESULT
+```
+
+### 2e. Image Generation Pipeline
+
+Both `infograph` and `anime` share the same pipeline; only the system prompt
+and style prefix differ.
+
+```mermaid
+flowchart TD
+    PROMPT[prompt]
+    STYLE{Style Prefix}
+    INFO["infographic: " + prompt]
+    ANI["japanese anime style: " + prompt]
+    API[Image Generation API]
+    BYTES[image bytes]
+    NAME(GenerateFilename)
+    PUT(PutToWebDAV)
+    DAV["/{root}/{room_id}/images/{name}.png"]
+    URL[WebDAV public URL]
+    RESULT[ToolResult]
+
+    PROMPT --> STYLE
+    STYLE -->|"infograph"| INFO
+    STYLE -->|"anime"| ANI
+    INFO -->|"styled prompt"| API
+    ANI -->|"styled prompt"| API
+    API -->|"PNG bytes"| BYTES
+    BYTES --> NAME
+    NAME -->|"{tool}_{timestamp}.png"| PUT
+    DAV -->|"destination"| PUT
+    PUT -->|"201 Created"| URL
+    URL -->|"markdown image link"| RESULT
+```
+
+### 2f. Per-Room State Routing
 
 Each room maintains independent state — conversation history, agent context, and
-WebDAV archive path. The harness routes incoming messages to the correct room's
+WebDAV archive path. The agent routes incoming messages to the correct room's
 pipeline.
 
 ```mermaid
@@ -88,7 +190,7 @@ flowchart TD
     NEW_ROOM(NewRoomState)
     EXIST_ROOM[RoomState]
     MEM[(InMemoryHistory)]
-    AGENT(Agent Loop)
+    INACT(InteractWithAi)
     AREPLY[BotReply]
     DAV["{room_id}/memory/"]
     DAV_IMG["{room_id}/images/"]
@@ -102,12 +204,12 @@ flowchart TD
     NEW_ROOM -->|"seed"| MEM
     NEW_ROOM -->|"store"| ROOM_MAP
     EXIST_ROOM -->|"history"| MEM
-    MEM -->|"history"| AGENT
-    AGENT -->|"reply"| AREPLY
-    AGENT -->|"generated image"| DAV_IMG
+    MEM -->|"history"| INACT
+    INACT -->|"reply"| AREPLY
+    INACT -->|"generated image"| DAV_IMG
 ```
 
-### 2d. Startup Sequence Deep Dive
+### 2g. Startup Sequence
 
 ```mermaid
 flowchart TD
@@ -122,7 +224,7 @@ flowchart TD
     DAV[(WebDAV)]
     LIST_MEM(ListMemoryArchives)
     SEED(SeedAllRooms)
-    LOOP[Event Loop]
+    LOOP[Agent Loop]
     CFG_STORE[(AppConfig)]
 
     START -->|"config path"| CFG
@@ -141,6 +243,16 @@ flowchart TD
     SEED -->|"ready"| LOOP
 ```
 
+### 2h. Tool Definitions
+
+| Tool Name     | Description                                      | Arguments                          |
+| ------------- | ------------------------------------------------ | ---------------------------------- |
+| `web_search`  | Search the web using Exa                         | `query: string`                    |
+| `web_fetch`   | Fetch a URL, optionally as markdown              | `url: string, markdown: bool`      |
+| `vision`      | Describe or analyze an image                     | `url: string, prompt: string`      |
+| `infograph`   | _(planned)_ Generate an infographic image        | `prompt: string`                   |
+| `anime`       | _(planned)_ Generate a Japanese anime-style image | `prompt: string`                  |
+
 ## 3. Data Structures
 
 #### `HarnessState`
@@ -150,7 +262,6 @@ flowchart TD
 | `config`    | `Arc<AppConfig>`           | Immutable configuration shared across subsystems |
 | `rooms`     | `HashMap<String, RoomState>` | Per-room state map (room_id → state)     |
 | `client`    | `rocketchat::Client`       | RocketChat connection handle                |
-| `agent`     | `Agent`                    | Single agent instance (state per room)      |
 | `memory`    | `MemoryManager`            | Per-room conversation history               |
 | `webdav`    | `WebDavClient`             | WebDAV handle for persistent storage        |
 
@@ -171,3 +282,35 @@ flowchart TD
 | `Running`  | —                  | Main event loop active                     |
 | `Shutdown` | `exit_code: i32`   | Graceful shutdown triggered                |
 | `Reconnect`| `attempt: u32`     | WebSocket reconnection in progress         |
+
+#### `AgentContext`
+
+| Field           | Type                  | Notes                              |
+| --------------- | --------------------- | ---------------------------------- |
+| `system_prompt` | `String`              | Bot personality and instructions   |
+| `history`       | `Vec<ChatMessage>`    | Conversation history for room      |
+| `tools`         | `Vec<ToolDef>`        | Registered tool definitions        |
+| `room_id`       | `String`              | Source room/DM identifier          |
+
+#### `ToolResult`
+
+| Field      | Type     | Notes                                      |
+| ---------- | -------- | ------------------------------------------ |
+| `call_id`  | `String` | Matches `ToolCall.id`                      |
+| `name`     | `String` | Tool name                                  |
+| `content`  | `String` | Result text (returned to LLM as tool msg)  |
+| `is_error` | `bool`   | True if tool execution failed              |
+
+#### `ToolRegistry`
+
+| Field      | Type                    | Notes                          |
+| ---------- | ----------------------- | ------------------------------ |
+| `tools`    | `HashMap<String, Box<dyn Tool>>` | Name → implementation |
+
+#### `ToolDef`
+
+| Field        | Type     | Notes                                   |
+| ------------ | -------- | --------------------------------------- |
+| `name`       | `String` | Function name                           |
+| `description`| `String` | Human-readable description for the LLM  |
+| `parameters` | `Value`  | JSON Schema for arguments               |

@@ -9,7 +9,7 @@ disk. Each room gets its own directory subtree.
 
 - Upstream: [Configuration Management](config.md) provides `WebDavConfig`
 - Upstream: [Memory Management](memory.md) stores and retrieves `.md` archives
-- Upstream: [Agent Tools](agent.md) (vision) reads images from WebDAV
+- Upstream: [Agent Loop](agent-harness.md) (vision tool) reads images from WebDAV
 
 ## 2. Diagram
 
