@@ -1,12 +1,30 @@
-# Agent Loop
+# Agent Harness
 
 ## 1. Purpose
 
-The core tool-calling loop: receives a `ChatRequest` (system prompt +
-conversation history + tool definitions), sends it to the AI provider, executes
-any returned tool calls, feeds results back, and loops until a final text reply
-is produced. This IS the agent: the loop that orchestrates LLM interaction and
-tool execution.
+The operational environment that wraps the agent loop — the invariant core
+cycle of `LLM → tools → LLM → ...`. The harness layers Tools, Knowledge, and
+Context around this loop without modifying it.
+
+### 1a. Micro Harness Scope
+
+rockbot implements a **micro harness**: a minimal harness with only the
+mechanisms needed for a single-agent, single-channel chatbot. Three of the six
+standard harness mechanisms are present:
+
+| Mechanism   | Coverage | Details |
+|-------------|----------|---------|
+| **Tools**   | Full     | `web_search`, `web_fetch`, `vision`, image generation — each tool has its own DFD |
+| **Knowledge** | Full  | On-demand context via [Memory Management](memory.md): archive loading, conversation history, system prompt assembly |
+| **Context** | Full     | Per-room history, loop iteration limits, truncation/summarization, room state routing |
+
+Intentionally absent — not needed for rockbot's scope:
+
+| Mechanism       | Reason |
+|-----------------|--------|
+| **Permissions** | Single-user bot — no sandbox or approval flows |
+| **Extensions**  | No plugin/hook system — tools are statically registered |
+| **Coordination**| Single agent — no subagents, teams, or worktrees |
 
 - Upstream: [Agent Orchestrator](agent-orchestrator.md) feeds `IncomingMessage`
   into the loop and consumes `BotReply`
@@ -58,11 +76,11 @@ flowchart TD
     TRUNC -->|"summarized reply"| REPLY
 ```
 
-### 2c. LLM Interaction Deep Dive
+### 2c. Agent Loop Deep Dive
 
-Level 2 decomposition of `InteractWithAi`: the tool-calling loop that queries the
-AI provider, executes any tool calls, feeds results back, and loops until a final
-text reply is produced.
+Level 2 decomposition of the invariant agent loop (`while True: LLM → tools →
+LLM`): queries the AI provider, executes any tool calls, feeds results back, and
+loops until a final text reply is produced.
 
 ```mermaid
 flowchart TD
