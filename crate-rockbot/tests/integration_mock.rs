@@ -1,6 +1,6 @@
 use rockbot::config::ProviderConfig;
 use rockbot::error::RockBotError;
-use rockbot::provider::{AiProvider, DeepSeekProvider};
+use rockbot::provider::{AiProvider, DeepSeekProvider, OpenRouterProvider};
 use rockbot::types::{ChatMessage, ChatRequest, FinishReason, ThinkingConfig, ToolDef};
 use std::collections::HashMap;
 use wiremock::matchers::{header, method, path};
@@ -572,4 +572,334 @@ async fn test_complete_422_invalid_params() {
 
     let err = provider.complete(request).await.unwrap_err();
     assert!(matches!(err, RockBotError::InvalidParameters(_)));
+}
+
+// ─── Mock HTTP Tests: OpenRouterProvider.complete() ─────────────────────────
+
+#[tokio::test]
+async fn test_openrouter_complete_simple_response() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(header("Authorization", "Bearer sk-or-test"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "or-001",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "Hello from OpenRouter!"
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": 8,
+                "completion_tokens": 4,
+                "total_tokens": 12
+            }
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let config = ProviderConfig {
+        name: "openrouter".into(),
+        api_key: "sk-or-test".into(),
+        base_url: mock_server.uri(),
+        basecf_url: None,
+        chat_path: Some("/chat/completions".into()),
+        draw_path: None,
+        models: HashMap::new(),
+    };
+    let provider = OpenRouterProvider::new(&config, "openai/gpt-4").unwrap();
+
+    let request = ChatRequest {
+        model: "openai/gpt-4".into(),
+        messages: vec![ChatMessage::user("Hello")],
+        tools: None,
+        stream: false,
+        temperature: None,
+        max_tokens: None,
+        thinking: None,
+        reasoning_effort: None,
+        tool_choice: None,
+    };
+
+    let result = provider.complete(request).await.unwrap();
+    assert_eq!(result.text, Some("Hello from OpenRouter!".into()));
+    assert_eq!(result.finish, FinishReason::Stop);
+}
+
+#[tokio::test]
+async fn test_openrouter_complete_with_tools() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_or1",
+                        "type": "function",
+                        "function": {
+                            "name": "web_search",
+                            "arguments": "{\"query\":\"rust lang\"}"
+                        }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let config = ProviderConfig {
+        name: "openrouter".into(),
+        api_key: "sk-or-test".into(),
+        base_url: mock_server.uri(),
+        basecf_url: None,
+        chat_path: Some("/chat/completions".into()),
+        draw_path: None,
+        models: HashMap::new(),
+    };
+    let provider = OpenRouterProvider::new(&config, "openai/gpt-4").unwrap();
+
+    let request = ChatRequest {
+        model: "openai/gpt-4".into(),
+        messages: vec![ChatMessage::user("Search for rust")],
+        tools: Some(vec![ToolDef::new(
+            "web_search",
+            "Search the web",
+            serde_json::json!({"type": "object", "properties": {"query": {"type": "string"}}}),
+        )]),
+        stream: false,
+        temperature: None,
+        max_tokens: None,
+        thinking: None,
+        reasoning_effort: None,
+        tool_choice: None,
+    };
+
+    let result = provider.complete(request).await.unwrap();
+    assert_eq!(result.finish, FinishReason::ToolUse);
+    assert_eq!(result.tool_calls.len(), 1);
+    assert_eq!(result.tool_calls[0].function.name, "web_search");
+}
+
+#[tokio::test]
+async fn test_openrouter_complete_with_temperature() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "Creative response"
+                },
+                "finish_reason": "stop"
+            }]
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let config = ProviderConfig {
+        name: "openrouter".into(),
+        api_key: "sk-or-test".into(),
+        base_url: mock_server.uri(),
+        basecf_url: None,
+        chat_path: Some("/chat/completions".into()),
+        draw_path: None,
+        models: HashMap::new(),
+    };
+    let provider = OpenRouterProvider::new(&config, "openai/gpt-4").unwrap();
+
+    let request = ChatRequest {
+        model: "openai/gpt-4".into(),
+        messages: vec![ChatMessage::user("Be creative")],
+        tools: None,
+        stream: false,
+        temperature: Some(0.9),
+        max_tokens: Some(2048),
+        thinking: None,
+        reasoning_effort: None,
+        tool_choice: None,
+    };
+
+    let result = provider.complete(request).await.unwrap();
+    assert!(result.text.is_some());
+}
+
+#[tokio::test]
+async fn test_openrouter_complete_401() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(401)
+                .set_body_json(serde_json::json!({"error": {"message": "Bad API key"}})),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let config = ProviderConfig {
+        name: "openrouter".into(),
+        api_key: "sk-bad".into(),
+        base_url: mock_server.uri(),
+        basecf_url: None,
+        chat_path: Some("/chat/completions".into()),
+        draw_path: None,
+        models: HashMap::new(),
+    };
+    let provider = OpenRouterProvider::new(&config, "openai/gpt-4").unwrap();
+
+    let request = ChatRequest {
+        model: "openai/gpt-4".into(),
+        messages: vec![ChatMessage::user("Hi")],
+        tools: None,
+        stream: false,
+        temperature: None,
+        max_tokens: None,
+        thinking: None,
+        reasoning_effort: None,
+        tool_choice: None,
+    };
+
+    let err = provider.complete(request).await.unwrap_err();
+    assert!(matches!(err, RockBotError::AuthFailed(_)));
+}
+
+#[tokio::test]
+async fn test_openrouter_complete_429() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(429)
+                .set_body_json(serde_json::json!({"error": {"message": "Too many requests"}})),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let config = ProviderConfig {
+        name: "openrouter".into(),
+        api_key: "sk-or-test".into(),
+        base_url: mock_server.uri(),
+        basecf_url: None,
+        chat_path: Some("/chat/completions".into()),
+        draw_path: None,
+        models: HashMap::new(),
+    };
+    let provider = OpenRouterProvider::new(&config, "openai/gpt-4").unwrap();
+
+    let request = ChatRequest {
+        model: "openai/gpt-4".into(),
+        messages: vec![ChatMessage::user("Hi")],
+        tools: None,
+        stream: false,
+        temperature: None,
+        max_tokens: None,
+        thinking: None,
+        reasoning_effort: None,
+        tool_choice: None,
+    };
+
+    let err = provider.complete(request).await.unwrap_err();
+    assert!(matches!(err, RockBotError::RateLimited { .. }));
+}
+
+#[tokio::test]
+async fn test_openrouter_complete_500() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(500).set_body_string("Server error"))
+        .mount(&mock_server)
+        .await;
+
+    let config = ProviderConfig {
+        name: "openrouter".into(),
+        api_key: "sk-or-test".into(),
+        base_url: mock_server.uri(),
+        basecf_url: None,
+        chat_path: Some("/chat/completions".into()),
+        draw_path: None,
+        models: HashMap::new(),
+    };
+    let provider = OpenRouterProvider::new(&config, "openai/gpt-4").unwrap();
+
+    let request = ChatRequest {
+        model: "openai/gpt-4".into(),
+        messages: vec![ChatMessage::user("Hi")],
+        tools: None,
+        stream: false,
+        temperature: None,
+        max_tokens: None,
+        thinking: None,
+        reasoning_effort: None,
+        tool_choice: None,
+    };
+
+    let err = provider.complete(request).await.unwrap_err();
+    match err {
+        RockBotError::ServerError { status, .. } => assert_eq!(status, 500),
+        _ => panic!("Expected ServerError"),
+    }
+}
+
+#[tokio::test]
+async fn test_openrouter_complete_with_reasoning() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "Paris is the capital of France.",
+                    "reasoning_content": "The user asked about the capital of France. France's capital is Paris."
+                },
+                "finish_reason": "stop"
+            }]
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let config = ProviderConfig {
+        name: "openrouter".into(),
+        api_key: "sk-or-test".into(),
+        base_url: mock_server.uri(),
+        basecf_url: None,
+        chat_path: Some("/chat/completions".into()),
+        draw_path: None,
+        models: HashMap::new(),
+    };
+    let provider = OpenRouterProvider::new(&config, "openai/gpt-4").unwrap();
+
+    let request = ChatRequest {
+        model: "openai/gpt-4".into(),
+        messages: vec![ChatMessage::user("What is the capital of France?")],
+        tools: None,
+        stream: false,
+        temperature: None,
+        max_tokens: None,
+        thinking: Some(ThinkingConfig::enabled()),
+        reasoning_effort: Some("high".into()),
+        tool_choice: None,
+    };
+
+    let result = provider.complete(request).await.unwrap();
+    assert!(result.text.is_some());
+    assert!(result.reasoning_content.is_some());
 }

@@ -100,7 +100,7 @@ impl MemoryManager {
         self.rooms.get_mut(room_id)
     }
 
-    pub fn check_and_archive(&mut self, room_id: &str) -> Option<(String, Vec<ChatMessage>)> {
+    pub fn check_and_archive(&mut self, room_id: &str) -> Option<(String, Vec<ChatMessage>, u64)> {
         let room = self.rooms.get(room_id)?;
         if room.history.needs_archive(self.max_chars) {
             let to_archive = room
@@ -108,7 +108,8 @@ impl MemoryManager {
                 .oldest_messages(room.history.messages.len() / 2);
             let messages: Vec<ChatMessage> = to_archive.to_vec();
             let room_id = room.room_id.clone();
-            Some((room_id, messages))
+            let seq = room.history.archive_seq;
+            Some((room_id, messages, seq))
         } else {
             None
         }

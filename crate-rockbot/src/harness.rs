@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
 use tracing::{debug, error, warn};
-use webdav::WebDavClient;
+use webdav::{WebDavClient, WebDavPath};
 
 use crate::AppConfig;
 use crate::error::Result;
 use crate::memory::MemoryManager;
 use crate::provider::AiProvider;
 use crate::tool::ToolRegistry;
-use crate::types::{ChatMessage, ChatRequest};
+use crate::types::{ChatMessage, ChatRequest, Role};
 
 const MAX_AGENT_ITERATIONS: u32 = 8;
 
@@ -230,10 +230,26 @@ impl AgentHarness {
 
     pub async fn archive_room_if_needed(&mut self, room_id: &str) -> Result<()> {
         let needs_archive = self.memory.check_and_archive(room_id);
-        if let Some((rid, msgs)) = needs_archive {
-            if let Some(ref _webdav) = self.webdav {
+        if let Some((rid, msgs, seq)) = needs_archive {
+            if let Some(ref webdav_client) = self.webdav {
                 let count = msgs.len();
-                debug!("Archiving {} messages for room {}", count, rid);
+                let content = format_messages_as_markdown(&msgs);
+                let path = WebDavPath::new("").archive_path(&rid, seq);
+
+                match webdav_client
+                    .write_file_auto_mkcol(&path, content.as_bytes().to_vec())
+                    .await
+                {
+                    Ok(()) => {
+                        debug!("Archived {} messages for room {} to {}", count, rid, path);
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Failed to archive messages for room {}: {}. Truncating instead.",
+                            rid, e
+                        );
+                    }
+                }
                 self.memory.prune_archived(&rid, count);
             } else {
                 debug!(
@@ -248,12 +264,40 @@ impl AgentHarness {
     }
 }
 
+fn format_messages_as_markdown(messages: &[ChatMessage]) -> String {
+    let mut md = String::from("# Conversation Archive\n\n");
+    for msg in messages {
+        let role = match msg.role {
+            Role::System => "System",
+            Role::User => "User",
+            Role::Assistant => "Assistant",
+            Role::Tool => "Tool",
+        };
+        let text = msg.text_content().unwrap_or("");
+        if !text.is_empty() {
+            md.push_str(&format!("**{}**: {}\n\n", role, text));
+        }
+        if let Some(tool_calls) = &msg.tool_calls {
+            for tc in tool_calls {
+                md.push_str(&format!(
+                    "**{}**: [tool: {}](args: {})\n\n",
+                    role, tc.function.name, tc.function.arguments
+                ));
+            }
+        }
+        if text.is_empty() && msg.tool_calls.is_none() {
+            md.push_str(&format!("**{}**: (empty message)\n\n", role));
+        }
+    }
+    md.trim().to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::error::RockBotError;
     use crate::provider::AiProvider;
-    use crate::types::{CompletionResult, FinishReason};
+    use crate::types::{CompletionResult, FinishReason, ToolCall};
     use async_trait::async_trait;
 
     struct MockProvider {
@@ -392,5 +436,64 @@ chat = "mock-model"
         let harness = AgentHarness::new(config, provider, None);
         let model = harness.resolve_model();
         assert_eq!(model, "mock-model");
+    }
+
+    #[test]
+    fn test_format_messages_as_markdown() {
+        let msgs = vec![
+            ChatMessage::system("You are helpful"),
+            ChatMessage::user("Hello"),
+            ChatMessage::assistant("Hi there!"),
+        ];
+        let md = format_messages_as_markdown(&msgs);
+        assert!(md.contains("**System**: You are helpful"));
+        assert!(md.contains("**User**: Hello"));
+        assert!(md.contains("**Assistant**: Hi there!"));
+    }
+
+    #[test]
+    fn test_format_messages_as_markdown_with_tool_calls() {
+        let tc = ToolCall::new("call_1", "get_weather", r#"{"location":"Paris"}"#);
+        let msgs = vec![ChatMessage::assistant_with_tool_calls("", vec![tc], None)];
+        let md = format_messages_as_markdown(&msgs);
+        assert!(md.contains("get_weather"));
+        assert!(md.contains("Paris"));
+    }
+
+    #[tokio::test]
+    async fn test_archive_room_if_needed_no_webdav() {
+        let config = make_test_config();
+        let provider = Box::new(MockProvider::new(vec![]));
+        let mut harness = AgentHarness::new(config, provider, None);
+
+        let room = harness
+            .memory_mut()
+            .get_or_create("room1", "general", false);
+        for i in 0..10 {
+            room.history
+                .append(ChatMessage::user(format!("msg {}", i)));
+        }
+
+        let result = harness.archive_room_if_needed("room1").await;
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_check_and_archive_returns_seq() {
+        let mut mgr = MemoryManager::new(50, 12);
+        let room = mgr.get_or_create("room1", "general", false);
+        for i in 0..10 {
+            room.history.append(ChatMessage::user(format!(
+                "Message number {} with some padding text",
+                i
+            )));
+        }
+
+        let result = mgr.check_and_archive("room1");
+        if let Some((rid, msgs, seq)) = result {
+            assert_eq!(rid, "room1");
+            assert!(!msgs.is_empty());
+            assert_eq!(seq, 0);
+        }
     }
 }
