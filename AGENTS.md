@@ -8,14 +8,12 @@
 
 ```
 crate-rocketchat/     # lib + debug binary — standalone RocketChat DDP WebSocket client
-crate-rockbot/        # lib only — config, AiProvider trait, agent loop, tools, memory
+crate-rockbot/        # lib + application binary — config, AiProvider trait, agent loop, tools, memory
 crate-webdav/         # lib only — WebDAV client for NextCloud storage operations
 bot/                  # Python app (IGNORED per user directive)
 _dfds/ _docs/         # Mermaid data flow diagrams and architecture docs
 example.config.toml   # template for config; real config.toml is gitignored
 ```
-
-The `crate-rockbot` application binary (`main.rs`) does not exist yet — the app binary is still Python.
 
 ## Build & test
 
@@ -55,6 +53,32 @@ Run `cargo fmt` and `cargo clippy` with default settings.
 - The `rocketchat` crate uses `thiserror`, `serde`/`serde_json`, `tokio-tungstenite` with `rustls-tls-native-roots` for WebSocket TLS.
 - The `rockbot` crate uses `async-trait` for the `AiProvider` trait (OpenRouter, DeepSeek).
 - The `webdav` crate uses `quick-xml` and `base64` for WebDAV XML parsing and auth.
+
+## DFD-driven implementation
+
+Data Flow Diagrams in `_dfds/` define the system's architecture. When a DFD is modified, align the Rust implementation to match:
+
+1. **Read the changed DFD** to understand the updated data flow, process steps, and decision nodes.
+2. **Map DFD processes to source files** — each DFD rectangle/process node typically corresponds to a function, method, or module. Use the DFD annotations (e.g. references to `src/harness.rs`, `src/memory.rs`) as entry points.
+3. **Implement in iteration order** — follow the DFD flow top-to-bottom. Start with data structure changes (`types.rs`, `config.rs`), then the core logic (harness, provider, tools), then wiring (`main.rs`, `lib.rs`).
+4. **Add/update tests** in the corresponding test file (inline `#[cfg(test)]` modules for unit tests, `tests/*.rs` for integration). Mock external dependencies (HTTP, WebDAV, RocketChat) — see existing `wiremock` patterns in `integration_mock.rs`.
+5. **Verify with `cargo test`** — all tests must pass before committing. Run `cargo fmt` and `cargo clippy` to keep code clean.
+
+### DFD-to-code mapping
+
+| DFD file | Primary Rust source | Secondary sources |
+| -------- | ------------------- | ----------------- |
+| `agent-harness.md` | `harness.rs` | `memory.rs`, `tool.rs`, `provider/mod.rs` |
+| `agent-orchestrator.md` | `main.rs` | `harness.rs`, `config.rs` |
+| `base/ai-provider.md` | `provider/mod.rs`, `provider/deepseek.rs`, `provider/openrouter.rs` | `types.rs` |
+| `base/config.md` | `config.rs` | `example.config.toml` |
+| `rocketchat.md` | rocketchat crate (`client.rs`, `ddp.rs`, `types.rs`) | — |
+| `memory.md` | `memory.rs` | `harness.rs` |
+| `tools/exa-search.md` | `tools/web_search.rs` | `tools/web_fetch.rs` |
+| `tools/web-fetch.md` | `tools/web_fetch.rs` | `tools/web_search.rs` |
+| `tools/webdav.md` | webdav crate (`client.rs`, `path.rs`) | `harness.rs` |
+| `tools/knowledge.md` | `memory.rs` | `harness.rs` |
+| `context-diagram.md` | (Level 0 — system boundary, no code changes) | — |
 
 ## Testing
 
