@@ -5,6 +5,9 @@ pub enum WebDavError {
     #[error("HTTP request failed: {0}")]
     Http(#[from] reqwest::Error),
 
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+
     #[error("Invalid URL: {0}")]
     InvalidUrl(String),
 
@@ -25,6 +28,9 @@ pub enum WebDavError {
 
     #[error("Unexpected HTTP status {status}: {body}")]
     UnexpectedStatus { status: u16, body: String },
+
+    #[error("Config parse error: {0}")]
+    Config(#[from] toml::de::Error),
 
     #[error("Serialization error: {0}")]
     SerdeJson(#[from] serde_json::Error),
