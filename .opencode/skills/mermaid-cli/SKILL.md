@@ -11,7 +11,7 @@ Validate Mermaid diagram blocks in `.md` files against the official Mermaid
 parser. Zero-install — Deno pulls `mermaid` + `jsdom` automatically on first
 run. No headless browser, no npm install, no `/tmp` scripts.
 
-## deno (preferred)
+## deno
 
 ```bash
 deno run -A --node-modules-dir=auto \
@@ -20,18 +20,13 @@ deno run -A --node-modules-dir=auto \
 ```
 
 Accepts a single `.md` file or a directory. First-run downloads + caches
-dependencies (~5s). Subsequent runs are instant. Exit code is non-zero on
-any parse failure.
+`mermaid` + `jsdom` (~200 transitive deps, ~5s). Subsequent runs are instant.
+Exit code is non-zero on any parse failure.
 
-## npx (fallback — needs Chrome)
-
-```bash
-npx @mermaid-js/mermaid-cli --input _dfds/agent-harness.md -o /dev/null -q
-```
-
-Catches syntax errors during rendering. Requires a headless Chrome binary
-with `libnspr4` — may produce spurious "browser process" errors. Prefer
-deno above.
+`@mermaid-js/mermaid-cli` (mmdc) also validates but requires a headless
+Chrome binary with `libnspr4` — it failed here with `Code: 127` because the
+system library was absent. The deno approach uses `mermaid.parse()` + jsdom
+instead, avoiding the browser dependency entirely.
 
 ## Common syntax errors
 
