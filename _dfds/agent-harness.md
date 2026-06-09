@@ -25,12 +25,12 @@ flowchart TD
     CFG[(AppConfig)]
     INIT(InitializeSystems)
     RC_CONNECT[RocketChat Connection]
-    MEM_SEED[Seed Memory]
-    RC[IncomingMessage]
+    MEM_SEED(SeedMemory)
+    EVT[IncomingMessage]
     ROUTE(RouteByRoom)
     CTX(BuildContext)
-    MEM[HIST[ConversationHistory]]
-    TOOLS_DEF[ToolRegistry]
+    MEM[(ConversationHistory)]
+    TOOLS_DEF[(ToolRegistry)]
     AGENT(Agent Loop)
     REPLY[BotReply]
     SEND(SendReply)
@@ -39,9 +39,9 @@ flowchart TD
     CFG -->|"config slices"| INIT
     INIT -->|"startup"| RC_CONNECT
     INIT -->|"load archives"| MEM_SEED
-    RC_CONNECT -->|"connected"| RC
+    RC_CONNECT -->|"connected"| EVT
     MEM_SEED -->|"seed history"| MEM
-    RC -->|"IncomingMessage"| ROUTE
+    EVT -->|"IncomingMessage"| ROUTE
     ROUTE -->|"message + room_id"| CTX
     MEM -->|"history for room"| CTX
     TOOLS_DEF -->|"tool definitions"| CTX
