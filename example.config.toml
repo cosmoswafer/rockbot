@@ -4,35 +4,38 @@ username = "EDITME"
 password = "EDITME"
 debug = false
 default_provider = "openrouter"
-default_model = "deepseek/deepseek-v3.2:online"
+default_model = "deepseek"
 tools = false
 max_history_size = 12
 max_text_length = 50000
 
-[providers.openrouter]
+[[providers]]
+name = "openrouter"
 api_key = "sk-or-v1-EDITME"
 base_url = "https://openrouter.ai/api/v1"
 basecf_url = "https://your-cf-worker.example.com/api/v1"
 chat_path = "/chat/completions"
 draw_path = "/images/generations"
 
-[providers.openrouter.models]
+[providers.models]
 gpt = "openai/gpt-oss-120b:online"
 qwen = "qwen/qwen3-235b-a22b-thinking-2507:online"
 perplexity = "perplexity/sonar-deep-research"
 deepseek = "deepseek/deepseek-v3.2:online"
 
-[providers.deepseek]
+[[providers]]
+name = "deepseek"
 api_key = "EDITME"
 base_url = "https://api.deepseek.com/v1"
 
-[providers.deepseek.models]
+[providers.models]
 chat = "deepseek-chat"
 reasoner = "deepseek-reasoner"
 
-[providers.replicate]
+[[providers]]
+name = "replicate"
 api_key = "EDITME"
 base_url = "https://api.replicate.com/v1/predictions"
 
-[providers.replicate.models]
+[providers.models]
 flux-1.1-pro-ultra = "black-forest-labs/flux-1.1-pro-ultra"
