@@ -1,4 +1,4 @@
-// Usage: deno run -A validate.js [directory]
+// Usage: deno run -A --node-modules-dir=auto validate.js <file.md | directory>
 // Validates all Mermaid blocks in .md files using mermaid.parse().
 // No npm install needed — Deno handles npm: specifiers.
 
@@ -6,7 +6,7 @@ import { JSDOM } from "npm:jsdom";
 import fs from "node:fs";
 import path from "node:path";
 
-const targetDir = Deno.args[0] || Deno.cwd();
+const target = Deno.args[0] || Deno.cwd();
 
 // Setup minimal DOM for mermaid
 const dom = new JSDOM(
@@ -28,21 +28,32 @@ globalThis.cancelAnimationFrame = dom.window.cancelAnimationFrame ||
 const mermaid = (await import("npm:mermaid")).default;
 mermaid.initialize({ startOnLoad: false, securityLevel: "loose" });
 
-const files = [...Deno.readDirSync(targetDir)]
-  .filter((e) => e.isFile && e.name.endsWith(".md"))
-  .map((e) => e.name)
-  .sort();
+// Build file list: single .md file or all .md files in directory
+let files = [];
+const stat = fs.statSync(target);
+if (stat.isFile) {
+  if (!target.endsWith(".md")) {
+    console.log("Error: file must be .md");
+    Deno.exit(1);
+  }
+  files.push({ name: path.basename(target), dir: path.dirname(target) });
+} else {
+  files = [...Deno.readDirSync(target)]
+    .filter((e) => e.isFile && e.name.endsWith(".md"))
+    .map((e) => ({ name: e.name, dir: target }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
 
 if (files.length === 0) {
-  console.log("No .md files found in", targetDir);
+  console.log("No .md files found in", target);
   Deno.exit(0);
 }
 
 let total = 0;
 let errors = 0;
 
-for (const fname of files) {
-  const content = fs.readFileSync(path.join(targetDir, fname), "utf-8");
+for (const { name: fname, dir } of files) {
+  const content = fs.readFileSync(path.join(dir, fname), "utf-8");
   const re = /```mermaid\n([\s\S]*?)```/g;
   let match;
   let i = 0;

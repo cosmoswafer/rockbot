@@ -1,6 +1,6 @@
 ---
 name: mermaid-cli
-description: Use ONLY when asked to validate, check, parse, or fix Mermaid diagram syntax. Covers running mermaid.parse() with jsdom for headless validation, common syntax errors (nested brackets, shape-chars inside labels, escaped quotes), and the validate.js script. Do NOT use for creating or editing diagrams (see dfd-md skill for that).
+description: Use ONLY when asked to validate, check, parse, or fix Mermaid diagram syntax. Covers running mermaid.parse() with jsdom (no browser needed), common syntax errors (nested brackets, shape-chars inside labels, escaped quotes), and the validate.js tool. Do NOT use for creating or editing diagrams (see dfd-md skill for that).
 ---
 
 # mermaid-cli — Validate Mermaid Syntax
@@ -8,94 +8,30 @@ description: Use ONLY when asked to validate, check, parse, or fix Mermaid diagr
 ## Purpose
 
 Validate Mermaid diagram blocks in `.md` files against the official Mermaid
-parser (`mermaid.parse()`). Uses Deno with `npm:` specifiers — no npm install
-or headless browser needed. Dependencies are pulled and cached automatically on
-first run.
+parser. Zero-install — Deno pulls `mermaid` + `jsdom` automatically on first
+run. No headless browser, no npm install, no `/tmp` scripts.
 
-- Validate: `deno run -A --node-modules-dir=auto validate.js [directory]`
-- Fix: interpret parse errors to correct common syntax mistakes.
-
-## Run validation
-
-The `validate.js` script is bundled with this skill. Run it directly from the
-skill directory:
+## deno (preferred)
 
 ```bash
 deno run -A --node-modules-dir=auto \
-  /home/claw/rockbot/.opencode/skills/mermaid-cli/validate.js \
-  /home/claw/rockbot/_dfds
+  .opencode/skills/mermaid-cli/validate.js \
+  _dfds/agent-harness.md
 ```
 
-First run downloads + caches `mermaid` and `jsdom` automatically. Subsequent
-runs use the cache.
-
-Pass any directory containing `.md` files. The script extracts every
-` ```mermaid` block, runs `mermaid.parse()` on each, and exits non-zero on
+Accepts a single `.md` file or a directory. First-run downloads + caches
+dependencies (~5s). Subsequent runs are instant. Exit code is non-zero on
 any parse failure.
 
-## validate.js
+## npx (fallback — needs Chrome)
 
-The canonical script lives at
-`.opencode/skills/mermaid-cli/validate.js`. It uses Deno's `npm:` specifiers so
-zero local dependencies are required:
-
-```js
-import { JSDOM } from "npm:jsdom";
-import fs from "node:fs";
-import path from "node:path";
-
-const targetDir = Deno.args[0] || Deno.cwd();
-
-const dom = new JSDOM(
-  '<!DOCTYPE html><html><body><div id="mermaid-root"></div></body></html>',
-  { url: "http://localhost", pretendToBeVisual: true },
-);
-
-globalThis.window = dom.window;
-globalThis.document = dom.window.document;
-globalThis.HTMLElement = dom.window.HTMLElement;
-globalThis.HTMLDivElement = dom.window.HTMLDivElement;
-globalThis.SVGElement = dom.window.SVGElement || class {};
-globalThis.getComputedStyle = dom.window.getComputedStyle;
-globalThis.requestAnimationFrame = dom.window.requestAnimationFrame ||
-  ((cb) => setTimeout(cb, 0));
-globalThis.cancelAnimationFrame = dom.window.cancelAnimationFrame ||
-  clearTimeout;
-
-const mermaid = (await import("npm:mermaid")).default;
-mermaid.initialize({ startOnLoad: false, securityLevel: "loose" });
-
-const files = [...Deno.readDirSync(targetDir)]
-  .filter((e) => e.isFile && e.name.endsWith(".md"))
-  .map((e) => e.name)
-  .sort();
-
-let total = 0, errors = 0;
-
-for (const fname of files) {
-  const content = fs.readFileSync(path.join(targetDir, fname), "utf-8");
-  const re = /```mermaid\n([\s\S]*?)```/g;
-  let match, i = 0;
-  while ((match = re.exec(content)) !== null) {
-    const block = match[1].trim();
-    const firstLine = block.split("\n")[0].trim();
-    total++;
-    try {
-      await mermaid.parse(block);
-      console.log(`OK  ${fname} [block ${i}]  (${firstLine})`);
-    } catch (err) {
-      errors++;
-      console.log(`FAIL ${fname} [block ${i}]  (${firstLine})`);
-      for (const line of (err.message || String(err)).split("\n").slice(0, 5))
-        console.log(`     ${line.trim().slice(0, 120)}`);
-    }
-    i++;
-  }
-}
-
-console.log(`\nTotal: ${errors} errors / ${total} blocks`);
-Deno.exit(errors > 0 ? 1 : 0);
+```bash
+npx @mermaid-js/mermaid-cli --input _dfds/agent-harness.md -o /dev/null -q
 ```
+
+Catches syntax errors during rendering. Requires a headless Chrome binary
+with `libnspr4` — may produce spurious "browser process" errors. Prefer
+deno above.
 
 ## Common syntax errors
 
@@ -164,26 +100,4 @@ Expecting 'TAGEND', ..., got 'DIAMOND_START'
 - `got 'TAGEND'` → the parser expected to close the current tag but found
   something else (often an unexpected character like `\"` or nested brackets).
 
-The "Expecting" list shows what the parser tried to find at that position —
-use it to identify which character is being misinterpreted.
-
-## Troubleshooting
-
-**`deno run` fails with "Could not find a matching package"**
-
-Add `--node-modules-dir=auto` to let Deno auto-resolve `npm:` packages:
-
-```bash
-deno run -A --node-modules-dir=auto validate.js _dfds
-```
-
-**First-run latency**
-
-The initial run downloads mermaid + jsdom + their transitive dependencies
-(~200 packages) to the Deno cache. Subsequent runs are instant.
-
-**`mmdc` (the Mermaid CLI renderer)**
-
-Avoid `@mermaid-js/mermaid-cli` for validation — it requires a headless Chrome
-binary and `libnspr4` system library. The `mermaid.parse()` approach here
-neither.
+The "Expecting" list shows what the parser tried to find at that position.
