@@ -7,13 +7,13 @@
 ## Project layout
 
 ```
-crates/rocketchat/     # ONLY Rust crate in the workspace — standalone RocketChat client library
+crate-rocketchat/     # ONLY Rust crate in the workspace — standalone RocketChat client library
 bot/                   # Python app (IGNORED per user directive)
 _dfds/ _docs/          # Mermaid data flow diagrams and architecture docs
 example.config.toml    # template for config; real config.toml is gitignored
 ```
 
-The `crates/rockbot/` directory described in README.md **does not exist yet**.
+The `crate-rockbot/` directory described in README.md **does not exist yet**.
 The application binary is currently Python, not Rust.
 
 ## Build & test
@@ -22,7 +22,7 @@ The application binary is currently Python, not Rust.
 cargo build --release          # workspace build
 
 # Unit tests + integration tests that don't need a server:
-cargo test                     # from workspace root or crates/rocketchat/
+cargo test                     # from workspace root or crate-rocketchat/
 
 # Real integration tests (require running RocketChat server + valid config.toml):
 cargo test --test integration_real -- --ignored
@@ -37,7 +37,7 @@ No CI, no rustfmt.toml, no clippy.toml, no rust-toolchain file.
 
 ## Key facts
 - `Cargo.lock` is gitignored — atypical for a binary crate.
-- `crates/rocketchat/` has both `lib.rs` (public API) and `main.rs` (manual debug binary that connects to a RocketChat server and logs events).
+- `crate-rocketchat/` has both `lib.rs` (public API) and `main.rs` (manual debug binary that connects to a RocketChat server and logs events).
 - `config.toml` is gitignored; use `example.config.toml` as a reference. Real integration tests read `config.toml` from the workspace root.
 - The `rocketchat` crate uses `thiserror` for errors, `serde`/`serde_json` for serialization, `tokio-tungstenite` with `rustls-tls-native-roots` for WebSocket TLS.
 

@@ -10,18 +10,17 @@ entirely by a NextCloud WebDAV server for persistent state.
 rockbot/
 ├── Cargo.toml              # workspace root
 ├── config.toml             # runtime configuration
-├── crates/
-│   ├── rocketchat/         # standalone RocketChat client library
-│   │   ├── auth            # REST login, session management
-│   │   ├── websocket       # WS event stream, reconnection
-│   │   └── messages        # parsing, filtering, sending
-│   └── rockbot/            # application binary
-│       ├── config          # TOML loader + JSON migration
-│       ├── provider        # AiProvider trait (OpenRouter, DeepSeek)
-│       ├── agent           # agentic loop, tool registry
-│       ├── tools           # Exa search, web fetch, vision
-│       ├── memory          # in-memory history + archive pipeline
-│       └── webdav          # NextCloud WebDAV client
+├── crate-rocketchat/      # standalone RocketChat client library
+│   ├── auth            # REST login, session management
+│   ├── websocket       # WS event stream, reconnection
+│   └── messages        # parsing, filtering, sending
+├── crate-rockbot/      # application binary
+│   ├── config          # TOML loader + JSON migration
+│   ├── provider        # AiProvider trait (OpenRouter, DeepSeek)
+│   ├── agent           # agentic loop, tool registry
+│   ├── tools           # Exa search, web fetch, vision
+│   ├── memory          # in-memory history + archive pipeline
+│   └── webdav          # NextCloud WebDAV client
 └── _dfds/                  # data flow diagrams
 ```
 
