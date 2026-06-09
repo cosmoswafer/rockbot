@@ -31,7 +31,7 @@ flux-1.1-pro-ultra = "black-forest-labs/flux-1.1-pro-ultra"
 
 [rocketchat.model]
 default_provider = "deepseek"
-default_model = "deepseek-v4-flash"
+default_model = "flash"
 max_history_size = 12
 max_text_length = 50000
 
