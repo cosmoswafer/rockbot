@@ -2,6 +2,7 @@ __pycache__
 .*.swp
 venv/
 config.json
+config.toml
 .aider*
 .env
 .opencode/deno.lock

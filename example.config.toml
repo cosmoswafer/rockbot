@@ -1,0 +1,39 @@
+[server]
+url = "your-server.example.com"
+username = "EDITME"
+password = "EDITME"
+debug = false
+
+[ai]
+provider = "openrouter"
+tools = false
+max_history_size = 12
+max_text_length = 50000
+debug = false
+
+[ai.openrouter]
+api_key = "sk-or-v1-EDITME"
+base_url = "https://openrouter.ai/api/v1"
+model = "deepseek/deepseek-v3.2:online"
+
+[ai.openrouter.url]
+basecf = "https://your-cf-worker.example.com/api/v1"
+chat = "/chat/completions"
+draw = "/images/generations"
+
+[ai.openrouter.models]
+gpt = "openai/gpt-oss-120b:online"
+qwen = "qwen/qwen3-235b-a22b-thinking-2507:online"
+perplexity = "perplexity/sonar-deep-research"
+deepseek = "deepseek/deepseek-v3.2:online"
+
+[ai.deepseek]
+api_key = "EDITME"
+base_url = "https://api.deepseek.com/v1"
+model = "deepseek-chat"
+
+[ai.draw]
+provider = "replicate"
+api_key = "EDITME"
+base_url = "https://api.replicate.com/v1/predictions"
+model_url = "https://api.replicate.com/v1/models/black-forest-labs/flux-1.1-pro-ultra/predictions"
