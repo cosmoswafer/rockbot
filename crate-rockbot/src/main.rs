@@ -27,8 +27,8 @@ fn setup_logging() {
 fn main() {
     setup_logging();
 
-    let config_path = env::args()
-        .nth(1)
+    let config_path = env::var("CONFIG_FILE").ok()
+        .or_else(|| env::args().nth(1))
         .unwrap_or_else(|| "config.toml".to_string());
 
     info!("Loading config from {}", config_path);
