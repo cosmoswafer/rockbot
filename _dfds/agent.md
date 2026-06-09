@@ -134,8 +134,8 @@ and style prefix differ.
 flowchart TD
     PROMPT[prompt]
     STYLE{Style Prefix}
-    INFO["\"infographic: \" + prompt"]
-    ANI["\"japanese anime style: \" + prompt"]
+    INFO["infographic: " + prompt]
+    ANI["japanese anime style: " + prompt]
     API(Image Generation API)
     BYTES[image bytes]
     NAME(GenerateFilename)

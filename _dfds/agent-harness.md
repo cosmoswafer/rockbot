@@ -90,8 +90,8 @@ flowchart TD
     MEM[(InMemoryHistory)]
     AGENT(Agent Loop)
     AREPLY[BotReply]
-    DAV[{room_id}/memory/]
-    DAV_IMG[{room_id}/images/]
+    DAV["{room_id}/memory/"]
+    DAV_IMG["{room_id}/images/"]
 
     RC -->|"room_id"| GET_EXIST
     ROOM_MAP -->|"lookup"| GET_EXIST
@@ -111,7 +111,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    START[main()]
+    START["main()"]
     CFG(LoadConfig)
     MIGRATE{Legacy JSON?}
     TOML["config.toml"]
