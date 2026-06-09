@@ -23,25 +23,21 @@ tool execution.
 ```mermaid
 flowchart TD
     RC[RocketChat]
-    EVT[IncomingMessage]
     ROUTE(RouteByRoom)
     CTX(BuildContext)
     MEM[(ConversationHistory)]
     TOOLS_DEF[(ToolRegistry)]
     INTERACT(InteractWithAi)
     AI[AiProvider]
-    REPLY[BotReply]
 
-    RC -->|"DM / @mention"| EVT
-    EVT -->|"message + room_id"| ROUTE
+    RC -->|"incoming message"| ROUTE
     ROUTE -->|"routed message"| CTX
     MEM -->|"history for room"| CTX
     TOOLS_DEF -->|"tool definitions"| CTX
-    CTX -->|"ChatRequest"| INTERACT
-    INTERACT -->|"ChatRequest"| AI
-    AI -->|"CompletionResult"| INTERACT
-    INTERACT -->|"BotReply"| REPLY
-    REPLY -->|"reply"| RC
+    CTX -->|"chat request"| INTERACT
+    INTERACT -->|"chat request"| AI
+    AI -->|"completion result"| INTERACT
+    INTERACT -->|"bot reply"| RC
 ```
 
 ### 2b. Error Handling & Fallbacks
@@ -50,16 +46,16 @@ flowchart TD
 flowchart TD
     AI[AiProvider]
     TOOL_EXEC(ExecuteTool)
-    MAX_LOOP{MaxIterations?}
+    LOOP_LIMIT(CheckMaxIterations)
     FALLBACK(SendFallbackReply)
     TRUNC(TruncateAndSummarize)
     REPLY[BotReply]
 
-    AI -.->|"API error"| FALLBACK
-    TOOL_EXEC -.->|"execution failed"| FALLBACK
-    FALLBACK -->|"error message"| REPLY
-    MAX_LOOP -.->|"exceeded"| TRUNC
-    TRUNC -->|"summarized context back to loop"| REPLY
+    AI -.->|"api error response"| FALLBACK
+    TOOL_EXEC -.->|"tool execution error"| FALLBACK
+    FALLBACK -->|"error reply text"| REPLY
+    LOOP_LIMIT -.->|"overflow context"| TRUNC
+    TRUNC -->|"summarized reply"| REPLY
 ```
 
 ### 2c. LLM Interaction Deep Dive
@@ -70,29 +66,26 @@ text reply is produced.
 
 ```mermaid
 flowchart TD
-    REQ[ChatRequest]
+    CTX[BuildContext]
     AI[AiProvider]
-    CHECK{HasToolCalls?}
+    ASSESS(AssessCompletion)
     EXEC(ExecuteTool)
-    RESULT[ToolResult]
     APPEND(AppendToolResult)
-    REPLY[BotReply]
-    MAX_LOOP{MaxIterations?}
+    LIMIT(CheckIterationLimit)
     TRUNC(TruncateAndSummarize)
+    REPLY_OUT[BotReply]
 
-    REQ -->|"messages + tools"| AI
-    AI -->|"CompletionResult"| CHECK
-    CHECK -->|"no tool calls"| REPLY
-    REPLY -->|"BotReply"| INTERACT
-    CHECK -->|"tool_calls[]"| EXEC
-    EXEC -->|"ToolResult"| RESULT
-    RESULT -->|"tool result message"| APPEND
-    APPEND -->|"updated messages"| REQ
-    REQ -->|"loop count"| MAX_LOOP
-    MAX_LOOP -->|"exceeded"| TRUNC
-    TRUNC -->|"summarized context"| REQ
-    EXEC -.->|"execution failed"| RESULT
-    AI -.->|"API error"| REPLY
+    CTX -->|"chat request"| AI
+    AI -->|"completion result"| ASSESS
+    ASSESS -->|"tool calls"| EXEC
+    ASSESS -->|"final reply text"| REPLY_OUT
+    EXEC -->|"tool result"| APPEND
+    APPEND -->|"updated messages"| CTX
+    CTX -->|"iteration count"| LIMIT
+    LIMIT -.->|"overflow context"| TRUNC
+    TRUNC -->|"summarized messages"| CTX
+    EXEC -.->|"tool execution error"| APPEND
+    AI -.->|"api error"| REPLY_OUT
 ```
 
 ### 2d. Tool Execution Deep Dive
@@ -100,44 +93,28 @@ flowchart TD
 ```mermaid
 flowchart TD
     CALL[ToolCall]
-    REG{ToolRegistry}
-    EXA(ExaSearch)
-    FETCH(WebFetch)
-    VISION(VisionAnalyze)
-    INFOGRAPH(InfographGen)
-    ANIME(AnimeGen)
-    RESULT[ToolResult]
-    EXA_API[Exa API]
+    REG[(ToolRegistry)]
+    EXEC(ExecuteToolByName)
+    EXA[Exa API]
     WEB_URL[Remote URL]
-    WEBDAV_IMG[WebDAV Image]
+    WEBDAV_IMG[(WebDAV Image)]
     IMG_API[Image Generation API]
-    WEBDAV_STORE[WebDAV images/]
+    WEBDAV_STORE[(WebDAV images)]
+    RESULT[ToolResult]
 
-    CALL -->|"name"| REG
-    REG -->|"web_search"| EXA
-    REG -->|"web_fetch"| FETCH
-    REG -->|"vision"| VISION
-    REG -->|"infograph"| INFOGRAPH
-    REG -->|"anime"| ANIME
-    EXA -->|"search query"| EXA_API
-    EXA_API -->|"results"| EXA
-    EXA -->|"formatted results"| RESULT
-    FETCH -->|"HTTP GET"| WEB_URL
-    WEB_URL -->|"HTML"| FETCH
-    FETCH -->|"markdown text"| RESULT
-    VISION -->|"download image"| WEBDAV_IMG
-    WEBDAV_IMG -->|"image bytes"| VISION
-    VISION -->|"image description"| RESULT
-    INFOGRAPH -->|"infograph prompt"| IMG_API
-    IMG_API -->|"image bytes"| INFOGRAPH
-    INFOGRAPH -->|"PUT image.png"| WEBDAV_STORE
-    WEBDAV_STORE -->|"image URL"| INFOGRAPH
-    INFOGRAPH -->|"image URL"| RESULT
-    ANIME -->|"anime prompt"| IMG_API
-    IMG_API -->|"image bytes"| ANIME
-    ANIME -->|"PUT image.png"| WEBDAV_STORE
-    WEBDAV_STORE -->|"image URL"| ANIME
-    ANIME -->|"image URL"| RESULT
+    CALL -->|"tool name + args"| EXEC
+    REG -->|"tool definitions"| EXEC
+    EXEC -->|"search query"| EXA
+    EXA -->|"search results"| EXEC
+    EXEC -->|"http get"| WEB_URL
+    WEB_URL -->|"html"| EXEC
+    EXEC -->|"download image"| WEBDAV_IMG
+    WEBDAV_IMG -->|"image bytes"| EXEC
+    EXEC -->|"generation prompt"| IMG_API
+    IMG_API -->|"image bytes"| EXEC
+    EXEC -->|"image asset"| WEBDAV_STORE
+    WEBDAV_STORE -->|"image url"| EXEC
+    EXEC -->|"formatted result"| RESULT
 ```
 
 ### 2e. Image Generation Pipeline
@@ -147,29 +124,22 @@ and style prefix differ.
 
 ```mermaid
 flowchart TD
-    PROMPT[prompt]
-    STYLE{Style Prefix}
-    INFO["infographic: " + prompt]
-    ANI["japanese anime style: " + prompt]
+    PROMPT[Prompt]
+    FORMAT(FormatStyledPrompt)
     API[Image Generation API]
-    BYTES[image bytes]
+    BYTES(ReceiveImageBytes)
     NAME(GenerateFilename)
     PUT(PutToWebDAV)
-    DAV["/{root}/{room_id}/images/{name}.png"]
-    URL[WebDAV public URL]
+    DAV[(WebDAV images)]
     RESULT[ToolResult]
 
-    PROMPT --> STYLE
-    STYLE -->|"infograph"| INFO
-    STYLE -->|"anime"| ANI
-    INFO -->|"styled prompt"| API
-    ANI -->|"styled prompt"| API
-    API -->|"PNG bytes"| BYTES
-    BYTES --> NAME
-    NAME -->|"{tool}_{timestamp}.png"| PUT
-    DAV -->|"destination"| PUT
-    PUT -->|"201 Created"| URL
-    URL -->|"markdown image link"| RESULT
+    PROMPT -->|"prompt"| FORMAT
+    FORMAT -->|"styled prompt"| API
+    API -->|"png bytes"| BYTES
+    BYTES -->|"image bytes"| NAME
+    NAME -->|"filename"| PUT
+    DAV -->|"storage target"| PUT
+    PUT -->|"webdav image url"| RESULT
 ```
 
 ### 2f. Per-Room State Routing
@@ -182,38 +152,26 @@ pipeline.
 flowchart TD
     RC[IncomingMessage]
     ROOM_MAP[(RoomStateMap)]
-    GET_EXIST{GetOrCreate}
-    NEW_ROOM(NewRoomState)
-    EXIST_ROOM[RoomState]
+    RESOLVE(ResolveRoomState)
+    NEW_ROOM(InitializeRoom)
     MEM[(InMemoryHistory)]
     INACT(InteractWithAi)
-    AREPLY[BotReply]
-    DAV["{room_id}/memory/"]
-    DAV_IMG["{room_id}/images/"]
+    REPLY[BotReply]
+    DAV[(WebDAV room memory)]
+    DAV_IMG[(WebDAV room images)]
 
-    RC -->|"room_id"| GET_EXIST
-    ROOM_MAP -->|"lookup"| GET_EXIST
-    GET_EXIST -->|"not found"| NEW_ROOM
-    GET_EXIST -->|"found"| EXIST_ROOM
-    NEW_ROOM -->|"load archives"| DAV
+    RC -->|"room id"| ROOM_MAP
+    ROOM_MAP -->|"room state or not found"| RESOLVE
+    RESOLVE -->|"new room context"| NEW_ROOM
+    RESOLVE -->|"existing room context"| INACT
+    NEW_ROOM -->|"load archives request"| DAV
     DAV -->|"archive files"| NEW_ROOM
-    NEW_ROOM -->|"seed"| MEM
-    NEW_ROOM -->|"store"| ROOM_MAP
-    EXIST_ROOM -->|"history"| MEM
-    MEM -->|"history"| INACT
-    INACT -->|"reply"| AREPLY
+    NEW_ROOM -->|"archived messages"| MEM
+    NEW_ROOM -->|"initialized state"| ROOM_MAP
+    MEM -->|"conversation history"| INACT
+    INACT -->|"bot reply"| REPLY
     INACT -->|"generated image"| DAV_IMG
 ```
-
-### 2g. Tool Definitions
-
-| Tool Name     | Description                                      | Arguments                          |
-| ------------- | ------------------------------------------------ | ---------------------------------- |
-| `web_search`  | Search the web using Exa                         | `query: string`                    |
-| `web_fetch`   | Fetch a URL, optionally as markdown              | `url: string, markdown: bool`      |
-| `vision`      | Describe or analyze an image                     | `url: string, prompt: string`      |
-| `infograph`   | _(planned)_ Generate an infographic image        | `prompt: string`                   |
-| `anime`       | _(planned)_ Generate a Japanese anime-style image | `prompt: string`                  |
 
 ## 3. Data Structures
 
@@ -248,3 +206,13 @@ flowchart TD
 | `name`       | `String` | Function name                           |
 | `description`| `String` | Human-readable description for the LLM  |
 | `parameters` | `Value`  | JSON Schema for arguments               |
+
+#### Registered Tools
+
+| Tool Name     | Description                                      | Arguments                          |
+| ------------- | ------------------------------------------------ | ---------------------------------- |
+| `web_search`  | Search the web using Exa                         | `query: string`                    |
+| `web_fetch`   | Fetch a URL, optionally as markdown              | `url: string, markdown: bool`      |
+| `vision`      | Describe or analyze an image                     | `url: string, prompt: string`      |
+| `infograph`   | _(planned)_ Generate an infographic image        | `prompt: string`                   |
+| `anime`       | _(planned)_ Generate a Japanese anime-style image | `prompt: string`                  |

@@ -17,28 +17,28 @@ validated `AppConfig` struct is shared read-only across all subsystems.
 
 ```mermaid
 flowchart TD
-    START[Startup]
-    TOML_FILE["config.toml on disk"]
-    JSON_FILE["config.json on disk"]
+    INIT(Initialize)
+    TOML_FILE[(Config File)]
+    JSON_LEGACY[(Legacy Config)]
     LOAD(LoadToml)
     DETECT(DetectLegacyJson)
     MIGRATE(MigrateJsonToToml)
     BACKUP(BackupJson)
     VALIDATE(ValidateConfig)
-    SHARE(Distribute AppConfig)
-    SUBSYS[All Subsystems]
+    SHARE(DistributeAppConfig)
+    SUBSYS[Subsystems]
 
-    START -->|"config path"| LOAD
-    TOML_FILE -->|"TOML text"| LOAD
-    LOAD -->|"AppConfig struct"| VALIDATE
-    LOAD -->|"check existence"| DETECT
-    JSON_FILE -->|"found"| DETECT
-    DETECT -->|"JSON text"| MIGRATE
-    MIGRATE -->|"config.toml"| TOML_FILE
-    MIGRATE -->|"backup trigger"| BACKUP
-    JSON_FILE -->|"renamed to .bak"| BACKUP
-    VALIDATE -->|"validated AppConfig"| SHARE
-    SHARE -->|"Arc<AppConfig>"| SUBSYS
+    INIT -->|"config path"| LOAD
+    TOML_FILE -->|"toml text"| LOAD
+    LOAD -->|"appconfig struct"| VALIDATE
+    LOAD -->|"file presence check"| DETECT
+    JSON_LEGACY -->|"legacy json"| DETECT
+    DETECT -->|"json text"| MIGRATE
+    MIGRATE -->|"migrated toml content"| TOML_FILE
+    MIGRATE -->|"migration result"| BACKUP
+    JSON_LEGACY -->|"renamed to .bak"| BACKUP
+    VALIDATE -->|"validated appconfig"| SHARE
+    SHARE -->|"arc appconfig"| SUBSYS
 ```
 
 ### 2b. Error Handling & Fallbacks
@@ -52,33 +52,33 @@ flowchart TD
     ERR_VALID[Error: Validation]
     VALIDATE(ValidateConfig)
 
-    LOAD -->|"file not found"| DETECT
-    DETECT -->|"json also missing"| ERR_NO_CFG
-    LOAD -->|"malformed TOML"| ERR_PARSE
-    VALIDATE -->|"missing required field"| ERR_VALID
+    LOAD -->|"error: file not found"| DETECT
+    DETECT -->|"error: no config files"| ERR_NO_CFG
+    LOAD -->|"error: parse failure"| ERR_PARSE
+    VALIDATE -->|"error: validation failure"| ERR_VALID
 ```
 
 ### 2c. Config Migration Deep Dive
 
 ```mermaid
 flowchart TD
-    JSON["config.json"]
+    JSON[(Legacy Config)]
     READ(ReadJson)
     MAP(MapFields)
     RENDER(RenderToml)
     WRITE(WriteToml)
-    TOML["config.toml"]
+    TOML[(Config File)]
     RENAME(RenameToJsonBak)
-    BAK["config.json.bak"]
+    BAK[(Config Backup)]
 
-    JSON -->|"raw JSON"| READ
+    JSON -->|"raw json"| READ
     READ -->|"serde_json::Value"| MAP
     MAP -->|"toml::Value"| RENDER
-    RENDER -->|"TOML string"| WRITE
+    RENDER -->|"toml string"| WRITE
     WRITE -->|"new config"| TOML
-    WRITE -->|"migration done"| RENAME
-    JSON -->|"rename"| RENAME
-    RENAME -->|"backup"| BAK
+    WRITE -->|"migration success"| RENAME
+    JSON -->|"backup file path"| RENAME
+    RENAME -->|"backup file name"| BAK
 ```
 
 ## 3. Data Structures

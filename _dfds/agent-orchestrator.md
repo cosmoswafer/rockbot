@@ -10,11 +10,12 @@ manages per-room memory, and persists everything to WebDAV.
 
 - Upstream: [Configuration Management](config.md) provides `AppConfig`
 - Downstream: [Agent Loop](agent-harness.md) receives `IncomingMessage` and
-  returns `BotReply`
+  returns `BotReply` (see agent-harness.md for loop internals and tool execution)
 - Downstream: [RocketChat Connection](rocketchat.md) handles auth, WebSocket
   streaming, and message filtering
 - Downstream: [AI Provider](ai-provider.md) handles chat completion requests
 - Downstream: [Memory Management](memory.md) manages per-room conversation history
+  (see memory.md for archive and threshold flows)
 - Downstream: [WebDAV Storage](webdav.md) persists archives and image assets
 
 ## 2. Diagram
@@ -27,39 +28,36 @@ flowchart TD
     AI[AI Provider API]
     DAV[(NextCloud WebDAV)]
     EXA[Exa Search API]
-
     DISPATCH(ReceiveMessage)
     LOOP(AgentLoop)
-    TOOL_EXEC(ExecuteTools)
     ARCHIVE(ArchiveMemory)
     PERSIST(PersistAssets)
-
     CFG[(AppConfig)]
     HISTORY[(ConversationHistory)]
     TOOLS[(ToolRegistry)]
     ROOMS[(RoomStateMap)]
 
-    RC -->|"DM / @mention"| DISPATCH
+    RC -->|"incoming message"| DISPATCH
     ROOMS -->|"room state"| DISPATCH
-    DISPATCH -->|"IncomingMessage"| LOOP
+    CFG -->|"app config"| DISPATCH
+    DISPATCH -->|"incoming message"| LOOP
+    CFG -->|"ai config"| LOOP
     HISTORY -->|"conversation history"| LOOP
     TOOLS -->|"tool definitions"| LOOP
-    CFG -->|"AI provider config"| LOOP
-    LOOP -->|"ChatRequest"| AI
-    AI -->|"CompletionResult"| LOOP
-    LOOP -->|"tool calls"| TOOL_EXEC
-    TOOL_EXEC -->|"search query"| EXA
-    EXA -->|"search results"| TOOL_EXEC
-    TOOL_EXEC -->|"image asset"| PERSIST
-    PERSIST -->|"read/write"| DAV
-    TOOL_EXEC -->|"ToolResult"| LOOP
-    LOOP -->|"BotReply"| RC
-    LOOP -->|"message to archive"| ARCHIVE
+    LOOP -->|"chat request"| AI
+    AI -->|"completion result"| LOOP
+    LOOP -->|"search query"| EXA
+    EXA -->|"search results"| LOOP
+    LOOP -->|"bot reply"| RC
+    LOOP -->|"new message"| ARCHIVE
+    LOOP -->|"image asset"| PERSIST
     ARCHIVE -->|"summary prompt"| AI
     AI -->|"summary text"| ARCHIVE
-    ARCHIVE -->|"archive .md"| PERSIST
+    ARCHIVE -->|"archive file"| PERSIST
+    PERSIST -->|"file data"| DAV
+    DAV -->|"file data"| PERSIST
     ARCHIVE -->|"pruned history"| HISTORY
-    LOOP -->|"updated state"| ROOMS
+    LOOP -->|"updated room state"| ROOMS
 ```
 
 ### 2b. Startup Sequence
@@ -68,9 +66,9 @@ flowchart TD
 flowchart TD
     START["main()"]
     CFG(LoadConfig)
-    MIGRATE{Legacy JSON?}
-    TOML["config.toml"]
-    JSON["config.json"]
+    DETECT(DetectLegacyJson)
+    TOML[(Config File)]
+    JSON_LEGACY[(Legacy Config)]
     VALIDATE(ValidateConfig)
     LOGIN(LoginRocketChat)
     CONNECT(ConnectWebSocket)
@@ -81,18 +79,18 @@ flowchart TD
     CFG_STORE[(AppConfig)]
 
     START -->|"config path"| CFG
-    CFG -->|"load TOML"| TOML
-    CFG -->|"check legacy"| MIGRATE
-    MIGRATE -->|"found"| JSON
-    JSON -->|"migrate"| TOML
+    CFG -->|"load toml"| TOML
+    CFG -->|"check legacy"| DETECT
+    JSON_LEGACY -->|"legacy json"| DETECT
+    DETECT -->|"migrated toml"| TOML
     TOML -->|"raw config"| VALIDATE
-    VALIDATE -->|"AppConfig"| CFG_STORE
+    VALIDATE -->|"appconfig"| CFG_STORE
     CFG_STORE -->|"server credentials"| LOGIN
     LOGIN -->|"auth token"| CONNECT
     CONNECT -->|"connected"| DAV
-    CFG_STORE -->|"WebDAV credentials"| DAV
-    DAV -->|"PROPFIND"| LIST_MEM
-    LIST_MEM -->|"archive list"| SEED
+    CFG_STORE -->|"webdav credentials"| DAV
+    DAV -->|"archive list"| LIST_MEM
+    LIST_MEM -->|"archived messages"| SEED
     SEED -->|"ready"| LOOP
 ```
 
@@ -100,33 +98,24 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    START[Boot]
-    WS(WebSocket Stream)
+    START(BootSystem)
+    WS(StreamWebSocket)
     AI[AI Provider API]
     DAV[(NextCloud WebDAV)]
-
-    AUTH_FAIL[Startup: Auth Failed]
-    WS_CLOSED[Runtime: WS Disconnect]
-    AI_ERROR[Runtime: AI Error]
-    DAV_ERROR[Runtime: WebDAV Error]
-
     RECONNECT(ReconnectWithBackoff)
     FALLBACK(SendFallbackReply)
     RETRY(RetryWithBackoff)
     SHUTDOWN(GracefulShutdown)
     SIG[OS Signals]
 
-    START -->|"auth failure"| AUTH_FAIL
-    AUTH_FAIL -->|"exponential backoff"| RECONNECT
-    WS -->|"closed / error"| WS_CLOSED
-    WS_CLOSED -->|"reconnect"| RECONNECT
-    RECONNECT -->|"max retries"| SHUTDOWN
-    AI -->|"API error"| AI_ERROR
-    AI_ERROR -->|"error message reply"| FALLBACK
-    DAV -->|"connection lost"| DAV_ERROR
-    DAV_ERROR -->|"retry"| RETRY
-    RETRY -->|"max retries"| FALLBACK
-    SIG -->|"SIGTERM / SIGINT"| SHUTDOWN
+    START -.->|"auth failure error"| RECONNECT
+    WS -.->|"ws disconnect error"| RECONNECT
+    RECONNECT -.->|"reconnect signal"| WS
+    RECONNECT -.->|"max retries exhausted"| SHUTDOWN
+    AI -.->|"api error response"| FALLBACK
+    DAV -.->|"connection lost error"| RETRY
+    RETRY -.->|"retries exhausted"| FALLBACK
+    SIG -.->|"shutdown signal"| SHUTDOWN
 ```
 
 ## 3. Data Structures

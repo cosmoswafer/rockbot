@@ -18,30 +18,28 @@ disk. Each room gets its own directory subtree.
 ```mermaid
 flowchart TD
     CALLER[Calling Subsystem]
+    CFG[(WebDavConfig)]
     RESOLVE(ResolvePath)
-    OP{Operation}
     READ(ReadFile)
     WRITE(WriteFile)
     LIST(ListDirectory)
     MKDIR(EnsureDirectory)
     HTTP(HttpClient)
     NC[(NextCloud WebDAV)]
-    CFG[WebDavConfig]
 
-    CALLER -->|"path + op"| RESOLVE
+    CALLER -->|"path + operation"| RESOLVE
     CFG -->|"root + credentials"| RESOLVE
-    RESOLVE -->|"full WebDAV URL"| OP
-    OP -->|"GET"| READ
-    OP -->|"PUT"| WRITE
-    OP -->|"PROPFIND"| LIST
-    OP -->|"MKCOL"| MKDIR
+    RESOLVE -->|"get request"| READ
+    RESOLVE -->|"put request"| WRITE
+    RESOLVE -->|"propfind request"| LIST
+    RESOLVE -->|"mkcol request"| MKDIR
     READ -->|"GET"| HTTP
     WRITE -->|"PUT with body"| HTTP
     LIST -->|"PROPFIND depth=1"| HTTP
     MKDIR -->|"MKCOL"| HTTP
-    HTTP -->|"HTTP request"| NC
+    HTTP -->|"http request"| NC
     NC -->|"response"| HTTP
-    HTTP -->|"response body / status"| OP
+    HTTP -->|"response body / status"| RESOLVE
 ```
 
 ### 2b. Error Handling & Fallbacks
@@ -57,48 +55,47 @@ flowchart TD
     MKDIR(EnsureDirectory)
     WRITE(WriteFile)
 
-    HTTP -->|"401 Unauthorized"| AUTH_REFRESH
-    AUTH_REFRESH -->|"re-read config"| RETRY
-    HTTP -->|"404 Not Found"| ERR_404
-    HTTP -->|"connection refused"| RETRY
-    RETRY -->|"max retries"| ERR_NET
-    WRITE -->|"parent dir missing"| MKDIR
-    MKDIR -->|"MKCOL success"| WRITE
+    HTTP -.->|"401 unauthorized"| AUTH_REFRESH
+    AUTH_REFRESH -.->|"refreshed auth"| RETRY
+    HTTP -->|"404 not found"| ERR_404
+    HTTP -.->|"connection refused"| RETRY
+    RETRY -.->|"retries exhausted"| ERR_NET
+    WRITE -.->|"parent dir missing"| MKDIR
+    MKDIR -.->|"mkcol success"| WRITE
 ```
 
 ### 2c. Directory Structure Deep Dive
 
 ```mermaid
 flowchart TD
-    ROOT["/rockbot/"]
-    CH["ch-general/"]
-    CH2["ch-project-x/"]
-    DM["dm-alice/"]
-    MEM_CH["memory/"]
-    MEM_CH2["memory/"]
-    MEM_DM["memory/"]
-    IMG_CH["images/"]
-    IMG_CH2["images/"]
-    IMG_DM["images/"]
-    WSP_CH["workspace/"]
-    WSP_CH2["workspace/"]
-    WSP_DM["workspace/"]
-    CFG_DIR["_config/"]
+    ROOT[(WebDAV Root)]
+    CH[(ch-general)]
+    CH2[(ch-project-x)]
+    DM[(dm-alice)]
+    MEM_CH[(general/memory)]
+    MEM_CH2[(project-x/memory)]
+    MEM_DM[(alice/memory)]
+    IMG_CH[(general/images)]
+    IMG_CH2[(project-x/images)]
+    IMG_DM[(alice/images)]
+    WSP_CH[(general/workspace)]
+    WSP_CH2[(project-x/workspace)]
+    WSP_DM[(alice/workspace)]
+    CFG_DIR[(Config Backups)]
 
-    ROOT --> CH
-    ROOT --> CH2
-    ROOT --> DM
-    ROOT --> CFG_DIR
-    CH --> MEM_CH
-    CH --> IMG_CH
-    CH --> WSP_CH
-    CH2 --> MEM_CH2
-    CH2 --> IMG_CH2
-    CH2 --> WSP_CH2
-    DM --> MEM_DM
-    DM --> IMG_DM
-    DM --> WSP_DM
-    CFG_DIR -->|"config.json.bak"| ROOT
+    ROOT -->|"channel messages + assets"| CH
+    ROOT -->|"channel messages + assets"| CH2
+    ROOT -->|"dm messages + assets"| DM
+    ROOT -->|"config backups"| CFG_DIR
+    CH -->|"memory archives"| MEM_CH
+    CH -->|"image assets"| IMG_CH
+    CH -->|"workspace files"| WSP_CH
+    CH2 -->|"memory archives"| MEM_CH2
+    CH2 -->|"image assets"| IMG_CH2
+    CH2 -->|"workspace files"| WSP_CH2
+    DM -->|"memory archives"| MEM_DM
+    DM -->|"image assets"| IMG_DM
+    DM -->|"workspace files"| WSP_DM
 ```
 
 ## 3. Data Structures

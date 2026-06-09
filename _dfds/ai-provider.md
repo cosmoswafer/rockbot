@@ -9,7 +9,7 @@ streaming responses and tool/function calling.
 
 - Upstream: [Configuration Management](config.md) provides `AiConfig`
 - Downstream: [Agent Loop](agent-harness.md) calls `complete()` with `ChatRequest`
-  (message history + tool definitions) and receives `CompletionResult`
+  (message history + tool definitions) and returns `CompletionResult`
 
 ## 2. Diagram
 
@@ -18,25 +18,24 @@ streaming responses and tool/function calling.
 ```mermaid
 flowchart TD
     AGENT[Agent]
-    BUILD(BuildRequest)
-    ROUTE(RouteProvider)
-    SELECT{SelectProvider}
-    OPENROUTER(OpenRouter)
-    DEEPSEEK(DeepSeek)
+    BUILD(BuildContext)
+    FORMAT(FormatProviderRequest)
+    OPENROUTER(OpenRouterProvider)
+    DEEPSEEK(DeepSeekProvider)
     HTTP(SendHttpRequest)
     PARSE(ParseResponse)
     PROVIDER_API[Provider HTTP API]
 
-    AGENT -->|"ChatRequest"| BUILD
-    BUILD -->|"ProviderRequest"| ROUTE
-    ROUTE -->|"provider == openrouter"| OPENROUTER
-    ROUTE -->|"provider == deepseek"| DEEPSEEK
-    OPENROUTER -->|"reqwest::Request"| HTTP
-    DEEPSEEK -->|"reqwest::Request"| HTTP
-    HTTP -->|"HTTP POST"| PROVIDER_API
-    PROVIDER_API -->|"JSON response body"| HTTP
+    AGENT -->|"chat request"| BUILD
+    BUILD -->|"provider request"| FORMAT
+    FORMAT -->|"openrouter request"| OPENROUTER
+    FORMAT -->|"deepseek request"| DEEPSEEK
+    OPENROUTER -->|"http request"| HTTP
+    DEEPSEEK -->|"http request"| HTTP
+    HTTP -->|"http post"| PROVIDER_API
+    PROVIDER_API -->|"json response body"| HTTP
     HTTP -->|"raw bytes"| PARSE
-    PARSE -->|"text + tool_calls"| AGENT
+    PARSE -->|"completion result"| AGENT
 ```
 
 ### 2b. Error Handling & Fallbacks
@@ -47,42 +46,43 @@ flowchart TD
     PARSE(ParseResponse)
     RATE(RateLimitBackoff)
     RETRY(RetryWithBackoff)
-    REPORT_API(ReportApiError)
-    REPORT_PARSE(ReportParseError)
-    REPORT_AUTH(ReportAuthError)
+    ERR_API[Error: API Unreachable]
+    ERR_PARSE[Error: Malformed Response]
+    ERR_AUTH[Error: Invalid API Key]
     AGENT[Agent Loop]
 
-    HTTP -->|"429 Too Many Requests"| RATE
-    RATE -->|"wait + retry"| RETRY
-    HTTP -->|"5xx Server Error"| RETRY
-    RETRY -->|"max retries exceeded"| REPORT_API
-    HTTP -->|"401 Unauthorized"| REPORT_AUTH
-    PARSE -->|"invalid JSON"| REPORT_PARSE
-    REPORT_API -->|"API unreachable"| AGENT
-    REPORT_AUTH -->|"invalid API key"| AGENT
-    REPORT_PARSE -->|"malformed response"| AGENT
+    HTTP -.->|"429 rate limited"| RATE
+    RATE -.->|"backoff signal"| RETRY
+    HTTP -.->|"5xx server error"| RETRY
+    RETRY -.->|"retries exhausted"| ERR_API
+    HTTP -->|"401 unauthorized"| ERR_AUTH
+    PARSE -->|"invalid json error"| ERR_PARSE
+    ERR_API -->|"api error"| AGENT
+    ERR_AUTH -->|"auth error"| AGENT
+    ERR_PARSE -->|"parse error"| AGENT
 ```
 
 ### 2c. Vision Payload Deep Dive
 
 ```mermaid
 flowchart TD
-    AGENT[Agent]
+    MSG[ChatMessage]
     CHECK(CheckContentType)
     TEXT_ONLY(FormatTextContent)
     MULTI(FormatMultipartContent)
-    BUILD_URL(BuildImageUrl)
-    BUILD_B64(BuildImageBase64)
-    REQUEST[(ChatRequest)]
+    IMG_URL(FormatImageUrl)
+    IMG_B64(FormatImageBase64)
+    REQ[ProviderRequest]
 
-    AGENT -->|"ChatMessage"| CHECK
-    CHECK -->|"text only"| TEXT_ONLY
-    CHECK -->|"text + image"| MULTI
-    CHECK -->|"image from WebDAV"| BUILD_B64
-    TEXT_ONLY -->|"content string"| REQUEST
-    MULTI -->|"content array"| REQUEST
-    BUILD_URL -->|"{type: image_url, url}"| MULTI
-    BUILD_B64 -->|"{type: image_url, base64}"| MULTI
+    MSG -->|"chat message"| CHECK
+    CHECK -->|"text content"| TEXT_ONLY
+    CHECK -->|"multipart content"| MULTI
+    CHECK -->|"image url"| IMG_URL
+    CHECK -->|"image base64"| IMG_B64
+    TEXT_ONLY -->|"content string"| REQ
+    MULTI -->|"content array"| REQ
+    IMG_URL -->|"image url part"| MULTI
+    IMG_B64 -->|"image base64 part"| MULTI
 ```
 
 ## 3. Data Structures

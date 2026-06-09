@@ -20,38 +20,35 @@ context.
 
 ```mermaid
 flowchart TD
-    MSG[New ChatMessage]
+    MSG[ChatMessage]
     STORE[(InMemoryHistory)]
     APPEND(AppendMessage)
     COUNT(CheckCharCount)
-    THRESHOLD{ExceedsThreshold?}
+    THRESHOLD(AssessThreshold)
     SUMMARIZE(SummarizeOldest)
     ARCHIVE(WriteArchive)
     PRUNE(PruneSummarized)
     WEBDAV[(WebDAV Archive Dir)]
-    AI(AiProvider)
+    AI[AiProvider]
     LOAD(LoadRecentArchives)
-    STARTUP[Bot Startup]
-    ROOM_ID[Room ID]
+    INIT(Initialize)
 
-    MSG -->|"message"| APPEND
-    APPEND -->|"store"| STORE
-    APPEND -->|"total chars"| COUNT
-    COUNT -->|"char count"| THRESHOLD
-    THRESHOLD -->|"no"| STORE
-    THRESHOLD -->|"yes"| SUMMARIZE
+    MSG -->|"chat message"| APPEND
+    APPEND -->|"stored message"| STORE
+    APPEND -->|"updated char count"| COUNT
+    COUNT -->|"char count + threshold config"| THRESHOLD
+    THRESHOLD -->|"overflow trigger + oldest messages"| SUMMARIZE
     STORE -->|"oldest messages"| SUMMARIZE
     SUMMARIZE -->|"summary prompt"| AI
     AI -->|"summary text"| SUMMARIZE
-    SUMMARIZE -->|"summary.md"| ARCHIVE
-    ROOM_ID -->|"/{room_id}/memory/"| WEBDAV
-    ARCHIVE -->|"PUT summary.md"| WEBDAV
-    ARCHIVE -->|"done"| PRUNE
-    STORE -->|"remove summarized msgs"| PRUNE
-    STARTUP -->|"room_id"| LOAD
-    LOAD -->|"GET *.md"| WEBDAV
+    SUMMARIZE -->|"summary.md content"| ARCHIVE
+    ARCHIVE -->|"summary.md + room path"| WEBDAV
+    ARCHIVE -->|"archive confirmation"| PRUNE
+    STORE -->|"pruned message ids"| PRUNE
+    INIT -->|"room id"| LOAD
+    LOAD -->|"get *.md request"| WEBDAV
     WEBDAV -->|"archive files"| LOAD
-    LOAD -->|"seed history"| STORE
+    LOAD -->|"archived messages"| STORE
 ```
 
 ### 2b. Error Handling & Fallbacks
@@ -60,17 +57,17 @@ flowchart TD
 flowchart TD
     SUMMARIZE(SummarizeOldest)
     ARCHIVE(WriteArchive)
-    AI(AiProvider)
+    AI[AiProvider]
     WEBDAV[(WebDAV)]
     DEFER(DeferArchive)
     TRUNCATE(TruncateOldest)
     STORE[(InMemoryHistory)]
 
-    AI -->|"summarization failed"| DEFER
-    DEFER -->|"retry next cycle"| SUMMARIZE
-    ARCHIVE -->|"WebDAV PUT failed"| DEFER
-    DEFER -->|"memory still over limit"| TRUNCATE
-    STORE -->|"drop oldest messages"| TRUNCATE
+    AI -.->|"error: summarization failed"| DEFER
+    DEFER -.->|"retry signal"| SUMMARIZE
+    ARCHIVE -.->|"error: webdav put failed"| DEFER
+    DEFER -.->|"truncation trigger"| TRUNCATE
+    STORE -->|"oldest messages to drop"| TRUNCATE
 ```
 
 ### 2c. Memory Partitioning Deep Dive
@@ -80,22 +77,22 @@ in-memory history and WebDAV archive directory.
 
 ```mermaid
 flowchart TD
-    ROOM_A[Room: general]
-    ROOM_B[Room: DM-alice]
-    ROOM_C[Room: project-x]
+    ROOM_A[general]
+    ROOM_B[dm-alice]
+    ROOM_C[project-x]
     MEM_A[(InMemory A)]
     MEM_B[(InMemory B)]
     MEM_C[(InMemory C)]
-    DAV_A["/webdav/general/memory/"]
-    DAV_B["/webdav/DM-alice/memory/"]
-    DAV_C["/webdav/project-x/memory/"]
+    DAV_A[(WebDAV general/memory)]
+    DAV_B[(WebDAV dm-alice/memory)]
+    DAV_C[(WebDAV project-x/memory)]
 
-    ROOM_A --> MEM_A
-    ROOM_B --> MEM_B
-    ROOM_C --> MEM_C
-    MEM_A -->|"archive"| DAV_A
-    MEM_B -->|"archive"| DAV_B
-    MEM_C -->|"archive"| DAV_C
+    ROOM_A -->|"messages"| MEM_A
+    ROOM_B -->|"messages"| MEM_B
+    ROOM_C -->|"messages"| MEM_C
+    MEM_A -->|"archive files"| DAV_A
+    MEM_B -->|"archive files"| DAV_B
+    MEM_C -->|"archive files"| DAV_C
 ```
 
 ## 3. Data Structures

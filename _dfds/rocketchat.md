@@ -5,7 +5,8 @@
 Python module (`RocketChatBot`) that manages the full lifecycle of a
 RocketChat connection: WebSocket authentication, subscription to message
 stream, event dispatch, message parsing/filtering, and reply delivery.
-Only DMs and messages starting with `@botname` are forwarded to the agent.
+DMs, messages starting with `@botname`, and room-specific registered callbacks
+are forwarded to the agent.
 
 - Upstream: [Configuration Management](config.md) provides configuration
   (loaded as `SimpleNamespace` from `config.json` in the Python implementation)
@@ -28,34 +29,31 @@ flowchart TD
     FILTER(FilterMentionOrDM)
     DISPATCH(DispatchMessage)
     SEND(SendReply)
-    BOT_USER[BotUserId]
     HARNESS[Agent Loop]
     RC_WS[RocketChat WebSocket]
 
     CFG -->|"credentials"| AUTH
-    CONNECT -->|"ws upgrade + connect msg"| RC_WS
-    RC_WS -->|"connected event"| AUTH
-    AUTH -->|"login method"| RC_WS
-    RC_WS -->|"result {id, token}"| AUTH
-    AUTH -->|"userId"| BOT_USER
-    AUTH -->|"subscribe"| SUB
+    CONNECT -->|"connection request"| RC_WS
+    RC_WS -->|"connection confirmation"| AUTH
+    AUTH -->|"login credentials"| RC_WS
+    RC_WS -->|"auth token + user id"| AUTH
+    AUTH -->|"subscription request"| SUB
     SUB -->|"sub method"| RC_WS
-    RC_WS -->|"raw JSON frame"| STREAM
-    STREAM -->|"JSON event"| PARSE
-    BOT_USER -->|"bot user id"| FILTER
-    PARSE -->|"RawEvent"| FILTER
-    FILTER -->|"IncomingMessage"| DISPATCH
-    DISPATCH -->|"message"| HARNESS
-    HARNESS -->|"BotReply"| SEND
-    SEND -->|"sendMessage method"| RC_WS
+    RC_WS -->|"raw json frame"| STREAM
+    STREAM -->|"json event"| PARSE
+    AUTH -->|"bot user id"| FILTER
+    PARSE -->|"raw event"| FILTER
+    FILTER -->|"incoming message"| DISPATCH
+    DISPATCH -->|"filtered message"| HARNESS
+    HARNESS -->|"bot reply"| SEND
+    SEND -->|"reply payload"| RC_WS
 ```
 
 ### 2b. Error Handling & Fallbacks
 
 The Python implementation has minimal internal error recovery — any WebSocket
 exception propagates uncaught and terminates the process. External restart is
-provided by the shell wrapper (`manual_start.sh`) with a fixed 5s delay and
-retry counter.
+provided by the shell wrapper (`manual_start.sh`) with a retry counter.
 
 ```mermaid
 flowchart TD
@@ -64,10 +62,10 @@ flowchart TD
     STREAM(StreamEvents)
     RESTART[Shell Restart Wrapper]
 
-    AUTH -->|"exception"| RESTART
-    CONNECT -->|"exception"| RESTART
-    STREAM -->|"exception"| RESTART
-    RESTART -.->|"fixed 5s delay"| CONNECT
+    AUTH -->|"error details"| RESTART
+    CONNECT -->|"error details"| RESTART
+    STREAM -->|"error details"| RESTART
+    RESTART -.->|"restart signal"| CONNECT
 ```
 
 ### 2c. Message Filter Deep Dive
@@ -80,27 +78,24 @@ responds to three cases: (1) `@botname` at the start of a channel message,
 ```mermaid
 flowchart TD
     RAW[RawEvent]
-    SKIP_SELF{SkipSelf}
-    MENTION{StartsWithAt}
-    REG_RM{RegisteredRoom}
-    IS_DM{IsDirectMessage}
-    IGNORE(Ignore)
-    MSG[Callback args]
-    BOTNAME["@username"]
+    FILTER(FilterMessage)
+    BOT_USER[BotUserId]
     ROOMS[(RegisteredRooms)]
+    DISPATCH[DispatchMessage]
 
-    RAW --> SKIP_SELF
-    SKIP_SELF -->|"sender_id == bot_uid"| IGNORE
-    SKIP_SELF -->|"otherwise"| MENTION
-    MENTION -->|"room_name && starts w/ @botname"| MSG
-    MENTION -->|"otherwise"| REG_RM
-    REG_RM -->|"room_name in rooms"| MSG
-    REG_RM -->|"otherwise"| IS_DM
-    IS_DM -->|"no room_name"| MSG
-    IS_DM -->|"otherwise"| IGNORE
-    BOTNAME -->|"@username"| MENTION
-    ROOMS -->|"lookup"| REG_RM
+    RAW -->|"raw event + sender id"| FILTER
+    BOT_USER -->|"bot user id"| FILTER
+    ROOMS -->|"registered room list"| FILTER
+    FILTER -->|"incoming message + callback args"| DISPATCH
 ```
+
+The filter process internally:
+1. Skips events from the bot's own user ID
+2. Matches messages starting with `@botname` in channels
+3. Falls back to checking a registered-room list
+4. Accepts DMs with no room name (`rom == ""` or `rom == "DIRECT_MESSAGES"`)
+
+All other cases are silently dropped.
 
 ### 2d. Ping/Pong Keepalive Deep Dive
 
@@ -122,11 +117,11 @@ flowchart TD
     WS -->|"raw frame"| RECV
     RECV -->|"frame string"| PARSE
     PARSE -->|"json object"| ROUTE
-    CMD -->|"msg → callback mapping"| ROUTE
-    ROUTE -->|"msg == ping"| PONG
-    PONG -->|"{msg: pong}"| WS
-    ROUTE -->|"msg == changed"| FORWARD
-    FORWARD -->|"RawEvent"| PARSE_PROC[ParseEvent]
+    CMD -->|"msg to callback mapping"| ROUTE
+    ROUTE -->|"ping event"| PONG
+    PONG -->|"pong response"| WS
+    ROUTE -->|"changed event"| FORWARD
+    FORWARD -->|"raw event"| PARSE_PROC[ParseEvent]
 ```
 
 **Dispatch table** — the `cbdist` dict maps each `msg` value to a callback:
@@ -157,10 +152,10 @@ flowchart TD
     PARAMS[(SubscriptionParams)]
     STREAM_PROC[StreamEvents]
 
-    WS -->|"result {id, token}"| AUTH_RX
-    AUTH_RX -->|"login ok"| SUB
-    PARAMS -->|"stream-room-messages, __my_messages__"| SUB
-    SUB -->|"sub method {msg: sub, name: stream-room-messages}"| WS
+    WS -->|"auth result {id, token}"| AUTH_RX
+    AUTH_RX -->|"login confirmation"| SUB
+    PARAMS -->|"stream-room-messages scope"| SUB
+    SUB -->|"subscription method"| WS
     WS -->|"changed events"| STREAM_PROC
 ```
 
@@ -188,14 +183,15 @@ maps to the current code.
 
 #### `IncomingMessage`
 
-| Field       | Type     | Python mapping                                       |
-| ----------- | -------- | ---------------------------------------------------- |
-| `msg_id`    | `String` | **Not parsed** — not available in callback           |
-| `room_id`   | `String` | `rid` arg passed to callback                         |
-| `sender_name` | `String` | `usr` arg passed to callback (username, not user ID) |
-| `text`      | `String` | `txt` arg; mentions stripped via `.replace()` for @channel messages, **not stripped for DMs** |
-| `is_dm`     | `bool`   | **Not a boolean** — inferred from `rom == "DIRECT_MESSAGES"` or `rom == ""` |
-| `timestamp` | `i64`    | **Not parsed** — not available in callback           |
+| Field        | Type     | Python mapping                                       |
+| ------------ | -------- | ---------------------------------------------------- |
+| `msg_id`     | `String` | **Not parsed** — not available in callback           |
+| `room_id`    | `String` | `rid` arg passed to callback                         |
+| `room_name`  | `String` | `rom` arg passed to callback; `"DIRECT_MESSAGES"` for DMs, channel name otherwise |
+| `sender_name`| `String` | `usr` arg passed to callback (username, not user ID) |
+| `text`       | `String` | `txt` arg; mentions stripped via `.replace()` for @channel messages, **not stripped for DMs** |
+| `is_dm`      | `bool`   | **Not a boolean** — inferred from `rom == "DIRECT_MESSAGES"` or `rom == ""` |
+| `timestamp`  | `i64`    | **Not parsed** — not available in callback           |
 
 #### `BotReply`
 

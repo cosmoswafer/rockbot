@@ -12,29 +12,29 @@ touching local disk.
 
 ```mermaid
 flowchart LR
-    RC[RocketChat Server]
-    AI[AI Provider]
-    NC[NextCloud WebDAV]
-    Exa[Exa Search API]
-    Web[Web Page]
-    ImgGen[Image Generation API]
+    RocketChat[RocketChat Server]
+    AIProvider[AI Provider]
+    NextCloud[NextCloud WebDAV]
+    ExaSearch[Exa Search API]
+    WebPage[Web Page]
+    ImageGen[Image Generation API]
     Bot(("RockBot"))
 
-    RC -->|"DM / @mention event"| Bot
-    Bot -->|"bot reply"| RC
+    RocketChat -->|"incoming message event"| Bot
+    Bot -->|"bot reply text"| RocketChat
 
-    Bot -->|"chat completion request"| AI
-    AI -->|"completion + tool calls"| Bot
+    Bot -->|"chat completion request"| AIProvider
+    AIProvider -->|"completion result + tool calls"| Bot
 
-    Bot -->|"PROPFIND / GET / PUT"| NC
-    NC -->|"config, archives, images"| Bot
+    Bot -->|"file read/write/list request"| NextCloud
+    NextCloud -->|"config, archives, images"| Bot
 
-    Bot -->|"search query"| Exa
-    Exa -->|"search results"| Bot
+    Bot -->|"search query"| ExaSearch
+    ExaSearch -->|"search results"| Bot
 
-    Bot -->|"HTTP GET"| Web
-    Web -->|"page HTML"| Bot
+    Bot -->|"http GET request"| WebPage
+    WebPage -->|"page html"| Bot
 
-    Bot -->|"generation prompt"| ImgGen
-    ImgGen -->|"generated image"| Bot
+    Bot -->|"image generation prompt"| ImageGen
+    ImageGen -->|"generated image bytes"| Bot
 ```
