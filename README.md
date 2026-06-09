@@ -1,67 +1,154 @@
-# Rocket Chat bot with sqlite database
+# RockBot
 
-## Quickstart
+AI-powered RocketChat bot written in Rust. Responds to DMs and @mentions with
+agentic capabilities — web search, URL fetching, and image vision — backed
+entirely by a NextCloud WebDAV server for persistent state.
+
+## Architecture
+
+```
+rockbot/
+├── Cargo.toml              # workspace root
+├── config.toml             # runtime configuration
+├── crates/
+│   ├── rocketchat/         # standalone RocketChat client library
+│   │   ├── auth            # REST login, session management
+│   │   ├── websocket       # WS event stream, reconnection
+│   │   └── messages        # parsing, filtering, sending
+│   └── rockbot/            # application binary
+│       ├── config          # TOML loader + JSON migration
+│       ├── provider        # AiProvider trait (OpenRouter, DeepSeek)
+│       ├── agent           # agentic loop, tool registry
+│       ├── tools           # Exa search, web fetch, vision
+│       ├── memory          # in-memory history + archive pipeline
+│       └── webdav          # NextCloud WebDAV client
+└── _dfds/                  # data flow diagrams
+```
+
+### Key design decisions
+
+| Decision | Rationale |
+| -------- | --------- |
+| **No local disk** | All persistent state lives on NextCloud WebDAV — config backups, memory archives, images |
+| **Standalone `rocketchat` crate** | Reusable library with zero application logic — auth, WS stream, message I/O |
+| **`AiProvider` trait** | Single interface for OpenRouter and DeepSeek; add new providers by implementing one trait |
+| **Per-room memory** | Each channel and DM has isolated in-memory history and its own WebDAV archive directory |
+| **Minimal dependencies** | `tokio`, `reqwest`, `serde`, `toml`, `scraper`/`htmd` for HTML→MD — no heavy frameworks |
+
+## Configuration
+
+Configuration uses `config.toml`. On first run, the bot detects a legacy
+`config.json` and auto-migrates it.
+
+```toml
+[server]
+url = "https://chat.example.com"
+username = "rockbot"
+password = "secret"
+use_tls = true
+
+[ai]
+provider = "openrouter"        # or "deepseek"
+api_key = "sk-or-..."
+model = "openai/gpt-4o"
+base_url = ""                  # optional override
+
+[webdav]
+url = "https://cloud.example.com/remote.php/dav/files/rockbot"
+username = "rockbot"
+password = "app-password"
+root = "/rockbot"
+
+[memory]
+max_chars = 50000              # archive trigger threshold
+archive_interval = 3600        # seconds between archive checks
+
+[tools]
+exa_api_key = "..."
+web_fetch = true
+vision = true
+```
+
+See [config migration DFD](_dfds/config.md) for the JSON→TOML field mapping.
+
+## Build & Run
 
 ```bash
-python3 -m venv venv
-venv/bin/pip install -r requirements.txt
-copy config.example.json config.json
-venv/bin/python rock.py
+cargo build --release
+./target/release/rockbot                    # uses ./config.toml
+./target/release/rockbot -c /path/to.toml   # custom config path
 ```
 
-## Python packages
+### Prerequisites
 
-See [requirements.in](requirements.in) for details.
+- Rust 1.75+ (edition 2021)
+- A RocketChat server with WebSocket support enabled
+- A NextCloud instance with WebDAV access
+- An API key for OpenRouter or DeepSeek
+- (Optional) An Exa API key for web search
 
+## Agentic Flow
 
+The bot runs a loop: receive message → build context → query AI → execute tool
+calls → feed results back → repeat until final reply.
 
-## Database schema
+**Available tools:**
 
-Fuel database:
+| Tool | Description |
+| ---- | ----------- |
+| `web_search` | Search the web via Exa API and return ranked results |
+| `web_fetch` | Fetch a URL and optionally convert HTML to clean Markdown |
+| `vision` | Download an image from WebDAV and send it to the AI provider for analysis |
 
-```sql
-CREATE TABLE fuel (km INT(11), l FLOAT(5.2), c FLOAT(7.2), d DATE, void INT(1) default FALSE);
-CREATE TABLE mant (desc TEXT, c FLOAT(7.2), km INT(11), d DATE, void INT(1) default FALSE);
-CREATE TABLE wash (c FLOAT(7.2), d DATE, desc TEXT, void INT(1) default FALSE);
+See [agent orchestration DFD](_dfds/agent.md) for the full loop.
+
+## Memory Management
+
+Each room accumulates conversation history in local memory. When the character
+count exceeds `memory.max_chars`, the oldest messages are summarized by the AI
+provider into a `.md` file and archived to the room's WebDAV directory:
+
+```
+{webdav.root}/{room_id}/memory/000001_summary.md
 ```
 
-Expense tables:
+Archives are loaded back on startup to seed context. If WebDAV is unreachable,
+archiving is deferred and the oldest messages are truncated as a fallback.
 
-```sql
-CREATE TABLE expense
-    (purchase_date DATE
-    ,item_name TEXT
-    ,lifetime INT(5) --Unit: months
-    ,price FLOAT(13.2) --MOP only
-    ,category_a TEXT
-    ,category_b TEXT
-    ,serial_number TEXT DEFAULT ''
-    ,void INT(1) DEFAULT FALSE
-    ,t TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
+See [memory management DFD](_dfds/memory.md) for the full pipeline.
+
+## Data Flow Diagrams
+
+| Diagram | Level | Description |
+| ------- | ----- | ----------- |
+| [Context](_dfds/context-diagram.md) | 0 | System boundary and external entities |
+| [Config](_dfds/config.md) | 1 | TOML loading and JSON migration |
+| [RocketChat](_dfds/rocketchat.md) | 1 | Auth, WebSocket, message filtering |
+| [AI Provider](_dfds/ai-provider.md) | 1 | Trait abstraction, vision payloads |
+| [Agent](_dfds/agent.md) | 1 | Agentic loop, tool execution |
+| [Memory](_dfds/memory.md) | 1 | History, summarization, archival |
+| [WebDAV](_dfds/webdav.md) | 1 | NextCloud storage operations |
+
+## Crate: `rocketchat`
+
+Standalone, reusable RocketChat client library. No application logic.
+
+```rust
+use rocketchat::{Client, EventStream, MessageFilter};
+
+let client = Client::connect("https://chat.example.com", "user", "pass").await?;
+let mut stream = client.event_stream().await?;
+
+while let Some(event) = stream.next().await {
+    if MessageFilter::is_dm_or_mention(&event, client.user_id()) {
+        client.send_message(room_id, "Hello!").await?;
+    }
+}
 ```
 
-Gif database:
+Handles authentication, WebSocket reconnection with exponential backoff, ping/pong
+keepalive, and message parsing/filtering.
 
-```sql
-CREATE TABLE gif
-    (name TEXT PRIMARY KEY
-    ,url TEXT
-    ,t TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    ,void INT(1) DEFAULT FALSE
-    );
-```
+## License
 
-## Implementation
-
-Neither library nor framework, just a programming method to quickly implement a _minimalism_ information system.
-
-### General technique
-
-- Python `argparse` application in bot commands
-- Python async programming
-- Dataclass and database connecting
-- Simple Bot logic
-- Test driven development
-
-### Tricky points
+MIT
