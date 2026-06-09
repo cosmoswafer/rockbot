@@ -18,6 +18,9 @@ against the legacy realtime API.
 
 ## Protocol Overview
 
+The client implements a subset of DDP over WebSocket. The full handshake and
+message lifecycle:
+
 ```mermaid
 sequenceDiagram
     participant B as Bot
@@ -25,7 +28,7 @@ sequenceDiagram
 
     B->>RC: {"msg":"connect","version":"1","support":["1"]}
     RC-->>B: {"msg":"connected"}
-    B->>RC: {"msg":"method","method":"login","params":[{user,password}]}
+    B->>RC: {"msg":"method","method":"login","params":[{user,{digest,algorithm:"sha-256"}}]}
     RC-->>B: {"msg":"result","result":{"id":"...","token":"..."}}
     B->>RC: {"msg":"sub","name":"stream-room-messages","params":["__my_messages__",false]}
     RC-->>B: {"msg":"ready","subs":["ABCROCK"]}
@@ -39,6 +42,24 @@ sequenceDiagram
     RC-->>B: {"msg":"ping"}
     B->>RC: {"msg":"pong"}
 ```
+
+## DDP Message Types
+
+The dispatch table (`cbdist`) routes every incoming server frame by its
+`msg` field:
+
+| `msg`       | Handler           | Behavior |
+|-------------|-------------------|----------|
+| `connected` | `_cb_connected`   | Sends `login` method; password hashed with SHA-256 as `{digest, algorithm}` per the [Rocket.Chat realtime login spec](https://web.archive.org/web/20220728050012/https://developer.rocket.chat/reference/api/realtime-api/method-calls/login) |
+| `result`    | `_rt_dispatch`    | Extracts `id` (stored as `self.uid`) and `token`; triggers `_gologin()` to subscribe |
+| `ready`     | *(not handled)*   | Server confirms subscription is active (`"subs":["ABCROCK"]`); ignored silently |
+| `nosub`     | *(not handled)*   | Server reports subscription loss; passes through uncaught |
+| `changed`   | `_cb_changed`     | Parses message payload and runs the four-stage filter |
+| `ping`      | `_cb_ping`        | Replies with `{"msg":"pong"}`; no proactive pings sent |
+
+The `ready` and `nosub` messages are standard DDP lifecycle events that the
+current implementation does not handle — subscription confirmation and
+subscription loss are not detected.
 
 ## Channel Subscription & Stream Classes
 
@@ -81,14 +102,100 @@ flowchart TB
 
 ### Connectivity & Protocol (Layer 1)
 
-| Mechanism | Implementation | Notes |
-|-----------|---------------|-------|
-| Transport | `websockets` library (`wss://`) | Single persistent connection |
-| Handshake | `{"msg":"connect","version":"1"}` | DDP connect; server responds `{"msg":"connected"}` |
-| Auth | `{"msg":"method","method":"login"}` | **Sends password in plain text** (see fixes below) |
-| Keepalive | Reactive pong only | No proactive ping; no heartbeat monitoring |
-| Subscription | `stream-room-messages` / `__my_messages__` | Receives all messages visible to the bot user |
-| Send | `{"msg":"method","method":"sendMessage"}` | Sends text; no threading support |
+| Mechanism    | Implementation |
+|--------------|----------------|
+| Transport    | `websockets` library over `wss://`; single persistent connection |
+| Handshake    | DDP `{"msg":"connect","version":"1","support":["1"]}`; server responds `{"msg":"connected"}` |
+| Auth         | `{"msg":"method","method":"login"}` with username and SHA-256 hashed password: `{"password":{"digest":"<hex>","algorithm":"sha-256"}}` |
+| Keepalive    | Reactive only: responds to server `ping` with `pong`; no proactive heartbeat or watchdog timer |
+| Subscription | `{"msg":"sub","name":"stream-room-messages","params":["__my_messages__",false]}` — the `false` flag selects DDP delta mode (only `changed` events, no `added` for existing messages) |
+| Send         | `{"msg":"method","method":"sendMessage","params":[{rid, msg}]}`; optional `tmid` for threading is available in the DDP API but not exposed by `sendMsg()` |
+| Typing       | `{"msg":"method","method":"stream-notify-room","params":[rid+"/typing", username, typing]}` |
+
+### Authentication Flow
+
+```mermaid
+flowchart TD
+    CONNECT(ConnectWebSocket)
+    AUTH(Authenticate)
+    SUB(SubscribeStream)
+    READY(ConfirmSubscription)
+    STREAM(StreamEvents)
+
+    CONNECT -->|"DDP connect"| RC["Rocket.Chat\n(DDP over WebSocket)"]
+    RC -->|"msg: connected"| AUTH
+    AUTH -->|"login + sha256(password)"| RC
+    RC -->|"msg: result {id, token}"| AUTH
+    AUTH -->|"store uid"| SUB
+    SUB -->|"msg: sub stream-room-messages"| RC
+    RC -->|"msg: ready"| READY
+    READY --> STREAM
+```
+
+The login payload (`_cb_connected` at `RocketChatBot.py:75`):
+
+```json
+{
+    "msg": "method",
+    "method": "login",
+    "id": "42",
+    "params": [{
+        "user": { "username": "rockbot" },
+        "password": {
+            "digest": "<sha256 hex hash>",
+            "algorithm": "sha-256"
+        }
+    }]
+}
+```
+
+The server responds with an auth result containing the user id, token, and
+optional `tokenExpires` date (not consumed by this client):
+
+```json
+{
+    "msg": "result",
+    "id": "42",
+    "result": {
+        "id": "user-id",
+        "token": "auth-token",
+        "tokenExpires": { "$date": 1480377601 }
+    }
+}
+```
+
+### Subscription Flow
+
+```mermaid
+flowchart TD
+    AUTH_RX(ReceiveAuthResult)
+    SUB(SubscribeToStream)
+    WS["Rocket.Chat\n(DDP over WebSocket)"]
+    READY(ConfirmSubscription)
+    STREAM(StreamEvents)
+
+    AUTH_RX -->|"login confirmed"| SUB
+    SUB -->|"msg: sub"| WS
+    WS -->|"msg: ready"| READY
+    READY -->|"subscription active"| STREAM
+    WS -->|"msg: changed"| STREAM
+```
+
+Subscription payload:
+
+```json
+{
+    "msg": "sub",
+    "id": "ABCROCK",
+    "name": "stream-room-messages",
+    "params": ["__my_messages__", false]
+}
+```
+
+`"__my_messages__"` scopes to the authenticated user's message stream.
+The trailing `false` is the DDP backward-compatibility flag: `false` = only
+`"changed"` events (deltas); `true` would also emit `"added"` events for
+every existing message. Bots only need new messages, so `false` is correct.
 
 ### Message Processing (Layer 2)
 
@@ -97,9 +204,9 @@ The `_cb_changed` callback implements a four-stage decision chain:
 | Stage | Condition | Action |
 |-------|-----------|--------|
 | 1 | `sender_id == bot_uid` | Silently drop (skip self) |
-| 2 | `msg.starts_with("@botname")` AND `room_name != ""` | Forward as @mention in channel |
+| 2 | `msg.starts_with("@botname")` AND `room_name != ""` | Forward as @mention in channel; strips `@botname` prefix from text |
 | 3 | `room_name` in registered rooms dict | Forward to room-specific callback |
-| 4 | `room_name == ""` (DM) | Forward as direct message |
+| 4 | `room_name == ""` (DM) | Forward as direct message; `@botname` prefix **not** stripped |
 
 All other cases are silently dropped.
 
@@ -109,162 +216,51 @@ Messages arrive as nested DDP `changed` events:
 
 ```json
 {
-  "msg": "changed",
-  "fields": {
-    "args": [
-      { "msg": "hello", "rid": "room-id", "u": { "_id": "...", "username": "..." } },
-      { "roomName": "general" }
-    ]
-  }
+    "msg": "changed",
+    "fields": {
+        "args": [
+            { "msg": "hello", "rid": "room-id", "u": { "_id": "...", "username": "..." } },
+            { "roomName": "general" }
+        ]
+    }
 }
 ```
 
 The bot extracts `msg_txt`, `room_id`, `sender_id`, `sender_name`, and
 `room_name` using ad-hoc dict accessors (`_parse_msg_txt`, `_parse_room_id`,
-etc.) with a `@defJson` decorator providing a fallback default on KeyError.
+etc.) with a `@defJson` decorator providing a fallback default on `KeyError`.
 
 ### Reply Delivery
 
 | Method | Parameters | Description |
 |--------|------------|-------------|
-| `sendMsg(rid, msg)` | `rid`, `msg` | Plain text reply |
-| `notifyTyping(rid, typing)` | `rid`+"/typing", `username`, `bool` | Typing indicator |
+| `sendMsg(rid, msg)` | `rid`, `msg` | Plain text reply via DDP `sendMessage` method |
+| `notifyTyping(rid, typing)` | `rid`+"/typing", `username`, `bool` | Typing indicator via `stream-notify-room` |
 | `bot.reply(msg)` | `msg` | Convenience wrapper around `sendMsg` |
 | `bot.replyQ(msg)` | `msg` | Code-block formatted reply |
 | `bot.typing(state)` | `bool` | Convenience wrapper around `notifyTyping` |
+
+### Error Recovery
+
+The implementation has minimal internal error recovery. Any WebSocket
+exception propagates uncaught and terminates the process. External
+restart is provided by the shell wrapper (`manual_start.sh`) with a
+retry counter. There is no proactive connection watchdog, no ping
+interval monitoring, and no automatic reconnection or exponential
+backoff within the Python process itself.
 
 ## Environment Config
 
 ```json
 {
-  "botname": "rockbot",
-  "password": "...",
-  "server": "chat.example.com"
+    "botname": "rockbot",
+    "password": "...",
+    "server": "chat.example.com"
 }
 ```
 
 The `config.json` file is loaded into a `SimpleNamespace` and passed to
 `RocketChatBot(user, password, server, debug=false)`.
-
-## Known Issues & Required Fixes
-
-### 1. Password sent in plain text (CRITICAL)
-
-**What**: `RocketChatBot.py:84` sends `"password": self._password` as a plain
-string. The Rocket.Chat DDP login API requires the password to be SHA-256
-hashed:
-
-```json
-{
-  "user": { "username": "rockbot" },
-  "password": {
-    "digest": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
-    "algorithm": "sha-256"
-  }
-}
-```
-
-**Fix**: Hash the password with `hashlib.sha256(password.encode()).hexdigest()`
-before sending, and restructure the login params to include `"digest"` and
-`"algorithm"` keys. Without this fix, the client only works against
-non-standard servers that accept plaintext credentials.
-
-*Location*: `bot/RocketChatBot.py:79-87`
-
-### 2. No `ready`/`nosub` subscription handshake
-
-**What**: The server sends `{"msg":"ready","subs":["ABCROCK"]}` to confirm a
-subscription is active, and `{"msg":"nosub"}` on unsubscribe. The current
-dispatch table has no handler for either message, meaning the bot never
-confirms its subscription actually succeeded.
-
-**Fix**: Add `"ready"` and `"nosub"` to the `cbdist` dispatch table. Log the
-confirmation. On `"nosub"`, attempt re-subscription.
-
-*Location*: `bot/RocketChatBot.py:30-34`
-
-### 3. No proactive ping / reconnection logic
-
-**What**: The bot only responds to server-initiated pings. If the server
-stops sending pings (or the connection drops silently), the bot hangs forever.
-When a WebSocket error does occur, it propagates uncaught and kills the
-process. The shell wrapper (`manual_start.sh`) provides only external restart.
-
-**Fix**: Add a proactive ping every 30s and a connection watchdog. If no
-frame is received within 60s, close and reconnect. Catch `WebSocketException`
-and retry with exponential backoff instead of relying solely on the shell
-wrapper.
-
-*Location*: `bot/RocketChatBot.py:40-54, 220-227`
-
-### 4. Thread support missing
-
-**What**: `sendMsg()` has no threading capability. The Rocket.Chat
-`sendMessage` method supports `tmid` (thread message ID) for replying in
-threads. DMs and channel replies always go to the main timeline.
-
-**Fix**: Add an optional `tmid` parameter to `sendMsg()` and `bot.reply()`.
-Pass it through as `{"tmid": thread_id}` in the payload.
-
-*Location*: `bot/RocketChatBot.py:185-192`, `bot/bot.py:15-16`
-
-### 5. Mentions not stripped in DMs
-
-**What**: Section 3 of the DFD notes that mentions are stripped via
-`.replace()` for @channel messages but "**not stripped for DMs**". The
-current code at `RocketChatBot.py:132` strips `@botname` from the message
-text before forwarding in-channal @mentions. DM messages are passed with the
-raw text (line 141). This is intentional — DMs don't start with `@botname` —
-but means any incidental `@botname` in a DM body is not cleaned.
-
-**Fix**: Optionally strip `@botname` from DM text too, or document this as
-intended behavior.
-
-*Location*: `bot/RocketChatBot.py:132, 141`
-
-### 6. `__my_messages__` second param semantics
-
-**What**: The DFD (section 2e) says `false` "disables the `args` shorthand
-(ensuring full message payloads are delivered)." In reality, this boolean
-controls DDP backward compatibility: `true` = receive `add` events for new
-items; `false` = only receive `changed` events (deltas). The current value
-(`false`) is correct, but the explanation is wrong.
-
-**Fix**: Update the DFD documentation in `_dfds/rocketchat.md`, section 2e.
-
-### 7. Protocol is DDP, not custom WebSocket
-
-**What**: The DFD uses "RocketChat WebSocket" as a black-box component. The
-actual communication runs DDP (Distributed Data Protocol), a Meteor protocol
-with specific message types (`connect`, `ping`, `pong`, `method`, `sub`,
-`unsub`, `ready`, `nosub`, `result`, `changed`, `added`, `removed`). Naming
-the protocol correctly aids debugging and integration with other DDP clients.
-
-**Fix**: Reference DDP in the documentation. Consider using the official
-`@rocket.chat/ddp-client` SDK for a TypeScript/Node.js rewrite.
-
-### 8. Typing notification misconfigured
-
-**What**: `notifyTyping()` at line 180 sends `stream-notify-room` with params
-`[rid + "/typing", self._username, typing]`. The first param should be the
-room ID; appending `"/typing"` is a server-side convention that may or may
-not work depending on the Rocket.Chat version.
-
-**Fix**: Verify against the target Rocket.Chat server version. The documented
-approach is `stream-notify-room` with `[roomId + "/typing", username, bool]`.
-
-*Location*: `bot/RocketChatBot.py:176-183`
-
-## Implementation Checklist
-
-- [ ] Fix password hashing (SHA-256 digest + algorithm)
-- [ ] Add `ready`/`nosub` handlers to dispatch table
-- [ ] Add proactive ping + reconnection with backoff
-- [ ] Add optional `tmid` thread support to `sendMsg()` and `bot.reply()`
-- [ ] Strip `@botname` from DM text (or document as intentional)
-- [ ] Correct DFD `__my_messages__` param explanation
-- [ ] Rename protocol references from "WebSocket" to "DDP over WebSocket"
-- [ ] Verify typing notification param format against server version
 
 ## References
 
