@@ -72,7 +72,7 @@ image_gen_api_key = "..."      # planned
 image_gen_url = ""             # planned, optional endpoint override
 ```
 
-See [config migration DFD](_dfds/config.md) for the JSON→TOML field mapping.
+See [config migration DFD](_dfds/base/config.md) for the JSON→TOML field mapping.
 
 ## Build & Run
 
@@ -129,11 +129,11 @@ See [memory management DFD](_dfds/memory.md) for the full pipeline.
 | ------- | ----- | ----------- |
 | [Context](_dfds/context-diagram.md) | 0 | System boundary and external entities |
 | [Agent Loop](_dfds/agent-harness.md) | 1 | Agent event loop, LLM interaction, tool execution, per-room routing |
-| [Config](_dfds/config.md) | 1 | TOML loading and JSON migration |
+| [Config](_dfds/base/config.md) | 1 | TOML loading and JSON migration |
 | [RocketChat](_dfds/rocketchat.md) | 1 | Auth, WebSocket, message filtering |
-| [AI Provider](_dfds/ai-provider.md) | 1 | Trait abstraction, vision payloads |
+| [AI Provider](_dfds/base/ai-provider.md) | 1 | Trait abstraction, vision payloads |
 | [Memory](_dfds/memory.md) | 1 | History, summarization, archival |
-| [WebDAV](_dfds/webdav.md) | 1 | NextCloud storage operations |
+| [WebDAV](_dfds/tools/webdav.md) | 1 | NextCloud storage operations |
 
 ## Crate: `rocketchat`
 
