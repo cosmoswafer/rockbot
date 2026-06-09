@@ -71,25 +71,33 @@ flowchart TD
 ```mermaid
 flowchart TD
     ROOT["/rockbot/"]
-    GEN["general/"]
+    CH["ch-general/"]
+    CH2["ch-project-x/"]
     DM["dm-alice/"]
-    PROJ["project-x/"]
-    MEM_GEN["memory/"]
+    MEM_CH["memory/"]
+    MEM_CH2["memory/"]
     MEM_DM["memory/"]
-    MEM_PROJ["memory/"]
-    IMG_GEN["images/"]
+    IMG_CH["images/"]
+    IMG_CH2["images/"]
     IMG_DM["images/"]
+    WSP_CH["workspace/"]
+    WSP_CH2["workspace/"]
+    WSP_DM["workspace/"]
     CFG_DIR["_config/"]
 
-    ROOT --> GEN
+    ROOT --> CH
+    ROOT --> CH2
     ROOT --> DM
-    ROOT --> PROJ
     ROOT --> CFG_DIR
-    GEN --> MEM_GEN
-    GEN --> IMG_GEN
+    CH --> MEM_CH
+    CH --> IMG_CH
+    CH --> WSP_CH
+    CH2 --> MEM_CH2
+    CH2 --> IMG_CH2
+    CH2 --> WSP_CH2
     DM --> MEM_DM
     DM --> IMG_DM
-    PROJ --> MEM_PROJ
+    DM --> WSP_DM
     CFG_DIR -->|"config.json.bak"| ROOT
 ```
 
