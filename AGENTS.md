@@ -30,9 +30,12 @@ cargo test --test integration_real -- --ignored
 
 No CI, no rustfmt.toml, no clippy.toml, no rust-toolchain file.
 
-## Key facts
+## Code style
 
-- **Edition 2024**, MSRV **1.85**. Use modern Rust (async/await, `impl Trait` in return position allowed).
+- **Use async Rust everywhere.** Prefer `async fn` over sync functions. Use `tokio` as the async runtime. All I/O (HTTP, WebSocket, file, subprocess) must be async.
+- **Edition 2024**, MSRV **1.85**. Use modern Rust (`impl Trait` in return position allowed).
+
+## Key facts
 - `Cargo.lock` is gitignored — atypical for a binary crate.
 - `crates/rocketchat/` has both `lib.rs` (public API) and `main.rs` (manual debug binary that connects to a RocketChat server and logs events).
 - `config.toml` is gitignored; use `example.config.toml` as a reference. Real integration tests read `config.toml` from the workspace root.
