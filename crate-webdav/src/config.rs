@@ -1,7 +1,7 @@
 use serde::Deserialize;
 
 use crate::client::WebDavClient;
-use crate::error::Result;
+use crate::error::{Result, WebDavError};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct WebDavConfig {
@@ -14,7 +14,11 @@ pub struct WebDavConfig {
 impl WebDavConfig {
     pub fn from_file(path: &str) -> Result<Self> {
         let content = std::fs::read_to_string(path)?;
-        let config: Self = toml::from_str(&content)?;
+        let table: toml::Table = toml::from_str(&content)?;
+        let webdav = table.get("webdav").ok_or_else(|| {
+            WebDavError::ConfigMissing("missing [webdav] section in config file".into())
+        })?;
+        let config: Self = webdav.clone().try_into()?;
         Ok(config)
     }
 

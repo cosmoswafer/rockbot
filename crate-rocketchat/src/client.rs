@@ -64,7 +64,7 @@ impl WriteHalf {
     async fn send(&mut self, payload: &serde_json::Value) -> Result<()> {
         let text = serde_json::to_string(payload)?;
         debug!("WS>>> {}", text);
-        self.inner.send(Message::Text(text)).await?;
+        self.inner.send(Message::Text(text.into())).await?;
         Ok(())
     }
 }

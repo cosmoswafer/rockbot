@@ -222,7 +222,8 @@ impl AgentHarness {
             .unwrap_or_else(|| {
                 warn!(
                     "Model alias '{}' not found for provider '{}', using raw model name",
-                    self.config.rocketchat.model.default_model, self.config.rocketchat.model.default_provider
+                    self.config.rocketchat.model.default_model,
+                    self.config.rocketchat.model.default_provider
                 );
                 self.config.rocketchat.model.default_model.clone()
             })
@@ -471,8 +472,7 @@ chat = "mock-model"
             .memory_mut()
             .get_or_create("room1", "general", false);
         for i in 0..10 {
-            room.history
-                .append(ChatMessage::user(format!("msg {}", i)));
+            room.history.append(ChatMessage::user(format!("msg {}", i)));
         }
 
         let result = harness.archive_room_if_needed("room1").await;

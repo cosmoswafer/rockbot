@@ -29,6 +29,9 @@ pub enum WebDavError {
     #[error("Unexpected HTTP status {status}: {body}")]
     UnexpectedStatus { status: u16, body: String },
 
+    #[error("Config section missing: {0}")]
+    ConfigMissing(String),
+
     #[error("Config parse error: {0}")]
     Config(#[from] toml::de::Error),
 
