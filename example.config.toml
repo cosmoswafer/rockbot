@@ -25,9 +25,14 @@ deepseek = "deepseek/deepseek-v3.2:online"
 [providers.deepseek]
 api_key = "EDITME"
 base_url = "https://api.deepseek.com/v1"
-model = "deepseek-chat"
+
+[providers.deepseek.models]
+chat = "deepseek-chat"
+reasoner = "deepseek-reasoner"
 
 [providers.replicate]
 api_key = "EDITME"
 base_url = "https://api.replicate.com/v1/predictions"
-model_url = "https://api.replicate.com/v1/models/black-forest-labs/flux-1.1-pro-ultra/predictions"
+
+[providers.replicate.models]
+flux-1.1-pro-ultra = "black-forest-labs/flux-1.1-pro-ultra"
