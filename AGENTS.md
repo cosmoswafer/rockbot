@@ -15,6 +15,10 @@ _dfds/ _docs/         # Mermaid data flow diagrams and architecture docs
 example.config.toml   # template for config; real config.toml is gitignored
 ```
 
+## Runtime
+
+- Use `./tmp/` for runtime temporary files (logs, state, etc.). Never use `/tmp/` or other system-wide temp directories.
+
 ## Build & test
 
 ```bash

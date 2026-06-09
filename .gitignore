@@ -7,6 +7,8 @@ config.toml
 .env
 .opencode/deno.lock
 
+tmp/
+
 # Rust
 /target/
 Cargo.lock
