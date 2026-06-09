@@ -67,6 +67,9 @@ archive_interval = 3600        # seconds between archive checks
 exa_api_key = "..."
 web_fetch = true
 vision = true
+image_gen = true               # planned
+image_gen_api_key = "..."      # planned
+image_gen_url = ""             # planned, optional endpoint override
 ```
 
 See [config migration DFD](_dfds/config.md) for the JSON→TOML field mapping.
@@ -86,6 +89,7 @@ cargo build --release
 - A NextCloud instance with WebDAV access
 - An API key for OpenRouter or DeepSeek
 - (Optional) An Exa API key for web search
+- (Optional) An image generation API key for infograph and anime tools
 
 ## Agentic Flow
 
@@ -99,6 +103,8 @@ calls → feed results back → repeat until final reply.
 | `web_search` | Search the web via Exa API and return ranked results |
 | `web_fetch` | Fetch a URL and optionally convert HTML to clean Markdown |
 | `vision` | Download an image from WebDAV and send it to the AI provider for analysis |
+| `infograph` | _(planned)_ Generate an infographic image from a text prompt, stored on WebDAV |
+| `anime` | _(planned)_ Generate a Japanese anime-style image from a text prompt, stored on WebDAV |
 
 See [agent orchestration DFD](_dfds/agent.md) for the full loop.
 

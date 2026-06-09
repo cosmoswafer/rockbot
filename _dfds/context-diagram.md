@@ -4,8 +4,9 @@
 
 Single-process view of RockBot: a Rust-based AI agent that connects to a
 self-hosted RocketChat server, answers DMs and @mentions via configurable AI
-providers, executes agentic tools (web search, URL fetch, vision), and persists
-all state to a NextCloud WebDAV server — never touching local disk.
+providers, executes agentic tools (web search, URL fetch, vision, image
+generation), and persists all state to a NextCloud WebDAV server — never
+touching local disk.
 
 ## 2. Diagram
 
@@ -17,6 +18,7 @@ flowchart LR
     NC[NextCloud WebDAV]
     Exa[Exa Search API]
     Web[Web Page]
+    ImgGen[Image Generation API]
     Bot(("RockBot"))
 
     User -->|"chat message"| RC
@@ -35,4 +37,7 @@ flowchart LR
 
     Bot -->|"HTTP GET"| Web
     Web -->|"page HTML"| Bot
+
+    Bot -->|"generation prompt"| ImgGen
+    ImgGen -->|"generated image"| Bot
 ```

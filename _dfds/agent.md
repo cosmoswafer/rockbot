@@ -78,15 +78,21 @@ flowchart TD
     EXA(ExaSearch)
     FETCH(WebFetch)
     VISION(VisionAnalyze)
+    INFOGRAPH(InfographGen)
+    ANIME(AnimeGen)
     RESULT[ToolResult]
     EXA_API[Exa API]
     WEB_URL[Remote URL]
     WEBDAV_IMG[WebDAV Image]
+    IMG_API[Image Generation API]
+    WEBDAV_STORE[WebDAV images/]
 
     CALL -->|"name"| REG
     REG -->|"web_search"| EXA
     REG -->|"web_fetch"| FETCH
     REG -->|"vision"| VISION
+    REG -->|"infograph"| INFOGRAPH
+    REG -->|"anime"| ANIME
     EXA -->|"search query"| EXA_API
     EXA_API -->|"results"| EXA
     EXA -->|"formatted results"| RESULT
@@ -96,15 +102,59 @@ flowchart TD
     VISION -->|"download image"| WEBDAV_IMG
     WEBDAV_IMG -->|"image bytes"| VISION
     VISION -->|"image description"| RESULT
+    INFOGRAPH -->|"infograph prompt"| IMG_API
+    IMG_API -->|"image bytes"| INFOGRAPH
+    INFOGRAPH -->|"PUT image.png"| WEBDAV_STORE
+    WEBDAV_STORE -->|"image URL"| INFOGRAPH
+    INFOGRAPH -->|"image URL"| RESULT
+    ANIME -->|"anime prompt"| IMG_API
+    IMG_API -->|"image bytes"| ANIME
+    ANIME -->|"PUT image.png"| WEBDAV_STORE
+    WEBDAV_STORE -->|"image URL"| ANIME
+    ANIME -->|"image URL"| RESULT
 ```
 
 ### 2d. Tool Definitions
 
-| Tool Name     | Description                           | Arguments                    |
-| ------------- | ------------------------------------- | ---------------------------- |
-| `web_search`  | Search the web using Exa              | `query: string`              |
-| `web_fetch`   | Fetch a URL, optionally as markdown   | `url: string, markdown: bool`|
-| `vision`      | Describe or analyze an image          | `url: string, prompt: string`|
+| Tool Name     | Description                                      | Arguments                          |
+| ------------- | ------------------------------------------------ | ---------------------------------- |
+| `web_search`  | Search the web using Exa                         | `query: string`                    |
+| `web_fetch`   | Fetch a URL, optionally as markdown              | `url: string, markdown: bool`      |
+| `vision`      | Describe or analyze an image                     | `url: string, prompt: string`      |
+| `infograph`   | _(planned)_ Generate an infographic image        | `prompt: string`                   |
+| `anime`       | _(planned)_ Generate a Japanese anime-style image | `prompt: string`                  |
+
+### 2e. Image Generation Pipeline
+
+Both `infograph` and `anime` share the same pipeline; only the system prompt
+and style prefix differ.
+
+```mermaid
+flowchart TD
+    PROMPT[prompt]
+    STYLE{Style Prefix}
+    INFO["\"infographic: \" + prompt"]
+    ANI["\"japanese anime style: \" + prompt"]
+    API(Image Generation API)
+    BYTES[image bytes]
+    NAME(GenerateFilename)
+    PUT(PUT to WebDAV)
+    DAV["/{root}/{room_id}/images/{name}.png"]
+    URL[WebDAV public URL]
+    RESULT[ToolResult]
+
+    PROMPT --> STYLE
+    STYLE -->|"infograph"| INFO
+    STYLE -->|"anime"| ANI
+    INFO -->|"styled prompt"| API
+    ANI -->|"styled prompt"| API
+    API -->|"PNG bytes"| BYTES
+    BYTES --> NAME
+    NAME -->|"{tool}_{timestamp}.png"| PUT
+    DAV -->|"destination"| PUT
+    PUT -->|"201 Created"| URL
+    URL -->|"markdown image link"| RESULT
+```
 
 ## 3. Data Structures
 

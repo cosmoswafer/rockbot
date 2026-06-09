@@ -129,11 +129,14 @@ flowchart TD
 
 #### `ToolsConfig`
 
-| Field          | Type              | Notes                          |
-| -------------- | ----------------- | ------------------------------ |
-| `exa_api_key`  | `Option<String>`  | Exa search API key             |
-| `web_fetch`    | `bool`            | Enable web fetch tool          |
-| `vision`       | `bool`            | Enable vision tool             |
+| Field              | Type              | Notes                               |
+| ------------------ | ----------------- | ----------------------------------- |
+| `exa_api_key`      | `Option<String>`  | Exa search API key                  |
+| `web_fetch`        | `bool`            | Enable web fetch tool               |
+| `vision`           | `bool`            | Enable vision tool                  |
+| `image_gen`        | `bool`            | Enable image generation tools       |
+| `image_gen_api_key`| `Option<String>`  | Image generation API key            |
+| `image_gen_url`    | `Option<String>`  | Image generation endpoint override  |
 
 #### JSON → TOML Field Mapping
 
