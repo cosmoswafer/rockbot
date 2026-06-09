@@ -1,0 +1,25 @@
+[package]
+name = "rocketchat"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+rust-version = "1.75"
+description = "Standalone RocketChat DDP WebSocket client library"
+repository = "https://github.com/anomalyco/rockbot"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
+rustls-native-certs = "0.8"
+futures-util = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+hex = "0.4"
+toml = "0.8"
+thiserror = "2"
+tracing = "0.1"
+url = "2"
+
+[dev-dependencies]
+tokio-test = "0.4"
