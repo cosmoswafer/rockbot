@@ -36,7 +36,7 @@ impl WebDavTool {
         let full = self.room_path(room_id, path);
         debug!("webdav write: {} ({})", full, content.len());
         self.client
-            .write_file_auto_mkcol(&full, content.as_bytes().to_vec())
+            .write_file_with_fallback(&full, content.as_bytes().to_vec())
             .await
             .map_err(|e| RockBotError::Provider(format!("WebDAV write failed: {e}")))?;
         Ok(format!("Written {} bytes to {}", content.len(), full))

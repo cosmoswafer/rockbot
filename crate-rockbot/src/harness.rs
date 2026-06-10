@@ -240,7 +240,7 @@ impl AgentHarness {
                 let path = WebDavPath::new("").archive_path(&rid, seq);
 
                 match webdav_client
-                    .write_file_auto_mkcol(&path, content.as_bytes().to_vec())
+                    .write_file_with_fallback(&path, content.as_bytes().to_vec())
                     .await
                 {
                     Ok(()) => {
@@ -457,10 +457,7 @@ chat = "mock-model"
             usage: None,
         };
 
-        let provider = Box::new(MockProvider::new(vec![
-            tool_result.clone(),
-            tool_result,
-        ]));
+        let provider = Box::new(MockProvider::new(vec![tool_result.clone(), tool_result]));
 
         let mut harness = AgentHarness::new(config, provider, None);
 

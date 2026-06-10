@@ -50,6 +50,14 @@ impl WebDavPath {
         let file_path = file_path.trim_start_matches('/');
         format!("/{}/{}/{}", self.root, room_id, file_path)
     }
+
+    pub fn parent_path(path: &str) -> String {
+        let trimmed = path.trim_end_matches('/');
+        match trimmed.rfind('/') {
+            Some(pos) if pos > 0 => trimmed[..pos].to_string(),
+            _ => "/".to_string(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -135,6 +143,26 @@ mod tests {
         assert_eq!(
             p.room_path("general", "/notes.txt"),
             "/rockbot/general/notes.txt"
+        );
+    }
+
+    #[test]
+    fn test_parent_path() {
+        assert_eq!(WebDavPath::parent_path("/a/b/c"), "/a/b");
+        assert_eq!(WebDavPath::parent_path("/a/b/c/"), "/a/b");
+        assert_eq!(WebDavPath::parent_path("/a/b"), "/a");
+        assert_eq!(WebDavPath::parent_path("/a"), "/");
+        assert_eq!(WebDavPath::parent_path("/"), "/");
+    }
+
+    #[test]
+    fn test_room_path_empty_root() {
+        let p = WebDavPath::new("");
+        assert_eq!(p.room_path("general", "notes.txt"), "//general/notes.txt");
+        assert_eq!(p.room_dir("general"), "//general/");
+        assert_eq!(
+            p.archive_path("general", 1),
+            "//general/memory/000001_summary.md"
         );
     }
 }

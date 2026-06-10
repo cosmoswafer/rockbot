@@ -3,6 +3,7 @@ use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 use url::Url;
 
 use crate::error::{Result, WebDavError};
+use crate::path::WebDavPath;
 use crate::types::{MultiStatus, WebDavEntry};
 
 const MULTI_STATUS_XML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -221,6 +222,38 @@ impl WebDavClient {
 
         self.handle_status_discard(response, |s| s == 201 || s == 204 || s == 200)
             .await
+    }
+
+    /// Write a file, falling back to explicit mkdir if AutoMkcol is not supported.
+    ///
+    /// First tries `write_file_auto_mkcol`. If the server returns 404 (path not
+    /// found), the parent directory is explicitly created via `ensure_directory_all`,
+    /// then a plain PUT is retried without the NextCloud-specific header.
+    pub async fn write_file_with_fallback(
+        &self,
+        path: &str,
+        content: impl Into<bytes::Bytes> + Clone,
+    ) -> Result<()> {
+        let content = content.into();
+        match self.write_file_auto_mkcol(path, content.clone()).await {
+            Ok(()) => return Ok(()),
+            Err(WebDavError::NotFound(_)) => {}
+            Err(e) => return Err(e),
+        }
+
+        let parent = WebDavPath::parent_path(path);
+        self.ensure_directory_all(&parent).await?;
+        self.write_file(path, content).await
+    }
+
+    /// Ensure the root room directory exists for a given room_id.
+    ///
+    /// Creates `/{room_id}/` at the configured root if it doesn't already exist.
+    /// Safe to call multiple times — uses `ensure_directory_all` which silently
+    /// ignores already-existing path segments.
+    pub async fn ensure_room_directory(&self, room_id: &str) -> Result<()> {
+        let path = WebDavPath::new("").room_dir(room_id);
+        self.ensure_directory_all(&path).await
     }
 
     async fn handle_status_discard<F: Fn(u16) -> bool>(

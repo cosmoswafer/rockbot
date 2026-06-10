@@ -1140,3 +1140,303 @@ async fn test_webdav_mkdir_deep() {
         .unwrap();
     assert!(result.contains("created"));
 }
+
+// ─── WebDAV Write-With-Fallback Tests ──────────────────────────────────────────
+
+#[tokio::test]
+async fn test_webdav_write_fallback_happy_path() {
+    let mock_server = MockServer::start().await;
+
+    // AutoMkcol succeeds on first try
+    Mock::given(method("PUT"))
+        .and(path("/general/notes.txt"))
+        .and(header("X-NC-WebDAV-AutoMkcol", "1"))
+        .respond_with(ResponseTemplate::new(201))
+        .mount(&mock_server)
+        .await;
+
+    let client = make_test_client(&mock_server.uri());
+    let tool = rockbot::tools::WebDavTool::new(client);
+
+    let result = tool
+        .execute(
+            r#"{"action": "write", "room_id": "general", "path": "notes.txt", "content": "hello"}"#,
+        )
+        .await
+        .unwrap();
+    assert!(result.contains("bytes"));
+    assert!(result.contains("general/notes.txt"));
+}
+
+#[tokio::test]
+async fn test_webdav_write_fallback_404_then_mkdir_retry() {
+    let mock_server = MockServer::start().await;
+
+    // AutoMkcol returns 404 (server doesn't support it / parent dir missing)
+    Mock::given(method("PUT"))
+        .and(path("/general/notes.txt"))
+        .and(header("X-NC-WebDAV-AutoMkcol", "1"))
+        .respond_with(ResponseTemplate::new(404).set_body_string("not found"))
+        .mount(&mock_server)
+        .await;
+
+    // ensure_directory_all creates /general (root dir already exists via 405, just return 201)
+    Mock::given(method("MKCOL"))
+        .and(path("/general"))
+        .respond_with(ResponseTemplate::new(201))
+        .mount(&mock_server)
+        .await;
+
+    // Retry plain PUT succeeds
+    Mock::given(method("PUT"))
+        .and(path("/general/notes.txt"))
+        .respond_with(ResponseTemplate::new(201))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = make_test_client(&mock_server.uri());
+    let tool = rockbot::tools::WebDavTool::new(client);
+
+    let result = tool
+        .execute(
+            r#"{"action": "write", "room_id": "general", "path": "notes.txt", "content": "hello"}"#,
+        )
+        .await
+        .unwrap();
+    assert!(result.contains("bytes"));
+    assert!(result.contains("general/notes.txt"));
+}
+
+#[tokio::test]
+async fn test_webdav_write_fallback_nested_dir_creation() {
+    let mock_server = MockServer::start().await;
+
+    // AutoMkcol 404
+    Mock::given(method("PUT"))
+        .and(path("/general/workspace/report.txt"))
+        .and(header("X-NC-WebDAV-AutoMkcol", "1"))
+        .respond_with(ResponseTemplate::new(404).set_body_string("not found"))
+        .mount(&mock_server)
+        .await;
+
+    // ensure_directory_all: /general (already exists → 405 silenced)
+    Mock::given(method("MKCOL"))
+        .and(path("/general"))
+        .respond_with(ResponseTemplate::new(405))
+        .mount(&mock_server)
+        .await;
+
+    // ensure_directory_all: /general/workspace (created)
+    Mock::given(method("MKCOL"))
+        .and(path("/general/workspace"))
+        .respond_with(ResponseTemplate::new(201))
+        .mount(&mock_server)
+        .await;
+
+    // Retry plain PUT succeeds
+    Mock::given(method("PUT"))
+        .and(path("/general/workspace/report.txt"))
+        .respond_with(ResponseTemplate::new(201))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = make_test_client(&mock_server.uri());
+    let tool = rockbot::tools::WebDavTool::new(client);
+
+    let result = tool
+        .execute(
+            r#"{"action": "write", "room_id": "general", "path": "workspace/report.txt", "content": "report"}"#,
+        )
+        .await
+        .unwrap();
+    assert!(result.contains("bytes"));
+}
+
+#[tokio::test]
+async fn test_webdav_write_fallback_inner_mkdir_already_exists() {
+    let mock_server = MockServer::start().await;
+
+    // AutoMkcol 404
+    Mock::given(method("PUT"))
+        .and(path("/general/workspace/report.txt"))
+        .and(header("X-NC-WebDAV-AutoMkcol", "1"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&mock_server)
+        .await;
+
+    // Both dir segments already exist → 405 for each
+    Mock::given(method("MKCOL"))
+        .and(path("/general"))
+        .respond_with(ResponseTemplate::new(405))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("MKCOL"))
+        .and(path("/general/workspace"))
+        .respond_with(ResponseTemplate::new(405))
+        .mount(&mock_server)
+        .await;
+
+    // Retry plain PUT succeeds
+    Mock::given(method("PUT"))
+        .and(path("/general/workspace/report.txt"))
+        .respond_with(ResponseTemplate::new(201))
+        .mount(&mock_server)
+        .await;
+
+    let client = make_test_client(&mock_server.uri());
+    let tool = rockbot::tools::WebDavTool::new(client);
+
+    let result = tool
+        .execute(
+            r#"{"action": "write", "room_id": "general", "path": "workspace/report.txt", "content": "ok"}"#,
+        )
+        .await
+        .unwrap();
+    assert!(result.contains("bytes"));
+}
+
+#[tokio::test]
+async fn test_webdav_write_fallback_both_fail() {
+    let mock_server = MockServer::start().await;
+
+    // AutoMkcol 404
+    Mock::given(method("PUT"))
+        .and(path("/general/notes.txt"))
+        .and(header("X-NC-WebDAV-AutoMkcol", "1"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&mock_server)
+        .await;
+
+    // ensure_directory_all succeeds
+    Mock::given(method("MKCOL"))
+        .and(path("/general"))
+        .respond_with(ResponseTemplate::new(201))
+        .mount(&mock_server)
+        .await;
+
+    // Retry plain PUT also fails with non-404 (e.g. 403 forbidden)
+    Mock::given(method("PUT"))
+        .and(path("/general/notes.txt"))
+        .respond_with(ResponseTemplate::new(403).set_body_string("forbidden"))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = make_test_client(&mock_server.uri());
+    let tool = rockbot::tools::WebDavTool::new(client);
+
+    let result = tool
+        .execute(
+            r#"{"action": "write", "room_id": "general", "path": "notes.txt", "content": "hello"}"#,
+        )
+        .await;
+
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("WebDAV write failed"),
+        "unexpected error: {err}"
+    );
+}
+
+#[tokio::test]
+async fn test_webdav_write_fallback_non_404_error_propagates() {
+    let mock_server = MockServer::start().await;
+
+    // AutoMkcol fails with 401 — should propagate, not trigger fallback
+    Mock::given(method("PUT"))
+        .and(path("/general/notes.txt"))
+        .and(header("X-NC-WebDAV-AutoMkcol", "1"))
+        .respond_with(ResponseTemplate::new(401).set_body_string("unauthorized"))
+        .mount(&mock_server)
+        .await;
+
+    let client = make_test_client(&mock_server.uri());
+    let tool = rockbot::tools::WebDavTool::new(client);
+
+    let result = tool
+        .execute(
+            r#"{"action": "write", "room_id": "general", "path": "notes.txt", "content": "hello"}"#,
+        )
+        .await;
+
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("WebDAV write failed"),
+        "unexpected error: {err}"
+    );
+}
+
+// ─── WebDAV Ensure Room Directory Tests ────────────────────────────────────────
+
+#[tokio::test]
+async fn test_webdav_ensure_room_directory_creates() {
+    let mock_server = MockServer::start().await;
+
+    // ensure_directory_all for /general/
+    Mock::given(method("MKCOL"))
+        .and(path("/general"))
+        .respond_with(ResponseTemplate::new(201))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = make_test_client(&mock_server.uri());
+    client.ensure_room_directory("general").await.unwrap();
+}
+
+#[tokio::test]
+async fn test_webdav_ensure_room_directory_already_exists() {
+    let mock_server = MockServer::start().await;
+
+    // /general/ already exists → 405, silently ignored by ensure_directory_all
+    Mock::given(method("MKCOL"))
+        .and(path("/general"))
+        .respond_with(ResponseTemplate::new(405))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = make_test_client(&mock_server.uri());
+    client.ensure_room_directory("general").await.unwrap();
+}
+
+#[tokio::test]
+async fn test_webdav_write_first_time_in_room() {
+    let mock_server = MockServer::start().await;
+
+    // Step 1: ensure_room_directory for "general" — creates /general
+    Mock::given(method("MKCOL"))
+        .and(path("/general"))
+        .respond_with(ResponseTemplate::new(201))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // Step 2: write_file_with_fallback → auto_mkcol fails 404 (parent exists now but just simulating)
+    // Actually with new code, we'd ensure_room_directory first, then write via fallback.
+    // The write_file_with_fallback tries auto_mkcol first, which would work if ensuring was done.
+    // Let's simulate the full "first time write" flow:
+
+    // AutoMkcol write file (this would be called by the tool after ensure_room_directory)
+    Mock::given(method("PUT"))
+        .and(path("/general/notes.txt"))
+        .and(header("X-NC-WebDAV-AutoMkcol", "1"))
+        .respond_with(ResponseTemplate::new(201))
+        .mount(&mock_server)
+        .await;
+
+    let client = make_test_client(&mock_server.uri());
+
+    // Ensure room dir first
+    client.ensure_room_directory("general").await.unwrap();
+
+    // Then write
+    client
+        .write_file_with_fallback("/general/notes.txt", "hello".as_bytes().to_vec())
+        .await
+        .unwrap();
+}
