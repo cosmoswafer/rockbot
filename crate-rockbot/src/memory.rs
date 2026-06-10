@@ -311,4 +311,24 @@ mod tests {
         assert!(!state.is_dm);
         assert_eq!(state.history.room_id, "rid1");
     }
+
+    #[test]
+    fn test_room_state_dm() {
+        let state = RoomState::new("dm-uuid-123", "saru", true);
+        assert_eq!(state.room_id, "dm-uuid-123");
+        assert_eq!(state.room_name, "saru");
+        assert!(state.is_dm);
+    }
+
+    #[test]
+    fn test_build_context_with_dm_name() {
+        let mut mgr = MemoryManager::new(1000, 12);
+        let room = mgr.get_or_create("dm-xyz", "alice", true);
+        assert_eq!(room.room_name, "alice");
+        assert!(room.is_dm);
+        room.history.append(ChatMessage::user("alice: hello"));
+        let ctx = mgr.build_context("dm-xyz", "prompt", None, None);
+        assert_eq!(ctx.len(), 2);
+        assert_eq!(ctx[1].text_content(), Some("alice: hello"));
+    }
 }

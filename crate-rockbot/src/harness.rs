@@ -660,4 +660,29 @@ chat = "mock-model"
     fn test_compute_webdav_dir_dm() {
         assert_eq!(compute_webdav_dir("saru", true), "dms/saru");
     }
+
+    #[test]
+    fn test_compute_webdav_dir_channel_with_hyphens() {
+        assert_eq!(
+            compute_webdav_dir("my-team-room", false),
+            "rooms/my-team-room"
+        );
+    }
+
+    #[test]
+    fn test_compute_webdav_dir_dm_with_dots() {
+        assert_eq!(compute_webdav_dir("john.doe", true), "dms/john.doe");
+    }
+
+    #[test]
+    fn test_compute_webdav_dir_unicode_name() {
+        assert_eq!(compute_webdav_dir("日本語", false), "rooms/日本語");
+        assert_eq!(compute_webdav_dir("中文", true), "dms/中文");
+    }
+
+    #[test]
+    fn test_compute_webdav_dir_empty_name() {
+        assert_eq!(compute_webdav_dir("", false), "rooms/");
+        assert_eq!(compute_webdav_dir("", true), "dms/");
+    }
 }

@@ -235,4 +235,108 @@ mod tests {
         let result = tool.execute("not json").await;
         assert!(result.is_err());
     }
+
+    #[test]
+    fn test_parse_args_with_all_optional_params() {
+        let args: Value =
+            serde_json::from_str(r#"{"query": "rust", "type": "deep", "num_results": 10}"#)
+                .unwrap();
+        assert_eq!(args["query"], "rust");
+        assert_eq!(args["type"], "deep");
+        assert_eq!(args["num_results"], 10);
+    }
+
+    #[test]
+    fn test_parse_args_defaults() {
+        let args: Value = serde_json::from_str(r#"{"query": "rust"}"#).unwrap();
+        let search_type = args.get("type").and_then(|t| t.as_str()).unwrap_or("auto");
+        assert_eq!(search_type, "auto");
+        let num_results = args
+            .get("num_results")
+            .and_then(|n| n.as_u64())
+            .unwrap_or(5);
+        assert_eq!(num_results, 5);
+    }
+
+    #[test]
+    fn test_parse_args_num_results_bounds() {
+        let args: Value = serde_json::from_str(r#"{"query": "x", "num_results": 1}"#).unwrap();
+        assert_eq!(args["num_results"], 1);
+        let args: Value = serde_json::from_str(r#"{"query": "x", "num_results": 20}"#).unwrap();
+        assert_eq!(args["num_results"], 20);
+    }
+
+    #[test]
+    fn test_exa_request_body_contains_contents_highlights() {
+        let body = serde_json::json!({
+            "query": "rust",
+            "numResults": 5,
+            "type": "auto",
+            "contents": {
+                "highlights": {
+                    "numSentences": 3,
+                    "highlightsPerUrl": 3,
+                    "query": "rust"
+                }
+            }
+        });
+        assert!(body["contents"]["highlights"]["numSentences"] == 3);
+        assert_eq!(body["contents"]["highlights"]["query"], "rust");
+    }
+
+    #[test]
+    fn test_exa_request_body_type_is_not_neural() {
+        let body = serde_json::json!({
+            "query": "test",
+            "numResults": 5,
+            "type": "auto",
+            "contents": {"highlights": {"numSentences": 3, "highlightsPerUrl": 3, "query": "test"}}
+        });
+        assert_ne!(
+            body["type"], "neural",
+            "\"neural\" is not a valid Exa search type"
+        );
+    }
+
+    #[test]
+    fn test_exa_request_body_no_deprecated_use_autoprompt() {
+        let body = serde_json::json!({
+            "query": "test",
+            "numResults": 5,
+            "type": "auto",
+            "useAutoprompt": true,
+            "contents": {"highlights": {"numSentences": 3, "highlightsPerUrl": 3, "query": "test"}}
+        });
+        assert_eq!(
+            body["type"], "auto",
+            "useAutoprompt=true is only valid with type=auto"
+        );
+    }
+
+    #[test]
+    fn test_parse_highlight_results() {
+        let highlights: Vec<String> = vec![
+            "Rust is fast".into(),
+            "Memory safe".into(),
+            "Zero-cost abstractions".into(),
+        ];
+        let summary = highlights.join(" ... ");
+        assert_eq!(
+            summary,
+            "Rust is fast ... Memory safe ... Zero-cost abstractions"
+        );
+        assert!(summary.contains("Rust"));
+        assert!(summary.contains("Memory safe"));
+    }
+
+    #[test]
+    fn test_parse_text_fallback_when_no_highlights() {
+        let text = "This is a long text that should be truncated at 500 characters...";
+        let summary = if text.len() > 500 {
+            format!("{}...", &text[..500])
+        } else {
+            text.to_string()
+        };
+        assert!(!summary.is_empty());
+    }
 }

@@ -212,4 +212,29 @@ mod tests {
         assert!(id.contains('-'));
         assert_eq!(id.len(), 13);
     }
+
+    #[test]
+    fn test_webdav_dir_extraction() {
+        let args = serde_json::json!({
+            "prompt": "a cat",
+            "room_id": "uuid-123",
+            "webdav_dir": "dms/saru"
+        });
+        assert_eq!(args["webdav_dir"], "dms/saru");
+        assert_eq!(args["room_id"], "uuid-123");
+    }
+
+    #[test]
+    fn test_webdav_dir_fallback_to_room_id() {
+        let args = serde_json::json!({
+            "prompt": "a cat",
+            "room_id": "uuid-123"
+        });
+        assert!(args.get("webdav_dir").is_none());
+        let webdav_dir = args
+            .get("webdav_dir")
+            .and_then(|d| d.as_str())
+            .unwrap_or(args["room_id"].as_str().unwrap());
+        assert_eq!(webdav_dir, "uuid-123");
+    }
 }

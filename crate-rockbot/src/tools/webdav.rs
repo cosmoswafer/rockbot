@@ -334,4 +334,38 @@ mod tests {
         let result = tool.execute("not json").await;
         assert!(result.is_err());
     }
+
+    #[test]
+    fn test_webdav_dir_channel_path() {
+        let client = webdav::WebDavClient::new("https://example.com", "user", "pass").unwrap();
+        let tool = WebDavTool::new(client);
+        assert_eq!(
+            tool.room_path("rooms/atomkb", "notes.txt"),
+            "//rooms/atomkb/notes.txt"
+        );
+    }
+
+    #[test]
+    fn test_webdav_dir_dm_path() {
+        let client = webdav::WebDavClient::new("https://example.com", "user", "pass").unwrap();
+        let tool = WebDavTool::new(client);
+        assert_eq!(
+            tool.room_path("dms/saru", "data.csv"),
+            "//dms/saru/data.csv"
+        );
+    }
+
+    #[test]
+    fn test_webdav_dir_channel_dir() {
+        let client = webdav::WebDavClient::new("https://example.com", "user", "pass").unwrap();
+        let tool = WebDavTool::new(client);
+        assert_eq!(tool.room_dir("rooms/general"), "//rooms/general/");
+    }
+
+    #[test]
+    fn test_webdav_dir_dm_dir() {
+        let client = webdav::WebDavClient::new("https://example.com", "user", "pass").unwrap();
+        let tool = WebDavTool::new(client);
+        assert_eq!(tool.room_dir("dms/alice"), "//dms/alice/");
+    }
 }

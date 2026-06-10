@@ -1,10 +1,10 @@
 use rockbot::config::ProviderConfig;
 use rockbot::error::RockBotError;
-use rockbot::provider::{AiProvider, DeepSeekProvider, OpenRouterProvider};
+use rockbot::provider::{AiProvider, DeepSeekProvider, FalAiProvider, OpenRouterProvider};
 use rockbot::tool::Tool;
 use rockbot::types::{ChatMessage, ChatRequest, FinishReason, ThinkingConfig, ToolDef};
 use std::collections::HashMap;
-use wiremock::matchers::{header, method, path};
+use wiremock::matchers::{body_string_contains, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 // ─── Mock HTTP Tests: DeepSeekProvider.complete() ────────────────────────────
@@ -1420,4 +1420,135 @@ async fn test_webdav_write_first_time_in_room() {
         .write_file_with_fallback("/general/notes.txt", "hello".as_bytes().to_vec())
         .await
         .unwrap();
+}
+
+// ─── Mock HTTP Tests: FalAiProvider.generate_image() ──────────────────────────
+
+fn make_fal_config(mock_uri: &str) -> ProviderConfig {
+    ProviderConfig {
+        name: "fal".into(),
+        api_key: "fal-test-key".into(),
+        base_url: mock_uri.to_string(),
+        basecf_url: None,
+        chat_path: None,
+        models: HashMap::new(),
+    }
+}
+
+#[tokio::test]
+async fn test_fal_submit_request() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/fal-ai/flux/schnell"))
+        .and(header("Authorization", "Key fal-test-key"))
+        .and(header("Content-Type", "application/json"))
+        .and(body_string_contains("\"prompt\":\"a sunset\""))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "request_id": "req-abc-123",
+            "status_url": "/fal-ai/flux/schnell/requests/req-abc-123/status",
+            "response_url": "/fal-ai/flux/schnell/requests/req-abc-123"
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/fal-ai/flux/schnell/requests/req-abc-123/status"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "status": "COMPLETED"
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/fal-ai/flux/schnell/requests/req-abc-123"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "images": [{"url": "https://fal.media/result.png", "width": 1024, "height": 1024}]
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let config = make_fal_config(&mock_server.uri());
+    let provider = FalAiProvider::new(&config, "fal-ai/flux/schnell").unwrap();
+    let url = provider.generate_image("a sunset").await.unwrap();
+    assert_eq!(url, "https://fal.media/result.png");
+}
+
+#[tokio::test]
+async fn test_fal_submit_unauthorized() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/fal-ai/flux/schnell"))
+        .respond_with(
+            ResponseTemplate::new(401).set_body_json(serde_json::json!({"detail": "Invalid key"})),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let config = make_fal_config(&mock_server.uri());
+    let provider = FalAiProvider::new(&config, "fal-ai/flux/schnell").unwrap();
+    let result = provider.generate_image("test").await;
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("Invalid key"));
+}
+
+#[tokio::test]
+async fn test_fal_submit_missing_request_id() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/fal-ai/flux/schnell"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+        .mount(&mock_server)
+        .await;
+
+    let config = make_fal_config(&mock_server.uri());
+    let provider = FalAiProvider::new(&config, "fal-ai/flux/schnell").unwrap();
+    let result = provider.generate_image("test").await;
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn test_fal_poll_status_failed() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/fal-ai/flux/schnell"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "request_id": "req-fail-1"
+        })))
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/fal-ai/flux/schnell/requests/req-fail-1/status"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "status": "FAILED",
+            "error": "NSFW content detected"
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let config = make_fal_config(&mock_server.uri());
+    let provider = FalAiProvider::new(&config, "fal-ai/flux/schnell").unwrap();
+    let result = provider.generate_image("test").await;
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("NSFW"));
+}
+
+// ─── WebDavTool: webdav_dir schema test ─────────────────────────────────────
+
+#[test]
+fn test_webdav_tool_webdav_dir_not_in_llm_schema() {
+    let client = webdav::WebDavClient::new("https://example.com", "user", "pass").unwrap();
+    let tool = rockbot::tools::WebDavTool::new(client);
+    let params = tool.parameters();
+    assert!(
+        params["properties"].get("webdav_dir").is_none(),
+        "webdav_dir should not be in LLM-facing schema (injected by harness)"
+    );
 }
