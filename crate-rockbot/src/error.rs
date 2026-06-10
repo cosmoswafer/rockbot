@@ -9,7 +9,7 @@ pub enum RockBotError {
     Json(#[from] serde_json::Error),
 
     #[error("Config error: {0}")]
-    Config(#[from] toml::de::Error),
+    Config(String),
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
