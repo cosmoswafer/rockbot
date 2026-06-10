@@ -185,7 +185,7 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     info!("Bot initialized. Starting RocketChat connection...");
 
     // Spawn combined maintenance timer: persist dirty snapshots, then evict stale rooms
-    {
+    let timer_handle = {
         let harness = harness.clone();
         let persist_secs = {
             let h = harness.lock().await;
@@ -203,12 +203,19 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                 let mut h = harness.lock().await;
                 h.maintenance_tick(ttl_secs).await;
             }
-        });
-        info!(
-            "Maintenance timer started (persist every {}s, evict after {}s idle)",
-            persist_secs, ttl_secs
-        );
-    }
+        })
+    };
+    info!(
+        "Maintenance timer started (persist every {}s, evict after {}s idle)",
+        {
+            let h = harness.lock().await;
+            h.memory().persist_interval_secs
+        },
+        {
+            let h = harness.lock().await;
+            h.config().rocketchat.model.memory_ttl_secs
+        }
+    );
 
     let bot_name = {
         let h = harness.lock().await;
@@ -231,7 +238,15 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     let max_retries: u32 = 5;
     let mut retry_count: u32 = 0;
 
-    let shutdown = tokio::signal::ctrl_c();
+    let shutdown = async {
+        let mut sigterm =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .expect("failed to register SIGTERM handler");
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {},
+            _ = sigterm.recv() => {},
+        }
+    };
 
     tokio::pin!(shutdown);
 
@@ -333,7 +348,11 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
         let result = tokio::select! {
             r = connect_fut => r,
             _ = &mut shutdown => {
-                info!("Received shutdown signal, exiting...");
+                info!("Received shutdown signal, flushing snapshots...");
+                timer_handle.abort();
+                let mut h = harness.lock().await;
+                h.flush_all_snapshots().await;
+                info!("Graceful shutdown complete");
                 return Ok(());
             }
         };
@@ -341,6 +360,9 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
         match result {
             Ok(()) => {
                 info!("WebSocket connection closed normally");
+                timer_handle.abort();
+                let mut h = harness.lock().await;
+                h.flush_all_snapshots().await;
                 break;
             }
             Err(e) => {
@@ -350,6 +372,9 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                         "Max reconnect retries ({}) reached, shutting down",
                         max_retries
                     );
+                    timer_handle.abort();
+                    let mut h = harness.lock().await;
+                    h.flush_all_snapshots().await;
                     return Err(e.into());
                 }
                 let delay = Duration::from_secs(2u64.pow(retry_count));

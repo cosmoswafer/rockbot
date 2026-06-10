@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 use webdav::{WebDavClient, WebDavPath};
 
 use crate::AppConfig;
@@ -722,18 +722,11 @@ impl AgentHarness {
         Ok(())
     }
 
-    pub async fn maintenance_tick(&mut self, memory_ttl_secs: u64) {
-        // Phase 1: persist dirty snapshots (crash recovery)
+    /// Persist all dirty snapshots to WebDAV immediately (used for graceful shutdown).
+    pub async fn flush_all_snapshots(&mut self) {
         let webdav_client = match &self.webdav {
             Some(c) => c,
-            None => {
-                // No WebDAV — just evict without persisting
-                let stale: Vec<String> = self.memory.stale_rooms(memory_ttl_secs);
-                for room_id in &stale {
-                    self.memory.evict_room(room_id);
-                }
-                return;
-            }
+            None => return,
         };
 
         let dirty: Vec<String> = self.memory.dirty_snapshots();
@@ -746,7 +739,6 @@ impl AgentHarness {
                 }
             };
 
-            // Skip empty rooms
             if snapshot.messages.is_empty() {
                 self.memory.clear_dirty(room_id);
                 continue;
@@ -775,15 +767,25 @@ impl AgentHarness {
             match webdav_client.write_file_with_fallback(&path, json).await {
                 Ok(()) => {
                     self.memory.clear_dirty(room_id);
-                    debug!("Persisted snapshot for room {} to {}", room_id, path);
+                    info!("Flushed snapshot for room {} on shutdown", room_id);
                 }
                 Err(e) => {
-                    warn!("Failed to write snapshot for {}: {}", room_id, e);
+                    warn!(
+                        "Failed to flush snapshot for {} on shutdown: {}",
+                        room_id, e
+                    );
                 }
             }
         }
+    }
 
-        // Phase 2: evict stale rooms (persist is done, safe to remove)
+    pub async fn maintenance_tick(&mut self, memory_ttl_secs: u64) {
+        // Phase 1: persist dirty snapshots
+        if self.webdav.is_some() {
+            self.flush_all_snapshots().await;
+        }
+
+        // Phase 2: evict stale rooms
         let stale: Vec<String> = self.memory.stale_rooms(memory_ttl_secs);
         for room_id in &stale {
             let room_name = self

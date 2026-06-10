@@ -81,18 +81,30 @@ flowchart TD
     RECONNECT(ReconnectWithBackoff)
     FALLBACK(SendFallbackReply)
     RETRY(RetryWithBackoff)
+    SIGINT([SIGINT / Ctrl+C])
+    SIGTERM([SIGTERM / pkill])
     SHUTDOWN(GracefulShutdown)
-    SIG[OS Signals]
+    ABORT_TIMER(AbortMaintenanceTimer)
+    FLUSH(FlushAllSnapshots)
 
     START -.->|"auth failure error"| RECONNECT
     WS -.->|"ws disconnect error"| RECONNECT
+    WS -.->|"ws close ok"| SHUTDOWN
     RECONNECT -.->|"reconnect signal"| WS
     RECONNECT -.->|"max retries exhausted"| SHUTDOWN
     AI -.->|"api error response"| FALLBACK
     DAV -.->|"connection lost error"| RETRY
     RETRY -.->|"retries exhausted"| FALLBACK
-    SIG -.->|"shutdown signal"| SHUTDOWN
+    SIGINT -.->|"SIGINT"| SHUTDOWN
+    SIGTERM -.->|"SIGTERM"| SHUTDOWN
+    SHUTDOWN -->|"1. abort"| ABORT_TIMER
+    ABORT_TIMER -->|"2. acquire lock"| FLUSH
+    FLUSH -->|"snapshot.json per dirty room"| DAV
 ```
+
+On graceful shutdown (SIGINT, SIGTERM, normal WS close, or max reconnect retries), the bot:
+1. Aborts the periodic maintenance timer to prevent races on the harness mutex.
+2. Acquires the harness lock and calls `flush_all_snapshots()`, which iterates every dirty room (soul/knowledge/daily-summary changes), builds a `PersistSnapshot`, serializes to JSON, and uploads `snapshot.json` to WebDAV via `write_file_with_fallback`.
 
 Typing indicator failures are non-critical: if `sender.typing()` returns an error (e.g. WebSocket disconnected), the heartbeat task silently catches it and stops refreshing. The main agent loop is unaffected — it continues processing and sends the reply without typing cleanup.
 
@@ -180,4 +192,8 @@ Typing indicator state is intentionally not retried or persisted — it is a tra
 | `webdav_dir`    | `String`            | Computed on-the-fly from `room_name`/`room_fname`/`is_dm` via `compute_webdav_dir()`; not a stored field |
 | `last_activity` | `u64`               | Unix timestamp of last interaction; checked against `memory_ttl_secs` for eviction |
 
-No `LifecycleSignal` enum exists. The main loop uses inline `tokio::signal::ctrl_c()` for shutdown and a local `retry_count: u32` variable for reconnect backoff.
+The main loop uses `tokio::signal::unix::signal(SignalKind::terminate())` raced with
+`tokio::signal::ctrl_c()` for shutdown (both SIGTERM and SIGINT), and a local
+`retry_count: u32` variable for reconnect backoff. Graceful shutdown calls
+`AgentHarness::flush_all_snapshots()` (harness.rs:726) to sync dirty per-room
+state to WebDAV before exiting.
