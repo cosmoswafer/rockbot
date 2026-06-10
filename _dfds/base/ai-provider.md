@@ -8,7 +8,7 @@ provider-specific headers, model naming, and vision payload formatting _(planned
 streaming responses and tool/function calling.
 
 - Upstream: [Configuration Management](config.md) provides `AiConfig`
-- Downstream: [Agent Loop](agent-harness.md) calls `complete()` with `ChatRequest`
+- Downstream: [Agent Harness](../agent-harness.md) calls `complete()` with `ChatRequest`
   (message history + tool definitions) and returns `CompletionResult`
 
 ## 2. Diagram

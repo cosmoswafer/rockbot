@@ -1,4 +1,4 @@
-# Agent Orchestrator
+# Agent Loop
 
 ## 1. Purpose
 
@@ -8,15 +8,15 @@ top-level process decomposition of RockBot: a single event loop that connects to
 RocketChat, routes incoming messages to the agent harness, executes tool calls,
 manages per-room memory, and persists everything to WebDAV.
 
-- Upstream: [Configuration Management](config.md) provides `AppConfig`
-- Downstream: [Agent Loop](agent-harness.md) receives `IncomingMessage` and
+- Upstream: [Configuration Management](base/config.md) provides `AppConfig`
+- Downstream: [Agent Harness](agent-harness.md) receives `IncomingMessage` and
   returns `BotReply` (see agent-harness.md for loop internals and tool execution)
-- Downstream: [RocketChat Connection](rocketchat.md) handles auth, WebSocket
+- Downstream: [RocketChat Connection](base/rocketchat.md) handles auth, WebSocket
   streaming, and message filtering
-- Downstream: [AI Provider](ai-provider.md) handles chat completion requests
-- Downstream: [Memory Management](memory.md) manages per-room conversation history
-  (see memory.md for archive and threshold flows)
-- Downstream: [WebDAV Storage](webdav.md) persists archives and image assets
+- Downstream: [AI Provider](base/ai-provider.md) handles chat completion requests
+- Downstream: [Memory Management](base/memory.md) manages per-room conversation history
+  (see base/memory.md for archive and threshold flows)
+- Downstream: [WebDAV Storage](base/webdav.md) persists archives and image assets
 
 ## 2. Diagram
 
@@ -60,41 +60,7 @@ flowchart TD
     LOOP -->|"updated room state"| ROOMS
 ```
 
-### 2b. Startup Sequence
-
-```mermaid
-flowchart TD
-    START["main()"]
-    CFG(LoadConfig)
-    DETECT(DetectLegacyJson)
-    TOML[(Config File)]
-    JSON_LEGACY[(Legacy Config)]
-    VALIDATE(ValidateConfig)
-    LOGIN(LoginRocketChat)
-    CONNECT(ConnectWebSocket)
-    DAV[(NextCloud WebDAV)]
-    LIST_MEM(ListMemoryArchives)
-    SEED(SeedAllRooms)
-    LOOP[AgentLoop]
-    CFG_STORE[(AppConfig)]
-
-    START -->|"config path"| CFG
-    CFG -->|"load toml"| TOML
-    CFG -->|"check legacy"| DETECT
-    JSON_LEGACY -->|"legacy json"| DETECT
-    DETECT -->|"migrated toml"| TOML
-    TOML -->|"raw config"| VALIDATE
-    VALIDATE -->|"appconfig"| CFG_STORE
-    CFG_STORE -->|"server credentials"| LOGIN
-    LOGIN -->|"auth token"| CONNECT
-    CONNECT -->|"connected"| DAV
-    CFG_STORE -->|"webdav credentials"| DAV
-    DAV -->|"archive list"| LIST_MEM
-    LIST_MEM -->|"archived messages"| SEED
-    SEED -->|"ready"| LOOP
-```
-
-### 2c. Error Handling & Fallbacks
+### 2b. Error Handling & Fallbacks
 
 ```mermaid
 flowchart TD
@@ -116,6 +82,35 @@ flowchart TD
     DAV -.->|"connection lost error"| RETRY
     RETRY -.->|"retries exhausted"| FALLBACK
     SIG -.->|"shutdown signal"| SHUTDOWN
+```
+
+### 2c. Startup Sequence
+
+```mermaid
+flowchart TD
+    START["main()"]
+    CFG(LoadConfig)
+    TOML[(Config File)]
+    VALIDATE(ValidateConfig)
+    LOGIN(LoginRocketChat)
+    CONNECT(ConnectWebSocket)
+    DAV[(NextCloud WebDAV)]
+    LIST_MEM(ListMemoryArchives)
+    SEED(SeedAllRooms)
+    LOOP[AgentLoop]
+    CFG_STORE[(AppConfig)]
+
+    START -->|"config path"| CFG
+    CFG -->|"load toml"| TOML
+    TOML -->|"raw config"| VALIDATE
+    VALIDATE -->|"appconfig"| CFG_STORE
+    CFG_STORE -->|"server credentials"| LOGIN
+    LOGIN -->|"auth token"| CONNECT
+    CONNECT -->|"connected"| DAV
+    CFG_STORE -->|"webdav credentials"| DAV
+    DAV -->|"archive list"| LIST_MEM
+    LIST_MEM -->|"archived messages"| SEED
+    SEED -->|"ready"| LOOP
 ```
 
 ## 3. Data Structures

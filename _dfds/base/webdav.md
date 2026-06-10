@@ -19,8 +19,8 @@ with an app password (generated via NextCloud's personal security settings).
 
 - Upstream: [Configuration Management](config.md) provides `WebDavConfig`
 - Upstream: [Memory Management](memory.md) stores and retrieves `.md` archives
-- Upstream: [Agent Loop](agent-harness.md) (vision tool) reads images from WebDAV
-- Upstream: [Agent Loop](agent-harness.md) (webdav tool) exposes storage to the AI agent
+- Upstream: [Agent Harness](../agent-harness.md) (vision tool) reads images from WebDAV
+- Upstream: [Agent Harness](../agent-harness.md) (webdav tool) exposes storage to the AI agent
 
 ## 2. Diagram
 

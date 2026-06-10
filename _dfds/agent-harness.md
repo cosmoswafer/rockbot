@@ -15,7 +15,7 @@ standard harness mechanisms are present:
 | Mechanism   | Coverage | Details |
 |-------------|----------|---------|
 | **Tools**   | Full     | `web_search`, `web_fetch`, `vision`, `webdav`, image generation — each tool has its own DFD |
-| **Knowledge** | Full  | On-demand context via [Memory Management](memory.md): archive loading, conversation history, system prompt assembly |
+| **Knowledge** | Full  | On-demand context via [Memory Management](base/memory.md): archive loading, conversation history, system prompt assembly |
 | **Context** | Full     | Per-room history, loop iteration limits, truncation/summarization, room state routing |
 
 Intentionally absent — not needed for rockbot's scope:
@@ -26,13 +26,13 @@ Intentionally absent — not needed for rockbot's scope:
 | **Extensions**  | No plugin/hook system — tools are statically registered |
 | **Coordination**| Single agent — no subagents, teams, or worktrees |
 
-- Upstream: [Agent Orchestrator](agent-orchestrator.md) feeds `IncomingMessage`
+- Upstream: [Agent Loop](agent-loop.md) feeds `IncomingMessage`
   into the loop and consumes `BotReply`
-- Downstream: [AI Provider](ai-provider.md) receives `ChatRequest` and returns
+- Downstream: [AI Provider](base/ai-provider.md) receives `ChatRequest` and returns
   `CompletionResult` with tool calls or final text
-- Downstream: [Memory Management](memory.md) provides `ConversationHistory` per
+- Downstream: [Memory Management](base/memory.md) provides `ConversationHistory` per
   room and receives new messages for archival
-- Downstream: [WebDAV Storage](webdav.md) persists generated image assets
+- Downstream: [WebDAV Storage](base/webdav.md) persists generated image assets
 
 ## 2. Diagram
 

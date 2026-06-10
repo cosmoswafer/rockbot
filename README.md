@@ -194,13 +194,13 @@ let reply = harness.process_message("room1", "general", false, "user", "Hello").
 | ------- | ----- | ----------- |
 | [Context](_dfds/context-diagram.md) | 0 | System boundary and external entities |
 | [Agent Loop](_dfds/agent-harness.md) | 1 | Agent event loop, LLM interaction, tool execution, per-room routing |
-| [Agent Orchestrator](_dfds/agent-orchestrator.md) | 1 | Top-level wiring: startup sequence, error handling, data structures |
-| [Config](_dfds/base/config.md) | 1 | TOML loading and JSON migration |
-| [RocketChat](_dfds/rocketchat.md) | 1 | Auth, WebSocket, message filtering |
+| [Agent Loop](_dfds/agent-loop.md) | 1 | Top-level wiring: startup sequence, error handling, data structures |
+| [Config](_dfds/base/config.md) | 1 | TOML loading, validation, data structures |
+| [RocketChat](_dfds/base/rocketchat.md) | 1 | Auth, WebSocket, message filtering |
 | [AI Provider](_dfds/base/ai-provider.md) | 1 | Trait abstraction, ChatRequest/CompletionResult data structures |
-| [Memory](_dfds/memory.md) | 1 | History, summarization, archival |
+| [Memory](_dfds/base/memory.md) | 1 | History, summarization, archival |
 | [Knowledge](_dfds/tools/knowledge.md) | 1 | Fact extraction from memory, indexed `.md` storage, context injection |
-| [WebDAV](_dfds/tools/webdav.md) | 1 | NextCloud storage operations |
+| [WebDAV](_dfds/base/webdav.md) | 1 | NextCloud storage operations |
 
 ## License
 

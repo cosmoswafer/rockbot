@@ -86,14 +86,14 @@ Data Flow Diagrams in `_dfds/` define the system's architecture. When a DFD is m
 | DFD file | Primary Rust source | Secondary sources |
 | -------- | ------------------- | ----------------- |
 | `agent-harness.md` | `harness.rs` | `memory.rs`, `tool.rs`, `provider/mod.rs` |
-| `agent-orchestrator.md` | `main.rs` | `harness.rs`, `config.rs` |
+| `agent-loop.md` | `main.rs` | `harness.rs`, `config.rs` |
 | `base/ai-provider.md` | `provider/mod.rs`, `provider/deepseek.rs`, `provider/openrouter.rs` | `types.rs` |
 | `base/config.md` | `config.rs` | `example.config.toml` |
-| `rocketchat.md` | rocketchat crate (`client.rs`, `ddp.rs`, `types.rs`) | — |
-| `memory.md` | `memory.rs` | `harness.rs` |
+| `base/memory.md` | `memory.rs` | `harness.rs` |
+| `base/rocketchat.md` | rocketchat crate (`client.rs`, `ddp.rs`, `types.rs`) | — |
+| `base/webdav.md` | webdav crate (`client.rs`, `path.rs`) | `harness.rs` |
 | `tools/exa-search.md` | `tools/web_search.rs` | `tools/web_fetch.rs` |
 | `tools/web-fetch.md` | `tools/web_fetch.rs` | `tools/web_search.rs` |
-| `tools/webdav.md` | webdav crate (`client.rs`, `path.rs`) | `harness.rs` |
 | `tools/knowledge.md` | `memory.rs` | `harness.rs` |
 | `context-diagram.md` | (Level 0 — system boundary, no code changes) | — |
 
