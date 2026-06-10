@@ -8,7 +8,11 @@ evicted after a configurable idle TTL — the snapshot is persisted to WebDAV
 before eviction, then restored on next interaction.
 
 All layers are loaded on room init and injected into the agent context as
-system messages.
+system messages. On restore, a single cached `snapshot.json` is read first
+(containing all three layers). Individual files (`soul.md`, `summaries/*.md`)
+serve as the source of truth — the snapshot is a performance cache, rebuilt
+incrementally whenever any layer changes. If the snapshot is missing or stale,
+the system falls back to reading individual files.
 
 | Layer | Name | Storage | Limit | Contents |
 |-------|------|---------|-------|----------|
@@ -111,34 +115,46 @@ flowchart TD
 ### 2c. Persist & Evict Flow — Timer
 
 A single periodic timer handles both crash-recovery snapshot persistence and
-TTL-based eviction. After persisting, rooms idle longer than `memory_ttl_secs`
-are saved and removed from the in-memory map.
+TTL-based eviction. The snapshot caches all three layers (chat history, daily
+summaries, soul) for single-read restore. After persisting, rooms idle longer
+than `memory_ttl_secs` are saved and removed from the in-memory map.
+
+When any layer changes (soul edit, summary write, archive), the snapshot is
+marked dirty and rebuilt on the next timer tick — writes are coalesced to
+avoid thrashing WebDAV.
 
 ```mermaid
 flowchart TD
     TIMER[Evict Timer]
     L1[(Layer 1<br/>Chat History)]
+    L2[(Layer 2<br/>Daily Summaries)]
+    L3[(Layer 3<br/>Soul)]
     WEBDAV[(NextCloud WebDAV)]
     LOAD_ROOM{More Rooms?}
     EMPTY{Room Empty?}
+    DIRTY{Snapshot Dirty?}
+    BUILD[Build Full Snapshot<br/>L1 + L2 + L3]
     PERSIST(Persist Snapshot)
     STALE{"now - last_activity<br/>> memory_ttl_secs"}
-    EVICT(Save Snapshot +<br/>Remove Room)
+    EVICT(Remove Room<br/>from Memory)
     ROOMS[(RoomStateMap)]
     DONE[Done]
 
-    TIMER -->|"every memory_ttl_secs"| ROOMS
+    TIMER -->|"every persist_interval_secs"| ROOMS
     ROOMS -->|"iterate rooms"| LOAD_ROOM
     LOAD_ROOM -->|"next room"| L1
     LOAD_ROOM -->|"no more"| DONE
-    L1 -->|"room_id + messages + char_count + archive_seq"| EMPTY
-    EMPTY -->|"no"| STALE
+    L1 -->|"room_id + messages + char_count"| EMPTY
+    EMPTY -->|"no"| DIRTY
     EMPTY -->|"yes: skip"| LOAD_ROOM
-    STALE -->|"yes: snapshot + evict"| EVICT
+    DIRTY -->|"yes: collect L1+L2+L3"| BUILD
+    DIRTY -->|"no"| STALE
+    BUILD --> PERSIST
+    PERSIST -->|"PUT snapshot.json"| WEBDAV
+    PERSIST --> STALE
+    STALE -->|"yes: evict"| EVICT
     STALE -->|"no: keep in memory"| LOAD_ROOM
-    EVICT -->|"PUT snapshot.json"| WEBDAV
     EVICT -->|"remove HashMap entry"| ROOMS
-    ROOMS -->|"confirm"| EVICT
     EVICT --> LOAD_ROOM
 ```
 
@@ -173,38 +189,57 @@ flowchart TD
     WRITE -->|"confirmation"| REPLY
 ```
 
-### 2e. Happy Flow — Restore (Room Init)
+### 2e. Restore Flow — Cache-First (Room Init)
 
-Three retrieval steps in order, each with a configurable limit:
+Snapshot is read first as a single WebDAV call. If present and fresh, all three
+layers are restored from it. If the snapshot is missing (never written, deleted,
+or from an older schema version), the system falls back to reading individual
+files.
 
 ```mermaid
 flowchart TD
     INIT[Room Initialization]
     DAV[(NextCloud WebDAV)]
-    L1[(Layer 1<br/>restored history)]
-    SOUL_INJECT[Soul Content]
-    SUMMARIES_INJECT[Summary Texts]
-    CTX[BuildContext]
+    GET_SNAP["1. GET snapshot.json"]
+    SNAP_OK{snapshot.json<br/>exists?}
+    UNPACK[Unpack All 3 Layers<br/>from Snapshot]
+    CHECK{All layers<br/>present?}
+    RESTORED((Restored))
+    NEED_L2{Need Layer 2?}
+    NEED_L3{Need Layer 3?}
+    GET_SOUL["GET soul.md"]
+    LIST_SUM["PROPFIND summaries/"]
+    LOAD_FILES["GET each .md"]
+    INJECT[Inject into<br/>MemoryManager]
 
-    INIT -->|"1. GET soul.md"| DAV
-    DAV -->|"soul content or 404"| SOUL_INJECT
-    SOUL_INJECT -->|"truncated to max_soul_chars"| CTX
+    INIT --> GET_SNAP
+    GET_SNAP --> DAV
+    DAV --> SNAP_OK
+    SNAP_OK -->|"yes (cache hit)"| UNPACK
+    SNAP_OK -->|"no (cache miss)"| NEED_L2
+    UNPACK --> CHECK
+    CHECK -->|"yes"| RESTORED
+    CHECK -->|"partial"| NEED_L2
 
-    INIT -->|"2. PROPFIND summaries/"| DAV
+    NEED_L2 -->|"GET soul.md"| GET_SOUL
+    NEED_L2 -->|"PROPFIND summaries/"| LIST_SUM
+    GET_SOUL --> DAV
+    LIST_SUM --> DAV
+    DAV -->|"soul content or 404"| INJECT
     DAV -->|"all summaries"| FILTER
     FILTER[Filter Last<br/>summary_days Days]
-    FILTER -->|"matching .md files"| LOAD_FILES
+    FILTER --> LOAD_FILES
     LOAD_FILES -->|"GET each .md"| DAV
-    DAV -->|"summary texts"| SUMMARIES_INJECT
-    SUMMARIES_INJECT -->|"newest first"| CTX
+    DAV -->|"summary texts"| INJECT
 
-    INIT -->|"3. GET snapshot.json"| DAV
-    DAV -->|"snapshot content or 404"| LOAD_SNAPSHOT
-    LOAD_SNAPSHOT -->|"restore messages"| L1
-    L1 -->|"limited to max_history_size"| CTX
-
-    CTX -->|"soul + summaries + history"| CTX
+    RESTORED --> INJECT
+    INJECT -->|"soul + summaries + history"| CTX[Agent Context]
 ```
+
+Key properties:
+- **Single read on cache hit**: one `GET snapshot.json` replaces 3+ WebDAV round trips
+- **Graceful degradation**: if snapshot is missing or partial, falls back to individual file reads
+- **No snapshot blocking**: if snapshot write fails, the system continues operating — next timer tick retries
 
 ### 2f. Error Handling
 
@@ -218,13 +253,15 @@ flowchart TD
     LOAD[Load on Room Init]
     FALLBACK[Truncate Without<br/>Summarizing]
     WARN[Warn + Continue]
+    RETRY[Retry Next Tick]
 
     AI -.->|"api error"| FALLBACK
     L2_WRITE -.->|"PUT failed"| FALLBACK
-    SNAP_WRITE -.->|"PUT failed"| WARN
+    SNAP_WRITE -.->|"PUT failed"| RETRY
     SOUL_WRITE -.->|"PUT failed"| WARN
-    LOAD -.->|"GET / PROPFIND failed"| WARN
-    WARN -->|"proceed without memory"| LOAD
+    LOAD -.->|"snapshot missing / partial"| WARN
+    WARN -->|"fallback: read individual files"| LOAD
+    RETRY -->|"keep dirty flag, retry on next timer"| SNAP_WRITE
 ```
 
 ### 2g. Memory Partitioning
@@ -264,18 +301,26 @@ flowchart TD
 
 All structs live in `crate-rockbot/src/memory.rs` unless noted.
 
-### `PersistSnapshot` (WebDAV checkpoint)
+### `PersistSnapshot` (WebDAV checkpoint / cache)
 
-Saved every `persist_interval_secs` at
-`{root}/{webdav_dir}/memory/snapshot.json`. One file per room.
+A single JSON file stored at `{root}/{webdav_dir}/memory/snapshot.json`.
+One file per room. Caches all three layers for single-read restore.
 
-| Field         | Type               | Notes                                      |
-| ------------- | ------------------ | ------------------------------------------ |
-| `room_id`     | `String`           | RocketChat room UUID                       |
-| `messages`    | `Vec<ChatMessage>` | Raw Layer 1 messages                      |
-| `char_count`  | `usize`            | Running character count                    |
-| `archive_seq` | `u64`              | Next archive sequence number               |
-| `updated_at`  | `String`           | ISO 8601 timestamp of last write           |
+| Field              | Type                    | Notes                                                  |
+| ------------------ | ----------------------- | ------------------------------------------------------ |
+| `schema`           | `String`                | `"rockbot-snapshot/1"` version marker                  |
+| `room_id`          | `String`                | RocketChat room UUID                                   |
+| `messages`         | `Vec<ChatMessage>`      | Raw Layer 1 messages (in-memory buffer)                |
+| `char_count`       | `usize`                 | Running Layer 1 character count                        |
+| `archive_seq`      | `u64`                   | Next archive sequence number                           |
+| `soul`             | `Option<String>`        | Layer 3: full soul.md content (None if no soul)       |
+| `daily_summaries`  | `Vec<DailySummary>`     | Layer 2: cached daily summaries                       |
+| `updated_at`       | `String`                | ISO 8601 timestamp of last write                       |
+
+Rebuilt whenever any layer is modified (soul edit, summary write, archive).
+Written on the periodic persist timer (coalesced — not on every individual
+change). Source of truth for each layer remains its dedicated file
+(`soul.md`, `summaries/*.md`).
 
 ### `MemoryManager`
 
@@ -286,7 +331,11 @@ Saved every `persist_interval_secs` at
 | `max_history_messages` | `usize`                      | Layer 1 message count limit for context  |
 | `max_summary_chars`    | `usize`                      | Layer 2 total chars across loaded summaries |
 | `summary_days`         | `u32`                        | Layer 2 retention window (default 7)     |
-| `memory_ttl_secs`      | `u64`                        | Idle timeout before eviction (default 300) |
+| `max_soul_chars`       | `usize`                      | Layer 3 max chars for soul.md content    |
+| `daily_summaries`      | `HashMap<String, Vec<DailySummary>>` | Layer 2 in-memory cache           |
+| `souls`                | `HashMap<String, SoulMemory>`| Layer 3 in-memory cache                  |
+| `dirty_snapshots`      | `HashSet<String>`            | Room IDs needing snapshot rebuild        |
+| `persist_interval_secs`| `u64`                        | Timer interval for writing snapshots (default 60) |
 
 ### `RoomState`
 
@@ -307,7 +356,6 @@ Saved every `persist_interval_secs` at
 | `messages`         | `Vec<ChatMessage>` | In-memory message buffer             |
 | `char_count`       | `usize`            | Running character count              |
 | `archive_seq`      | `u64`              | Next archive sequence number         |
-| `restored_summary` | `Option<String>`   | Restored context from prior archives |
 
 ### `DailySummary` (Layer 2)
 
@@ -336,21 +384,6 @@ The `content` is plain markdown with optional section headers (`## Preferences`,
 `## Identity`, `## Notes`). Sections are separated by `## ` headers for
 targeted editing via the `edit_soul` tool.
 
-### `MemoryJson` (legacy archive format)
-
-Kept for backward compatibility. Read only — no longer written.
-
-| Field        | Type               | Notes                                       |
-| ------------ | ------------------ | ------------------------------------------- |
-| `schema`     | `String`           | `"rockbot-memory/1"` version marker         |
-| `seq`        | `u64`              | Sequence number                             |
-| `room_id`    | `String`           | Owning room                                 |
-| `summary`    | `String`           | Truncated text preview                      |
-| `date_range` | `String`           | `"ISO to ISO"`                              |
-| `msg_count`  | `usize`            | Number of messages archived                 |
-| `messages`   | `Vec<MessageRef>`  | Message references                          |
-| `created_at` | `String`           | Archive creation timestamp                  |
-
 ### File Layout
 
 Memory is stored per-room under the prefixed `webdav_dir` key (see
@@ -365,7 +398,6 @@ Memory is stored per-room under the prefixed `webdav_dir` key (see
 │   ├── 2026-06-08.md
 │   ├── 2026-06-09.md
 │   └── 2026-06-10.md
-└── 000001_memory.json          # Legacy (pre-Layer-2 archives)
 ```
 
 ## 4. Configuration
@@ -379,7 +411,8 @@ Fields from `ModelConfig` in [Configuration Management](config.md):
 | `max_summary_chars`    | `usize` | 8000    | Layer 2 total chars across loaded summaries         |
 | `max_soul_chars`       | `usize` | 2000    | Layer 3 max chars for soul.md content              |
 | `summary_days`         | `u32`   | 7       | Layer 2 retention window (days)                    |
-| `memory_ttl_secs`      | `u64`   | 300     | Room idle timeout — snapshot to WebDAV then evict from memory |
+| `memory_ttl_secs`      | `u64`   | 300     | Room idle timeout — evict from memory (after snapshot persisted) |
+| `persist_interval_secs`| `u64`   | 60      | How often the timer writes dirty snapshots to WebDAV |
 
 ## 5. Integration with Agent Harness
 
@@ -387,10 +420,12 @@ Fields from `ModelConfig` in [Configuration Management](config.md):
 
 | Trigger             | Method                        | Frequency                      | Condition                                                    | Action                                        |
 | ------------------- | ----------------------------- | ------------------------------ | ------------------------------------------------------------ | --------------------------------------------- |
-| **Timer evict**     | `evict_stale_rooms()`         | Every `memory_ttl_secs`        | Room has ≥ 1 message AND `now - last_activity > memory_ttl_secs` | Write `snapshot.json` to WebDAV, remove room from `HashMap` |
-| **Archive**         | `archive_room_if_needed()`    | After every message response   | `char_count > max_text_length` AND `messages.len() > 4`      | AI-summarize oldest half → daily `.md`, prune L1 |
-| **Room init**       | `restore_history()`           | Once per room, on first message| Room not in memory (fresh or evicted)                        | Load snapshot + soul + summaries             |
-| **Touch activity**  | `update_last_activity()`      | On every incoming message      | Room exists in memory                                        | Update `last_activity` timestamp to prevent eviction |
+| **Timer persist**   | `persist_room_snapshots()`    | Every `persist_interval_secs`  | `dirty_snapshots` is non-empty                               | Build full snapshot (L1+L2+L3), PUT `snapshot.json`, clear dirty flag |
+| **Timer evict**     | `evict_stale_rooms()`         | Every `memory_ttl_secs`        | Room has ≥ 1 message AND `now - last_activity > memory_ttl_secs` | Persist snapshot if dirty, then remove room from `HashMap` |
+| **Archive**         | `archive_room_if_needed()`    | After every message response   | `char_count > max_text_length` AND `messages.len() > 4`      | AI-summarize oldest half → daily `.md`, prune L1, mark snapshot dirty |
+| **Room init**       | `restore_history()`           | Once per room, on first message| Room not in memory (fresh or evicted)                        | Load snapshot (cache-first), fall back to individual files |
+| **Soul edit**       | `edit_soul()` tool            | On user request                | LLM invokes `edit_soul` tool                                 | Write `soul.md`, update in-memory soul, mark snapshot dirty |
+| **Touch activity**  | `process_message()`           | On every incoming message      | Room exists in memory                                        | Update `last_activity` timestamp to prevent eviction |
 
 ### Tool: `edit_soul`
 
@@ -412,19 +447,20 @@ context in this order:
 ```
 
 Knowledge entries are injected between soul and summaries (see
-[Knowledge Management](knowledge.md)). Legacy `MemoryJson` context is
-restored into the chat history buffer before injection.
+[Knowledge Management](knowledge.md)).
 
 ### Archival Lifecycle (harness.rs)
 
 | Step               | Harness method                     | Notes                                              |
 | ------------------ | ---------------------------------- | -------------------------------------------------- |
-| Timer evict        | `evict_stale_rooms()`              | Called every `memory_ttl_secs`; saves snapshot + removes stale rooms |
+| Timer persist      | `persist_room_snapshots()`         | Called every `persist_interval_secs`; writes dirty snapshot.json |
+| Timer evict        | `evict_stale_rooms()`              | Called every `memory_ttl_secs`; persists snapshot then removes stale rooms |
 | Archive check      | `memory.check_and_archive()`       | Returns oldest half if Layer 1 overflowed           |
 | AI summarize       | `summarize_for_archive()`          | Calls AI provider with oldest messages              |
-| Merge daily        | `upsert_daily_summary()`           | Reads today's `.md`, appends, writes back           |
+| Merge daily        | `upsert_daily_summary()`           | Reads today's `.md`, appends, writes back; marks snapshot dirty |
 | Prune Layer 1      | `memory.prune_archived()`          | Removes archived messages from buffer               |
 | Age out summaries  | `delete_old_summaries()`           | Deletes `.md` older than `summary_days`             |
-| Room init          | `restore_history()`                | Loads snapshot + soul + summaries                   |
+| Room init          | `restore_history()`                | Cache-first: reads snapshot.json, falls back to individual files |
+| Soul edit          | `edit_soul()` tool                 | Writes soul.md, updates in-memory, marks snapshot dirty |
 | Touch activity     | `process_message()`                | Updates `last_activity` on every incoming message   |
 | Context injection  | `MemoryManager::build_context()`   | Prepend soul + summaries before history             |

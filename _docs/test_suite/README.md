@@ -8,19 +8,19 @@ Total: **266 tests** across 3 crates. 138 unit tests, 121 integration tests, 7 i
 |-------|------|------------|---------------------|-------|
 | webdav | 27 | 18 | 4 | **49** |
 | rocketchat | 12 | 25 | 3 | **40** |
-| rockbot | 99 | 78 | 0 | **177** |
+| rockbot | 99 | 77 | 0 | **176** |
 
 ## crate-webdav (49 tests)
 
 ### `src/path.rs` — 11 unit tests
-WebDavPath helpers: `room_dir`, `root_trim_slashes`, `memory_dir`, `image_path`, `archive_path` (zero-padding), `image_dir`, `workspace_dir`, `config_backup_path`, `room_path`, `parent_path`, `room_path_empty_root`.
+WebDavPath helpers: `room_dir`, `root_trim_slashes`, `memory_dir`, `image_path`, `image_dir`, `workspace_dir`, `config_backup_path`, `room_path`, `parent_path`, `room_path_empty_root`.
 
 ### `src/client.rs` — 16 unit tests + 1 helper
 - **XML parsing (10)**: `parse_propfind_empty`, single-entry with/without namespace/whitespace, `<response>` deserialization (href-only, two-strings, string-then-vec, string-then-struct-vec), `<prop>` deserialization (minimal, with resourcetype, with collection, with opt-string, all fields, getetag with quote), direct prop/propstat/response deserialization.
 - **Helper**: `make_test_client()`.
 
 ### `tests/integration.rs` — 12 tests
-Client construction, WebDavPath integration (room_dir, memory_dir, image_path, archive_path, room_path, config_backup_path, image_dir, workspace_dir, root_trim), archive zero-padding edge cases.
+Client construction, WebDavPath integration (room_dir, memory_dir, image_path, room_path, config_backup_path, image_dir, workspace_dir, root_trim).
 
 ### `tests/config_tests.rs` — 6 tests
 TOML config deserialization (minimal, trailing slash, root with slashes), `into_client()`, `base_url_construction`, missing field error.
@@ -53,9 +53,9 @@ Real RocketChat: `config_toml_exists_and_parses`, `connect_and_receive_events` (
 
 ## crate-rockbot (177 tests)
 
-### `src/harness.rs` — 10 unit tests
+### `src/harness.rs` — 19 unit tests
 - **MockProvider-based (5)**: `simple_response`, `dm_message`, `provider_error`, `max_iterations_limit` (loop cutoff at 2), `construction`.
-- **No-mock (5)**: `resolve_model`, `format_messages_as_markdown`, `format_messages_as_markdown_with_tool_calls`, `archive_room_if_needed_no_webdav`, `check_and_archive_returns_seq`.
+- **No-mock (14)**: `resolve_model`, `archive_room_if_needed_no_webdav`, `check_and_archive_returns_seq`, `summarize_for_archive`, `inject_room_context` (2), `compute_webdav_dir` (8 variants).
 - **Helpers**: `MockProvider` struct, `make_test_config()`.
 
 ### `src/tools/webdav.rs` — 10 unit tests
@@ -92,7 +92,7 @@ Tool definition, detect_mime_type (png/jpg/jpeg/gif), missing url error.
 ### `src/tool.rs` — 6 unit tests + 1 helper
 ToolResult (success/error), Registry (register/get, definitions), execute (unknown tool, known tool). Helper: `MockTool` struct.
 
-### `src/memory.rs` — 11 unit tests + 1 helper
+### `src/memory.rs` — 20 unit tests + 1 helper
 ConversationHistory (new, append, needs_archive, needs_archive_too_few_messages, oldest_messages, prune_first, prune_first_all), MemoryManager (get_or_create, build_context, build_context_nonexistent_room), RoomState::new. Helper: `make_msg()`.
 
 ### `tests/provider_tests.rs` — 41 tests (no mocks)

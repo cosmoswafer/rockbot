@@ -34,10 +34,6 @@ impl WebDavPath {
         )
     }
 
-    pub fn archive_path(&self, room_id: &str, seq: u64) -> String {
-        format!("/{}/{}/memory/{:06}_memory.json", self.root, room_id, seq)
-    }
-
     pub fn config_backup_path(&self, filename: &str) -> String {
         format!(
             "/{}/config/{}/",
@@ -96,23 +92,6 @@ mod tests {
     }
 
     #[test]
-    fn test_archive_path() {
-        let p = WebDavPath::new("rockbot");
-        assert_eq!(
-            p.archive_path("general", 1),
-            "/rockbot/general/memory/000001_memory.json"
-        );
-        assert_eq!(
-            p.archive_path("general", 42),
-            "/rockbot/general/memory/000042_memory.json"
-        );
-        assert_eq!(
-            p.archive_path("general", 999999),
-            "/rockbot/general/memory/999999_memory.json"
-        );
-    }
-
-    #[test]
     fn test_image_dir() {
         let p = WebDavPath::new("rockbot");
         assert_eq!(p.image_dir("general"), "/rockbot/general/images/");
@@ -160,9 +139,5 @@ mod tests {
         let p = WebDavPath::new("");
         assert_eq!(p.room_path("general", "notes.txt"), "//general/notes.txt");
         assert_eq!(p.room_dir("general"), "//general/");
-        assert_eq!(
-            p.archive_path("general", 1),
-            "//general/memory/000001_memory.json"
-        );
     }
 }

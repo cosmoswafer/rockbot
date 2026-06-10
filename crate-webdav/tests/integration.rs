@@ -42,23 +42,6 @@ fn test_webdav_path_image_path() {
 }
 
 #[test]
-fn test_webdav_path_archive_path() {
-    let path = WebDavPath::new("rockbot");
-    assert_eq!(
-        path.archive_path("general", 1),
-        "/rockbot/general/memory/000001_memory.json"
-    );
-    assert_eq!(
-        path.archive_path("general", 999),
-        "/rockbot/general/memory/000999_memory.json"
-    );
-    assert_eq!(
-        path.archive_path("project-x", 123456),
-        "/rockbot/project-x/memory/123456_memory.json"
-    );
-}
-
-#[test]
 fn test_webdav_path_root_trim() {
     let path = WebDavPath::new("/rockbot/");
     assert_eq!(path.root, "rockbot");
@@ -100,22 +83,5 @@ fn test_webdav_path_config_backup_path() {
     assert_eq!(
         path.config_backup_path("2026-06-01_config.toml"),
         "/rockbot/config/2026-06-01_config.toml/"
-    );
-}
-
-#[test]
-fn test_archive_path_zero_padding() {
-    let path = WebDavPath::new("bot");
-    assert_eq!(
-        path.archive_path("room", 0),
-        "/bot/room/memory/000000_memory.json"
-    );
-    assert_eq!(
-        path.archive_path("room", 7),
-        "/bot/room/memory/000007_memory.json"
-    );
-    assert_eq!(
-        path.archive_path("room", 999999),
-        "/bot/room/memory/999999_memory.json"
     );
 }

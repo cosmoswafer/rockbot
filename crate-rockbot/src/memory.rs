@@ -6,18 +6,6 @@ use webdav::WebDavPath;
 use crate::types::ChatMessage;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MemoryJson {
-    pub schema: String,
-    pub seq: u64,
-    pub room_id: String,
-    pub summary: String,
-    pub date_range: String,
-    pub msg_count: usize,
-    pub messages: Vec<MessageRef>,
-    pub created_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DailySummary {
     pub date: String,
     pub summary: String,
@@ -32,40 +20,12 @@ pub struct SoulMemory {
     pub updated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MessageRef {
-    pub id: String,
-    pub author: String,
-    pub content: String,
-    pub timestamp: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct ArchiveEntry {
-    pub seq: u64,
-    pub summary: String,
-    pub date_range: String,
-    pub msg_count: usize,
-}
-
-impl ArchiveEntry {
-    pub fn new(seq: u64, summary: String, date_range: String, msg_count: usize) -> Self {
-        Self {
-            seq,
-            summary,
-            date_range,
-            msg_count,
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct ConversationHistory {
     pub room_id: String,
     pub messages: Vec<ChatMessage>,
     pub char_count: usize,
     pub archive_seq: u64,
-    pub restored_summary: Option<String>,
 }
 
 impl ConversationHistory {
@@ -75,7 +35,6 @@ impl ConversationHistory {
             messages: Vec::new(),
             char_count: 0,
             archive_seq: 0,
-            restored_summary: None,
         }
     }
 
@@ -106,10 +65,6 @@ impl ConversationHistory {
             }
         }
         self.archive_seq += 1;
-    }
-
-    pub fn set_archive_seq(&mut self, seq: u64) {
-        self.archive_seq = seq;
     }
 }
 
@@ -199,7 +154,7 @@ impl MemoryManager {
         self.rooms.get_mut(room_id)
     }
 
-    pub fn check_and_archive(&mut self, room_id: &str) -> Option<(String, Vec<ChatMessage>, u64)> {
+    pub fn check_and_archive(&mut self, room_id: &str) -> Option<(String, Vec<ChatMessage>)> {
         let room = self.rooms.get(room_id)?;
         if room.history.needs_archive(self.max_chars) {
             let to_archive = room
@@ -207,46 +162,10 @@ impl MemoryManager {
                 .oldest_messages(room.history.messages.len() / 2);
             let messages: Vec<ChatMessage> = to_archive.to_vec();
             let room_id = room.room_id.clone();
-            let seq = room.history.archive_seq;
-            Some((room_id, messages, seq))
+            Some((room_id, messages))
         } else {
             None
         }
-    }
-
-    pub fn restore_from_archives(
-        &mut self,
-        room_id: &str,
-        room_name: &str,
-        room_fname: &str,
-        is_dm: bool,
-        archives: &[MemoryJson],
-    ) {
-        if archives.is_empty() {
-            return;
-        }
-
-        let room = self.get_or_create(room_id, room_name, room_fname, is_dm);
-
-        let max_seq = archives.iter().map(|a| a.seq).max().unwrap_or(0);
-        room.history.set_archive_seq(max_seq + 1);
-
-        let latest = archives.last().unwrap();
-        let mut summary = format!(
-            "[Restored conversation context from {} ({} messages archived across {} segments)]\n{}",
-            latest.date_range,
-            archives.iter().map(|a| a.msg_count).sum::<usize>(),
-            archives.len(),
-            latest.summary,
-        );
-
-        if archives.len() > 1 {
-            for a in archives.iter().rev().skip(1) {
-                summary.push_str(&format!("\nEarlier summary (#{}): {}", a.seq, a.summary));
-            }
-        }
-
-        room.history.restored_summary = Some(summary);
     }
 
     pub fn prune_archived(&mut self, room_id: &str, count: usize) {
@@ -306,9 +225,6 @@ impl MemoryManager {
         }
 
         if let Some(room) = self.rooms.get(room_id) {
-            if let Some(ref restored) = room.history.restored_summary {
-                messages.push(ChatMessage::system(restored.as_str()));
-            }
             let history = &room.history.messages;
             let start = if history.len() > limit {
                 history.len() - limit
@@ -460,15 +376,6 @@ mod tests {
             Role::System => ChatMessage::system(text),
             Role::Tool => ChatMessage::tool("id", text),
         }
-    }
-
-    #[test]
-    fn test_archive_entry_new() {
-        let entry = ArchiveEntry::new(0, "Summary".into(), "2025-01-01".into(), 10);
-        assert_eq!(entry.seq, 0);
-        assert_eq!(entry.summary, "Summary");
-        assert_eq!(entry.date_range, "2025-01-01");
-        assert_eq!(entry.msg_count, 10);
     }
 
     #[test]
