@@ -3,8 +3,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::Mutex;
-use tracing::{Level, debug, error, info, warn};
-use tracing_subscriber::FmtSubscriber;
+use tracing::{debug, error, info, warn};
+use tracing_subscriber::EnvFilter;
 
 use rockbot::config::AppConfig;
 use rockbot::harness::AgentHarness;
@@ -16,8 +16,10 @@ use rockbot::tools::{
 };
 
 fn setup_logging() {
-    let subscriber = FmtSubscriber::builder()
-        .with_max_level(Level::INFO)
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info"));
+    let subscriber = tracing_subscriber::fmt()
+        .with_env_filter(filter)
         .with_target(false)
         .with_thread_ids(false)
         .with_file(false)
@@ -339,6 +341,9 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                                 let _ = sender
                                     .reply(&format!("Error processing message: {}", e))
                                     .await;
+                                if let Err(e) = h.archive_room_if_needed(&msg.room_id).await {
+                                    warn!("Memory archiving failed: {}", e);
+                                }
                             }
                         }
                     }

@@ -16,7 +16,7 @@ toml = "1.1"
 thiserror = "2"
 async-trait = "0.1"
 tracing = "0.1"
-tracing-subscriber = "0.3"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 webdav = { path = "../crate-webdav" }
 rocketchat = { path = "../crate-rocketchat" }
 

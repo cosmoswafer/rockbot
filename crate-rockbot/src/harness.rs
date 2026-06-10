@@ -127,6 +127,8 @@ impl AgentHarness {
             room.history.append(user_msg);
         }
 
+        self.memory.mark_snapshot_dirty(room_id);
+
         let system_prompt = self.build_system_prompt();
         let tool_defs = self.tools.definitions();
         let have_tools = !tool_defs.is_empty();
@@ -739,7 +741,10 @@ impl AgentHarness {
                 }
             };
 
-            if snapshot.messages.is_empty() {
+            if snapshot.messages.is_empty()
+                && snapshot.soul.is_none()
+                && snapshot.daily_summaries.is_empty()
+            {
                 self.memory.clear_dirty(room_id);
                 continue;
             }

@@ -16,6 +16,7 @@ example.config.toml   # template for config; real config.toml is gitignored
 - Start the bot: `./target/release/rockbot &> ./tmp/rockbot.log &`
 - Restart: covered in Phase 3 — Ship (step 4).
 - Use `pkill rockbot` (process name) — **not** `pkill -f` (full cmdline). The `-f` flag reads `/proc/*/cmdline` which can hang on systems with stuck D-state kernel threads.
+- **Debug logging**: set `RUST_LOG=rocketchat=debug` to see outbound `WS>>>` DDP payloads (typing, replies, auth) and inbound `WS<<<` messages. Use `RUST_LOG=debug` for all crates — gives rockbot internals too (tool invocations, `mark_snapshot_dirty`, snapshot flushes, WebDAV PUTs). Full restart with debug: `RUST_LOG=debug nohup ./target/release/rockbot < /dev/null > ./tmp/rockbot.log 2>&1 &`
 
 ## Build & test
 

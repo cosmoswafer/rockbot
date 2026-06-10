@@ -32,6 +32,8 @@ flowchart TD
     DISPATCH(ReceiveMessage)
     TYPING(ToggleTyping)
     LOOP(AgentLoop)
+    DIRTY(MarkSnapshotDirty)
+    SNAPSHOT(FlushSnapshots)
     ARCHIVE(CompressDaily)
     EVICT_ROOMS(EvictStaleRooms)
     PERSIST_ASSETS(PersistAssets)
@@ -55,15 +57,21 @@ flowchart TD
     EXA -->|"search results"| LOOP
     LOOP -->|"typing off"| RC
     LOOP -->|"bot reply"| RC
+    LOOP -->|"reply produced<br/>(every response)"| DIRTY
+    DIRTY -->|"dirty flag"| ROOMS
     LOOP -->|"new message"| ARCHIVE
     LOOP -->|"image asset"| PERSIST_ASSETS
     ARCHIVE -->|"summary prompt"| AI
     AI -->|"summary text"| ARCHIVE
     ARCHIVE -->|"daily summary + soul"| PERSIST_ASSETS
+    ARCHIVE -->|"also marks dirty"| DIRTY
     PERSIST_ASSETS -->|"file data"| DAV
     DAV -->|"file data"| PERSIST_ASSETS
     ARCHIVE -->|"pruned history"| HISTORY
     LOOP -->|"updated room state"| ROOMS
+    TIMER -->|"every persist_interval_secs"| SNAPSHOT
+    ROOMS -->|"dirty rooms"| SNAPSHOT
+    SNAPSHOT -->|"snapshot.json<br/>(history + summaries + soul)"| DAV
     TIMER -->|"every persist_interval_secs"| EVICT_ROOMS
     ROOMS -->|"all rooms"| EVICT_ROOMS
     EVICT_ROOMS -->|"snapshot.json for stale rooms"| DAV

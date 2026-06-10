@@ -52,6 +52,7 @@ flowchart TD
     TOOLS_DEF[(ToolRegistry)]
     INTERACT(InteractWithAi)
     AI[AiProvider]
+    MRK_DIRTY(MarkSnapshotDirty)
 
     RC -->|"incoming message"| ROUTE
     ROUTE -->|"routed message"| CTX
@@ -61,7 +62,13 @@ flowchart TD
     INTERACT -->|"chat request"| AI
     AI -->|"completion result"| INTERACT
     INTERACT -->|"bot reply"| RC
+    INTERACT -->|"reply produced"| MRK_DIRTY
 ```
+
+After every response (including errors and fallbacks), the room is marked dirty for
+snapshot persistence. The periodic maintenance timer (every `persist_interval_secs`)
+flushes all dirty snapshots to WebDAV. The snapshot contains all three persistence
+layers: chat history, daily summaries, and soul memory.
 
 ### 2b. Error Handling & Fallbacks
 
