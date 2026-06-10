@@ -1,5 +1,6 @@
 pub mod calendar;
 pub mod datetime;
+pub mod edit_soul;
 pub mod image_gen;
 pub mod vision;
 pub mod web_fetch;
@@ -8,6 +9,7 @@ pub mod webdav;
 
 pub use calendar::CalendarTool;
 pub use datetime::DateTimeTool;
+pub use edit_soul::EditSoulTool;
 pub use image_gen::ImageGenTool;
 pub use vision::VisionTool;
 pub use web_fetch::WebFetchTool;

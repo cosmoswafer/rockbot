@@ -42,6 +42,10 @@ pub struct ModelConfig {
     pub max_text_length: usize,
     #[serde(default = "default_max_iterations")]
     pub max_iterations: u32,
+    #[serde(default = "default_summary_days")]
+    pub summary_days: u32,
+    #[serde(default = "default_max_summary_chars")]
+    pub max_summary_chars: usize,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -60,6 +64,14 @@ fn default_max_history_size() -> usize {
 
 fn default_max_text_length() -> usize {
     50000
+}
+
+fn default_summary_days() -> u32 {
+    7
+}
+
+fn default_max_summary_chars() -> usize {
+    8000
 }
 
 #[derive(Debug, Clone, Deserialize)]

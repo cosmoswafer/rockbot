@@ -43,7 +43,7 @@ base_url = "https://queue.fal.run"
 seedream = "fal-ai/bytedance/seedream/v4.5/text-to-image"
 gptimg = "openai/gpt-image-2"
 
-[image.model]
+[image_model]
 default_provider = "fal"
 default_model = "seedream"
 
@@ -53,6 +53,8 @@ default_model = "flash"
 max_history_size = 12
 max_text_length = 50000
 max_iterations = 8
+max_summary_chars = 8000
+summary_days = 7
 
 [rocketchat.server]
 url = "your-server.example.com"

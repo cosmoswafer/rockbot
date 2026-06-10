@@ -17,8 +17,6 @@ and room-specific registered callbacks are forwarded to the agent.
   (typed `RocketChatConfig` deserialized from TOML via `serde`)
 - Downstream: [Agent Harness](../agent-harness.md) receives filtered `IncomingMessage`
   structs via async callback; sends replies through `MessageSender::reply()`
-- Downstream: [Room Name Cache](room-cache.md) subscribes to the DDP `"rooms"`
-  collection and resolves `fname` when per-event `args[1].fname` is missing
 
 ## 2. Diagram
 

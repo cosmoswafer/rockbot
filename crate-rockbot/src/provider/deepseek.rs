@@ -188,25 +188,44 @@ fn extract_error_message(body: &str) -> String {
 impl AiProvider for DeepSeekProvider {
     async fn complete(&self, request: ChatRequest) -> Result<CompletionResult> {
         let body = self.build_request_body(&request);
+        let max_retries: u32 = 3;
 
-        let response = self
-            .http_client
-            .post(&self.base_url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
-            .await?;
+        for attempt in 0..=max_retries {
+            let response = self
+                .http_client
+                .post(&self.base_url)
+                .header("Authorization", format!("Bearer {}", self.api_key))
+                .header("Content-Type", "application/json")
+                .json(&body)
+                .send()
+                .await?;
 
-        let status = response.status();
-        if !status.is_success() {
+            let status = response.status();
+            if status.is_success() {
+                let response_body: serde_json::Value = response.json().await?;
+                return Self::parse_response_body(&response_body);
+            }
+
             let status_code = status.as_u16();
-            let body = response.text().await.unwrap_or_default();
-            return Err(Self::map_http_error(status_code, &body));
+            let error_body = response.text().await.unwrap_or_default();
+
+            if (status_code == 429 || status_code >= 500) && attempt < max_retries {
+                let delay = 2u64.pow(attempt + 1);
+                tracing::warn!(
+                    "DeepSeek HTTP {}, retrying in {}s (attempt {}/{})",
+                    status_code,
+                    delay,
+                    attempt + 1,
+                    max_retries
+                );
+                tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
+                continue;
+            }
+
+            return Err(Self::map_http_error(status_code, &error_body));
         }
 
-        let response_body: serde_json::Value = response.json().await?;
-        Self::parse_response_body(&response_body)
+        unreachable!("retry loop exhausted")
     }
 
     fn provider_name(&self) -> &str {

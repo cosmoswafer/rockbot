@@ -11,7 +11,8 @@ use rockbot::harness::AgentHarness;
 use rockbot::provider::{AiProvider, DeepSeekProvider, FalAiProvider, OpenRouterProvider};
 use rockbot::tool::ToolRegistry;
 use rockbot::tools::{
-    CalendarTool, DateTimeTool, ImageGenTool, VisionTool, WebDavTool, WebFetchTool, WebSearchTool,
+    CalendarTool, DateTimeTool, EditSoulTool, ImageGenTool, VisionTool, WebDavTool, WebFetchTool,
+    WebSearchTool,
 };
 
 fn setup_logging() {
@@ -122,6 +123,7 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     tool_registry.register(Box::new(VisionTool::new()));
     if let Some(ref webdav_client) = webdav {
         tool_registry.register(Box::new(WebDavTool::new(webdav_client.clone())));
+        tool_registry.register(Box::new(EditSoulTool::new(webdav_client.clone())));
 
         if let Some(ref wd_cfg) = webdav_config_for_calendar {
             if let Some(calendar_tool) = CalendarTool::from_config(webdav_client.clone(), wd_cfg) {
@@ -199,10 +201,14 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     let max_retries: u32 = 5;
     let mut retry_count: u32 = 0;
 
+    let shutdown = tokio::signal::ctrl_c();
+
+    tokio::pin!(shutdown);
+
     loop {
         let client = rocketchat::RocketChatClient::new(rocketchat_config.clone());
 
-        let result = client
+        let connect_fut = client
             .connect_and_run({
                 let harness = harness.clone();
                 let bot_name = bot_name.clone();
@@ -272,8 +278,15 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 }
-            })
-            .await;
+            });
+
+        let result = tokio::select! {
+            r = connect_fut => r,
+            _ = &mut shutdown => {
+                info!("Received shutdown signal, exiting...");
+                return Ok(());
+            }
+        };
 
         match result {
             Ok(()) => {

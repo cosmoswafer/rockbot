@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
+use webdav::WebDavPath;
 
 use crate::types::ChatMessage;
 
@@ -14,6 +15,21 @@ pub struct MemoryJson {
     pub msg_count: usize,
     pub messages: Vec<MessageRef>,
     pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DailySummary {
+    pub date: String,
+    pub summary: String,
+    pub msg_count: usize,
+    pub char_count: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct SoulMemory {
+    pub room_id: String,
+    pub content: String,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -124,19 +140,32 @@ impl RoomState {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct MemoryManager {
     rooms: HashMap<String, RoomState>,
     max_chars: usize,
     max_history_messages: usize,
+    pub max_summary_chars: usize,
+    pub summary_days: u32,
+    daily_summaries: HashMap<String, Vec<DailySummary>>,
+    souls: HashMap<String, SoulMemory>,
 }
 
 impl MemoryManager {
-    pub fn new(max_chars: usize, max_history_messages: usize) -> Self {
+    pub fn new(
+        max_chars: usize,
+        max_history_messages: usize,
+        max_summary_chars: usize,
+        summary_days: u32,
+    ) -> Self {
         Self {
             rooms: HashMap::new(),
             max_chars,
             max_history_messages,
+            max_summary_chars,
+            summary_days,
+            daily_summaries: HashMap::new(),
+            souls: HashMap::new(),
         }
     }
 
@@ -232,6 +261,30 @@ impl MemoryManager {
         let mut messages = Vec::new();
         messages.push(ChatMessage::system(system_prompt));
 
+        if let Some(soul) = self.souls.get(room_id) {
+            if !soul.content.is_empty() {
+                messages.push(ChatMessage::system(format!(
+                    "[Core memory — permanent preferences, identity, and notes]\n{}",
+                    soul.content
+                )));
+            }
+        }
+
+        let summaries = self.daily_summaries.get(room_id).map(|v| v.as_slice()).unwrap_or(&[]);
+        if !summaries.is_empty() {
+            let mut summary_text = String::from("[Recent conversation summaries]\n");
+            let mut total = 0usize;
+            for s in summaries.iter().rev() {
+                let line = format!("## {} ({} messages)\n{}\n\n", s.date, s.msg_count, s.summary);
+                if total + line.len() > self.max_summary_chars {
+                    break;
+                }
+                total += line.len();
+                summary_text.push_str(&line);
+            }
+            messages.push(ChatMessage::system(&summary_text));
+        }
+
         if let Some(room) = self.rooms.get(room_id) {
             if let Some(ref restored) = room.history.restored_summary {
                 messages.push(ChatMessage::system(restored.as_str()));
@@ -257,6 +310,60 @@ impl MemoryManager {
     pub fn room_count(&self) -> usize {
         self.rooms.len()
     }
+
+    pub fn daily_summaries_dir(&self, webdav_dir: &str) -> String {
+        format!("{}memory/summaries/", WebDavPath::new("").room_dir(webdav_dir))
+    }
+
+    pub fn set_daily_summaries(&mut self, room_id: &str, summaries: Vec<DailySummary>) {
+        let recent: Vec<DailySummary> = summaries
+            .into_iter()
+            .filter(|s| self.is_summary_recent(&s.date))
+            .take(10)
+            .collect();
+        self.daily_summaries.insert(room_id.to_string(), recent);
+    }
+
+    pub fn get_daily_summaries(&self, room_id: &str) -> &[DailySummary] {
+        // Return empty slice if not loaded yet (graceful, not a panic)
+        self.daily_summaries.get(room_id).map(|v| v.as_slice()).unwrap_or(&[])
+    }
+
+    fn is_summary_recent(&self, date: &str) -> bool {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+        let now_days = (now.as_secs() / 86400) as i64;
+        let date_days = date_to_days(date);
+        date_days.map(|d| now_days - d < self.summary_days as i64).unwrap_or(false)
+    }
+
+    pub fn set_soul(&mut self, room_id: &str, soul: SoulMemory) {
+        self.souls.insert(room_id.to_string(), soul);
+    }
+
+    pub fn get_soul(&self, room_id: &str) -> Option<&SoulMemory> {
+        self.souls.get(room_id)
+    }
+}
+
+pub fn date_to_days(date: &str) -> Option<i64> {
+    let parts: Vec<&str> = date.split('-').collect();
+    if parts.len() != 3 {
+        return None;
+    }
+    let y: i64 = parts[0].parse().ok()?;
+    let m: i64 = parts[1].parse().ok()?;
+    let d: i64 = parts[2].parse().ok()?;
+    if m < 1 || m > 12 || d < 1 || d > 31 {
+        return None;
+    }
+    let m = if m <= 2 { m + 12 } else { m };
+    let y = if m > 12 { y - 1 } else { y };
+    let era = (if y >= 0 { y } else { y - 399 }) / 400;
+    let yoe = (y - era * 400) as u64;
+    let doy = (153 * (m as u64 - 3) + 2) / 5 + d as u64 - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    Some((era as i64) * 146097 + doe as i64 - 719468)
 }
 
 fn strip_orphaned_tool_calls(messages: &mut Vec<ChatMessage>) {
@@ -409,7 +516,7 @@ mod tests {
 
     #[test]
     fn test_memory_manager_get_or_create() {
-        let mut mgr = MemoryManager::new(1000, 12);
+        let mut mgr = MemoryManager::new(1000, 12, 8000, 7);
         let room = mgr.get_or_create("room1", "general", "", false);
         assert_eq!(room.room_id, "room1");
         assert_eq!(room.room_name, "general");
@@ -423,7 +530,7 @@ mod tests {
 
     #[test]
     fn test_memory_manager_build_context() {
-        let mut mgr = MemoryManager::new(1000, 3);
+        let mut mgr = MemoryManager::new(1000, 3, 8000, 7);
         let room = mgr.get_or_create("room1", "general", "", false);
         for i in 0..5 {
             room.history
@@ -440,7 +547,7 @@ mod tests {
 
     #[test]
     fn test_memory_manager_build_context_nonexistent_room() {
-        let mgr = MemoryManager::new(1000, 12);
+        let mgr = MemoryManager::new(1000, 12, 8000, 7);
         let ctx = mgr.build_context("nonexistent", "prompt", None, None);
         assert_eq!(ctx.len(), 1);
     }
@@ -475,7 +582,7 @@ mod tests {
 
     #[test]
     fn test_build_context_with_dm_name() {
-        let mut mgr = MemoryManager::new(1000, 12);
+        let mut mgr = MemoryManager::new(1000, 12, 8000, 7);
         let room = mgr.get_or_create("dm-xyz", "alice", "", true);
         assert_eq!(room.room_name, "alice");
         assert!(room.is_dm);
