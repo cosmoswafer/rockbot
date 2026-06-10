@@ -144,6 +144,36 @@ mod tests {
     }
 
     #[test]
+    fn test_next_id_increments() {
+        let a = next_id();
+        let b = next_id();
+        let c = next_id();
+        let a_num: u64 = a.parse().unwrap();
+        let b_num: u64 = b.parse().unwrap();
+        let c_num: u64 = c.parse().unwrap();
+        assert_eq!(b_num, a_num + 1, "IDs must be sequential");
+        assert_eq!(c_num, b_num + 1, "IDs must be sequential");
+        assert_ne!(a, b);
+        assert_ne!(b, c);
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn test_next_id_unique_across_payloads() {
+        let login = login_message("u", "p");
+        let typing = typing_payload("r", "u", true);
+        let send = send_message_payload("r", "hello");
+        let login_id: u64 = login["id"].as_str().unwrap().parse().unwrap();
+        let typing_id: u64 = typing["id"].as_str().unwrap().parse().unwrap();
+        let send_id: u64 = send["id"].as_str().unwrap().parse().unwrap();
+        assert_ne!(login_id, typing_id, "login and typing must have different ids");
+        assert_ne!(typing_id, send_id, "typing and send must have different ids");
+        assert_ne!(login_id, send_id, "login and send must have different ids");
+        let msg_id: u64 = send["params"][0]["_id"].as_str().unwrap().parse().unwrap();
+        assert_ne!(send_id, msg_id, "send method id and message _id must be different");
+    }
+
+    #[test]
     fn test_connect_message() {
         let msg = connect_message();
         assert_eq!(msg["msg"], "connect");
@@ -196,6 +226,7 @@ mod tests {
         let msg = typing_payload("room123", "user1", true);
         assert_eq!(msg["msg"], "method");
         assert_eq!(msg["method"], "stream-notify-room");
+        assert!(msg["id"].as_str().unwrap().parse::<u64>().is_ok());
         assert_eq!(msg["params"][0], "room123/typing");
         assert_eq!(msg["params"][1], "user1");
         assert_eq!(msg["params"][2], true);

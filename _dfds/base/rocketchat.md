@@ -216,13 +216,19 @@ the password to be pre-hashed with **SHA-256**, sent as a lowercase hex digest
 alongside the algorithm name. The Rust implementation uses `sha2::Digest` to
 hash the password before constructing the payload.
 
+All DDP method calls (`login`, `stream-notify-room`, `sendMessage`) use a shared
+`AtomicU64` counter (`MSG_ID`) that generates sequential, unique IDs per call.
+This ensures the server can match each `"result"` response to its originating
+`"method"` call — required by the DDP protocol to prevent "Match failed" errors
+on duplicate IDs.
+
 **Implementation** (`ddp::login_message()`):
 
 ```json
 {
     "msg": "method",
     "method": "login",
-    "id": "42",
+    "id": "<next_id()>",
     "params": [
         {
             "user": { "username": "rockbot" },
@@ -235,12 +241,32 @@ hash the password before constructing the payload.
 }
 ```
 
+**sendMessage implementation** (`ddp::send_message_payload()`):
+
+The `sendMessage` method requires a client-generated `_id` string field inside
+the `params` message object — RocketChat validates this on the server side and
+rejects messages without it. Both the DDP method `id` and the message `_id` use
+`next_id()` for unique values:
+
+```json
+{
+    "msg": "method",
+    "method": "sendMessage",
+    "id": "<next_id()>",
+    "params": [{
+        "_id": "<next_id()>",
+        "rid": "room-uuid",
+        "msg": "reply text"
+    }]
+}
+```
+
 **Server response** on success:
 
 ```json
 {
     "msg": "result",
-    "id": "42",
+    "id": "<next_id()>",
     "result": {
         "id": "user-id",
         "token": "auth-token",
