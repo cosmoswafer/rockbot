@@ -491,7 +491,7 @@ impl WebDavClient {
     </D:prop>
   </D:set>
 </C:mkcalendar>"#,
-            xml_escape(display_name)
+            quick_xml::escape::escape(display_name)
         );
 
         let response = self
@@ -931,22 +931,6 @@ mod tests {
         let p: crate::types::Prop = quick_xml::de::from_str(xml).unwrap();
         assert_eq!(p.getcontentlength, None);
     }
-
-fn xml_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
-}
-
-#[test]
-fn test_xml_escape() {
-    assert_eq!(xml_escape("hello"), "hello");
-    assert_eq!(xml_escape("<hello>"), "&lt;hello&gt;");
-    assert_eq!(xml_escape("a&b"), "a&amp;b");
-    assert_eq!(xml_escape("\"quoted\""), "&quot;quoted&quot;");
-}
 
 #[test]
 fn test_parse_prop_missing_getcontentlength() {
