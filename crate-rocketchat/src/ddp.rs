@@ -44,15 +44,19 @@ pub fn pong_message() -> Value {
     json!({"msg": "pong"})
 }
 
-pub fn send_message_payload(room_id: &str, text: &str) -> Value {
+pub fn send_message_payload(room_id: &str, text: &str, alias: Option<&str>) -> Value {
+    let mut params = json!({
+        "rid": room_id,
+        "msg": text
+    });
+    if let Some(a) = alias {
+        params["alias"] = json!(a);
+    }
     json!({
         "msg": "method",
         "method": "sendMessage",
         "id": "42",
-        "params": [{
-            "rid": room_id,
-            "msg": text
-        }]
+        "params": [params]
     })
 }
 
@@ -171,7 +175,7 @@ mod tests {
 
     #[test]
     fn test_send_message_payload() {
-        let msg = send_message_payload("room123", "hello!");
+        let msg = send_message_payload("room123", "hello!", None);
         assert_eq!(msg["msg"], "method");
         assert_eq!(msg["method"], "sendMessage");
         assert_eq!(msg["params"][0]["rid"], "room123");

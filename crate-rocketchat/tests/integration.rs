@@ -296,11 +296,18 @@ password = "pw"
 
 #[test]
 fn test_send_message_payload() {
-    let msg = rocketchat::ddp::send_message_payload("room1", "hello world");
+    let msg = rocketchat::ddp::send_message_payload("room1", "hello world", None);
     assert_eq!(msg["msg"], "method");
     assert_eq!(msg["method"], "sendMessage");
     assert_eq!(msg["params"][0]["rid"], "room1");
     assert_eq!(msg["params"][0]["msg"], "hello world");
+    assert!(msg["params"][0].get("alias").is_none());
+}
+
+#[test]
+fn test_send_message_payload_with_alias() {
+    let msg = rocketchat::ddp::send_message_payload("room1", "hello world", Some("香菜"));
+    assert_eq!(msg["params"][0]["alias"], "香菜");
 }
 
 #[test]
@@ -472,6 +479,7 @@ fn test_client_new() {
             url: "chat.example.com".into(),
             username: "bot".into(),
             password: "pw".into(),
+            alias: None,
             debug: false,
             use_tls: true,
         },

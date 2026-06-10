@@ -231,6 +231,7 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                 url: h.config().rocketchat.server.url.clone(),
                 username: h.config().rocketchat.server.username.clone(),
                 password: h.config().rocketchat.server.password.clone(),
+                alias: h.config().rocketchat.server.alias.clone(),
                 debug: h.config().rocketchat.server.debug,
                 use_tls: true,
             },
