@@ -14,7 +14,7 @@ standard harness mechanisms are present:
 
 | Mechanism   | Coverage | Details |
 |-------------|----------|---------|
-| **Tools**   | Full     | `web_search`, `web_fetch`, `vision`, `webdav`, `image_gen` (fal.ai) — each tool has its own DFD |
+| **Tools**   | Full     | `web_search`, `web_fetch`, `vision`, `webdav`, `image_gen` (fal.ai), `calendar` (CalDAV), `datetime` — each tool has its own DFD |
 | **Context** | Full     | Per-room conversation history buffer, summarization, archive loading — see [Memory Management](base/memory.md); plus iteration limits, room state routing, system prompt assembly |
 | **Knowledge** | Full  | Domain facts extracted from conversations, stored as indexed `.md` files on WebDAV — see [Knowledge Management](base/knowledge.md) |
 
@@ -34,7 +34,10 @@ Intentionally absent — not needed for rockbot's scope:
   room and receives new messages for archival
 - Downstream: [Knowledge Management](base/knowledge.md) extracts and persists
   domain facts, loads entries into agent context on room init
-- Downstream: [WebDAV Storage](base/webdav.md) persists generated image assets
+- Downstream: [WebDAV Directory](base/webdav-directory.md) persists generated image assets
+  and provides file storage via `WebDavTool`
+- Downstream: [WebDAV Calendar](base/webdav-calendar.md) provides CalDAV event access
+  via `CalendarTool` (conditionally registered)
 
 ## 2. Diagram
 
@@ -238,6 +241,9 @@ flowchart TD
 | `web_search`  | Search the web using Exa                         | `query: string`                    |
 | `web_fetch`   | Fetch a URL, optionally as markdown              | `url: string, markdown: bool`      |
 | `vision`      | Download an image and report metadata _(true vision — sending image data to AI provider — is planned)_ | `url: string, prompt: string`      |
-| `image_gen`   | Generate an image using fal.ai models             | `prompt: string, model_id: string` |
+| `webdav`      | Read, write, list, and delete files in the room's WebDAV directory | `action: string, path: string, content?: string` |
+| `image_gen`   | Generate an image using fal.ai models _(requires `fal` provider in config)_ | `prompt: string, model_id: string` |
+| `calendar`    | Manage calendar events via CalDAV _(requires WebDAV + calendar_name)_ | `action: string, uid?: string, summary?: string, ...` |
+| `datetime`    | Get current date/time in various formats           | `timezone: string, format: string` |
 | `infograph`   | _(planned)_ Generate an infographic image         | `prompt: string`                   |
 | `anime`       | _(planned)_ Generate a Japanese anime-style image | `prompt: string`                   |

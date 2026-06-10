@@ -11,7 +11,7 @@ the LLM about user preferences, project context, and past decisions.
 - Upstream: [Memory Management](memory.md) provides `ConversationHistory` as
   extraction source
 - Upstream: [Configuration Management](config.md) provides `KnowledgeConfig`
-- Downstream: [WebDAV Storage](webdav.md) persists `.md` files and
+- Downstream: [WebDAV Directory](webdav-directory.md) persists `.md` files and
   `index.md`
 - Downstream: [AI Provider](ai-provider.md) is called for extraction
   synthesis

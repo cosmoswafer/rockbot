@@ -17,7 +17,7 @@ flushed to WebDAV on a configurable sync interval or graceful shutdown.
 - Upstream: [Configuration Management](config.md) provides `MemoryConfig`
 - Upstream: [Agent Harness](../agent-harness.md) loads archives on startup and
   triggers per-room history operations after each message
-- Downstream: [WebDAV Storage](webdav.md) persists `.json` archive files
+- Downstream: [WebDAV Memory](webdav-memory.md) persists `.json` archive files
 - Downstream: [AI Provider](ai-provider.md) is called to generate summaries
 
 ## 2. Diagram
