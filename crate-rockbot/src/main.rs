@@ -102,7 +102,6 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
         .tools
         .get("exa")
         .map(|t| t.api_key.clone())
-        .or_else(|| env::var("EXA_API_KEY").ok())
         .unwrap_or_default();
 
     let mut harness = AgentHarness::new(config, provider, webdav.clone());

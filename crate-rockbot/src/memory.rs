@@ -165,11 +165,36 @@ impl MemoryManager {
             messages.splice(1..1, extra);
         }
 
+        strip_orphaned_tool_calls(&mut messages);
+
         messages
     }
 
     pub fn room_count(&self) -> usize {
         self.rooms.len()
+    }
+}
+
+fn strip_orphaned_tool_calls(messages: &mut Vec<ChatMessage>) {
+    let mut i = 0;
+    while i < messages.len() {
+        if messages[i].role == crate::types::Role::Assistant && messages[i].tool_calls.is_some() {
+            let mut has_tool_reply = false;
+            for item in messages.iter().skip(i + 1) {
+                if item.role == crate::types::Role::Tool {
+                    has_tool_reply = true;
+                    break;
+                }
+                if item.role != crate::types::Role::Tool {
+                    break;
+                }
+            }
+            if !has_tool_reply && i + 1 >= messages.len() {
+                messages.truncate(i);
+                break;
+            }
+        }
+        i += 1;
     }
 }
 
@@ -330,5 +355,46 @@ mod tests {
         let ctx = mgr.build_context("dm-xyz", "prompt", None, None);
         assert_eq!(ctx.len(), 2);
         assert_eq!(ctx[1].text_content(), Some("alice: hello"));
+    }
+
+    #[test]
+    fn test_strip_orphaned_tool_calls_trailing() {
+        let tc = crate::types::ToolCall::new("c1", "search", r#"{"q":"x"}"#);
+        let mut msgs = vec![
+            ChatMessage::system("sys"),
+            ChatMessage::user("hi"),
+            ChatMessage::assistant_with_tool_calls("", vec![tc.clone()], None),
+        ];
+        strip_orphaned_tool_calls(&mut msgs);
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[1].role, Role::User);
+    }
+
+    #[test]
+    fn test_strip_orphaned_tool_calls_with_reply_preserved() {
+        let tc = crate::types::ToolCall::new("c1", "search", r#"{"q":"x"}"#);
+        let mut msgs = vec![
+            ChatMessage::system("sys"),
+            ChatMessage::user("hi"),
+            ChatMessage::assistant_with_tool_calls("", vec![tc.clone()], None),
+            ChatMessage::tool("c1", "result"),
+            ChatMessage::assistant("final reply"),
+        ];
+        let len_before = msgs.len();
+        strip_orphaned_tool_calls(&mut msgs);
+        assert_eq!(msgs.len(), len_before);
+        assert_eq!(msgs[2].role, Role::Assistant);
+        assert_eq!(msgs[3].role, Role::Tool);
+    }
+
+    #[test]
+    fn test_strip_orphaned_tool_calls_no_op() {
+        let mut msgs = vec![
+            ChatMessage::system("sys"),
+            ChatMessage::user("hi"),
+            ChatMessage::assistant("reply"),
+        ];
+        strip_orphaned_tool_calls(&mut msgs);
+        assert_eq!(msgs.len(), 3);
     }
 }

@@ -31,7 +31,7 @@ impl WebSearchTool {
     async fn search_exa(&self, query: &str, search_type: &str, num_results: u32) -> Result<String> {
         let api_key = self.api_key.as_deref().ok_or_else(|| {
             RockBotError::Provider(
-                "web_search requires EXA_API_KEY to be set. Configure it in your environment."
+                "web_search requires an Exa API key. Configure it in [tools.exa] section of config.toml."
                     .into(),
             )
         })?;

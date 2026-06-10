@@ -280,61 +280,68 @@ fn truncate(text: &str, max_chars: usize) -> String {
 }
 
 fn remove_tag_content(html: &str, tag: &str) -> String {
+    let mut result = Vec::with_capacity(html.len());
+    let bytes = html.as_bytes();
     let open = format!("<{}", tag);
     let close = format!("</{}>", tag);
-    let mut result = String::with_capacity(html.len());
+    let open_bytes = open.as_bytes();
+    let close_bytes = close.as_bytes();
     let mut skip = false;
     let mut depth: i32 = 0;
     let mut i = 0;
-    let bytes = html.as_bytes();
 
     while i < bytes.len() {
-        if !skip && bytes[i] == b'<' && i + open.len() <= bytes.len() {
-            let slice = &html[i..i + open.len()];
-            if slice.eq_ignore_ascii_case(&open) {
-                skip = true;
-                depth = 1;
-                i += open.len();
-                continue;
-            }
+        if !skip
+            && bytes[i] == b'<'
+            && i + open_bytes.len() <= bytes.len()
+            && bytes[i..i + open_bytes.len()].eq_ignore_ascii_case(open_bytes)
+        {
+            skip = true;
+            depth = 1;
+            i += open_bytes.len();
+            continue;
         }
-        if skip && bytes[i] == b'<' && i + close.len() <= bytes.len() {
-            let slice = &html[i..i + close.len()];
-            if slice.eq_ignore_ascii_case(&close) {
-                depth -= 1;
-                i += close.len();
-                if depth <= 0 {
-                    skip = false;
-                }
-                continue;
+        if skip
+            && bytes[i] == b'<'
+            && i + close_bytes.len() <= bytes.len()
+            && bytes[i..i + close_bytes.len()].eq_ignore_ascii_case(close_bytes)
+        {
+            depth -= 1;
+            i += close_bytes.len();
+            if depth <= 0 {
+                skip = false;
             }
-            if depth > 0 && bytes[i] == b'<' {
-                let end = find_tag_end(html, i);
-                let tag_name = extract_tag_name(html, i, end);
-                if tag_name.eq_ignore_ascii_case(tag) {
-                    depth += 1;
-                }
-                i = end;
-                continue;
+            continue;
+        }
+        if skip && depth > 0 && bytes[i] == b'<' {
+            let end = find_byte(html, i, b'>');
+            let tag_text = if end > i { &html[i + 1..end] } else { "" };
+            let tag_name = tag_text
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .trim_start_matches('/');
+            if tag_name.eq_ignore_ascii_case(tag) {
+                depth += 1;
             }
+            i = end + 1;
+            continue;
         }
         if !skip {
-            result.push(html[i..].chars().next().unwrap());
+            result.push(bytes[i]);
         }
-        i += html[i..].chars().next().unwrap().len_utf8();
+        i += 1;
     }
-    result
+
+    String::from_utf8_lossy(&result).into_owned()
 }
 
-fn find_tag_end(html: &str, start: usize) -> usize {
-    let rest = &html[start..];
-    rest.find('>').map(|p| start + p + 1).unwrap_or(html.len())
-}
-
-fn extract_tag_name(html: &str, start: usize, end: usize) -> String {
-    let inner = &html[start + 1..end - 1];
-    let inner = inner.trim();
-    inner.split_whitespace().next().unwrap_or("").to_string()
+fn find_byte(html: &str, start: usize, byte: u8) -> usize {
+    html.as_bytes()[start..]
+        .iter()
+        .position(|&b| b == byte)
+        .map(|p| start + p)
+        .unwrap_or(html.len())
 }
 
 fn convert_links(html: &str) -> String {
@@ -344,7 +351,7 @@ fn convert_links(html: &str) -> String {
 
     while i < bytes.len() {
         if bytes[i] == b'<' && i + 2 < bytes.len() && bytes[i + 1] == b'a' {
-            let end = find_tag_end(html, i);
+            let end = find_byte(html, i, b'>');
             let tag = &html[i..end];
             let href = extract_attr(tag, "href");
             let close_tag = "</a>";
@@ -359,8 +366,9 @@ fn convert_links(html: &str) -> String {
                 continue;
             }
         }
-        result.push(html[i..].chars().next().unwrap());
-        i += html[i..].chars().next().unwrap().len_utf8();
+        let ch = html[i..].chars().next().unwrap();
+        result.push(ch);
+        i += ch.len_utf8();
     }
     result
 }
@@ -517,6 +525,24 @@ mod tests {
         assert!(!md.contains("evil"));
         assert!(md.contains("Hello"));
         assert!(md.contains("World"));
+    }
+
+    #[test]
+    fn test_html_to_markdown_chinese() {
+        let html =
+            "<html><head><title>2026贵州旅游</title></head><body><p>本地人私藏</p></body></html>";
+        let md = html_to_markdown(html);
+        assert!(md.contains("2026贵州旅游"));
+        assert!(md.contains("本地人私藏"));
+    }
+
+    #[test]
+    fn test_remove_tag_content_with_chinese() {
+        let html = "<p>你好</p><script>var x = 1;</script><p>世界</p>";
+        let result = remove_tag_content(html, "script");
+        assert!(result.contains("你好"));
+        assert!(result.contains("世界"));
+        assert!(!result.contains("var x"));
     }
 
     #[test]
