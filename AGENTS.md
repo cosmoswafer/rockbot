@@ -47,14 +47,9 @@ cargo test -p webdav
 
 # Real integration tests (require credentials / running servers):
 cargo test -- --ignored              # all ignored tests across workspace
-
-# Specific ignored test files:
-cargo test -p rocketchat --test integration_real -- --ignored   # needs config.toml + RC server
-cargo test -p webdav --test integration_real -- --ignored       # needs WEBDAV_* env vars
 ```
 
 No CI, no `rustfmt.toml`, no `clippy.toml`, no `rust-toolchain` file.
-Run `cargo fmt` and `cargo clippy` with default settings.
 
 ## Code style
 
