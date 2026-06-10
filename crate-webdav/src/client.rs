@@ -423,6 +423,75 @@ impl WebDavClient {
         Ok(events.into_iter().next())
     }
 
+    pub async fn calendar_exists(&self, caldav_url: &str) -> Result<bool> {
+        let url = {
+            let clean = caldav_url.trim_end_matches('/');
+            format!("{}/", clean)
+        };
+        let mut headers = self.headers();
+        headers.insert("Depth", HeaderValue::from_static("0"));
+
+        let response = self
+            .client
+            .request(reqwest::Method::from_bytes(b"PROPFIND").unwrap(), &url)
+            .headers(headers)
+            .header("Content-Type", "application/xml")
+            .body(MULTI_STATUS_XML)
+            .send()
+            .await?;
+
+        match response.status().as_u16() {
+            207 => Ok(true),
+            404 => Ok(false),
+            status => {
+                let body = response.text().await.unwrap_or_default();
+                Err(WebDavError::UnexpectedStatus { status, body })
+            }
+        }
+    }
+
+    pub async fn ensure_calendar(
+        &self,
+        caldav_url: &str,
+        display_name: &str,
+    ) -> Result<()> {
+        let url = {
+            let clean = caldav_url.trim_end_matches('/');
+            format!("{}/", clean)
+        };
+
+        if self.calendar_exists(&url).await? {
+            return Ok(());
+        }
+
+        let body = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<C:mkcalendar xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:set>
+    <D:prop>
+      <D:displayname>{}</D:displayname>
+      <C:supported-calendar-component-set>
+        <C:comp name="VEVENT"/>
+      </C:supported-calendar-component-set>
+    </D:prop>
+  </D:set>
+</C:mkcalendar>"#,
+            display_name
+        );
+
+        let response = self
+            .client
+            .request(reqwest::Method::from_bytes(b"MKCALENDAR").unwrap(), &url)
+            .headers(self.headers())
+            .header("Content-Type", "application/xml")
+            .body(body)
+            .send()
+            .await?;
+
+        self.handle_status_discard(response, |s| s == 201 || s == 200)
+            .await
+    }
+
     pub async fn list_todos(
         &self,
         caldav_base_url: &str,

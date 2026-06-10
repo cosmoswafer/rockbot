@@ -1,6 +1,9 @@
+use std::collections::HashMap;
+use std::sync::Mutex;
+
 use async_trait::async_trait;
 use serde_json::Value;
-use tracing::debug;
+use tracing::{debug, warn};
 use webdav::{CaldavEvent, Reminder, WebDavClient, WebDavConfig, build_vevent_ics, quick_uid};
 
 use crate::error::{Result, RockBotError};
@@ -8,31 +11,70 @@ use crate::tool::Tool;
 
 pub struct CalendarTool {
     client: WebDavClient,
-    calendar_name: String,
     server_url: String,
     username: String,
+    room_calendars: Mutex<HashMap<String, String>>,
 }
 
 impl CalendarTool {
-    pub fn from_config(client: WebDavClient, config: &WebDavConfig) -> Option<Self> {
-        config.calendar_name.as_ref().map(|name| Self {
+    pub fn from_config(client: WebDavClient, config: &WebDavConfig) -> Self {
+        Self {
             client,
-            calendar_name: name.clone(),
             server_url: config.url.clone(),
             username: config.username.clone(),
-        })
+            room_calendars: Mutex::new(HashMap::new()),
+        }
     }
 
-    fn caldav_url(&self) -> String {
-        let origin = if let Some(pos) = self.server_url.find("/remote.php/dav/files/") {
-            &self.server_url[..pos]
+    fn server_origin(&self) -> String {
+        if let Some(pos) = self.server_url.find("/remote.php/dav/") {
+            self.server_url[..pos].to_string()
         } else {
-            self.server_url.trim_end_matches('/')
-        };
+            self.server_url.trim_end_matches('/').to_string()
+        }
+    }
+
+    fn build_caldav_url(&self, calendar_name: &str) -> String {
+        let origin = self.server_origin();
         format!(
             "{}/remote.php/dav/calendars/{}/{}/",
-            origin, self.username, self.calendar_name
+            origin, self.username, calendar_name
         )
+    }
+
+    async fn ensure_room_calendar(&self, room_id: &str) -> Option<String> {
+        {
+            let map = self.room_calendars.lock().unwrap();
+            if let Some(name) = map.get(room_id) {
+                return Some(self.build_caldav_url(name));
+            }
+        }
+
+        let calendar_name = format!("rockbot-{}", room_id);
+        let caldav_url = self.build_caldav_url(&calendar_name);
+
+        match self
+            .client
+            .ensure_calendar(&caldav_url, &calendar_name)
+            .await
+        {
+            Ok(()) => {
+                debug!(
+                    "Ensured calendar '{}' for room {}",
+                    calendar_name, room_id
+                );
+                let mut map = self.room_calendars.lock().unwrap();
+                map.insert(room_id.to_string(), calendar_name);
+                Some(caldav_url)
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to ensure calendar '{}' for room {}: {}",
+                    calendar_name, room_id, e
+                );
+                None
+            }
+        }
     }
 
     fn format_event(event: &CaldavEvent) -> String {
@@ -161,6 +203,8 @@ impl Tool for CalendarTool {
 
     fn description(&self) -> &str {
         "Manage calendar events on NextCloud CalDAV. \
+         Events are stored per-room — each room has its own calendar \
+         auto-created on first use. \
          Actions: list_events (list events in a date range), \
          get_event (fetch a single event by UID), \
          add_event (create a new event), update_event (modify an existing event by UID), \
@@ -231,6 +275,16 @@ impl Tool for CalendarTool {
             RockBotError::ToolCallParse(format!("Failed to parse calendar arguments: {e}"))
         })?;
 
+        let room_id = args
+            .get("room_id")
+            .and_then(|r| r.as_str())
+            .unwrap_or("global");
+
+        let caldav_url = self
+            .ensure_room_calendar(room_id)
+            .await
+            .unwrap_or_else(|| self.build_caldav_url(room_id));
+
         let action = args
             .get("action")
             .and_then(|a| a.as_str())
@@ -249,10 +303,10 @@ impl Tool for CalendarTool {
                     .and_then(|s| s.as_str())
                     .unwrap_or("20990101T000000Z");
 
-                debug!("calendar list_events: {} to {}", start, end);
+                debug!("calendar list_events: {} to {} (room={})", start, end, room_id);
                 let events = self
                     .client
-                    .list_events_by_date_range(&self.caldav_url(), start, end)
+                    .list_events_by_date_range(&caldav_url, start, end)
                     .await
                     .map_err(|e| RockBotError::Provider(format!("Calendar list failed: {e}")))?;
 
@@ -283,7 +337,7 @@ impl Tool for CalendarTool {
                     })?;
                 let event = self
                     .client
-                    .get_event(&self.caldav_url(), uid)
+                    .get_event(&caldav_url, uid)
                     .await
                     .map_err(|e| RockBotError::Provider(format!("Calendar get failed: {e}")))?;
                 Ok(Self::format_event(&event))
@@ -292,12 +346,13 @@ impl Tool for CalendarTool {
                 let uid = quick_uid();
                 let ics = build_ics_for_event(&args, &uid)?;
                 debug!(
-                    "calendar add_event: uid={} summary={:?}",
+                    "calendar add_event: uid={} summary={:?} (room={})",
                     uid,
-                    args.get("summary")
+                    args.get("summary"),
+                    room_id,
                 );
                 self.client
-                    .add_event(&self.caldav_url(), &uid, &ics)
+                    .add_event(&caldav_url, &uid, &ics)
                     .await
                     .map_err(|e| RockBotError::Provider(format!("Calendar add failed: {e}")))?;
                 Ok(format!("Event created with UID: {}", uid))
@@ -314,7 +369,7 @@ impl Tool for CalendarTool {
 
                 let existing = self
                     .client
-                    .fetch_event_by_uid(&self.caldav_url(), uid)
+                    .fetch_event_by_uid(&caldav_url, uid)
                     .await
                     .map_err(|e| {
                         RockBotError::Provider(format!("Calendar fetch failed: {e}"))
@@ -325,7 +380,7 @@ impl Tool for CalendarTool {
 
                 let ics = build_ics_for_update(&args, uid, &existing)?;
                 self.client
-                    .update_event(&self.caldav_url(), uid, &ics, &existing.etag)
+                    .update_event(&caldav_url, uid, &ics, &existing.etag)
                     .await
                     .map_err(|e| {
                         RockBotError::Provider(format!("Calendar update failed: {e}"))
@@ -342,7 +397,7 @@ impl Tool for CalendarTool {
                         )
                     })?;
                 self.client
-                    .delete_event(&self.caldav_url(), uid)
+                    .delete_event(&caldav_url, uid)
                     .await
                     .map_err(|e| {
                         RockBotError::Provider(format!("Calendar delete failed: {e}"))
@@ -364,9 +419,9 @@ mod tests {
         let client = webdav::WebDavClient::new("https://example.com", "user", "pass").unwrap();
         CalendarTool {
             client,
-            calendar_name: "personal".into(),
             server_url: "https://example.com/remote.php/dav/files/user".into(),
             username: "user".into(),
+            room_calendars: Mutex::new(HashMap::new()),
         }
     }
 
@@ -389,28 +444,41 @@ mod tests {
     }
 
     #[test]
-    fn test_caldav_url_construction() {
+    fn test_build_caldav_url() {
         let tool = make_test_tool();
-        let url = tool.caldav_url();
+        let url = tool.build_caldav_url("rockbot-testroom");
         assert_eq!(
             url,
-            "https://example.com/remote.php/dav/calendars/user/personal/"
+            "https://example.com/remote.php/dav/calendars/user/rockbot-testroom/"
         );
     }
 
     #[test]
-    fn test_caldav_url_no_dav_prefix() {
+    fn test_build_caldav_url_no_dav_prefix() {
         let tool = CalendarTool {
             client: webdav::WebDavClient::new("https://cloud.example.com", "admin", "pass").unwrap(),
-            calendar_name: "work".into(),
             server_url: "https://cloud.example.com".into(),
             username: "admin".into(),
+            room_calendars: Mutex::new(HashMap::new()),
         };
-        let url = tool.caldav_url();
+        let url = tool.build_caldav_url("rockbot-general");
         assert_eq!(
             url,
-            "https://cloud.example.com/remote.php/dav/calendars/admin/work/"
+            "https://cloud.example.com/remote.php/dav/calendars/admin/rockbot-general/"
         );
+    }
+
+    #[test]
+    fn test_room_calendars_cached() {
+        let tool = make_test_tool();
+        {
+            let mut map = tool.room_calendars.lock().unwrap();
+            map.insert("room1".to_string(), "rockbot-room1".to_string());
+        }
+        {
+            let map = tool.room_calendars.lock().unwrap();
+            assert_eq!(map.get("room1").unwrap(), "rockbot-room1");
+        }
     }
 
     #[tokio::test]

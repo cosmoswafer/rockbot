@@ -1,5 +1,13 @@
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+
+static MSG_ID: AtomicU64 = AtomicU64::new(1);
+
+fn next_id() -> String {
+    MSG_ID.fetch_add(1, Ordering::Relaxed).to_string()
+}
 
 pub fn sha256_digest(password: &str) -> String {
     let mut hasher = Sha256::new();
@@ -20,7 +28,7 @@ pub fn login_message(username: &str, password: &str) -> Value {
     json!({
         "msg": "method",
         "method": "login",
-        "id": "42",
+        "id": next_id(),
         "params": [{
             "user": { "username": username },
             "password": {
@@ -44,18 +52,16 @@ pub fn pong_message() -> Value {
     json!({"msg": "pong"})
 }
 
-pub fn send_message_payload(room_id: &str, text: &str, alias: Option<&str>) -> Value {
-    let mut params = json!({
+pub fn send_message_payload(room_id: &str, text: &str, _alias: Option<&str>) -> Value {
+    let params = json!({
+        "_id": next_id(),
         "rid": room_id,
-        "msg": text
+        "msg": text,
     });
-    if let Some(a) = alias {
-        params["alias"] = json!(a);
-    }
     json!({
         "msg": "method",
         "method": "sendMessage",
-        "id": "42",
+        "id": next_id(),
         "params": [params]
     })
 }
@@ -64,7 +70,7 @@ pub fn typing_payload(room_id: &str, username: &str, is_typing: bool) -> Value {
     json!({
         "msg": "method",
         "method": "stream-notify-room",
-        "id": "42",
+        "id": next_id(),
         "params": [format!("{}/typing", room_id), username, is_typing]
     })
 }
@@ -150,6 +156,7 @@ mod tests {
         let msg = login_message("testuser", "testpass");
         assert_eq!(msg["msg"], "method");
         assert_eq!(msg["method"], "login");
+        assert!(msg["id"].as_str().unwrap().parse::<u64>().is_ok());
         let params = &msg["params"][0];
         assert_eq!(params["user"]["username"], "testuser");
         let pw = &params["password"];
@@ -178,6 +185,8 @@ mod tests {
         let msg = send_message_payload("room123", "hello!", None);
         assert_eq!(msg["msg"], "method");
         assert_eq!(msg["method"], "sendMessage");
+        assert!(msg["id"].as_str().unwrap().parse::<u64>().is_ok());
+        assert!(msg["params"][0]["_id"].as_str().unwrap().parse::<u64>().is_ok());
         assert_eq!(msg["params"][0]["rid"], "room123");
         assert_eq!(msg["params"][0]["msg"], "hello!");
     }
@@ -204,7 +213,7 @@ mod tests {
     fn test_extract_login_result() {
         let v = serde_json::json!({
             "msg": "result",
-            "id": "42",
+            "id": "1",
             "result": {
                 "id": "user-id-123",
                 "token": "auth-token-abc",

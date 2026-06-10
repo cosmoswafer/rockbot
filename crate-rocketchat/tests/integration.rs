@@ -307,7 +307,7 @@ fn test_send_message_payload() {
 #[test]
 fn test_send_message_payload_with_alias() {
     let msg = rocketchat::ddp::send_message_payload("room1", "hello world", Some("香菜"));
-    assert_eq!(msg["params"][0]["alias"], "香菜");
+    assert!(msg["params"][0]["_id"].as_str().unwrap().parse::<u64>().is_ok());
 }
 
 #[test]

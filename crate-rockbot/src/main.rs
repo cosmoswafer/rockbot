@@ -132,13 +132,9 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
         info!("Registered knowledge tools (save, forget, recall)");
 
         if let Some(ref wd_cfg) = webdav_config_for_calendar {
-            if let Some(calendar_tool) = CalendarTool::from_config(webdav_client.clone(), wd_cfg) {
-                tool_registry.register(Box::new(calendar_tool));
-                info!(
-                    "Registered calendar tool for '{}'",
-                    wd_cfg.calendar_name.as_deref().unwrap_or("?")
-                );
-            }
+            let calendar_tool = CalendarTool::from_config(webdav_client.clone(), wd_cfg);
+            tool_registry.register(Box::new(calendar_tool));
+            info!("Registered calendar tool (per-room, auto-created)");
         }
 
         let (image_provider_name, image_model_name) = harness

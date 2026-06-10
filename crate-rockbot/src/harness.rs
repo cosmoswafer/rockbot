@@ -206,6 +206,7 @@ impl AgentHarness {
                                 || tool_call.function.name == "save_knowledge"
                                 || tool_call.function.name == "forget_knowledge"
                                 || tool_call.function.name == "recall_knowledge"
+                                || tool_call.function.name == "calendar"
                             {
                                 let wd = compute_webdav_dir(room_name, room_fname, is_dm);
                                 inject_room_context(&tool_call.function.arguments, room_id, &wd)

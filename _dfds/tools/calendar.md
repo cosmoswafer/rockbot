@@ -6,15 +6,16 @@ CalDAV event access wrapping NextCloud's calendar service. Supports listing
 events by date range, create/read/update/delete individual events with
 iCalendar (RFC 5545) `VEVENT` payloads, and `VALARM` reminders.
 
-**Scope**: Calendar events are globally scoped — stored at the WebDAV root level
-(`/calendars/{calendar_name}/`), not per-room. All rooms share the same calendar.
-This is by design: calendar events (meetings, deadlines) typically span across
-rooms and should be visible to any agent in any room.
+**Scope**: Calendar events are **per-room** — each RocketChat room gets its own
+NextCloud calendar, auto-created on first use via CalDAV `MKCALENDAR`. The
+calendar name is `rockbot-{room_id}`, stored under the configured user's
+CalDAV calendar home (`/remote.php/dav/calendars/{username}/`). Events from
+different rooms are fully isolated.
 
 - Upstream: [Configuration Management](../base/config.md) provides `WebDavConfig`
-  plus calendar name
-- Downstream: [Agent Harness](../agent-harness.md) exposes calendar event
-  access to the AI agent via the calendar tool
+  (server URL, credentials)
+- Downstream: [Agent Harness](../agent-harness.md) injects `room_id` + `webdav_dir`
+  into calendar tool arguments, triggering per-room calendar auto-creation
 
 ## 2. Diagram
 
@@ -23,25 +24,29 @@ rooms and should be visible to any agent in any room.
 ```mermaid
 flowchart TD
     CALLER[Calling Subsystem]
-    CAL_CFG[(WebDavConfig + calendar-name)]
+    CAL_CFG[(WebDavConfig)]
     HTTP(HttpClient)
     NC[(NextCloud CalDAV)]
+    AUTO(EnsureCalendar)
     LIST(ListEventsByDate)
     GET(GetEvent)
     ADD(AddEvent)
     UPD(UpdateEvent)
     DEL(DeleteEvent)
 
-    CALLER -->|"date range"| LIST
-    CALLER -->|"event uid"| GET
-    CALLER -->|"event details"| ADD
-    CALLER -->|"event uid + updates"| UPD
-    CALLER -->|"event uid"| DEL
-    CAL_CFG -->|"caldav url + credentials"| LIST
-    CAL_CFG -->|"caldav url + credentials"| GET
-    CAL_CFG -->|"caldav url + credentials"| ADD
-    CAL_CFG -->|"caldav url + credentials"| UPD
-    CAL_CFG -->|"caldav url + credentials"| DEL
+    CALLER -->|"date range + room_id"| LIST
+    CALLER -->|"event uid + room_id"| GET
+    CALLER -->|"event details + room_id"| ADD
+    CALLER -->|"event uid + updates + room_id"| UPD
+    CALLER -->|"event uid + room_id"| DEL
+
+    CAL_CFG -->|"server url + credentials"| AUTO
+    AUTO -->|"checks room calendar mapping"| LIST
+    AUTO -->|"checks room calendar mapping"| GET
+    AUTO -->|"checks room calendar mapping"| ADD
+    AUTO -->|"checks room calendar mapping"| UPD
+    AUTO -->|"checks room calendar mapping"| DEL
+
     LIST -->|"REPORT calendar-query xml"| HTTP
     GET -->|"GET .ics"| HTTP
     ADD -->|"PUT vevent ics body"| HTTP
@@ -60,9 +65,34 @@ flowchart TD
     DEL -->|"deleted"| CALLER
 ```
 
-### 2b. Calendar Operations Deep Dive
+### 2b. Calendar Auto-Creation Flow
 
-Per [NextCloud Calendar user guide](https://docs.nextcloud.com/server/latest/user_manual/en/groupware/calendar.html) and [RFC 4791](https://datatracker.ietf.org/doc/html/rfc4791). Events are iCalendar (RFC 5545) `VEVENT` objects. The CalDAV base URL is `/remote.php/dav/calendars/{username}/{calendar-name}/`. Each event is a resource named `{uid}.ics` within that collection.
+```mermaid
+flowchart TD
+    CALLER[Caller provides room_id]
+    MAP[(room_calendars HashMap)]
+    HTTP(HttpClient)
+    NC[(NextCloud CalDAV)]
+    CHECK{Calendar in map?}
+    EXISTS{Calendar exists on NC?}
+    CREATE(MKCALENDAR)
+    CAL_READY[Use per-room calendar URL]
+    CAL_ERR[Warn — proceed with operation]
+
+    CALLER --> CHECK
+    CHECK -->|yes, cached| CAL_READY
+    CHECK -->|no| EXISTS
+    EXISTS -->|yes via PROPFIND| MAP
+    EXISTS -->|no| CREATE
+    EXISTS -->|error| CAL_ERR
+    CREATE -->|201 created| MAP
+    CREATE -->|error| CAL_ERR
+    MAP --> CAL_READY
+```
+
+### 2c. Calendar Operations Deep Dive
+
+Per [NextCloud Calendar user guide](https://docs.nextcloud.com/server/latest/user_manual/en/groupware/calendar.html) and [RFC 4791](https://datatracker.ietf.org/doc/html/rfc4791). Events are iCalendar (RFC 5545) `VEVENT` objects. The CalDAV base URL is `/remote.php/dav/calendars/{username}/rockbot-{room_id}/`. Each event is a resource named `{uid}.ics` within that collection.
 
 ```mermaid
 flowchart TD
@@ -107,7 +137,7 @@ flowchart TD
     EVT_LIST -->|"parses time-range filtered vevents"| VEVENTStructure
 ```
 
-### 2c. Error Handling & Fallbacks
+### 2d. Error Handling & Fallbacks
 
 ```mermaid
 flowchart TD
@@ -119,13 +149,15 @@ flowchart TD
     CAL_UPD(UpdateEvent)
     CAL_REFETCH(RefetchEvent)
     CAL_RETRY(RetryUpdate)
+    CAL_AUTO_ERR[MKCALENDAR failed]
 
+    CAL_AUTO_ERR -.->|"log warn, still attempt operation"| HTTP
     CAL_UPD -.->|"409 conflict: etag mismatch"| ERR_CONFLICT
     HTTP -.->|"400 bad request"| ERR_BAD_ICS
     HTTP -.->|"404 not found"| ERR_404
 ```
 
-Note: The 409 Conflict retry loop (refetch → merge → retry with new etag) is not yet implemented. Calendar update returns an error on etag mismatch.
+Note: The 409 Conflict retry loop (refetch → merge → retry with new etag) is not yet implemented. Calendar update returns an error on etag mismatch. MKCALENDAR failure (permissions, unsupported) is non-fatal — the operation still proceeds against the target URL.
 
 ## 3. Data Structures
 
@@ -156,22 +188,36 @@ Stored as `{uid}.ics` within the calendar collection.
 | `action` | `String` | `DISPLAY` or `EMAIL`                          |
 | `trigger`| `String` | Duration before event (`-PT15M`) or absolute   |
 
+#### Room Calendar Mapping
+
+| Field           | Type                                | Notes                                                 |
+| --------------- | ----------------------------------- | ----------------------------------------------------- |
+| room_calendars  | `HashMap<String, String>`           | `room_id → calendar_name` mapping (in-memory, `Mutex`)|
+
 #### `WebDavPath` (calendar methods)
 
-Calendar paths are built via `CalendarTool::caldav_url()` and
-`WebDavConfig::caldav_base_url()` — the CalDAV endpoint is a separate URL
-(`/remote.php/dav/calendars/{user}/{calendar}/`) independent of the WebDAV
-file storage root. `WebDavPath` does **not** provide calendar-specific
-methods.
+Calendar paths are built via `CalendarTool::caldav_url_for_room(room_id)` — the
+CalDAV endpoint is a separate URL (`/remote.php/dav/calendars/{user}/rockbot-{room_id}/`)
+independent of the WebDAV file storage root. `WebDavPath` does **not** provide
+calendar-specific methods.
 
-| Method                      | Returns  | Notes                             |
-| --------------------------- | -------- | --------------------------------- |
-| `caldav_base_url(calendar)` | `String` | `/remote.php/dav/calendars/{user}/{calendar}/` (via `WebDavConfig`) |
-| `caldav_url()`              | `String` | Same URL, constructed by `CalendarTool` from stored config |
+| Method                              | Returns  | Notes                             |
+| ----------------------------------- | -------- | --------------------------------- |
+| `caldav_base_url(calendar, username, origin)` | `String` | `/remote.php/dav/calendars/{user}/{calendar}/` |
+| `caldav_url_for_room(room_id)`      | `String` | Same URL constructed by `CalendarTool` with auto-created per-room calendar |
 
 ## 4. NextCloud API Reference
 
 Per [NextCloud Calendar user guide](https://docs.nextcloud.com/server/latest/user_manual/en/groupware/calendar.html), [RFC 4791](https://datatracker.ietf.org/doc/html/rfc4791) (CalDAV), and [RFC 5545](https://datatracker.ietf.org/doc/html/rfc5545) (iCalendar). NextCloud serves CalDAV at `/remote.php/dav/calendars/{user}/{calendar-name}/`.
+
+### New: Create Calendar
+
+| DFD Operation   | HTTP Method  | Endpoint / Headers                                     | Notes                                                    |
+| --------------- | ------------ | ------------------------------------------------------ | -------------------------------------------------------- |
+| EnsureCalendar  | `MKCALENDAR` | `{origin}/remote.php/dav/calendars/{user}/{cal-name}/` | Creates a new calendar collection if it doesn't exist    |
+| CalendarExists  | `PROPFIND`   | `{origin}/remote.php/dav/calendars/{user}/{cal-name}/` | Depth: 0, check for 207 response                         |
+
+### Event Operations
 
 | DFD Operation       | HTTP Method | Endpoint / Headers                        | Notes                                           |
 | ------------------- | ----------- | ----------------------------------------- | ----------------------------------------------- |
@@ -180,6 +226,22 @@ Per [NextCloud Calendar user guide](https://docs.nextcloud.com/server/latest/use
 | AddEvent            | `PUT`       | `{base}/calendars/{user}/{cal}/{uid}.ics` | Body = `VEVENT` iCalendar (RFC 5545)            |
 | UpdateEvent         | `PUT`       | `{base}/calendars/{user}/{cal}/{uid}.ics` | `If-Match: {etag}` header; 409 on conflict      |
 | DeleteEvent         | `DELETE`    | `{base}/calendars/{user}/{cal}/{uid}.ics` | 204 on success, 404 if not found                |
+
+#### `MKCALENDAR` request body
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<C:mkcalendar xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:set>
+    <D:prop>
+      <D:displayname>{Display Name}</D:displayname>
+      <C:supported-calendar-component-set>
+        <C:comp name="VEVENT"/>
+      </C:supported-calendar-component-set>
+    </D:prop>
+  </D:set>
+</C:mkcalendar>
+```
 
 #### `calendar-query` REPORT body (listing events for a date)
 
