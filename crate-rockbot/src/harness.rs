@@ -353,9 +353,9 @@ fn inject_room_context(arguments: &str, room_id: &str, webdav_dir: &str) -> Stri
 
 fn compute_webdav_dir(room_name: &str, is_dm: bool) -> String {
     if is_dm {
-        format!("dms/{}", room_name)
+        format!("d-{}", room_name)
     } else {
-        format!("rooms/{}", room_name)
+        format!("r-{}", room_name)
     }
 }
 
@@ -635,54 +635,51 @@ chat = "mock-model"
     #[test]
     fn test_inject_room_context() {
         let args = r#"{"action":"read","path":"notes.txt"}"#;
-        let result = inject_room_context(args, "general", "rooms/general");
+        let result = inject_room_context(args, "general", "r-general");
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["room_id"], "general");
-        assert_eq!(parsed["webdav_dir"], "rooms/general");
+        assert_eq!(parsed["webdav_dir"], "r-general");
         assert_eq!(parsed["action"], "read");
     }
 
     #[test]
     fn test_inject_room_context_for_image_gen() {
         let args = r#"{"prompt":"test","room_id":"x"}"#;
-        let result = inject_room_context(args, "general", "rooms/general");
+        let result = inject_room_context(args, "general", "r-general");
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["room_id"], "general");
-        assert_eq!(parsed["webdav_dir"], "rooms/general");
+        assert_eq!(parsed["webdav_dir"], "r-general");
     }
 
     #[test]
     fn test_compute_webdav_dir_channel() {
-        assert_eq!(compute_webdav_dir("atomkb", false), "rooms/atomkb");
+        assert_eq!(compute_webdav_dir("atomkb", false), "r-atomkb");
     }
 
     #[test]
     fn test_compute_webdav_dir_dm() {
-        assert_eq!(compute_webdav_dir("saru", true), "dms/saru");
+        assert_eq!(compute_webdav_dir("saru", true), "d-saru");
     }
 
     #[test]
     fn test_compute_webdav_dir_channel_with_hyphens() {
-        assert_eq!(
-            compute_webdav_dir("my-team-room", false),
-            "rooms/my-team-room"
-        );
+        assert_eq!(compute_webdav_dir("my-team-room", false), "r-my-team-room");
     }
 
     #[test]
     fn test_compute_webdav_dir_dm_with_dots() {
-        assert_eq!(compute_webdav_dir("john.doe", true), "dms/john.doe");
+        assert_eq!(compute_webdav_dir("john.doe", true), "d-john.doe");
     }
 
     #[test]
     fn test_compute_webdav_dir_unicode_name() {
-        assert_eq!(compute_webdav_dir("日本語", false), "rooms/日本語");
-        assert_eq!(compute_webdav_dir("中文", true), "dms/中文");
+        assert_eq!(compute_webdav_dir("日本語", false), "r-日本語");
+        assert_eq!(compute_webdav_dir("中文", true), "d-中文");
     }
 
     #[test]
     fn test_compute_webdav_dir_empty_name() {
-        assert_eq!(compute_webdav_dir("", false), "rooms/");
-        assert_eq!(compute_webdav_dir("", true), "dms/");
+        assert_eq!(compute_webdav_dir("", false), "r-");
+        assert_eq!(compute_webdav_dir("", true), "d-");
     }
 }

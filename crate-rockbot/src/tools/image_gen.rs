@@ -218,9 +218,9 @@ mod tests {
         let args = serde_json::json!({
             "prompt": "a cat",
             "room_id": "uuid-123",
-            "webdav_dir": "dms/saru"
+            "webdav_dir": "d-saru"
         });
-        assert_eq!(args["webdav_dir"], "dms/saru");
+        assert_eq!(args["webdav_dir"], "d-saru");
         assert_eq!(args["room_id"], "uuid-123");
     }
 

@@ -109,8 +109,21 @@ impl<'a> MessageFilter<'a> {
 
         let (room_name, is_dm) = if args.len() > 1 {
             let name = args[1]
-                .get("roomName")
+                .get("name")
                 .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .or_else(|| {
+                    args[1]
+                        .get("roomName")
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty())
+                })
+                .or_else(|| {
+                    args[1]
+                        .get("fname")
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty())
+                })
                 .unwrap_or("")
                 .to_string();
             let dm = name.is_empty() || name == "DIRECT_MESSAGES";

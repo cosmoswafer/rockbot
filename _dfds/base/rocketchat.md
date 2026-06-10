@@ -256,18 +256,19 @@ definition and how it is populated.
 | ------------- | ----------------- | --------------------------------------------------- |
 | `msg_id`      | `Option<String>`  | `raw["id"]` — DDP message ID                        |
 | `room_id`     | `String`          | `args[0]["rid"]` — RocketChat room ID               |
-| `room_name`   | `String`          | `args[1]["roomName"]` — `""` or `"DIRECT_MESSAGES"` for DMs |
+| `room_name`   | `String`          | `args[1]["name"]` (display name) → `args[1]["roomName"]` (slug) → `args[1]["fname"]`. `""` or `"DIRECT_MESSAGES"` for DMs |
 | `sender_name` | `String`          | `args[0]["u"]["username"]` — sender username         |
 | `sender_id`   | `String`          | `args[0]["u"]["_id"]` — sender user ID               |
 | `text`        | `String`          | `args[0]["msg"]` — message body                      |
 | `is_dm`       | `bool`            | `true` when `room_name` is empty or `"DIRECT_MESSAGES"` |
 | `timestamp`   | `Option<i64>`     | `args[0]["ts"]["$date"]` — Unix ms epoch             |
 
-The agent harness resolves `room_name` for WebDAV directory naming:
-- **Channel** (e.g. `#atomkb`): DDP supplies `roomName: "atomkb"` → WebDAV dir `rooms/atomkb/`
-- **Direct message** (e.g. from `saru`): DDP supplies empty or `"DIRECT_MESSAGES"` → falls back to `sender_name` → WebDAV dir `dms/saru/`
+The agent harness computes `webdav_dir` for WebDAV storage:
+- **Channel** (e.g. `#原子知识库`): DDP supplies `name: "原子知识库"` → `webdav_dir: "r-原子知识库"`
+- **Channel fallback** (`name` missing): DDP supplies `roomName: "atomkb"` → `webdav_dir: "r-atomkb"`
+- **Direct message** (e.g. from `saru`): DDP `name` empty → falls back to `sender_name: "saru"` → `webdav_dir: "d-saru"`
 
-The `rooms/` and `dms/` prefixes prevent collisions between a channel and a DM user with the same slug.
+The flat `r-`/`d-` prefixes prevent collisions between a channel and a DM user with the same slug.
 
 #### `BotReply`
 

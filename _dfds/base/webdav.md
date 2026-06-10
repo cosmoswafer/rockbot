@@ -8,12 +8,13 @@ archives, and image assets — is stored remotely; the bot never writes to local
 disk. Each room gets its own directory subtree, created proactively on first
 use.
 
-**Room name isolation:** Directories use human-readable room names with
-namespace prefixes — `rooms/{name}/` for channels (e.g. `rooms/atomkb/`) and
-`dms/{name}/` for direct messages (e.g. `dms/saru/`). The prefixes prevent
+**Room name isolation:** Directories use a flat structure with type prefixes —
+`r-{name}/` for channels (e.g. `r-原子知识库/` or `r-atomkb/`) and
+`d-{name}/` for direct messages (e.g. `d-saru/`). The prefixes prevent
 collisions between a channel and a DM user with the same slug. The harness
-computes the `webdav_dir` from `room_name` + `is_dm` and injects it into tool
-arguments; the raw `room_id` UUID is never used for WebDAV path construction.
+computes the `webdav_dir` from the room's display name (DDP `name` field,
+falling back to `roomName`) + `is_dm` and injects it into tool arguments;
+the raw `room_id` UUID is never used for WebDAV path construction.
 
 The WebDAV client is used both internally (by `harness.rs` for room message
 archiving) and as an AI-callable tool (`WebDavTool` in `tools/webdav.rs`) that
@@ -122,35 +123,32 @@ flowchart TD
 
 ### 2d. Directory Structure Deep Dive
 
-All room data is namespaced under `rooms/` (channels) or `dms/` (direct messages).
-The harness injects `webdav_dir` (e.g. `"rooms/atomkb"`) into tool arguments so
-every read, write, and archive call targets the correct room subtree.
+All room data lives at the root level with type prefixes — `r-` for channels,
+`d-` for direct messages. The harness injects `webdav_dir` (e.g. `"r-atomkb"`)
+into tool arguments so every read, write, and archive call targets the correct
+room subtree.
 
 ```mermaid
 flowchart TD
     ROOT[(WebDAV Root)]
-    ROOMS[(rooms/)]
-    DMS[(dms/)]
-    CH_ATOM[(atomkb)]
-    CH_PROJ[(project-x)]
-    DM_SARU[(saru)]
-    MEM_CH_ATOM[(atomkb/memory)]
-    MEM_CH_PROJ[(project-x/memory)]
-    MEM_DM_SARU[(saru/memory)]
-    IMG_CH_ATOM[(atomkb/images)]
-    IMG_CH_PROJ[(project-x/images)]
-    IMG_DM_SARU[(saru/images)]
-    WSP_CH_ATOM[(atomkb/workspace)]
-    WSP_CH_PROJ[(project-x/workspace)]
-    WSP_DM_SARU[(saru/workspace)]
+    CH_ATOM[(r-atomkb)]
+    CH_PROJ[(r-project-x)]
+    DM_SARU[(d-saru)]
+    MEM_CH_ATOM[(r-atomkb/memory)]
+    MEM_CH_PROJ[(r-project-x/memory)]
+    MEM_DM_SARU[(d-saru/memory)]
+    IMG_CH_ATOM[(r-atomkb/images)]
+    IMG_CH_PROJ[(r-project-x/images)]
+    IMG_DM_SARU[(d-saru/images)]
+    WSP_CH_ATOM[(r-atomkb/workspace)]
+    WSP_CH_PROJ[(r-project-x/workspace)]
+    WSP_DM_SARU[(d-saru/workspace)]
     CFG_DIR[(config/)]
 
-    ROOT --> ROOMS
-    ROOT --> DMS
+    ROOT --> CH_ATOM
+    ROOT --> CH_PROJ
+    ROOT --> DM_SARU
     ROOT --> CFG_DIR
-    ROOMS --> CH_ATOM
-    ROOMS --> CH_PROJ
-    DMS --> DM_SARU
     CH_ATOM --> MEM_CH_ATOM
     CH_ATOM --> IMG_CH_ATOM
     CH_ATOM --> WSP_CH_ATOM
@@ -184,10 +182,10 @@ flowchart TD
 
 #### `WebDavPath`
 
-All methods accept a `dir_key` — either a plain room name (for backwards
-compatibility) or a namespaced `webdav_dir` such as `rooms/atomkb` or
-`dms/saru`. The harness computes and injects `webdav_dir`; the raw
-RocketChat room UUID is never used as a path segment.
+All methods accept a `dir_key` — a flat type-prefixed `webdav_dir` such as
+`r-atomkb` or `d-saru`. The harness computes and injects `webdav_dir` from
+the room's display name; the raw RocketChat room UUID is never used as a
+path segment.
 
 | Method                  | Returns    | Notes                                    |
 | ----------------------- | ---------- | ---------------------------------------- |

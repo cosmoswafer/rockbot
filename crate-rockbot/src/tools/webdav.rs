@@ -340,8 +340,8 @@ mod tests {
         let client = webdav::WebDavClient::new("https://example.com", "user", "pass").unwrap();
         let tool = WebDavTool::new(client);
         assert_eq!(
-            tool.room_path("rooms/atomkb", "notes.txt"),
-            "//rooms/atomkb/notes.txt"
+            tool.room_path("r-atomkb", "notes.txt"),
+            "//r-atomkb/notes.txt"
         );
     }
 
@@ -349,23 +349,20 @@ mod tests {
     fn test_webdav_dir_dm_path() {
         let client = webdav::WebDavClient::new("https://example.com", "user", "pass").unwrap();
         let tool = WebDavTool::new(client);
-        assert_eq!(
-            tool.room_path("dms/saru", "data.csv"),
-            "//dms/saru/data.csv"
-        );
+        assert_eq!(tool.room_path("d-saru", "data.csv"), "//d-saru/data.csv");
     }
 
     #[test]
     fn test_webdav_dir_channel_dir() {
         let client = webdav::WebDavClient::new("https://example.com", "user", "pass").unwrap();
         let tool = WebDavTool::new(client);
-        assert_eq!(tool.room_dir("rooms/general"), "//rooms/general/");
+        assert_eq!(tool.room_dir("r-general"), "//r-general/");
     }
 
     #[test]
     fn test_webdav_dir_dm_dir() {
         let client = webdav::WebDavClient::new("https://example.com", "user", "pass").unwrap();
         let tool = WebDavTool::new(client);
-        assert_eq!(tool.room_dir("dms/alice"), "//dms/alice/");
+        assert_eq!(tool.room_dir("d-alice"), "//d-alice/");
     }
 }
