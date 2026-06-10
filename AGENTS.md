@@ -21,14 +21,16 @@ example.config.toml   # template for config; real config.toml is gitignored
 - Start the bot in background:
 
   ```bash
-  nohup ./target/release/rockbot > ./tmp/rockbot.log 2>&1 &
+  nohup ./target/release/rockbot < /dev/null > ./tmp/rockbot.log 2>&1 &
   ```
 
 - Restart the bot:
 
   ```bash
-  pkill -f './target/release/rockbot' 2>/dev/null; sleep 1; nohup ./target/release/rockbot > ./tmp/rockbot.log 2>&1 &
+  pkill rockbot 2>/dev/null; sleep 1; nohup ./target/release/rockbot < /dev/null > ./tmp/rockbot.log 2>&1 &
   ```
+
+  Note: Use `pkill rockbot` (by process name) — **not** `pkill -f` (full cmdline). The `-f` flag reads `/proc/*/cmdline` which can hang on systems with stuck D-state kernel threads.
 
 ## Build & test
 
