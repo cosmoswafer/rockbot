@@ -8,7 +8,7 @@ pub struct AppConfig {
     #[serde(default)]
     pub providers: Vec<ProviderConfig>,
     #[serde(default)]
-    pub tools: Vec<ToolServiceConfig>,
+    pub tools: HashMap<String, ToolServiceConfig>,
     #[serde(default)]
     pub webdav: Option<WebDavConfig>,
 }
@@ -48,7 +48,6 @@ fn default_max_text_length() -> usize {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ToolServiceConfig {
-    pub name: String,
     pub api_key: String,
 }
 
@@ -92,7 +91,7 @@ impl AppConfig {
     }
 
     pub fn find_tool(&self, name: &str) -> Option<&ToolServiceConfig> {
-        self.tools.iter().find(|t| t.name == name)
+        self.tools.get(name)
     }
 
     pub fn resolve_model(&self, provider_name: &str, model_alias: &str) -> Option<String> {

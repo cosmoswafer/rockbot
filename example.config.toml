@@ -1,5 +1,4 @@
-[[tools]]
-name = "exa"
+[tools.exa]
 api_key = "EDITME"
 
 [[providers]]

@@ -183,14 +183,13 @@ base_url = "https://openrouter.ai/api/v1"
 [providers.models]
 deepseek = "deepseek/deepseek-v3.2:online"
 
-[[tools]]
-name = "exa"
+[tools.exa]
 api_key = "exa-key-123"
 "#;
     let config = AppConfig::from_str(toml).unwrap();
     assert_eq!(config.tools.len(), 1);
-    assert_eq!(config.tools[0].name, "exa");
-    assert_eq!(config.tools[0].api_key, "exa-key-123");
+    let exa = config.tools.get("exa").unwrap();
+    assert_eq!(exa.api_key, "exa-key-123");
 }
 
 #[test]
@@ -216,12 +215,10 @@ base_url = "https://openrouter.ai/api/v1"
 [providers.models]
 deepseek = "deepseek/deepseek-v3.2:online"
 
-[[tools]]
-name = "exa"
+[tools.exa]
 api_key = "exa-key-123"
 
-[[tools]]
-name = "vision"
+[tools.vision]
 api_key = "vis-key-456"
 "#;
     let config = AppConfig::from_str(toml).unwrap();

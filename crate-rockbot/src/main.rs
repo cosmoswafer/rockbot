@@ -98,7 +98,8 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let exa_key = config
-        .find_tool("exa")
+        .tools
+        .get("exa")
         .map(|t| t.api_key.clone())
         .or_else(|| env::var("EXA_API_KEY").ok())
         .unwrap_or_default();
