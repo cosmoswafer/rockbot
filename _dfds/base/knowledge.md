@@ -164,10 +164,16 @@ flowchart TD
 
 ### 2e. Retrieval Deep Dive — Matching When Useful
 
+Knowledge is scoped per-room: `index.json` and `.md` files live under
+`{root}/{webdav_dir}/knowledge/`. Retrieval loads the calling room's
+index and scores entries against that room's recent conversation
+messages.
+
 ```mermaid
 flowchart TD
     INIT[Room Init or<br/>recall_knowledge Call]
-    GET_IDX[GET index.json]
+    ROOM["webdav_dir<br/>(r-general / d-alice)"]
+    GET_IDX["GET<br/>{root}/{webdav_dir}/knowledge/index.json"]
     DAV[(NextCloud WebDAV)]
     CTX_MSGS[Recent Conversation Messages]
     EXTRACT_KW[Extract Keywords]
@@ -178,7 +184,8 @@ flowchart TD
     INJECT[BuildContext]
     SKIP[Skip]
 
-    INIT --> GET_IDX
+    INIT --> ROOM
+    ROOM -->|"room-scoped path"| GET_IDX
     GET_IDX -->|"parse entries"| SCORE
     CTX_MSGS -->|"text of last N messages"| EXTRACT_KW
     EXTRACT_KW -->|"tokenized keywords"| SCORE

@@ -130,10 +130,10 @@ flowchart TD
 
 | Field        | Type                | Notes                                      |
 | ------------ | ------------------- | ------------------------------------------ |
-| `room_id`    | `String`            | RocketChat room/channel identifier         |
+| `room_id`    | `String`            | RocketChat room UUID (in-memory lookup key, not a path segment) |
 | `is_dm`      | `bool`              | True if direct message room                |
 | `history`    | `ConversationHistory`| In-memory message buffer for this room     |
-| `webdav_root`| `String`            | `/{root}/{room_id}/` path prefix           |
+| `webdav_dir` | `String`            | Type-prefixed WebDAV path key (`r-`/`d-`), computed from `room_name`/`room_fname`/`is_dm` |
 
 #### `LifecycleSignal`
 
