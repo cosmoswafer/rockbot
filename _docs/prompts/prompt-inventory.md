@@ -92,11 +92,11 @@ existing values. Optional for both: description, location, rrule (recurrence rul
 ```
 
 ### 3g. `image_gen`
-**File:** `crate-rockbot/src/tools/image_gen.rs:87-91`
+**File:** `crate-rockbot/src/tools/image_gen.rs:87-92`
 ```
 Generate an image using fal.ai. Specify a prompt and an optional model_id (defaults to
-fal-ai/flux/schnell for fast generation). Images are stored on WebDAV and the path is
-returned.
+fal-ai/flux/schnell for fast generation). Returns both the WebDAV path and the original
+fal.ai CDN URL — prefer the fal.ai URL when sharing the image with the user.
 ```
 
 ### 3h. `edit_soul`

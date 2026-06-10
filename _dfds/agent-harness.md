@@ -153,9 +153,17 @@ flowchart TD
 ### 2e. Image Generation Pipeline
 
 The `image_gen` tool uses the fal.ai queue API (async submit + poll for result):
-a prompt is submitted to `queue.fal.run/{model_id}`, the status is polled until
-COMPLETED, the generated image URL is downloaded, uploaded to WebDAV, and the
-WebDAV URL is returned as the tool result.
+a prompt is submitted to `https://queue.fal.run/{model_id}`, the status is polled
+via `https://queue.fal.run/{model_id}/requests/{request_id}/status` until
+COMPLETED, then the result is fetched from
+`https://queue.fal.run/{model_id}/requests/{request_id}`. The generated image URL
+is downloaded and uploaded to WebDAV. The tool result includes **both** the
+WebDAV path and the original fal.ai CDN URL — the LLM should include the
+fal.ai URL in its response to the user so they can view/share the image
+directly.
+
+> **fal.ai API docs:** https://fal.ai/docs — see Model APIs section for
+> queue/submit/poll/result endpoints.
 
 ```mermaid
 flowchart TD
@@ -167,7 +175,7 @@ flowchart TD
     DOWNLOAD(DownloadImageBytes)
     PUT(PutToWebDAV)
     DAV[(WebDAV images)]
-    RESULT[ToolResult]
+    RESULT[ToolResult<br/>webdav_path + fal.ai URL]
 
     PROMPT -->|"prompt + model_id"| SUBMIT
     SUBMIT -->|"request_id"| QUEUE
@@ -176,7 +184,8 @@ flowchart TD
     GET -->|"image url"| DOWNLOAD
     DOWNLOAD -->|"image bytes"| PUT
     DAV -->|"storage target"| PUT
-    PUT -->|"webdav image url"| RESULT
+    FAL_URL["fal.ai CDN URL"] -.-> RESULT
+    PUT -->|"webdav path"| RESULT
 ```
 
 ### 2f. Per-Room State Routing
@@ -261,7 +270,7 @@ flowchart TD
 | `web_fetch`   | Fetch a URL, optionally as markdown              | `url: string, markdown: bool`      |
 | `vision`      | Download an image and report metadata _(true vision — sending image data to AI provider — is planned)_ | `url: string, prompt: string`      |
 | `webdav`      | Read, write, edit, list, mkdir, delete, and check existence in the room's WebDAV directory | `action: string, path: string, content?: string, oldString?: string, newString?: string` |
-| `image_gen`   | Generate an image using fal.ai models _(requires `fal` provider in config)_ | `prompt: string, model_id: string` |
+| `image_gen`   | Generate an image using fal.ai models; returns both the WebDAV path and the original fal.ai CDN URL — prefer the fal.ai URL in responses _(requires `fal` provider in config)_ | `prompt: string, model_id: string` |
 | `calendar`    | Manage calendar events via CalDAV _(requires WebDAV + calendar_name)_ | `action: string, uid?: string, summary?: string, ...` |
 | `datetime`    | Get current date/time in various formats           | `timezone: string, format: string` |
 | `edit_soul`   | Edit the bot's permanent core memory per room (Layer 3) | `action: string, section_header: string, content: string` |

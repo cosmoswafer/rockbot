@@ -87,7 +87,8 @@ impl Tool for ImageGenTool {
     fn description(&self) -> &str {
         "Generate an image using fal.ai. Specify a prompt and an optional model_id \
          (defaults to fal-ai/flux/schnell for fast generation). \
-         Images are stored on WebDAV and the path is returned."
+         Returns both the WebDAV path and the original fal.ai CDN URL — prefer \
+         the fal.ai URL when sharing the image with the user."
     }
 
     fn parameters(&self) -> serde_json::Value {

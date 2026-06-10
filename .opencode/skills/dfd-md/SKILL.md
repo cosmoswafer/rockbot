@@ -27,6 +27,24 @@ DFD must be:
   repeat the same data structure or flow in multiple DFDs; reference the
   original document instead
 
+## DFD-Driven Development Workflow
+
+DFDs drive implementation, not the other way around. Follow this process:
+
+1. **DFD first** — design or update the DFD before writing any implementation
+   code. The diagram defines the data flows, processes, and stores before
+   any source file is touched.
+2. **Review each DFD alongside its implementation** — after coding, re-read
+   the DFD and verify every flow, process, and store is correctly realized
+   in the code. Fix gaps or mismatches before moving on.
+3. **Implement one DFD at a time** — complete all implementation, review, and
+   testing for a single DFD before starting the next. Do not work on multiple
+   DFDs in parallel.
+4. **Run the full test suite comprehensively** — after implementing each DFD,
+   run `cargo test` (or the project's equivalent) and fix all failures before
+   proceeding. This ensures each DFD's implementation is fully functional and
+   doesn't regress existing code.
+
 ## Notation
 
 ### Symbol Mapping
