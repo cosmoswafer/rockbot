@@ -18,25 +18,13 @@ example.config.toml   # template for config; real config.toml is gitignored
 ## Runtime
 
 - Use `./tmp/` for runtime temporary files (logs, state, etc.). Never use `/tmp/` or other system-wide temp directories.
-- Start the bot in background:
-
-  ```bash
-  nohup ./target/release/rockbot < /dev/null > ./tmp/rockbot.log 2>&1 &
-  ```
-
-- Restart the bot:
-
-  ```bash
-  pkill rockbot 2>/dev/null; sleep 1; nohup ./target/release/rockbot < /dev/null > ./tmp/rockbot.log 2>&1 &
-  ```
-
-  Note: Use `pkill rockbot` (by process name) — **not** `pkill -f` (full cmdline). The `-f` flag reads `/proc/*/cmdline` which can hang on systems with stuck D-state kernel threads.
+- Start the bot: `./target/release/rockbot &> ./tmp/rockbot.log &`
+- Restart: covered in Phase 3 — Ship (step 4).
+- Use `pkill rockbot` (process name) — **not** `pkill -f` (full cmdline). The `-f` flag reads `/proc/*/cmdline` which can hang on systems with stuck D-state kernel threads.
 
 ## Build & test
 
 ```bash
-cargo build --release                # workspace build (3 crates)
-
 # Run all unit + non-ignored integration tests:
 cargo test                           # from workspace root
 
@@ -72,13 +60,29 @@ No CI, no `rustfmt.toml`, no `clippy.toml`, no `rust-toolchain` file.
 
 ## DFD-driven implementation
 
-Data Flow Diagrams in `_dfds/` define the system's architecture. When a DFD is modified, align the Rust implementation to match:
+Data Flow Diagrams in `_dfds/` define the system's architecture. The full development flow follows these phases in order:
 
-1. **Read the changed DFD** to understand the updated data flow, process steps, and decision nodes.
-2. **Map DFD processes to source files** — each DFD rectangle/process node typically corresponds to a function, method, or module. Use the DFD annotations (e.g. references to `src/harness.rs`, `src/memory.rs`) as entry points.
-3. **Implement in iteration order** — follow the DFD flow top-to-bottom. Start with data structure changes (`types.rs`, `config.rs`), then the core logic (harness, provider, tools), then wiring (`main.rs`, `lib.rs`).
-4. **Add/update tests** in the corresponding test file (inline `#[cfg(test)]` modules for unit tests, `tests/*.rs` for integration). Mock external dependencies (HTTP, WebDAV, RocketChat) — see existing `wiremock` patterns in `integration_mock.rs`.
-5. **Verify with `cargo test`** — all tests must pass before committing. Run `cargo fmt` and `cargo clippy` to keep code clean.
+### Phase 1 — DFD design (no code)
+
+Design or update DFDs first. Do not touch any Rust source code until the DFDs are finalized.
+
+### Phase 2 — Iterative DFD review & implementation
+
+For each DFD (ordered by the DFD-to-code mapping table below):
+
+1. **Read the DFD** to understand the data flow, process steps, and decision nodes.
+2. **Review the existing implementation** against the DFD — identify gaps, mismatches, or missing logic.
+3. **Implement findings** — map DFD processes to source files, add/modify code in iteration order (types/config → core logic → wiring).
+4. **Deep review** — re-read the DFD and re-check the implementation. Repeat steps 2–4 until the code fully aligns with the DFD.
+5. **Add/update tests** in the corresponding test file (inline `#[cfg(test)]` modules for unit tests, `tests/*.rs` for integration). Mock external dependencies (HTTP, WebDAV, RocketChat) — see existing `wiremock` patterns in `integration_mock.rs`.
+6. **Run full test suite** — `cargo test` (all non-ignored tests). Ensure tests cover all DFD paths and the latest changes. Fix any failures until all tests pass.
+
+### Phase 3 — Ship
+
+1. **Build release**: `cargo build --release`
+2. **Commit**: `git add -A` and `git commit` with a descriptive message.
+3. **Push**: `git push`
+4. **Restart bot**: `pkill rockbot 2>/dev/null; sleep 1; nohup ./target/release/rockbot < /dev/null > ./tmp/rockbot.log 2>&1 &`
 
 ### DFD-to-code mapping
 
@@ -90,6 +94,7 @@ Data Flow Diagrams in `_dfds/` define the system's architecture. When a DFD is m
 | `base/config.md` | `config.rs` | `example.config.toml` |
 | `base/memory.md` | `memory.rs` | `harness.rs`, webdav crate (`client.rs`, `path.rs`) |
 | `base/rocketchat.md` | rocketchat crate (`client.rs`, `ddp.rs`, `types.rs`) | — |
+| `base/room-cache.md` | rocketchat crate (`client.rs`, `ddp.rs`, `types.rs`) | — |
 | `tools/webdav.md` | `tools/webdav.rs` | webdav crate (`client.rs`, `path.rs`) |
 | `tools/calendar.md` | `tools/calendar.rs` | webdav crate (`client.rs`, `path.rs`) |
 | `tools/exa-search.md` | `tools/web_search.rs` | `tools/web_fetch.rs` |
