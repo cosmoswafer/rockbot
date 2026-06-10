@@ -9,9 +9,10 @@ use tracing::{debug, error, info, warn};
 use crate::config::RocketChatConfig;
 use crate::ddp;
 use crate::error::{Result, RocketChatError};
-use crate::types::{IncomingMessage, MessageFilter};
+use crate::types::{IncomingMessage, MessageFilter, RoomCache};
 
 const SUBSCRIPTION_ID: &str = "ABCROCK";
+const ROOMS_SUB_ID: &str = "ROCKROOMS";
 
 static INIT_CRYPTO: Once = Once::new();
 
@@ -76,6 +77,7 @@ pub struct RocketChatClient {
     username: String,
     bot_name: String,
     registered_rooms: HashMap<String, bool>,
+    room_cache: RoomCache,
 }
 
 impl RocketChatClient {
@@ -89,6 +91,7 @@ impl RocketChatClient {
             username,
             bot_name,
             registered_rooms: HashMap::new(),
+            room_cache: RoomCache::new(),
         }
     }
 
@@ -157,6 +160,17 @@ impl RocketChatClient {
         info!("Login successful, user_id={}", user_id);
         self.user_id = Some(user_id.clone());
 
+        // Subscribe to "rooms" to build RoomCache
+        let rooms_sub = ddp::subscribe_rooms_message(ROOMS_SUB_ID);
+        writer.lock().await.send(&rooms_sub).await?;
+
+        // Wait for rooms "ready" while collecting "added" events
+        Self::wait_for_rooms_ready(&mut read, &writer, &mut self.room_cache).await?;
+        info!(
+            "Rooms cache populated with {} entries",
+            self.room_cache.len()
+        );
+
         // Subscribe to stream-room-messages
         let sub_msg = ddp::subscribe_message(SUBSCRIPTION_ID);
         writer.lock().await.send(&sub_msg).await?;
@@ -203,8 +217,11 @@ impl RocketChatClient {
             if ddp::is_ping(&value) {
                 let pong = ddp::pong_message();
                 writer.lock().await.send(&pong).await?;
+            } else if ddp::is_added(&value) {
+                self.room_cache.insert_from_added(&value);
             } else if ddp::is_changed(&value) {
-                if let Some(msg) = MessageFilter::new(user_id.as_str()).filter(&value) {
+                let filter = MessageFilter::new(user_id.as_str());
+                if let Some(msg) = filter.filter(&value, Some(&self.room_cache)) {
                     let should_dispatch = msg.is_dm
                         || (!msg.room_name.is_empty() && msg.text.starts_with(&bot_name))
                         || (!registered_rooms.is_empty()
@@ -220,9 +237,17 @@ impl RocketChatClient {
                     }
                 }
             } else if ddp::is_nosub(&value) {
-                warn!("Received nosub, re-subscribing");
-                let sub_msg = ddp::subscribe_message(SUBSCRIPTION_ID);
-                writer.lock().await.send(&sub_msg).await?;
+                let subs = ddp::subs_list(&value);
+                if subs.iter().any(|s| s == ROOMS_SUB_ID) {
+                    warn!("Received nosub for rooms, re-subscribing");
+                    let rooms_sub = ddp::subscribe_rooms_message(ROOMS_SUB_ID);
+                    writer.lock().await.send(&rooms_sub).await?;
+                }
+                if subs.iter().any(|s| s == SUBSCRIPTION_ID) {
+                    warn!("Received nosub for stream-room-messages, re-subscribing");
+                    let sub_msg = ddp::subscribe_message(SUBSCRIPTION_ID);
+                    writer.lock().await.send(&sub_msg).await?;
+                }
             }
         }
 
@@ -257,6 +282,49 @@ impl RocketChatClient {
                 Message::Close(_) => {
                     return Err(RocketChatError::Protocol(
                         "Connection closed during setup".into(),
+                    ));
+                }
+                _ => continue,
+            }
+        }
+    }
+
+    /// Wait for the rooms subscription "ready" event while collecting
+    /// "added" events into the RoomCache.
+    async fn wait_for_rooms_ready(
+        read: &mut futures_util::stream::SplitStream<WsStream>,
+        writer: &Arc<Mutex<WriteHalf>>,
+        room_cache: &mut RoomCache,
+    ) -> Result<()> {
+        loop {
+            let frame = read
+                .next()
+                .await
+                .ok_or(RocketChatError::Protocol("Connection closed".into()))?
+                .map_err(|e| RocketChatError::WebSocket(Box::new(e)))?;
+
+            match frame {
+                Message::Text(text) => {
+                    let text_str: &str = &text;
+                    debug!("WS<<< {}", text_str);
+                    let value: serde_json::Value = serde_json::from_str(&text)?;
+
+                    if ddp::is_added(&value) {
+                        room_cache.insert_from_added(&value);
+                    } else if ddp::is_ready(&value) {
+                        let subs = ddp::subs_list(&value);
+                        if subs.iter().any(|s| s == ROOMS_SUB_ID) {
+                            debug!("Rooms subscription confirmed");
+                            return Ok(());
+                        }
+                    } else if ddp::is_ping(&value) {
+                        let pong = ddp::pong_message();
+                        writer.lock().await.send(&pong).await?;
+                    }
+                }
+                Message::Close(_) => {
+                    return Err(RocketChatError::Protocol(
+                        "Connection closed during rooms setup".into(),
                     ));
                 }
                 _ => continue,

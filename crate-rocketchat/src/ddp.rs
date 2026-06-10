@@ -115,6 +115,37 @@ pub fn is_result(value: &Value) -> bool {
     msg_field(value) == Some("result")
 }
 
+/// Build the DDP subscription message for the "rooms" collection.
+///
+/// Used to pre-populate the RoomCache at startup.
+pub fn subscribe_rooms_message(sub_id: &str) -> Value {
+    json!({
+        "msg": "sub",
+        "id": sub_id,
+        "name": "rooms",
+        "params": []
+    })
+}
+
+/// Check if a DDP message is an "added" event (rooms subscription).
+pub fn is_added(value: &Value) -> bool {
+    msg_field(value) == Some("added")
+}
+
+/// Extract the `subs` array from a DDP "ready" or "nosub" event to
+/// identify which subscription the event is for.
+pub fn subs_list(value: &Value) -> Vec<String> {
+    value
+        .get("subs")
+        .and_then(|s| s.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -236,5 +267,30 @@ mod tests {
 
     fn is_pong_msg(value: &Value) -> bool {
         msg_field(value) == Some("pong")
+    }
+
+    #[test]
+    fn test_subscribe_rooms_message() {
+        let msg = subscribe_rooms_message("ROCKROOMS");
+        assert_eq!(msg["msg"], "sub");
+        assert_eq!(msg["id"], "ROCKROOMS");
+        assert_eq!(msg["name"], "rooms");
+        assert!(msg["params"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_is_added() {
+        assert!(is_added(&serde_json::json!({"msg": "added"})));
+        assert!(!is_added(&serde_json::json!({"msg": "changed"})));
+    }
+
+    #[test]
+    fn test_subs_list() {
+        let v = serde_json::json!({"msg": "ready", "subs": ["ROCKROOMS"]});
+        assert_eq!(subs_list(&v), vec!["ROCKROOMS"]);
+        let v = serde_json::json!({"msg": "ready", "subs": ["A", "B"]});
+        assert_eq!(subs_list(&v), vec!["A", "B"]);
+        let v = serde_json::json!({"msg": "ready"});
+        assert!(subs_list(&v).is_empty());
     }
 }

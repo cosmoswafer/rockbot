@@ -100,7 +100,7 @@ fn test_filter_channel_message_with_fname() {
     });
 
     let filter = MessageFilter::new(bot_id);
-    let msg = filter.filter(&event).expect("Should parse message");
+    let msg = filter.filter(&event, None).expect("Should parse message");
 
     assert_eq!(msg.room_name, "shit");
     assert_eq!(msg.room_fname, "💩💩💩SHIT屎");
@@ -138,7 +138,7 @@ fn test_filter_channel_message_no_fname() {
     });
 
     let filter = MessageFilter::new(bot_id);
-    let msg = filter.filter(&event).expect("Should parse message");
+    let msg = filter.filter(&event, None).expect("Should parse message");
 
     assert_eq!(msg.room_name, "general");
     assert_eq!(msg.room_fname, "");
@@ -161,7 +161,7 @@ fn test_filter_skips_own_messages() {
     );
 
     let filter = MessageFilter::new(bot_id);
-    assert!(filter.filter(&event).is_none(), "Should skip own messages");
+    assert!(filter.filter(&event, None).is_none(), "Should skip own messages");
 }
 
 #[test]
@@ -173,7 +173,7 @@ fn test_filter_direct_message() {
     let event = make_changed_dm("msg1", "dmRoom1", "hello!", "user1", "user456");
 
     let filter = MessageFilter::new(bot_id);
-    let msg = filter.filter(&event).expect("Should not filter DM");
+    let msg = filter.filter(&event, None).expect("Should not filter DM");
 
     assert_eq!(msg.room_id, "dmRoom1");
     assert_eq!(msg.sender_name, "user1");
@@ -200,7 +200,7 @@ fn test_filter_registered_room() {
 
     let filter = MessageFilter::new(bot_id);
     let msg = filter
-        .filter(&event)
+        .filter(&event, None)
         .expect("Should accept registered room msg");
 
     assert_eq!(msg.room_name, "secret-room");
@@ -224,7 +224,7 @@ fn test_filter_non_registered_channel_no_mention() {
 
     let filter = MessageFilter::new(bot_id);
     let msg = filter
-        .filter(&event)
+        .filter(&event, None)
         .expect("Should parse but not dispatch");
 
     // The filter returns the message; dispatch decision is separate
@@ -263,7 +263,7 @@ fn test_parse_message_timestamp() {
     let _rooms: HashMap<String, bool> = HashMap::new();
 
     let filter = MessageFilter::new(bot_id);
-    let msg = filter.filter(&event).unwrap();
+    let msg = filter.filter(&event, None).unwrap();
 
     // timestamp is parsed from ts.$date
     assert_eq!(msg.timestamp, Some(1480377601000));

@@ -56,12 +56,23 @@ impl<'a> MessageFilter<'a> {
 
     /// Returns Some(IncomingMessage) if the event should be dispatched,
     /// or None if it should be filtered out.
-    pub fn filter(&self, raw: &serde_json::Value) -> Option<IncomingMessage> {
-        let msg = Self::parse_message(raw)?;
+    ///
+    /// When `room_cache` is provided, it is used to resolve `room_fname`
+    /// if the per-event `args[1].fname` is absent or empty.
+    pub fn filter(&self, raw: &serde_json::Value, room_cache: Option<&RoomCache>) -> Option<IncomingMessage> {
+        let mut msg = Self::parse_message(raw)?;
 
         // Skip messages from the bot itself
         if msg.sender_id == self.bot_user_id {
             return None;
+        }
+
+        if msg.room_fname.is_empty() {
+            if let Some(cache) = room_cache {
+                if let Some(cached_fname) = cache.get_fname(&msg.room_id) {
+                    msg.room_fname = cached_fname.to_string();
+                }
+            }
         }
 
         Some(msg)
@@ -180,5 +191,73 @@ impl<'a> MessageFilter<'a> {
         registered_rooms: &std::collections::HashMap<String, bool>,
     ) -> bool {
         registered_rooms.contains_key(room_name)
+    }
+}
+
+/// A cached room entry from the DDP "rooms" subscription.
+#[derive(Debug, Clone)]
+pub struct CachedRoom {
+    pub room_id: String,
+    pub name: String,
+    pub fname: String,
+    pub t: String,
+}
+
+/// In-memory cache of room metadata, keyed by RocketChat room UUID.
+///
+/// Populated at startup from the `"rooms"` DDP subscription and consulted
+/// on every incoming message to resolve `room_fname` when the per-event
+/// `args[1].fname` is absent or empty.
+#[derive(Debug, Clone, Default)]
+pub struct RoomCache {
+    rooms: std::collections::HashMap<String, CachedRoom>,
+}
+
+impl RoomCache {
+    pub fn new() -> Self {
+        Self {
+            rooms: std::collections::HashMap::new(),
+        }
+    }
+
+    pub fn insert_from_added(&mut self, raw: &serde_json::Value) {
+        let room_id = raw
+            .get("id")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        let fields = raw.get("fields");
+
+        if let (Some(rid), Some(f)) = (room_id, fields) {
+            let name = f.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let fname = f.get("fname").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let t = f.get("t").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            self.rooms.insert(
+                rid.clone(),
+                CachedRoom {
+                    room_id: rid,
+                    name,
+                    fname,
+                    t,
+                },
+            );
+        }
+    }
+
+    pub fn get_fname(&self, room_id: &str) -> Option<&str> {
+        self.rooms.get(room_id).and_then(|r| {
+            if r.fname.is_empty() {
+                None
+            } else {
+                Some(r.fname.as_str())
+            }
+        })
+    }
+
+    pub fn len(&self) -> usize {
+        self.rooms.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.rooms.is_empty()
     }
 }
