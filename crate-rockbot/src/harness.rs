@@ -33,7 +33,9 @@ When a user says !forget or asks to remove something you learned, \
 use the forget_knowledge tool. \
 When you need to recall previously saved knowledge, use the recall_knowledge tool. \
 Your display name is the first non-heading line of your soul file. \
-Use edit_soul to set your name as a plain line (no # prefix) at the top of the content. \
+When setting your name via edit_soul, create an Identity section with \
+your name on its own line (e.g. \"## Identity\\n零夢\"). \
+Use a short name under 32 characters. \
 Answer in the same language as the user. \
 Keep responses clear and to the point.\
 ";
@@ -146,23 +148,23 @@ impl AgentHarness {
 
         let user_text = format!("{}: {}", sender_name, clean_text);
 
-        // Auto-attachment: if the incoming message has image attachments, download
-        // the first one with auth headers and include it as a ContentPart::ImageUrl.
-        let user_msg = if let Some(att_url) = self.build_attachment_url(attachments) {
+        // Download all image attachments and encode as data URIs.
+        // Store them so they can be injected into image_gen tool calls.
+        let attachment_urls = self.build_attachment_urls(attachments);
+        let attachment_data_uris = self
+            .download_and_encode_attachments(&attachment_urls)
+            .await;
+
+        let user_msg = if !attachment_data_uris.is_empty() {
             let prompt = if clean_text.is_empty() {
                 "Describe this image in detail."
             } else {
                 &clean_text
             };
-            match self.download_and_encode_attachment(&att_url).await {
-                Ok(data_uri) => {
-                    ChatMessage::user_with_image(format!("{}: {}", sender_name, prompt), data_uri)
-                }
-                Err(e) => {
-                    warn!("Failed to download attachment: {}", e);
-                    ChatMessage::user(user_text)
-                }
-            }
+            ChatMessage::user_with_images(
+                format!("{}: {}", sender_name, prompt),
+                attachment_data_uris.clone(),
+            )
         } else {
             ChatMessage::user(user_text)
         };
@@ -245,8 +247,15 @@ impl AgentHarness {
                                 altered_knowledge = true;
                             }
 
-                            let arguments = if tool_call.function.name == "webdav"
-                                || tool_call.function.name == "image_gen"
+                            let arguments = if tool_call.function.name == "image_gen" {
+                                let wd = compute_webdav_dir(room_name, room_fname, is_dm);
+                                inject_room_context_with_images(
+                                    &tool_call.function.arguments,
+                                    room_id,
+                                    &wd,
+                                    &attachment_data_uris,
+                                )
+                            } else if tool_call.function.name == "webdav"
                                 || tool_call.function.name == "edit_soul"
                                 || tool_call.function.name == "save_knowledge"
                                 || tool_call.function.name == "forget_knowledge"
@@ -370,20 +379,37 @@ impl AgentHarness {
             })
     }
 
-    fn build_attachment_url(&self, attachments: &[rocketchat::AttachmentInfo]) -> Option<String> {
-        let att = attachments.first()?;
-        let title_link = att.title_link.as_deref()?;
-        if title_link.is_empty() {
-            return None;
-        }
-        Some(format!(
-            "https://{}{}",
-            self.config.rocketchat.server.url.trim_end_matches('/'),
-            title_link
-        ))
+    fn build_attachment_urls(&self, attachments: &[rocketchat::AttachmentInfo]) -> Vec<String> {
+        attachments
+            .iter()
+            .filter_map(|att| {
+                let title_link = att.title_link.as_deref()?;
+                if title_link.is_empty() {
+                    return None;
+                }
+                Some(format!(
+                    "https://{}{}",
+                    self.config.rocketchat.server.url.trim_end_matches('/'),
+                    title_link
+                ))
+            })
+            .collect()
     }
 
-    async fn download_and_encode_attachment(&self, url: &str) -> Result<String> {
+    async fn download_and_encode_attachments(&self, urls: &[String]) -> Vec<String> {
+        let mut data_uris = Vec::with_capacity(urls.len());
+        for url in urls {
+            match self.download_and_encode_single(url).await {
+                Ok(data_uri) => data_uris.push(data_uri),
+                Err(e) => {
+                    warn!("Failed to download attachment {}: {}", url, e);
+                }
+            }
+        }
+        data_uris
+    }
+
+    async fn download_and_encode_single(&self, url: &str) -> Result<String> {
         let mut req = self.provider_http_client().get(url);
         if let Some(ref rest) = self.rest_client {
             req = req.headers(rest.headers());
@@ -939,6 +965,28 @@ fn inject_room_context(arguments: &str, room_id: &str, webdav_dir: &str) -> Stri
     serde_json::to_string(&args).unwrap_or_else(|_| arguments.to_string())
 }
 
+fn inject_room_context_with_images(
+    arguments: &str,
+    room_id: &str,
+    webdav_dir: &str,
+    image_urls: &[String],
+) -> String {
+    let mut args: serde_json::Value =
+        serde_json::from_str(arguments).unwrap_or(serde_json::json!({}));
+    args["room_id"] = serde_json::Value::String(room_id.to_string());
+    args["webdav_dir"] = serde_json::Value::String(webdav_dir.to_string());
+    if !image_urls.is_empty() {
+        // Only inject if the agent didn't already provide image_urls.
+        // Agent-provided URLs take precedence (e.g. web URLs the agent found).
+        if !args.get("image_urls").is_some() {
+            args["image_urls"] = serde_json::Value::Array(
+                image_urls.iter().map(|u| serde_json::Value::String(u.clone())).collect(),
+            );
+        }
+    }
+    serde_json::to_string(&args).unwrap_or_else(|_| arguments.to_string())
+}
+
 fn compute_webdav_dir(room_name: &str, room_fname: &str, is_dm: bool) -> String {
     let name = if room_fname.is_empty() {
         room_name
@@ -1254,6 +1302,46 @@ chat = "mock-model"
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["room_id"], "general");
         assert_eq!(parsed["webdav_dir"], "r-general");
+    }
+
+    #[test]
+    fn test_inject_room_context_with_images() {
+        let args = r#"{"prompt":"edit this"}"#;
+        let images = vec![
+            "data:image/png;base64,abc".to_string(),
+            "https://example.com/img.png".to_string(),
+        ];
+        let result = inject_room_context_with_images(args, "general", "r-general", &images);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["room_id"], "general");
+        assert_eq!(parsed["webdav_dir"], "r-general");
+        let injected_urls = parsed["image_urls"].as_array().unwrap();
+        assert_eq!(injected_urls.len(), 2);
+        assert_eq!(injected_urls[0], "data:image/png;base64,abc");
+        assert_eq!(injected_urls[1], "https://example.com/img.png");
+    }
+
+    #[test]
+    fn test_inject_room_context_with_images_empty() {
+        let args = r#"{"prompt":"test"}"#;
+        let images: Vec<String> = vec![];
+        let result = inject_room_context_with_images(args, "general", "r-general", &images);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["room_id"], "general");
+        assert_eq!(parsed["webdav_dir"], "r-general");
+        assert!(parsed.get("image_urls").is_none());
+    }
+
+    #[test]
+    fn test_inject_room_context_with_images_agent_provided() {
+        let args = r#"{"prompt":"edit","image_urls":["https://explicit.url/img.png"]}"#;
+        let images = vec!["data:image/png;base64,attachment".to_string()];
+        let result = inject_room_context_with_images(args, "general", "r-general", &images);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        // Agent-provided URLs should take precedence
+        let urls = parsed["image_urls"].as_array().unwrap();
+        assert_eq!(urls.len(), 1);
+        assert_eq!(urls[0], "https://explicit.url/img.png");
     }
 
     #[test]

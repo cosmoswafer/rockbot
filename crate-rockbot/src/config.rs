@@ -59,7 +59,8 @@ pub struct ModelConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ImageModelConfig {
     pub default_provider: String,
-    pub default_model: String,
+    pub default_text_model: String,
+    pub default_edit_model: String,
 }
 
 fn default_max_iterations() -> u32 {

@@ -15,6 +15,7 @@ pub struct ImageGenParams {
     pub output_format: Option<String>,
     pub num_images: Option<u32>,
     pub model_id: Option<String>,
+    pub image_urls: Option<Vec<String>>,
 }
 
 impl ImageGenParams {
@@ -26,6 +27,7 @@ impl ImageGenParams {
             output_format: None,
             num_images: None,
             model_id: None,
+            image_urls: None,
         }
     }
 
@@ -122,6 +124,11 @@ impl FalAiProvider {
         }
         if let Some(image_size_val) = params.resolve_image_size() {
             body.insert("image_size".into(), image_size_val);
+        }
+        if let Some(ref image_urls) = params.image_urls {
+            if !image_urls.is_empty() {
+                body.insert("image_urls".into(), serde_json::json!(image_urls));
+            }
         }
 
         let model_id = params.model_id.as_deref().unwrap_or(&self.model_id);
@@ -305,6 +312,7 @@ mod tests {
             output_format: Some("png".into()),
             num_images: Some(2),
             model_id: Some("openai/gpt-image-2".into()),
+            image_urls: Some(vec!["https://example.com/img.png".into()]),
         };
         assert_eq!(params.quality.as_deref(), Some("medium"));
         assert_eq!(params.num_images, Some(2));
@@ -319,6 +327,7 @@ mod tests {
             output_format: None,
             num_images: None,
             model_id: None,
+            image_urls: None,
         };
         let resolved = params.resolve_image_size().unwrap();
         assert_eq!(resolved["width"], 3840);
@@ -334,6 +343,7 @@ mod tests {
             output_format: None,
             num_images: None,
             model_id: None,
+            image_urls: None,
         };
         let resolved = params.resolve_image_size().unwrap();
         assert_eq!(resolved["width"], 1920);
@@ -351,7 +361,7 @@ mod tests {
         let p = ImageGenParams {
             prompt: "t".into(), quality: None,
             image_size: Some(ImageSizeValue::Preset("square_hd".into())),
-            output_format: None, num_images: None, model_id: None,
+            output_format: None, num_images: None, model_id: None, image_urls: None,
         };
         let r = p.resolve_image_size().unwrap();
         assert_eq!(r["width"], 2880);
@@ -363,7 +373,7 @@ mod tests {
         let p = ImageGenParams {
             prompt: "t".into(), quality: None,
             image_size: Some(ImageSizeValue::Preset("landscape_4_3".into())),
-            output_format: None, num_images: None, model_id: None,
+            output_format: None, num_images: None, model_id: None, image_urls: None,
         };
         let r = p.resolve_image_size().unwrap();
         assert_eq!(r["width"], 3312);
@@ -375,7 +385,7 @@ mod tests {
         let p = ImageGenParams {
             prompt: "t".into(), quality: None,
             image_size: Some(ImageSizeValue::Preset("auto".into())),
-            output_format: None, num_images: None, model_id: None,
+            output_format: None, num_images: None, model_id: None, image_urls: None,
         };
         let r = p.resolve_image_size().unwrap();
         assert_eq!(r, serde_json::json!("auto"));

@@ -137,33 +137,65 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
             info!("Registered calendar tool (per-room, auto-created)");
         }
 
-        let (image_provider_name, image_model_name) = harness
+        let (image_provider_name, t2i_model_name, edit_model_name) = harness
             .config()
             .image_model
             .as_ref()
-            .map(|im| (im.default_provider.as_str(), im.default_model.as_str()))
-            .unwrap_or(("fal", "fal-ai/flux/schnell"));
+            .map(|im| {
+                (
+                    im.default_provider.as_str(),
+                    im.default_text_model.as_str(),
+                    im.default_edit_model.as_str(),
+                )
+            })
+            .unwrap_or(("fal", "fal-ai/flux/schnell", "fal-ai/nano-banana-pro/edit"));
 
         let image_cfg = harness.config().find_image_provider(image_provider_name);
         if let Some(img_cfg) = image_cfg {
-            let resolved_model = harness
+            let resolved_t2i = harness
                 .config()
-                .resolve_image_model(image_provider_name, image_model_name)
-                .unwrap_or_else(|| image_model_name.to_string());
+                .resolve_image_model(image_provider_name, t2i_model_name)
+                .unwrap_or_else(|| t2i_model_name.to_string());
 
-            match FalAiProvider::new(img_cfg, &resolved_model) {
-                Ok(fal_provider) => {
-                    tool_registry.register(Box::new(ImageGenTool::new(
-                        fal_provider,
-                        webdav_client.clone(),
-                    )));
-                    info!(
-                        "Registered image_gen tool with {} / {}",
-                        image_provider_name, resolved_model
-                    );
+            let resolved_edit = harness
+                .config()
+                .resolve_image_model(image_provider_name, edit_model_name)
+                .unwrap_or_else(|| edit_model_name.to_string());
+
+            // Providers like OpenRouter use the same model for both t2i and edit.
+            // Providers like Fal use different models for each.
+            let same_provider = resolved_t2i == resolved_edit;
+
+            match FalAiProvider::new(img_cfg, &resolved_t2i) {
+                Ok(fal_t2i) => {
+                    let fal_edit = if same_provider {
+                        FalAiProvider::new(img_cfg, &resolved_edit)
+                            .map_err(|e| warn!("Failed to create image gen provider ({}): {}", resolved_edit, e))
+                            .ok()
+                    } else {
+                        FalAiProvider::new(img_cfg, &resolved_edit)
+                            .map_err(|e| warn!("Failed to create edit-image provider ({}): {} — image_gen tool not registered", resolved_edit, e))
+                            .ok()
+                    };
+                    if let Some(fal_edit) = fal_edit {
+                        info!(
+                            "Registered image_gen with t2i={} / edit={}{}",
+                            resolved_t2i,
+                            resolved_edit,
+                            if same_provider { " (same provider)" } else { "" }
+                        );
+                        tool_registry.register(Box::new(ImageGenTool::with_img2img(
+                            fal_t2i,
+                            fal_edit,
+                            webdav_client.clone(),
+                        )));
+                    }
                 }
                 Err(e) => {
-                    warn!("Failed to create image gen provider: {}", e);
+                    warn!(
+                        "Failed to create image gen provider ({}): {} — image_gen tool not registered",
+                        resolved_t2i, e
+                    );
                 }
             }
         }

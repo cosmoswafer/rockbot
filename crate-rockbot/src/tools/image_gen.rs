@@ -9,6 +9,7 @@ use crate::tool::Tool;
 
 pub struct ImageGenTool {
     fal: FalAiProvider,
+    fal_img2img: Option<FalAiProvider>,
     webdav: WebDavClient,
     http_client: reqwest::Client,
 }
@@ -17,6 +18,20 @@ impl ImageGenTool {
     pub fn new(fal: FalAiProvider, webdav: WebDavClient) -> Self {
         Self {
             fal,
+            fal_img2img: None,
+            webdav,
+            http_client: reqwest::Client::new(),
+        }
+    }
+
+    pub fn with_img2img(
+        fal_text2img: FalAiProvider,
+        fal_img2img: FalAiProvider,
+        webdav: WebDavClient,
+    ) -> Self {
+        Self {
+            fal: fal_text2img,
+            fal_img2img: Some(fal_img2img),
             webdav,
             http_client: reqwest::Client::new(),
         }
@@ -25,6 +40,7 @@ impl ImageGenTool {
     pub fn with_client(fal: FalAiProvider, webdav: WebDavClient, client: reqwest::Client) -> Self {
         Self {
             fal,
+            fal_img2img: None,
             webdav,
             http_client: client,
         }
@@ -137,6 +153,11 @@ impl Tool for ImageGenTool {
                 "num_images": {
                     "type": "integer",
                     "description": "Number of images to generate per request. Default: 1."
+                },
+                "image_urls": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Optional list of image URLs or data URIs to use as input/reference images for image-to-image generation or editing. Pass public URLs or base64 data URIs. The agent can use image attachments the user sent as input — you just need to include them here. Use this when the user asks to edit, transform, or generate based on existing images."
                 }
             },
             "required": ["prompt"]
@@ -178,15 +199,31 @@ impl Tool for ImageGenTool {
             });
         }
 
+        if let Some(image_urls) = args.get("image_urls").and_then(|v| v.as_array()) {
+            let urls: Vec<String> = image_urls
+                .iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect();
+            if !urls.is_empty() {
+                params.image_urls = Some(urls);
+            }
+        }
+
         let ext = ext_from_output_format(params.output_format.as_deref());
+
+        let provider = if params.image_urls.is_some() {
+            self.fal_img2img.as_ref().unwrap_or(&self.fal)
+        } else {
+            &self.fal
+        };
 
         debug!(
             "Generating image with fal.ai model={}: {}",
-            params.model_id.as_deref().unwrap_or(self.fal.model_id()),
+            params.model_id.as_deref().unwrap_or(provider.model_id()),
             prompt
         );
 
-        let image_url = self.fal.generate_image(&params).await?;
+        let image_url = provider.generate_image(&params).await?;
         debug!("Image generated, URL: {}", image_url);
 
         let image_bytes = self.download_image(&image_url).await?;
@@ -240,6 +277,7 @@ mod tests {
         assert!(params["properties"].get("image_size").is_some());
         assert!(params["properties"].get("output_format").is_some());
         assert!(params["properties"].get("num_images").is_some());
+        assert!(params["properties"].get("image_urls").is_some());
     }
 
     #[tokio::test]
@@ -356,5 +394,61 @@ mod tests {
         assert!(params.output_format.is_none());
         assert!(params.num_images.is_none());
         assert!(params.image_size.is_none());
+    }
+
+    #[test]
+    fn test_image_gen_params_with_image_urls() {
+        let args: Value = serde_json::from_str(r#"{
+            "prompt": "edit this image",
+            "image_urls": ["https://example.com/img1.png", "data:image/png;base64,abc"]
+        }"#).unwrap();
+
+        let mut params = ImageGenParams::new(args["prompt"].as_str().unwrap());
+        if let Some(image_urls) = args.get("image_urls").and_then(|v| v.as_array()) {
+            let urls: Vec<String> = image_urls
+                .iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect();
+            if !urls.is_empty() {
+                params.image_urls = Some(urls);
+            }
+        }
+
+        let urls = params.image_urls.unwrap();
+        assert_eq!(urls.len(), 2);
+        assert_eq!(urls[0], "https://example.com/img1.png");
+        assert_eq!(urls[1], "data:image/png;base64,abc");
+    }
+
+    #[test]
+    fn test_image_gen_params_empty_image_urls() {
+        let args: Value = serde_json::from_str(r#"{"prompt": "test", "image_urls": []}"#).unwrap();
+        let mut params = ImageGenParams::new(args["prompt"].as_str().unwrap());
+        if let Some(image_urls) = args.get("image_urls").and_then(|v| v.as_array()) {
+            let urls: Vec<String> = image_urls
+                .iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect();
+            if !urls.is_empty() {
+                params.image_urls = Some(urls);
+            }
+        }
+        assert!(params.image_urls.is_none());
+    }
+
+    #[test]
+    fn test_image_gen_params_no_image_urls() {
+        let args: Value = serde_json::from_str(r#"{"prompt": "test"}"#).unwrap();
+        let mut params = ImageGenParams::new(args["prompt"].as_str().unwrap());
+        if let Some(image_urls) = args.get("image_urls").and_then(|v| v.as_array()) {
+            let urls: Vec<String> = image_urls
+                .iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect();
+            if !urls.is_empty() {
+                params.image_urls = Some(urls);
+            }
+        }
+        assert!(params.image_urls.is_none());
     }
 }

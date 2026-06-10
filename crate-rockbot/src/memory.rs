@@ -318,7 +318,17 @@ impl MemoryManager {
         if content.is_empty() {
             return None;
         }
-        // Skip markdown header lines (# Title, ## Section), return first content line
+
+        // First try: find ## Identity section content
+        let identity_content = extract_section(content, "Identity");
+        if let Some(sec) = &identity_content {
+            debug!("self_display_name: Identity section found: {:?}", sec);
+            if let Some(name) = extract_name_from_text(sec) {
+                return Some(name);
+            }
+        }
+
+        // Second try: first non-header line as plain name (legacy format)
         for line in content.lines() {
             let trimmed = line.trim();
             if trimmed.is_empty() || trimmed.starts_with('#') {
@@ -328,8 +338,9 @@ impl MemoryManager {
             if !name.is_empty() && name.len() <= 32 {
                 return Some(name.to_string());
             }
-            return None;
+            break;
         }
+
         None
     }
 
@@ -512,6 +523,71 @@ fn strip_orphaned_tool_calls(messages: &mut Vec<ChatMessage>) {
             }
         }
         i += 1;
+    }
+}
+
+/// Extract the content of a markdown section by header name.
+fn extract_section(content: &str, section: &str) -> Option<String> {
+    let header = format!("## {}", section);
+    let pos = content.find(&header)?;
+    let start = pos + header.len();
+    let rest = &content[start..];
+
+    // Take everything until the next ## header or end
+    let end = rest.find("\n## ").unwrap_or(rest.len());
+    let section_content = rest[..end].trim().to_string();
+
+    if section_content.is_empty() { None } else { Some(section_content) }
+}
+
+/// Extract a display name from text content using common patterns.
+fn extract_name_from_text(text: &str) -> Option<String> {
+    // 1. Bold markdown: **Name**
+    if let Some(name) = extract_bold(text) {
+        return Some(name);
+    }
+
+    // 2. "My name is X" / "我叫X" / "I'm X" / "name is X"
+    let line = text.lines().next().unwrap_or(text).trim();
+    let lower = line.to_lowercase();
+
+    for prefix in &["my name is ", "name is ", "i'm ", "i am ", "我叫", "我是"] {
+        if let Some(pos) = lower.find(prefix) {
+            let rest = &line[pos + prefix.len()..].trim();
+            // Take until punctuation or emoji
+            let end = rest.find(|c: char| {
+                c == '.' || c == ',' || c == '!' || c == '?' || c == '。' || c == '，' || c == '：'
+            }).unwrap_or(rest.len());
+            let name = rest[..end].trim().to_string();
+            if !name.is_empty() && name.len() <= 32 {
+                return Some(name);
+            }
+        }
+    }
+
+    // 3. First line, trim ** and quotes
+    let cleaned = line
+        .replace("**", "")
+        .replace("「", "")
+        .replace("」", "")
+        .trim()
+        .to_string();
+    if !cleaned.is_empty() && cleaned.len() <= 32 {
+        return Some(cleaned);
+    }
+
+    None
+}
+
+fn extract_bold(text: &str) -> Option<String> {
+    let start = text.find("**")?;
+    let end = text[start + 2..].find("**")?;
+    let name = &text[start + 2..start + 2 + end];
+    let name = name.trim().to_string();
+    if !name.is_empty() && name.len() <= 32 {
+        Some(name)
+    } else {
+        None
     }
 }
 
@@ -764,5 +840,45 @@ mod tests {
         assert_eq!(msgs[2].role, Role::Assistant);
         assert_eq!(msgs[3].role, Role::Tool);
         assert_eq!(msgs[4].role, Role::Assistant);
+    }
+
+    #[test]
+    fn test_extract_section_identity() {
+        let content = "# Soul Memory\n\n## Identity\n零夢\n\n## Preferences\nfoo";
+        let sec = extract_section(content, "Identity");
+        assert_eq!(sec, Some("零夢".to_string()));
+    }
+
+    #[test]
+    fn test_extract_section_identity_inline() {
+        let content = "# Soul Memory\n\n## Identity My name is 零夢 :sparkles:.\n\n## Preferences";
+        let sec = extract_section(content, "Identity");
+        assert_eq!(sec, Some("My name is 零夢 :sparkles:.".to_string()));
+    }
+
+    #[test]
+    fn test_extract_name_bold() {
+        assert_eq!(extract_name_from_text("**RocketBot**"), Some("RocketBot".into()));
+    }
+
+    #[test]
+    fn test_extract_name_my_name_is() {
+        assert_eq!(extract_name_from_text("My name is 零夢 :sparkles:."), Some("零夢 :sparkles:".into()));
+    }
+
+    #[test]
+    fn test_extract_name_chinese_wo_jiao() {
+        assert_eq!(extract_name_from_text("我叫雪山泡芙 ✨"), Some("雪山泡芙 ✨".into()));
+    }
+
+    #[test]
+    fn test_extract_name_plain_line() {
+        assert_eq!(extract_name_from_text("零夢"), Some("零夢".into()));
+    }
+
+    #[test]
+    fn test_extract_name_too_long() {
+        let long = "My name is a very very long name over 32 characters";
+        assert_eq!(extract_name_from_text(long), None);
     }
 }
