@@ -9,6 +9,11 @@ metadata + messages) is serialized to a structured JSON file and archived to
 the room's WebDAV directory. On startup, recent `.json` archives are loaded
 from WebDAV to seed context.
 
+**Memory cache layer:** JSON archive reads and writes go through a local
+in-memory `MemoryCache` (write-back) to avoid blocking the agent loop on
+WebDAV I/O. Writes return immediately after cache update; dirty entries are
+flushed to WebDAV on a configurable sync interval or graceful shutdown.
+
 - Upstream: [Configuration Management](config.md) provides `MemoryConfig`
 - Upstream: [Agent Harness](../agent-harness.md) loads archives on startup and
   triggers per-room history operations after each message
@@ -23,6 +28,7 @@ from WebDAV to seed context.
 flowchart TD
     MSG[ChatMessage]
     STORE[(InMemoryHistory)]
+    CACHE[(MemoryCache)]
     APPEND(AppendMessage)
     COUNT(CheckCharCount)
     THRESHOLD(AssessThreshold)
@@ -43,12 +49,14 @@ flowchart TD
     SUMMARIZE -->|"summary prompt"| AI
     AI -->|"summary text"| SUMMARIZE
     SUMMARIZE -->|"memory.json content"| ARCHIVE
-    ARCHIVE -->|"memory.json + room path"| WEBDAV
+    ARCHIVE -->|"store in cache"| CACHE
+    CACHE -->|"sync on timeout/exit"| WEBDAV
     ARCHIVE -->|"archive confirmation"| PRUNE
     STORE -->|"pruned message ids"| PRUNE
     INIT -->|"room id"| LOAD
     LOAD -->|"get *.json request"| WEBDAV
     WEBDAV -->|"archive files"| LOAD
+    LOAD -->|"preload cache"| CACHE
     LOAD -->|"archived messages"| STORE
 ```
 

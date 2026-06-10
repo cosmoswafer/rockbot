@@ -9,6 +9,13 @@ image assets, calendar events, and todo items — is stored remotely; the bot
 never persists state to local disk. Each room gets its own directory subtree,
 created proactively on first use.
 
+**System Memory Cache:** JSON memory archives use a local in-memory cache
+(`MemoryCache`) for read/write performance. Writes go to the cache immediately
+(returning without waiting for the WebDAV round-trip), then sync to WebDAV on
+a configurable timeout or on graceful shutdown. Reads check the cache first;
+on miss, the file is fetched from WebDAV and cached. This avoids blocking the
+agent loop on every memory I/O while keeping durability via the sync path.
+
 **Calendar (CalDAV):** The client wraps NextCloud's CalDAV implementation
 (RFC 4791) at `/remote.php/dav/calendars/{username}/{calendar-name}/`. CalDAV
 uses the `REPORT` method with `calendar-query` XML bodies to list events within
@@ -65,6 +72,7 @@ flowchart TD
     ENSURE_ROOM(EnsureRoomDir)
     HTTP(HttpClient)
     NC[(NextCloud DAV)]
+    CACHE[(MemoryCache)]
     CAL_LIST(ListEventsByDate)
     CAL_ADD(AddEvent)
     CAL_UPD(UpdateEvent)
@@ -105,8 +113,11 @@ flowchart TD
     CAL_UPD -->|"PUT vevent ics + If-Match etag"| HTTP
     CAL_GET -->|"GET event ics"| HTTP
     TODO_LIST -->|"REPORT calendar-query vtodo"| HTTP
-    MEM_WRITE -->|"PUT json body"| HTTP
-    MEM_READ -->|"GET json"| HTTP
+    MEM_WRITE -->|"store json in cache"| CACHE
+    MEM_READ -->|"check cache"| CACHE
+    CACHE -->|"cache hit: return json"| MEM_READ
+    CACHE -.->|"cache miss: fetch + cache"| HTTP
+    CACHE -->|"dirty entry: PUT json body"| HTTP
     MEM_LIST -->|"PROPFIND depth=1"| HTTP
     READ -->|"GET"| HTTP
     WRITE -->|"PUT with body + AutoMkcol header"| HTTP
@@ -121,8 +132,9 @@ flowchart TD
     HTTP -->|"204 updated"| CAL_UPD
     HTTP -->|"event ics"| CAL_GET
     HTTP -->|"multi-status vtodo"| TODO_LIST
-    HTTP -->|"response body / status"| MEM_WRITE
-    HTTP -->|"memory json"| MEM_READ
+    HTTP -.->|"json body"| CACHE
+    CACHE -->|"response body / status"| MEM_WRITE
+    CACHE -.->|"fetched memory json"| MEM_READ
     HTTP -->|"archive listing"| MEM_LIST
 ```
 
@@ -158,6 +170,7 @@ flowchart TD
     CAL_REFETCH -.->|"merge + PUT with new etag"| CAL_RETRY
     CAL_RETRY -.->|"retry update"| HTTP
     HTTP -.->|"400 bad request"| ERR_BAD_ICS
+    CACHE -.->|"flush failed on exit"| ERR_NET
 ```
 
 ### 2c. Write-With-Fallback Deep Dive
@@ -325,6 +338,67 @@ flowchart TD
     MEM_CH_ATOM ---> JSONFiles
 ```
 
+### 2g. Memory Cache Deep Dive
+
+Write-back cache for JSON memory archives. Writes return immediately after
+storing in local cache; a background timer or graceful-shutdown hook flushes
+dirty entries to WebDAV. Reads hit the cache first and fetch from WebDAV
+only on miss (populating the cache for subsequent reads). On startup, recent
+archives are preloaded into the cache from WebDAV.
+
+```mermaid
+flowchart TD
+    CALLER[Calling Subsystem]
+    CACHE[(MemoryCache - HashMap)]
+    DIRTY[(DirtySet - pending sync)]
+    HTTP(HttpClient)
+    NC[(NextCloud WebDAV)]
+    TIMER[Sync Timer - configurable interval]
+    EXIT[Exit Hook - graceful shutdown]
+    PRELOAD(Preload on Startup)
+
+    subgraph WritePath["Write Path (write-back)"]
+        direction LR
+        W_STORE(Store in Cache)
+        W_MARK(Mark Entry Dirty)
+        W_RETURN(Return to Caller)
+    end
+
+    subgraph ReadPath["Read Path"]
+        direction LR
+        R_CHECK{In Cache?}
+        R_HIT(Return Cached)
+        R_MISS(Fetch from WebDAV)
+        R_STORE(Store in Cache)
+        R_RETURN(Return to Caller)
+    end
+
+    subgraph SyncPath["Sync Path (timeout or exit)"]
+        direction LR
+        S_SCAN(Iterate DirtySet)
+        S_PUT(PUT to WebDAV)
+        S_CLEAR(Clear DirtyFlag)
+    end
+
+    CALLER -->|"write json"| WritePath
+    CALLER -->|"read json"| ReadPath
+    PRELOAD -->|"load recent archives"| HTTP
+    HTTP -->|"json files"| PRELOAD
+    PRELOAD -->|"populate cache"| CACHE
+    W_STORE --> CACHE
+    W_MARK --> DIRTY
+    TIMER -->|"trigger flush"| SyncPath
+    EXIT -->|"trigger flush"| SyncPath
+    S_SCAN --> DIRTY
+    S_PUT --> HTTP
+    HTTP --> NC
+    R_CHECK -->|"yes"| R_HIT
+    R_CHECK -->|"no"| R_MISS
+    R_MISS --> HTTP
+    HTTP --> R_STORE
+    R_STORE --> CACHE
+```
+
 ## 3. Data Structures
 
 #### `WebDavClient`
@@ -413,6 +487,26 @@ archive snapshot — AI-generated summary plus the messages summarized.
 | `author`    | `String` | Display name of the message author   |
 | `content`   | `String` | Message text content                 |
 | `timestamp` | `String` | ISO 8601 message timestamp           |
+
+#### `MemoryCache`
+
+Per-room write-back cache for `MemoryJson` archive files. Writes go to
+cache immediately; dirty entries are flushed to WebDAV on a configurable
+sync interval or on graceful shutdown.
+
+| Field            | Type                       | Notes                                       |
+| ---------------- | -------------------------- | ------------------------------------------- |
+| `entries`        | `HashMap<String, CachedEntry>`| Path → cached JSON + dirty flag          |
+| `sync_interval`  | `Duration`                 | How often to flush dirty entries (default 30s)|
+| `sync_handle`    | `Option<JoinHandle<()>>`   | Background sync task handle                 |
+
+#### `CachedEntry`
+
+| Field      | Type          | Notes                                    |
+| ---------- | ------------- | ---------------------------------------- |
+| `data`     | `MemoryJson`  | Parsed archive content                   |
+| `dirty`    | `bool`        | True if cache is ahead of WebDAV         |
+| `cached_at`| `Instant`     | When the entry was last loaded/updated   |
 
 #### `WebDavPath`
 
@@ -538,11 +632,16 @@ END:VCALENDAR
 
 ### JSON Memory Operations
 
+Memory operations route through the local `MemoryCache` layer before touching
+WebDAV. Writes are immediate to cache; sync to WebDAV happens on timer or exit.
+
 | DFD Operation           | HTTP Method | NextCloud Endpoint                        | Notes                                |
 | ----------------------- | ----------- | ----------------------------------------- | ------------------------------------ |
-| WriteMemoryJson         | `PUT`       | `{base}/files/{user}/{root}/{room}/memory/{seq:06}_memory.json` | Serialized `MemoryJson` payload |
-| ReadMemoryJson          | `GET`       | `{base}/files/{user}/{root}/{room}/memory/{seq:06}_memory.json` | Returns `MemoryJson` bytes          |
+| WriteMemoryJson         | `PUT`       | `{base}/files/{user}/{root}/{room}/memory/{seq:06}_memory.json` | Serialized `MemoryJson` — via cache write-back |
+| ReadMemoryJson          | `GET`       | `{base}/files/{user}/{root}/{room}/memory/{seq:06}_memory.json` | Returns `MemoryJson` — cache-hit or fetch |
 | ListMemoryArchives      | `PROPFIND`  | `{base}/files/{user}/{root}/{room}/memory/` | `Depth: 1` — filter `*.json`        |
+| FlushDirtyCache         | —           | — (local operation, triggers `PUT` batch) | Called by sync timer or exit hook     |
+| PreloadCache            | —           | — (local, fetches recent `*.json`)        | Called on room init after restart     |
 
 The `X-NC-WebDAV-AutoMkcol` header (available since NextCloud 32) instructs the
 server to automatically create any missing parent directories when uploading a
