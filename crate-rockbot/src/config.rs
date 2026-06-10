@@ -36,6 +36,12 @@ pub struct ModelConfig {
     pub max_history_size: usize,
     #[serde(default = "default_max_text_length")]
     pub max_text_length: usize,
+    #[serde(default = "default_max_iterations")]
+    pub max_iterations: u32,
+}
+
+fn default_max_iterations() -> u32 {
+    8
 }
 
 fn default_max_history_size() -> usize {

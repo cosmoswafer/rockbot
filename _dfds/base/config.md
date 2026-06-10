@@ -83,6 +83,7 @@ flowchart TD
 | `default_model`    | `String` | Model alias key in provider's models map |
 | `max_history_size` | `usize`  | Max conversation turns (default 12)      |
 | `max_text_length`  | `usize`  | Max total text chars (default 50000)     |
+| `max_iterations`   | `u32`    | Max agent loop iterations (default 8)    |
 
 #### `ProviderConfig`
 

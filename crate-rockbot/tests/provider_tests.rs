@@ -50,6 +50,7 @@ reasoner = "deepseek-reasoner"
     assert_eq!(config.rocketchat.model.default_model, "deepseek");
     assert_eq!(config.rocketchat.model.max_history_size, 12);
     assert_eq!(config.rocketchat.model.max_text_length, 50000);
+    assert_eq!(config.rocketchat.model.max_iterations, 8); // default
 
     assert_eq!(config.providers.len(), 2);
 
@@ -70,6 +71,55 @@ reasoner = "deepseek-reasoner"
         deepseek.models.get("reasoner").unwrap(),
         "deepseek-reasoner"
     );
+}
+
+#[test]
+fn test_config_max_iterations_default() {
+    let toml = r#"
+[rocketchat.server]
+url = "test.example.com"
+username = "bot"
+password = "secret"
+
+[rocketchat.model]
+default_provider = "mock"
+default_model = "chat"
+
+[[providers]]
+name = "mock"
+api_key = "sk-mock"
+base_url = "https://mock.ai/v1"
+
+[providers.models]
+chat = "mock-model"
+"#;
+    let config = AppConfig::from_str(toml).unwrap();
+    assert_eq!(config.rocketchat.model.max_iterations, 8);
+}
+
+#[test]
+fn test_config_max_iterations_custom() {
+    let toml = r#"
+[rocketchat.server]
+url = "test.example.com"
+username = "bot"
+password = "secret"
+
+[rocketchat.model]
+default_provider = "mock"
+default_model = "chat"
+max_iterations = 16
+
+[[providers]]
+name = "mock"
+api_key = "sk-mock"
+base_url = "https://mock.ai/v1"
+
+[providers.models]
+chat = "mock-model"
+"#;
+    let config = AppConfig::from_str(toml).unwrap();
+    assert_eq!(config.rocketchat.model.max_iterations, 16);
 }
 
 #[test]

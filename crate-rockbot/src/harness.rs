@@ -10,8 +10,6 @@ use crate::provider::AiProvider;
 use crate::tool::ToolRegistry;
 use crate::types::{ChatMessage, ChatRequest, Role};
 
-const MAX_AGENT_ITERATIONS: u32 = 8;
-
 const DEFAULT_SYSTEM_PROMPT: &str = "\
 You are RockBot, a helpful AI assistant running on a RocketChat server. \
 You respond to DMs and @mentions concisely and helpfully. \
@@ -29,6 +27,7 @@ pub struct AgentHarness {
     memory: MemoryManager,
     tools: ToolRegistry,
     webdav: Option<WebDavClient>,
+    max_iterations: u32,
 }
 
 impl AgentHarness {
@@ -39,6 +38,7 @@ impl AgentHarness {
     ) -> Self {
         let max_chars = config.rocketchat.model.max_text_length;
         let max_history = config.rocketchat.model.max_history_size;
+        let max_iterations = config.rocketchat.model.max_iterations;
         let config = Arc::new(config);
         Self {
             config,
@@ -46,6 +46,7 @@ impl AgentHarness {
             memory: MemoryManager::new(max_chars, max_history),
             tools: ToolRegistry::new(),
             webdav,
+            max_iterations,
         }
     }
 
@@ -110,10 +111,10 @@ impl AgentHarness {
 
         loop {
             iterations += 1;
-            if iterations > MAX_AGENT_ITERATIONS {
+            if iterations > self.max_iterations {
                 warn!(
                     "Max agent iterations ({}) reached for room {}",
-                    MAX_AGENT_ITERATIONS, room_id
+                    self.max_iterations, room_id
                 );
                 let fallback = "I'm sorry, I got stuck in a loop. Could you rephrase your request?";
                 let assistant_msg = ChatMessage::assistant(fallback);
@@ -352,6 +353,7 @@ default_provider = "mock"
 default_model = "chat"
 max_history_size = 12
 max_text_length = 50000
+max_iterations = 8
 
 [[providers]]
 name = "mock"
@@ -421,6 +423,60 @@ chat = "mock-model"
         let reply = result.unwrap();
         assert!(reply.is_some());
         assert!(reply.unwrap().contains("error"));
+    }
+
+    #[tokio::test]
+    async fn test_harness_max_iterations_limit() {
+        let config_toml = r#"
+[rocketchat.server]
+url = "test.example.com"
+username = "bot"
+password = "secret"
+
+[rocketchat.model]
+default_provider = "mock"
+default_model = "chat"
+max_iterations = 2
+
+[[providers]]
+name = "mock"
+api_key = "sk-mock"
+base_url = "https://mock.ai/v1"
+
+[providers.models]
+chat = "mock-model"
+"#;
+        let config = AppConfig::from_str(config_toml).unwrap();
+
+        let tool_call = ToolCall::new("call_1", "web_search", r#"{"query":"test"}"#);
+        let tool_result = CompletionResult {
+            text: None,
+            tool_calls: vec![tool_call],
+            finish: FinishReason::ToolUse,
+            reasoning_content: None,
+            usage: None,
+        };
+
+        let provider = Box::new(MockProvider::new(vec![
+            tool_result.clone(),
+            tool_result,
+        ]));
+
+        let mut harness = AgentHarness::new(config, provider, None);
+
+        let result = harness
+            .process_message("room1", "general", false, "user", "search something")
+            .await;
+
+        assert!(result.is_ok());
+        let reply = result.unwrap();
+        assert!(reply.is_some());
+        let text = reply.unwrap();
+        assert!(
+            text.contains("loop"),
+            "Expected loop-limit fallback, got: {}",
+            text
+        );
     }
 
     #[test]
