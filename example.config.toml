@@ -32,7 +32,7 @@ draw_path = "/images/generations"
 
 [image_providers.models]
 seedream = "fal-ai/bytedance/seedream/v4.5/text-to-image"
-gptimg = "openai/gpt-image-2"
+gptimage = "openai/gpt-image-2"
 
 [[image_providers]]
 name = "fal"
@@ -41,7 +41,7 @@ base_url = "https://queue.fal.run"
 
 [image_providers.models]
 seedream = "fal-ai/bytedance/seedream/v4.5/text-to-image"
-gptimg = "openai/gpt-image-2"
+gptimage = "openai/gpt-image-2"
 
 [image_model]
 default_provider = "fal"
