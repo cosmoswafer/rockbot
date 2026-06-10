@@ -38,7 +38,11 @@ pub(crate) struct Prop {
     )]
     pub getlastmodified: Option<String>,
 
-    #[serde(rename = "getcontentlength", default)]
+    #[serde(
+        rename = "getcontentlength",
+        default,
+        deserialize_with = "deserialize_opt_u64"
+    )]
     pub getcontentlength: Option<u64>,
 
     #[serde(
@@ -74,4 +78,18 @@ where
 {
     let s: Option<String> = Option::deserialize(deserializer).unwrap_or_default();
     Ok(s.filter(|v| !v.is_empty()))
+}
+
+fn deserialize_opt_u64<'de, D>(deserializer: D) -> std::result::Result<Option<u64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s: Option<String> = Option::deserialize(deserializer).unwrap_or_default();
+    match s {
+        Some(v) if !v.is_empty() => v
+            .parse::<u64>()
+            .map(Some)
+            .map_err(serde::de::Error::custom),
+        _ => Ok(None),
+    }
 }

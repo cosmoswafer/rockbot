@@ -1,5 +1,6 @@
 use base64::Engine;
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
+use tracing::{error, info};
 use url::Url;
 
 use crate::error::{Result, WebDavError};
@@ -98,6 +99,7 @@ impl WebDavClient {
 
     pub async fn list_directory(&self, path: &str) -> Result<Vec<WebDavEntry>> {
         let url = self.full_url(path)?;
+        info!("WebDAV PROPFIND: {}", url);
         let mut headers = self.headers();
         headers.insert("Depth", HeaderValue::from_static("1"));
 
@@ -110,6 +112,9 @@ impl WebDavClient {
             .send()
             .await?;
 
+        let status = response.status().as_u16();
+        info!("WebDAV PROPFIND response: status={}", status);
+
         let body = self
             .handle_status(response, |s| s == 207)
             .await?
@@ -118,6 +123,12 @@ impl WebDavClient {
         if body.is_empty() {
             return Ok(vec![]);
         }
+
+        info!(
+            "WebDAV PROPFIND body ({} chars): {}",
+            body.len(),
+            &body[..body.len().min(500)]
+        );
 
         self.parse_propfind_response(&body)
     }
@@ -306,7 +317,8 @@ impl WebDavClient {
     }
 
     fn parse_propfind_response(&self, xml: &str) -> Result<Vec<WebDavEntry>> {
-        let multi_status: MultiStatus = quick_xml::de::from_str(xml)?;
+        let multi_status: MultiStatus = quick_xml::de::from_str(xml)
+            .inspect_err(|e| error!("PROPFIND XML parse error: {e}"))?;
         let mut entries = Vec::new();
 
         for response in &multi_status.responses {
@@ -624,5 +636,19 @@ mod tests {
             entries[1].modified,
             "Mon, 02 Jan 2024 12:00:00 GMT"
         );
+    }
+
+    #[test]
+    fn test_parse_prop_empty_getcontentlength() {
+        let xml = r#"<prop><getlastmodified>Mon, 01 Jan 2024 00:00:00 GMT</getlastmodified><getcontentlength/><resourcetype></resourcetype></prop>"#;
+        let p: crate::types::Prop = quick_xml::de::from_str(xml).unwrap();
+        assert_eq!(p.getcontentlength, None);
+    }
+
+    #[test]
+    fn test_parse_prop_missing_getcontentlength() {
+        let xml = r#"<prop><getlastmodified>Mon, 01 Jan 2024 00:00:00 GMT</getlastmodified><resourcetype></resourcetype></prop>"#;
+        let p: crate::types::Prop = quick_xml::de::from_str(xml).unwrap();
+        assert_eq!(p.getcontentlength, None);
     }
 }
