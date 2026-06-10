@@ -62,11 +62,11 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
         let model_alias = &config.rocketchat.model.default_model;
 
         let provider_config = config
-            .find_provider(provider_name)
+            .find_chat_provider(provider_name)
             .ok_or_else(|| format!("Provider '{}' not found in config", provider_name))?;
 
         let resolved_model = config
-            .resolve_model(provider_name, model_alias)
+            .resolve_chat_model(provider_name, model_alias)
             .unwrap_or_else(|| model_alias.clone());
 
         info!(
@@ -133,18 +133,33 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        let fal_config = harness.config().find_provider("fal");
-        if let Some(fal_cfg) = fal_config {
-            match FalAiProvider::new(fal_cfg, "fal-ai/flux/schnell") {
+        let (image_provider_name, image_model_name) = harness
+            .config()
+            .image_model
+            .as_ref()
+            .map(|im| (im.default_provider.as_str(), im.default_model.as_str()))
+            .unwrap_or(("fal", "fal-ai/flux/schnell"));
+
+        let image_cfg = harness.config().find_image_provider(image_provider_name);
+        if let Some(img_cfg) = image_cfg {
+            let resolved_model = harness
+                .config()
+                .resolve_image_model(image_provider_name, image_model_name)
+                .unwrap_or_else(|| image_model_name.to_string());
+
+            match FalAiProvider::new(img_cfg, &resolved_model) {
                 Ok(fal_provider) => {
                     tool_registry.register(Box::new(ImageGenTool::new(
                         fal_provider,
                         webdav_client.clone(),
                     )));
-                    info!("Registered image_gen tool with fal.ai");
+                    info!(
+                        "Registered image_gen tool with {} / {}",
+                        image_provider_name, resolved_model
+                    );
                 }
                 Err(e) => {
-                    warn!("Failed to create fal.ai provider: {}", e);
+                    warn!("Failed to create image gen provider: {}", e);
                 }
             }
         }

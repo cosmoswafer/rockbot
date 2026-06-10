@@ -237,7 +237,7 @@ impl AgentHarness {
 
     fn resolve_model(&self) -> String {
         self.config
-            .resolve_model(
+            .resolve_chat_model(
                 &self.config.rocketchat.model.default_provider,
                 &self.config.rocketchat.model.default_model,
             )
@@ -546,12 +546,12 @@ max_history_size = 12
 max_text_length = 50000
 max_iterations = 8
 
-[[providers]]
+[[chat_providers]]
 name = "mock"
 api_key = "sk-mock"
 base_url = "https://mock.ai/v1"
 
-[providers.models]
+[chat_providers.models]
 chat = "mock-model"
 "#,
         )
@@ -629,12 +629,12 @@ default_provider = "mock"
 default_model = "chat"
 max_iterations = 2
 
-[[providers]]
+[[chat_providers]]
 name = "mock"
 api_key = "sk-mock"
 base_url = "https://mock.ai/v1"
 
-[providers.models]
+[chat_providers.models]
 chat = "mock-model"
 "#;
         let config = AppConfig::from_toml(config_toml).unwrap();

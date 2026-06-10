@@ -1,36 +1,51 @@
 [tools.exa]
 api_key = "EDITME"
 
-[[providers]]
+[[chat_providers]]
 name = "openrouter"
 api_key = "sk-or-v1-EDITME"
 base_url = "https://openrouter.ai/api/v1"
 basecf_url = "https://your-cf-worker.example.com/api/v1"
 chat_path = "/chat/completions"
 
-[providers.models]
+[chat_providers.models]
 gpt = "openai/gpt-oss-120b:online"
 qwen = "qwen/qwen3-235b-a22b-thinking-2507:online"
 perplexity = "perplexity/sonar-deep-research"
 deepseek = "deepseek/deepseek-v3.2:online"
 
-[[providers]]
+[[chat_providers]]
 name = "deepseek"
 api_key = "EDITME"
 base_url = "https://api.deepseek.com/v1"
 
-[providers.models]
+[chat_providers.models]
 flash = "deepseek-v4-flash"
 pro = "deepseek-v4-pro"
 
-[[providers]]
+[[image_providers]]
+name = "openrouter"
+api_key = "sk-or-v1-EDITME"
+base_url = "https://openrouter.ai/api/v1"
+basecf_url = "https://your-cf-worker.example.com/api/v1"
+draw_path = "/images/generations"
+
+[image_providers.models]
+seedream = "fal-ai/bytedance/seedream/v4.5/text-to-image"
+gptimg = "openai/gpt-image-2"
+
+[[image_providers]]
 name = "fal"
 api_key = "EDITME"
 base_url = "https://queue.fal.run"
 
-[providers.models]
+[image_providers.models]
 seedream = "fal-ai/bytedance/seedream/v4.5/text-to-image"
 gptimg = "openai/gpt-image-2"
+
+[image.model]
+default_provider = "fal"
+default_model = "seedream"
 
 [rocketchat.model]
 default_provider = "deepseek"

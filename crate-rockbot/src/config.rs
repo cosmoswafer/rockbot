@@ -6,7 +6,11 @@ use webdav::WebDavConfig;
 pub struct AppConfig {
     pub rocketchat: RocketChatSection,
     #[serde(default)]
-    pub providers: Vec<ProviderConfig>,
+    pub chat_providers: Vec<ProviderConfig>,
+    #[serde(default)]
+    pub image_providers: Vec<ProviderConfig>,
+    #[serde(default)]
+    pub image_model: Option<ImageModelConfig>,
     #[serde(default)]
     pub tools: HashMap<String, ToolServiceConfig>,
     #[serde(default)]
@@ -38,6 +42,12 @@ pub struct ModelConfig {
     pub max_text_length: usize,
     #[serde(default = "default_max_iterations")]
     pub max_iterations: u32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ImageModelConfig {
+    pub default_provider: String,
+    pub default_model: String,
 }
 
 fn default_max_iterations() -> u32 {
@@ -87,17 +97,26 @@ impl AppConfig {
 
     pub fn validate(&self) -> crate::error::Result<()> {
         let provider_name = &self.rocketchat.model.default_provider;
-        self.find_provider(provider_name)
+        self.find_chat_provider(provider_name)
             .ok_or_else(|| crate::error::RockBotError::ProviderNotFound(provider_name.clone()))?;
         Ok(())
     }
 
-    pub fn find_provider(&self, name: &str) -> Option<&ProviderConfig> {
-        self.providers.iter().find(|p| p.name == name)
+    pub fn find_chat_provider(&self, name: &str) -> Option<&ProviderConfig> {
+        self.chat_providers.iter().find(|p| p.name == name)
     }
 
-    pub fn resolve_model(&self, provider_name: &str, model_alias: &str) -> Option<String> {
-        let provider = self.find_provider(provider_name)?;
+    pub fn find_image_provider(&self, name: &str) -> Option<&ProviderConfig> {
+        self.image_providers.iter().find(|p| p.name == name)
+    }
+
+    pub fn resolve_chat_model(&self, provider_name: &str, model_alias: &str) -> Option<String> {
+        let provider = self.find_chat_provider(provider_name)?;
+        provider.models.get(model_alias).cloned()
+    }
+
+    pub fn resolve_image_model(&self, provider_name: &str, model_alias: &str) -> Option<String> {
+        let provider = self.find_image_provider(provider_name)?;
         provider.models.get(model_alias).cloned()
     }
 }

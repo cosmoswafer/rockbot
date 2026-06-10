@@ -25,22 +25,22 @@ default_model = "deepseek"
 max_history_size = 12
 max_text_length = 50000
 
-[[providers]]
+[[chat_providers]]
 name = "openrouter"
 api_key = "sk-or-v1-test"
 base_url = "https://openrouter.ai/api/v1"
 chat_path = "/chat/completions"
 
-[providers.models]
+[chat_providers.models]
 gpt = "openai/gpt-oss-120b:online"
 deepseek = "deepseek/deepseek-v3.2:online"
 
-[[providers]]
+[[chat_providers]]
 name = "deepseek"
 api_key = "sk-deepseek-test"
 base_url = "https://api.deepseek.com/v1"
 
-[providers.models]
+[chat_providers.models]
 chat = "deepseek-chat"
 reasoner = "deepseek-reasoner"
 "#;
@@ -52,9 +52,9 @@ reasoner = "deepseek-reasoner"
     assert_eq!(config.rocketchat.model.max_text_length, 50000);
     assert_eq!(config.rocketchat.model.max_iterations, 8); // default
 
-    assert_eq!(config.providers.len(), 2);
+    assert_eq!(config.chat_providers.len(), 2);
 
-    let openrouter = &config.providers[0];
+    let openrouter = &config.chat_providers[0];
     assert_eq!(openrouter.name, "openrouter");
     assert_eq!(openrouter.base_url, "https://openrouter.ai/api/v1");
     assert_eq!(openrouter.chat_path.as_deref(), Some("/chat/completions"));
@@ -63,7 +63,7 @@ reasoner = "deepseek-reasoner"
         "deepseek/deepseek-v3.2:online"
     );
 
-    let deepseek = &config.providers[1];
+    let deepseek = &config.chat_providers[1];
     assert_eq!(deepseek.name, "deepseek");
     assert_eq!(deepseek.base_url, "https://api.deepseek.com/v1");
     assert_eq!(deepseek.models.get("chat").unwrap(), "deepseek-chat");
@@ -85,12 +85,12 @@ password = "secret"
 default_provider = "mock"
 default_model = "chat"
 
-[[providers]]
+[[chat_providers]]
 name = "mock"
 api_key = "sk-mock"
 base_url = "https://mock.ai/v1"
 
-[providers.models]
+[chat_providers.models]
 chat = "mock-model"
 "#;
     let config = AppConfig::from_toml(toml).unwrap();
@@ -110,12 +110,12 @@ default_provider = "mock"
 default_model = "chat"
 max_iterations = 16
 
-[[providers]]
+[[chat_providers]]
 name = "mock"
 api_key = "sk-mock"
 base_url = "https://mock.ai/v1"
 
-[providers.models]
+[chat_providers.models]
 chat = "mock-model"
 "#;
     let config = AppConfig::from_toml(toml).unwrap();
@@ -137,27 +137,27 @@ default_model = "deepseek"
 max_history_size = 12
 max_text_length = 50000
 
-[[providers]]
+[[chat_providers]]
 name = "openrouter"
 api_key = "sk-or-v1-test"
 base_url = "https://openrouter.ai/api/v1"
 
-[providers.models]
+[chat_providers.models]
 gpt = "openai/gpt-oss-120b:online"
 
-[[providers]]
+[[chat_providers]]
 name = "deepseek"
 api_key = "sk-deepseek-test"
 base_url = "https://api.deepseek.com/v1"
 
-[providers.models]
+[chat_providers.models]
 chat = "deepseek-chat"
 "#;
     let config = AppConfig::from_toml(toml).unwrap();
 
-    assert!(config.find_provider("deepseek").is_some());
-    assert!(config.find_provider("openrouter").is_some());
-    assert!(config.find_provider("nonexistent").is_none());
+    assert!(config.find_chat_provider("deepseek").is_some());
+    assert!(config.find_chat_provider("openrouter").is_some());
+    assert!(config.find_chat_provider("nonexistent").is_none());
 }
 
 #[test]
@@ -175,39 +175,39 @@ default_model = "deepseek"
 max_history_size = 12
 max_text_length = 50000
 
-[[providers]]
+[[chat_providers]]
 name = "openrouter"
 api_key = "sk-or-v1-test"
 base_url = "https://openrouter.ai/api/v1"
 
-[providers.models]
+[chat_providers.models]
 gpt = "openai/gpt-oss-120b:online"
 deepseek = "deepseek/deepseek-v3.2:online"
 
-[[providers]]
+[[chat_providers]]
 name = "deepseek"
 api_key = "sk-deepseek-test"
 base_url = "https://api.deepseek.com/v1"
 
-[providers.models]
+[chat_providers.models]
 chat = "deepseek-chat"
 reasoner = "deepseek-reasoner"
 "#;
     let config = AppConfig::from_toml(toml).unwrap();
 
     assert_eq!(
-        config.resolve_model("deepseek", "chat").unwrap(),
+        config.resolve_chat_model("deepseek", "chat").unwrap(),
         "deepseek-chat"
     );
     assert_eq!(
-        config.resolve_model("deepseek", "reasoner").unwrap(),
+        config.resolve_chat_model("deepseek", "reasoner").unwrap(),
         "deepseek-reasoner"
     );
     assert_eq!(
-        config.resolve_model("openrouter", "deepseek").unwrap(),
+        config.resolve_chat_model("openrouter", "deepseek").unwrap(),
         "deepseek/deepseek-v3.2:online"
     );
-    assert!(config.resolve_model("deepseek", "nonexistent").is_none());
+    assert!(config.resolve_chat_model("deepseek", "nonexistent").is_none());
 }
 
 #[test]
@@ -225,12 +225,12 @@ default_model = "deepseek"
 max_history_size = 12
 max_text_length = 50000
 
-[[providers]]
+[[chat_providers]]
 name = "openrouter"
 api_key = "sk-or-v1-test"
 base_url = "https://openrouter.ai/api/v1"
 
-[providers.models]
+[chat_providers.models]
 deepseek = "deepseek/deepseek-v3.2:online"
 
 [tools.exa]
@@ -257,12 +257,12 @@ default_model = "deepseek"
 max_history_size = 12
 max_text_length = 50000
 
-[[providers]]
+[[chat_providers]]
 name = "openrouter"
 api_key = "sk-or-v1-test"
 base_url = "https://openrouter.ai/api/v1"
 
-[providers.models]
+[chat_providers.models]
 deepseek = "deepseek/deepseek-v3.2:online"
 
 [tools.exa]
