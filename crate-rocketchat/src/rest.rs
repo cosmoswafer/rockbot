@@ -69,7 +69,7 @@ impl RestApiClient {
         format!("{}://{}/api/v1/{}", protocol, self.host, path)
     }
 
-    fn headers(&self) -> reqwest::header::HeaderMap {
+    pub fn headers(&self) -> reqwest::header::HeaderMap {
         use reqwest::header::{HeaderMap, HeaderValue};
         let mut headers = HeaderMap::new();
         headers.insert("X-Auth-Token", HeaderValue::from_str(&self.auth_token).unwrap());

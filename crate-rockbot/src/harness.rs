@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use base64::Engine;
 use tracing::{debug, error, info, warn};
 use webdav::{WebDavClient, WebDavPath};
 use rocketchat::RestApiClient;
@@ -31,6 +32,8 @@ information worth persisting, use the save_knowledge tool. \
 When a user says !forget or asks to remove something you learned, \
 use the forget_knowledge tool. \
 When you need to recall previously saved knowledge, use the recall_knowledge tool. \
+Your display name is the first non-heading line of your soul file. \
+Use edit_soul to set your name as a plain line (no # prefix) at the top of the content. \
 Answer in the same language as the user. \
 Keep responses clear and to the point.\
 ";
@@ -123,6 +126,7 @@ impl AgentHarness {
         is_dm: bool,
         sender_name: &str,
         text: &str,
+        attachments: &[rocketchat::AttachmentInfo],
     ) -> Result<Option<String>> {
         let clean_text = if !is_dm && !text.is_empty() {
             text.trim_start().to_string()
@@ -140,7 +144,29 @@ impl AgentHarness {
             self.restore_history(room_id, room_name, room_fname, is_dm).await;
         }
 
-        let user_msg = ChatMessage::user(format!("{}: {}", sender_name, clean_text));
+        let user_text = format!("{}: {}", sender_name, clean_text);
+
+        // Auto-attachment: if the incoming message has image attachments, download
+        // the first one with auth headers and include it as a ContentPart::ImageUrl.
+        let user_msg = if let Some(att_url) = self.build_attachment_url(attachments) {
+            let prompt = if clean_text.is_empty() {
+                "Describe this image in detail."
+            } else {
+                &clean_text
+            };
+            match self.download_and_encode_attachment(&att_url).await {
+                Ok(data_uri) => {
+                    ChatMessage::user_with_image(format!("{}: {}", sender_name, prompt), data_uri)
+                }
+                Err(e) => {
+                    warn!("Failed to download attachment: {}", e);
+                    ChatMessage::user(user_text)
+                }
+            }
+        } else {
+            ChatMessage::user(user_text)
+        };
+
         if let Some(room) = self.memory.get_mut(room_id) {
             room.history.append(user_msg);
         }
@@ -238,6 +264,29 @@ impl AgentHarness {
                                 .execute_by_name(&tool_call.id, &tool_call.function.name, &arguments)
                                 .await?;
 
+                            // Vision tool: if result contains a data_uri, inject it as an
+                            // image ContentPart so the LLM can "see" the image on the next iteration.
+                            if tool_call.function.name == "vision" {
+                                if let Ok(vision_out) = serde_json::from_str::<
+                                    serde_json::Value,
+                                >(&tool_result.content)
+                                {
+                                    if let Some(data_uri) = vision_out
+                                        .get("data_uri")
+                                        .and_then(|v| v.as_str())
+                                    {
+                                        let prompt = vision_out
+                                            .get("prompt")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("Describe this image in detail.");
+                                        let img_msg =
+                                            ChatMessage::user_with_image(prompt, data_uri);
+                                        self.append_to_history(room_id, img_msg);
+                                        continue;
+                                    }
+                                }
+                            }
+
                             let tool_msg = ChatMessage::tool(&tool_call.id, &tool_result.content);
                             self.append_to_history(room_id, tool_msg);
                         }
@@ -319,6 +368,60 @@ impl AgentHarness {
                 );
                 self.config.rocketchat.model.default_model.clone()
             })
+    }
+
+    fn build_attachment_url(&self, attachments: &[rocketchat::AttachmentInfo]) -> Option<String> {
+        let att = attachments.first()?;
+        let title_link = att.title_link.as_deref()?;
+        if title_link.is_empty() {
+            return None;
+        }
+        Some(format!(
+            "https://{}{}",
+            self.config.rocketchat.server.url.trim_end_matches('/'),
+            title_link
+        ))
+    }
+
+    async fn download_and_encode_attachment(&self, url: &str) -> Result<String> {
+        let mut req = self.provider_http_client().get(url);
+        if let Some(ref rest) = self.rest_client {
+            req = req.headers(rest.headers());
+        }
+        let response = req
+            .timeout(std::time::Duration::from_secs(30))
+            .send()
+            .await
+            .map_err(|e| crate::error::RockBotError::Provider(format!("Attachment download failed: {e}")))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            return Err(crate::error::RockBotError::Provider(format!(
+                "Attachment download HTTP {}",
+                status
+            )));
+        }
+
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+
+        let bytes = response.bytes().await.map_err(|e| {
+            crate::error::RockBotError::Provider(format!("Attachment read failed: {e}"))
+        })?;
+
+        let mime = content_type.as_deref().unwrap_or("image/png");
+        Ok(format!(
+            "data:{};base64,{}",
+            mime,
+            base64::engine::general_purpose::STANDARD.encode(&bytes)
+        ))
+    }
+
+    fn provider_http_client(&self) -> reqwest::Client {
+        reqwest::Client::new()
     }
 
     pub async fn archive_room_if_needed(&mut self, room_id: &str) -> Result<()> {
@@ -969,7 +1072,7 @@ chat = "mock-model"
 
         let mut harness = AgentHarness::new(config, provider, None);
         let result = harness
-            .process_message("room1", "general", "", false, "user", "Hi")
+            .process_message("room1", "general", "", false, "user", "Hi", &[])
             .await;
 
         assert!(result.is_ok());
@@ -991,7 +1094,7 @@ chat = "mock-model"
 
         let mut harness = AgentHarness::new(config, provider, None);
         let result = harness
-            .process_message("dm-alice", "", "", true, "alice", "Hello bot")
+            .process_message("dm-alice", "", "", true, "alice", "Hello bot", &[])
             .await;
 
         assert!(result.is_ok());
@@ -1005,7 +1108,7 @@ chat = "mock-model"
 
         let mut harness = AgentHarness::new(config, provider, None);
         let result = harness
-            .process_message("room1", "general", "", false, "user", "Hi")
+            .process_message("room1", "general", "", false, "user", "Hi", &[])
             .await;
 
         assert!(result.is_ok());
@@ -1053,7 +1156,7 @@ chat = "mock-model"
         let mut harness = AgentHarness::new(config, provider, None);
 
         let result = harness
-            .process_message("room1", "general", "", false, "user", "search something")
+            .process_message("room1", "general", "", false, "user", "search something", &[])
             .await;
 
         assert!(result.is_ok());

@@ -438,6 +438,9 @@ fn test_incoming_message_dm_detection() {
         timestamp: None,
         sender_id: "uid".into(),
         alias: None,
+        file: None,
+        files: vec![],
+        attachments: vec![],
     };
 
     let rooms: HashMap<String, bool> = HashMap::new();
@@ -456,6 +459,9 @@ fn test_incoming_message_dm_detection() {
         timestamp: None,
         sender_id: "uid".into(),
         alias: None,
+        file: None,
+        files: vec![],
+        attachments: vec![],
     };
     assert!(!MessageFilter::is_dm_or_mention(&msg2, bot_name, &rooms));
 
@@ -470,6 +476,9 @@ fn test_incoming_message_dm_detection() {
         timestamp: None,
         sender_id: "uid".into(),
         alias: None,
+        file: None,
+        files: vec![],
+        attachments: vec![],
     };
     assert!(MessageFilter::is_dm_or_mention(&msg3, bot_name, &rooms));
 }
@@ -490,6 +499,9 @@ fn test_registered_room_dispatch() {
         timestamp: None,
         sender_id: "uid".into(),
         alias: None,
+        file: None,
+        files: vec![],
+        attachments: vec![],
     };
 
     assert!(MessageFilter::is_dm_or_mention(&msg, "@rockbot", &rooms));

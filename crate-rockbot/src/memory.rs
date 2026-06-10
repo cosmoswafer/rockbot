@@ -318,15 +318,13 @@ impl MemoryManager {
         if content.is_empty() {
             return None;
         }
+        // Skip markdown header lines (# Title, ## Section), return first content line
         for line in content.lines() {
             let trimmed = line.trim();
-            if trimmed.is_empty() {
+            if trimmed.is_empty() || trimmed.starts_with('#') {
                 continue;
             }
-            let name = trimmed
-                .trim_start_matches('#')
-                .trim_start_matches(' ')
-                .trim_end_matches(|c: char| c == ' ' || c == '：');
+            let name = trimmed.trim_end_matches(|c: char| c == ' ' || c == '：');
             if !name.is_empty() && name.len() <= 32 {
                 return Some(name.to_string());
             }

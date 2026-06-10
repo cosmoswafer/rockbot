@@ -331,10 +331,11 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                             .process_message(
                                 &msg.room_id,
                                 &room_name,
-                                &msg.room_fname,
+                                &display_name,
                                 msg.is_dm,
                                 &msg.sender_name,
                                 &text,
+                                &msg.attachments,
                             )
                             .await
                         {
@@ -342,8 +343,38 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                                 heartbeat.abort();
                                 let _ = sender.typing(false, &username).await;
                                 tokio::time::sleep(Duration::from_millis(300)).await;
-                                if let Err(e) = sender.reply(&reply).await {
-                                    error!("Failed to send reply: {}", e);
+
+                                // Try REST API with alias first, fall back to DDP
+                                let alias = h.memory().self_display_name(&msg.room_id);
+                                let rest_ok = if let Some(ref alias_name) = alias {
+                                    let rc_config = rocketchat::RocketChatConfig {
+                                        server: rocketchat::config::ServerConfig {
+                                            url: h.config().rocketchat.server.url.clone(),
+                                            username: h.config().rocketchat.server.username.clone(),
+                                            password: String::new(),
+                                            debug: false,
+                                            use_tls: true,
+                                        },
+                                    };
+                                    let rest = sender.rest_client(&rc_config);
+                                    match rest.send_message(&msg.room_id, &reply, Some(alias_name)).await {
+                                        Ok(msg_id) => {
+                                            debug!("REST send_message ok, msg_id={}", msg_id);
+                                            true
+                                        }
+                                        Err(e) => {
+                                            warn!("REST send_message failed: {}, falling back to DDP", e);
+                                            false
+                                        }
+                                    }
+                                } else {
+                                    false
+                                };
+
+                                if !rest_ok {
+                                    if let Err(e) = sender.reply(&reply).await {
+                                        error!("Failed to send reply: {}", e);
+                                    }
                                 }
                                 if let Err(e) = h.archive_room_if_needed(&msg.room_id).await {
                                     warn!("Memory archiving failed: {}", e);

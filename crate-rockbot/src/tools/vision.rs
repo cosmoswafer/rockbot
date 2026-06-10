@@ -1,8 +1,19 @@
 use async_trait::async_trait;
+use base64::Engine;
 use serde_json::Value;
 
 use crate::error::{Result, RockBotError};
 use crate::tool::Tool;
+
+const MAX_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct VisionOutput {
+    data_uri: String,
+    mime_type: String,
+    size_bytes: u64,
+    prompt: String,
+}
 
 pub struct VisionTool {
     http_client: reqwest::Client,
@@ -21,7 +32,7 @@ impl VisionTool {
         }
     }
 
-    async fn describe_image(&self, image_url: &str, prompt: &str) -> Result<String> {
+    async fn analyze_image(&self, image_url: &str, prompt: &str) -> Result<String> {
         let response = self
             .http_client
             .get(image_url)
@@ -37,19 +48,50 @@ impl VisionTool {
             )));
         }
 
-        let image_bytes = response.bytes().await?;
-        let mime_type = detect_mime_type(image_url, &image_bytes);
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
 
-        Ok(format!(
-            "Image downloaded: {} bytes, type: {}. Prompt: {}",
-            image_bytes.len(),
+        let image_bytes = response.bytes().await?;
+        let size = image_bytes.len() as u64;
+
+        if size > MAX_IMAGE_BYTES {
+            return Err(RockBotError::Provider(format!(
+                "Image too large: {} bytes (max {})",
+                size, MAX_IMAGE_BYTES
+            )));
+        }
+
+        let mime_type = detect_mime_type(image_url, content_type.as_deref());
+        let data_uri = format!(
+            "data:{};base64,{}",
             mime_type,
-            prompt
-        ))
+            base64::engine::general_purpose::STANDARD.encode(&image_bytes)
+        );
+
+        let output = VisionOutput {
+            data_uri,
+            mime_type,
+            size_bytes: size,
+            prompt: prompt.to_string(),
+        };
+
+        serde_json::to_string(&output).map_err(|e| {
+            RockBotError::Provider(format!("Failed to serialize vision output: {}", e))
+        })
     }
 }
 
-fn detect_mime_type(url: &str, _bytes: &[u8]) -> String {
+fn detect_mime_type(url: &str, content_type: Option<&str>) -> String {
+    if let Some(ct) = content_type {
+        let ct_lower = ct.to_lowercase();
+        if ct_lower.starts_with("image/") {
+            return ct_lower;
+        }
+    }
+
     let url_lower = url.to_lowercase();
     if url_lower.contains(".png") {
         "image/png"
@@ -74,7 +116,7 @@ impl Tool for VisionTool {
     }
 
     fn description(&self) -> &str {
-        "Download and describe an image. Provide an image URL and an optional prompt."
+        "Download and analyze an image using AI vision. Provide an image URL and a prompt describing what to look for. When the user sends an image attachment, the bot automatically uses this tool — you should describe what you see in the image."
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -87,7 +129,7 @@ impl Tool for VisionTool {
                 },
                 "prompt": {
                     "type": "string",
-                    "description": "Optional description of what to look for in the image"
+                    "description": "What to look for or ask about in the image"
                 }
             },
             "required": ["url"]
@@ -109,7 +151,7 @@ impl Tool for VisionTool {
             .and_then(|p| p.as_str())
             .unwrap_or("Describe this image in detail.");
 
-        self.describe_image(url, prompt).await
+        self.analyze_image(url, prompt).await
     }
 }
 
@@ -129,10 +171,28 @@ mod tests {
 
     #[test]
     fn test_detect_mime_type() {
-        assert_eq!(detect_mime_type("test.png", &[]), "image/png");
-        assert_eq!(detect_mime_type("test.jpg", &[]), "image/jpeg");
-        assert_eq!(detect_mime_type("test.jpeg", &[]), "image/jpeg");
-        assert_eq!(detect_mime_type("test.gif", &[]), "image/gif");
+        assert_eq!(detect_mime_type("test.png", None), "image/png");
+        assert_eq!(detect_mime_type("test.jpg", None), "image/jpeg");
+        assert_eq!(detect_mime_type("test.jpeg", None), "image/jpeg");
+        assert_eq!(detect_mime_type("test.gif", None), "image/gif");
+        assert_eq!(detect_mime_type("test.webp", None), "image/webp");
+        assert_eq!(detect_mime_type("test.svg", None), "image/svg+xml");
+    }
+
+    #[test]
+    fn test_detect_mime_type_prefers_content_type() {
+        assert_eq!(
+            detect_mime_type("test.pdf", Some("image/jpeg")),
+            "image/jpeg"
+        );
+    }
+
+    #[test]
+    fn test_detect_mime_type_falls_back_when_not_image() {
+        assert_eq!(
+            detect_mime_type("test.png", Some("text/html")),
+            "image/png"
+        );
     }
 
     #[tokio::test]
@@ -140,5 +200,20 @@ mod tests {
         let tool = VisionTool::new();
         let result = tool.execute(r#"{}"#).await;
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_vision_output_serialization() {
+        let output = VisionOutput {
+            data_uri: "data:image/png;base64,abc".into(),
+            mime_type: "image/png".into(),
+            size_bytes: 1000,
+            prompt: "describe this".into(),
+        };
+        let json = serde_json::to_string(&output).unwrap();
+        let parsed: VisionOutput = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.data_uri, "data:image/png;base64,abc");
+        assert_eq!(parsed.size_bytes, 1000);
+        assert_eq!(parsed.prompt, "describe this");
     }
 }
