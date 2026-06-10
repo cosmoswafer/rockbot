@@ -9,14 +9,12 @@ An allowlist mechanism that limits which rooms the bot responds in without an `@
 - **Dispatch gate** (`client.rs:211-215`): a message is dispatched if it's a DM, starts with `@botname`, **or** originates from a registered room slug (even without mention).
 - **Effect:** rooms not in the allowlist are ignored unless the bot is explicitly @-mentioned or messaged directly.
 
-## Room Save (`RoomCache`)
+## Room Save (`RoomCache`) — Removed 2026-06-10
 
-An in-memory cache of room metadata populated from the DDP `"rooms"` subscription.
-
-- **Types:** `CachedRoom { room_id, name, fname, t }` (`types.rs:199-204`), stored in `RoomCache` (`types.rs:212-214`)
-- **Insert:** `insert_from_added(&mut self, raw: &Value)` parses `"added"` DDP events (`types.rs:223-244`)
-- **Lookup:** `get_fname(&self, room_id: &str) -> Option<&str>` resolves the friendly room name when the per-event `args[1].fname` is absent (`types.rs:246-254`)
-- **Lifetime:** ephemeral — rebuilt on every connection from the `"rooms"` subscription stream.
+The `RoomCache` / `CachedRoom` mechanism was removed because the RocketChat
+server at `rc.tokyofy.top` doesn't respond to the `"rooms"` DDP subscription.
+See [`_docs/rocketchat/room-name-fields.md`](../../_docs/rocketchat/room-name-fields.md)
+for details. `room_fname` is now sourced solely from the per-event `args[1].fname`.
 
 ## File Locations
 
