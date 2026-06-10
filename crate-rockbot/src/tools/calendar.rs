@@ -42,7 +42,7 @@ impl CalendarTool {
         )
     }
 
-    async fn ensure_room_calendar(&self, room_id: &str) -> Option<String> {
+    async fn ensure_room_calendar(&self, room_id: &str, webdav_dir: &str) -> Option<String> {
         {
             let map = self.room_calendars.lock().unwrap();
             if let Some(name) = map.get(room_id) {
@@ -50,27 +50,26 @@ impl CalendarTool {
             }
         }
 
-        let calendar_name = format!("rockbot-{}", room_id);
-        let caldav_url = self.build_caldav_url(&calendar_name);
+        let caldav_url = self.build_caldav_url(webdav_dir);
 
         match self
             .client
-            .ensure_calendar(&caldav_url, &calendar_name)
+            .ensure_calendar(&caldav_url, webdav_dir)
             .await
         {
             Ok(()) => {
                 debug!(
                     "Ensured calendar '{}' for room {}",
-                    calendar_name, room_id
+                    webdav_dir, room_id
                 );
                 let mut map = self.room_calendars.lock().unwrap();
-                map.insert(room_id.to_string(), calendar_name);
+                map.insert(room_id.to_string(), webdav_dir.to_string());
                 Some(caldav_url)
             }
             Err(e) => {
                 warn!(
                     "Failed to ensure calendar '{}' for room {}: {}",
-                    calendar_name, room_id, e
+                    webdav_dir, room_id, e
                 );
                 None
             }
@@ -280,10 +279,15 @@ impl Tool for CalendarTool {
             .and_then(|r| r.as_str())
             .unwrap_or("global");
 
+        let webdav_dir = args
+            .get("webdav_dir")
+            .and_then(|d| d.as_str())
+            .unwrap_or(room_id);
+
         let caldav_url = self
-            .ensure_room_calendar(room_id)
+            .ensure_room_calendar(room_id, webdav_dir)
             .await
-            .unwrap_or_else(|| self.build_caldav_url(&format!("rockbot-{}", room_id)));
+            .unwrap_or_else(|| self.build_caldav_url(webdav_dir));
 
         let action = args
             .get("action")
@@ -446,10 +450,10 @@ mod tests {
     #[test]
     fn test_build_caldav_url() {
         let tool = make_test_tool();
-        let url = tool.build_caldav_url("rockbot-testroom");
+        let url = tool.build_caldav_url("r-testroom");
         assert_eq!(
             url,
-            "https://example.com/remote.php/dav/calendars/user/rockbot-testroom/"
+            "https://example.com/remote.php/dav/calendars/user/r-testroom/"
         );
     }
 
@@ -461,10 +465,10 @@ mod tests {
             username: "admin".into(),
             room_calendars: Mutex::new(HashMap::new()),
         };
-        let url = tool.build_caldav_url("rockbot-general");
+        let url = tool.build_caldav_url("r-general");
         assert_eq!(
             url,
-            "https://cloud.example.com/remote.php/dav/calendars/admin/rockbot-general/"
+            "https://cloud.example.com/remote.php/dav/calendars/admin/r-general/"
         );
     }
 
@@ -473,11 +477,11 @@ mod tests {
         let tool = make_test_tool();
         {
             let mut map = tool.room_calendars.lock().unwrap();
-            map.insert("room1".to_string(), "rockbot-room1".to_string());
+            map.insert("room1".to_string(), "r-hr".to_string());
         }
         {
             let map = tool.room_calendars.lock().unwrap();
-            assert_eq!(map.get("room1").unwrap(), "rockbot-room1");
+            assert_eq!(map.get("room1").unwrap(), "r-hr");
         }
     }
 

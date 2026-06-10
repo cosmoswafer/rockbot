@@ -8,14 +8,17 @@ iCalendar (RFC 5545) `VEVENT` payloads, and `VALARM` reminders.
 
 **Scope**: Calendar events are **per-room** — each RocketChat room gets its own
 NextCloud calendar, auto-created on first use via CalDAV `MKCALENDAR`. The
-calendar name is `rockbot-{room_id}`, stored under the configured user's
-CalDAV calendar home (`/remote.php/dav/calendars/{username}/`). Events from
+calendar name is `{webdav_dir}` (matching the WebDAV directory name,
+e.g. `r-General`, `d-bob`), stored under the configured user's CalDAV
+calendar home (`/remote.php/dav/calendars/{username}/`). Events from
 different rooms are fully isolated.
 
 - Upstream: [Configuration Management](../base/config.md) provides `WebDavConfig`
   (server URL, credentials)
 - Downstream: [Agent Harness](../agent-harness.md) injects `room_id` + `webdav_dir`
-  into calendar tool arguments, triggering per-room calendar auto-creation
+  into calendar tool arguments. `room_id` is used as the cache key in
+  `room_calendars`, while `webdav_dir` names the per-room calendar
+  (auto-created on first use)
 
 ## 2. Diagram
 
@@ -69,7 +72,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    CALLER[Caller provides room_id]
+    CALLER[Caller provides room_id + webdav_dir]
     MAP[(room_calendars HashMap)]
     HTTP(HttpClient)
     NC[(NextCloud CalDAV)]
@@ -92,7 +95,7 @@ flowchart TD
 
 ### 2c. Calendar Operations Deep Dive
 
-Per [NextCloud Calendar user guide](https://docs.nextcloud.com/server/latest/user_manual/en/groupware/calendar.html) and [RFC 4791](https://datatracker.ietf.org/doc/html/rfc4791). Events are iCalendar (RFC 5545) `VEVENT` objects. The CalDAV base URL is `/remote.php/dav/calendars/{username}/rockbot-{room_id}/`. Each event is a resource named `{uid}.ics` within that collection.
+Per [NextCloud Calendar user guide](https://docs.nextcloud.com/server/latest/user_manual/en/groupware/calendar.html) and [RFC 4791](https://datatracker.ietf.org/doc/html/rfc4791). Events are iCalendar (RFC 5545) `VEVENT` objects. The CalDAV base URL is `/remote.php/dav/calendars/{username}/{webdav_dir}/` (e.g. `/remote.php/dav/calendars/bot/r-General/`). Each event is a resource named `{uid}.ics` within that collection.
 
 ```mermaid
 flowchart TD
@@ -192,19 +195,19 @@ Stored as `{uid}.ics` within the calendar collection.
 
 | Field           | Type                                | Notes                                                 |
 | --------------- | ----------------------------------- | ----------------------------------------------------- |
-| room_calendars  | `HashMap<String, String>`           | `room_id → calendar_name` mapping (in-memory, `Mutex`)|
+| room_calendars  | `HashMap<String, String>`           | `room_id → webdav_dir` mapping (in-memory, `Mutex`). `room_id` is the raw RocketChat room ID (cache key); `webdav_dir` is the human-readable directory/calendar name (e.g. `r-General`, `d-bob`) |
 
 #### `WebDavPath` (calendar methods)
 
-Calendar paths are built via `CalendarTool::caldav_url_for_room(room_id)` — the
-CalDAV endpoint is a separate URL (`/remote.php/dav/calendars/{user}/rockbot-{room_id}/`)
+Calendar paths are built via `CalendarTool::build_caldav_url(webdav_dir)` — the
+CalDAV endpoint is a separate URL (`/remote.php/dav/calendars/{user}/{webdav_dir}/`)
 independent of the WebDAV file storage root. `WebDavPath` does **not** provide
 calendar-specific methods.
 
 | Method                              | Returns  | Notes                             |
 | ----------------------------------- | -------- | --------------------------------- |
 | `caldav_base_url(calendar, username, origin)` | `String` | `/remote.php/dav/calendars/{user}/{calendar}/` |
-| `caldav_url_for_room(room_id)`      | `String` | Same URL constructed by `CalendarTool` with auto-created per-room calendar |
+| `build_caldav_url(calendar_name)`   | `String` | Constructs the CalDAV URL for a given calendar name |
 
 ## 4. NextCloud API Reference
 
