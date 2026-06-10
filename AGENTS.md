@@ -93,7 +93,12 @@ For each DFD (ordered by the DFD-to-code mapping table below):
 | `tools/calendar.md` | `tools/calendar.rs` | webdav crate (`client.rs`, `path.rs`) |
 | `tools/exa-search.md` | `tools/web_search.rs` | `tools/web_fetch.rs` |
 | `tools/web-fetch.md` | `tools/web_fetch.rs` | `tools/web_search.rs` |
-| `base/knowledge.md` | *(planned — no implementation)* | — |
+| `tools/image-gen.md` | `tools/image_gen.rs` | `provider/fal.rs`, `webdav` crate |
+| `tools/vision.md` | `tools/vision.rs` | — |
+| `tools/datetime.md` | `tools/datetime.rs` | — |
+| `tools/edit-soul.md` | `tools/edit_soul.rs` | `memory.rs`, `webdav` crate |
+| `tools/knowledge.md` | `tools/save_knowledge.rs`, `tools/forget_knowledge.rs`, `tools/recall_knowledge.rs` | `knowledge.rs`, `webdav` crate |
+| `base/knowledge.md` | `knowledge.rs` | `tools/save_knowledge.rs`, `tools/forget_knowledge.rs`, `tools/recall_knowledge.rs` |
 | `context-diagram.md` | (Level 0 — system boundary, no code changes) | — |
 
 ## Testing
