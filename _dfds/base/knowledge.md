@@ -298,6 +298,18 @@ Registered in `ToolRegistry`. Parameters:
 | `when_useful` | `string` | Situation description (retrieval trigger)        |
 | `tags`        | `string` | Comma-separated keywords                         |
 
+### Tool: `forget_knowledge`
+
+Removes a knowledge entry and its index record. Parameters:
+
+| Parameter | Type     | Description                              |
+| --------- | -------- | ---------------------------------------- |
+| `topic`   | `string` | Title or slug of the entry to delete     |
+
+Deletes the `.md` file, removes the entry from `index.json`, and PUTs the
+updated index back to WebDAV. If the file doesn't exist the index entry is
+still removed (idempotent).
+
 ### Tool: `recall_knowledge`
 
 Registered in `ToolRegistry`. Parameters:
