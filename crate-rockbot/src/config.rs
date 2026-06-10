@@ -67,8 +67,6 @@ pub struct ProviderConfig {
     #[serde(default)]
     pub chat_path: Option<String>,
     #[serde(default)]
-    pub draw_path: Option<String>,
-    #[serde(default)]
     pub models: HashMap<String, String>,
 }
 
@@ -94,10 +92,6 @@ impl AppConfig {
 
     pub fn find_provider(&self, name: &str) -> Option<&ProviderConfig> {
         self.providers.iter().find(|p| p.name == name)
-    }
-
-    pub fn find_tool(&self, name: &str) -> Option<&ToolServiceConfig> {
-        self.tools.get(name)
     }
 
     pub fn resolve_model(&self, provider_name: &str, model_alias: &str) -> Option<String> {

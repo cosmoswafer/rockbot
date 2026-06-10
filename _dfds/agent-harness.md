@@ -14,7 +14,7 @@ standard harness mechanisms are present:
 
 | Mechanism   | Coverage | Details |
 |-------------|----------|---------|
-| **Tools**   | Full     | `web_search`, `web_fetch`, `vision`, `webdav`, image generation — each tool has its own DFD |
+| **Tools**   | Full     | `web_search`, `web_fetch`, `vision`, `webdav`, `image_gen` (fal.ai) — each tool has its own DFD |
 | **Context** | Full     | Per-room conversation history buffer, summarization, archive loading — see [Memory Management](base/memory.md); plus iteration limits, room state routing, system prompt assembly |
 | **Knowledge** | Full  | Domain facts extracted from conversations, stored as indexed `.md` files on WebDAV — see [Knowledge Management](base/knowledge.md) |
 
@@ -118,7 +118,7 @@ flowchart TD
     EXA[Exa API]
     WEB_URL[Remote URL]
     WEBDAV_IMG[(WebDAV Image)]
-    IMG_API[Image Generation API]
+    IMG_API[fal.ai]
     WEBDAV_STORE[(WebDAV images)]
     RESULT[ToolResult]
 
@@ -139,25 +139,29 @@ flowchart TD
 
 ### 2e. Image Generation Pipeline
 
-Both `infograph` and `anime` share the same pipeline; only the system prompt
-and style prefix differ.
+The `image_gen` tool uses the fal.ai queue API (async submit + poll for result):
+a prompt is submitted to `queue.fal.run/{model_id}`, the status is polled until
+COMPLETED, the generated image URL is downloaded, uploaded to WebDAV, and the
+WebDAV URL is returned as the tool result.
 
 ```mermaid
 flowchart TD
     PROMPT[Prompt]
-    FORMAT(FormatStyledPrompt)
-    API[Image Generation API]
-    BYTES(ReceiveImageBytes)
-    NAME(GenerateFilename)
+    SUBMIT(SubmitToFalQueue)
+    QUEUE[(fal.ai Queue)]
+    POLL(PollStatusUntilComplete)
+    GET(RetrieveImageURL)
+    DOWNLOAD(DownloadImageBytes)
     PUT(PutToWebDAV)
     DAV[(WebDAV images)]
     RESULT[ToolResult]
 
-    PROMPT -->|"prompt"| FORMAT
-    FORMAT -->|"styled prompt"| API
-    API -->|"png bytes"| BYTES
-    BYTES -->|"image bytes"| NAME
-    NAME -->|"filename"| PUT
+    PROMPT -->|"prompt + model_id"| SUBMIT
+    SUBMIT -->|"request_id"| QUEUE
+    QUEUE -->|"status_url"| POLL
+    POLL -->|"COMPLETED"| GET
+    GET -->|"image url"| DOWNLOAD
+    DOWNLOAD -->|"image bytes"| PUT
     DAV -->|"storage target"| PUT
     PUT -->|"webdav image url"| RESULT
 ```
@@ -234,5 +238,6 @@ flowchart TD
 | `web_search`  | Search the web using Exa                         | `query: string`                    |
 | `web_fetch`   | Fetch a URL, optionally as markdown              | `url: string, markdown: bool`      |
 | `vision`      | Download an image and report metadata _(true vision — sending image data to AI provider — is planned)_ | `url: string, prompt: string`      |
-| `infograph`   | _(planned)_ Generate an infographic image        | `prompt: string`                   |
-| `anime`       | _(planned)_ Generate a Japanese anime-style image | `prompt: string`                  |
+| `image_gen`   | Generate an image using fal.ai models             | `prompt: string, model_id: string` |
+| `infograph`   | _(planned)_ Generate an infographic image         | `prompt: string`                   |
+| `anime`       | _(planned)_ Generate a Japanese anime-style image | `prompt: string`                   |

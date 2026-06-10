@@ -1,5 +1,6 @@
 use std::env;
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio::sync::Mutex;
 use tracing::{Level, debug, error, info, warn};
@@ -7,9 +8,9 @@ use tracing_subscriber::FmtSubscriber;
 
 use rockbot::config::AppConfig;
 use rockbot::harness::AgentHarness;
-use rockbot::provider::{AiProvider, DeepSeekProvider, OpenRouterProvider};
+use rockbot::provider::{AiProvider, DeepSeekProvider, FalAiProvider, OpenRouterProvider};
 use rockbot::tool::ToolRegistry;
-use rockbot::tools::{VisionTool, WebDavTool, WebFetchTool, WebSearchTool};
+use rockbot::tools::{ImageGenTool, VisionTool, WebDavTool, WebFetchTool, WebSearchTool};
 
 fn setup_logging() {
     let subscriber = FmtSubscriber::builder()
@@ -117,6 +118,22 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     tool_registry.register(Box::new(VisionTool::new()));
     if let Some(ref webdav_client) = webdav {
         tool_registry.register(Box::new(WebDavTool::new(webdav_client.clone())));
+
+        let fal_config = harness.config().find_provider("fal");
+        if let Some(fal_cfg) = fal_config {
+            match FalAiProvider::new(fal_cfg, "fal-ai/flux/schnell") {
+                Ok(fal_provider) => {
+                    tool_registry.register(Box::new(ImageGenTool::new(
+                        fal_provider,
+                        webdav_client.clone(),
+                    )));
+                    info!("Registered image_gen tool with fal.ai");
+                }
+                Err(e) => {
+                    warn!("Failed to create fal.ai provider: {}", e);
+                }
+            }
+        }
     }
 
     if !tool_registry.is_empty() {
@@ -150,63 +167,101 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    let client = rocketchat::RocketChatClient::new(rocketchat_config);
+    let max_retries: u32 = 5;
+    let mut retry_count: u32 = 0;
 
-    client
-        .connect_and_run(move |msg, sender| {
-            let harness = harness.clone();
-            let bot_name = bot_name.clone();
-            async move {
-                let mut h = harness.lock().await;
+    loop {
+        let client = rocketchat::RocketChatClient::new(rocketchat_config.clone());
 
-                let text = if msg.is_dm {
-                    msg.text.clone()
-                } else {
-                    msg.text
-                        .strip_prefix(&bot_name)
-                        .unwrap_or(&msg.text)
-                        .trim()
-                        .to_string()
-                };
+        let result = client
+            .connect_and_run({
+                let harness = harness.clone();
+                let bot_name = bot_name.clone();
+                move |msg, sender| {
+                    let harness = harness.clone();
+                    let bot_name = bot_name.clone();
+                    async move {
+                        let mut h = harness.lock().await;
 
-                let room_name = if msg.room_name.is_empty() {
-                    format!("dm-{}", msg.sender_name)
-                } else {
-                    msg.room_name.clone()
-                };
+                        let text = if msg.is_dm {
+                            msg.text.clone()
+                        } else {
+                            msg.text
+                                .strip_prefix(&bot_name)
+                                .unwrap_or(&msg.text)
+                                .trim()
+                                .to_string()
+                        };
 
-                debug!(
-                    "Processing message from {} in {} (is_dm={}): {}",
-                    msg.sender_name, room_name, msg.is_dm, text
-                );
+                        let room_name = if msg.room_name.is_empty() {
+                            format!("dm-{}", msg.sender_name)
+                        } else {
+                            msg.room_name.clone()
+                        };
 
-                match h
-                    .process_message(&msg.room_id, &room_name, msg.is_dm, &msg.sender_name, &text)
-                    .await
-                {
-                    Ok(Some(reply)) => {
-                        if let Err(e) = sender.reply(&reply).await {
-                            error!("Failed to send reply: {}", e);
+                        debug!(
+                            "Processing message from {} in {} (is_dm={}): {}",
+                            msg.sender_name, room_name, msg.is_dm, text
+                        );
+
+                        match h
+                            .process_message(
+                                &msg.room_id,
+                                &room_name,
+                                msg.is_dm,
+                                &msg.sender_name,
+                                &text,
+                            )
+                            .await
+                        {
+                            Ok(Some(reply)) => {
+                                if let Err(e) = sender.reply(&reply).await {
+                                    error!("Failed to send reply: {}", e);
+                                }
+                                if let Err(e) = h.archive_room_if_needed(&msg.room_id).await {
+                                    warn!("Memory archiving failed: {}", e);
+                                }
+                            }
+                            Ok(None) => {
+                                if let Err(e) = h.archive_room_if_needed(&msg.room_id).await {
+                                    warn!("Memory archiving failed: {}", e);
+                                }
+                            }
+                            Err(e) => {
+                                error!("Failed to process message: {}", e);
+                                let _ = sender
+                                    .reply(&format!("Error processing message: {}", e))
+                                    .await;
+                            }
                         }
-                        if let Err(e) = h.archive_room_if_needed(&msg.room_id).await {
-                            warn!("Memory archiving failed: {}", e);
-                        }
-                    }
-                    Ok(None) => {
-                        if let Err(e) = h.archive_room_if_needed(&msg.room_id).await {
-                            warn!("Memory archiving failed: {}", e);
-                        }
-                    }
-                    Err(e) => {
-                        error!("Failed to process message: {}", e);
-                        let _ = sender
-                            .reply(&format!("Error processing message: {}", e))
-                            .await;
                     }
                 }
+            })
+            .await;
+
+        match result {
+            Ok(()) => {
+                info!("WebSocket connection closed normally");
+                break;
             }
-        })
-        .await?;
+            Err(e) => {
+                retry_count += 1;
+                if retry_count >= max_retries {
+                    error!(
+                        "Max reconnect retries ({}) reached, shutting down",
+                        max_retries
+                    );
+                    return Err(e.into());
+                }
+                let delay = Duration::from_secs(2u64.pow(retry_count));
+                warn!(
+                    "WebSocket disconnected: {}. Reconnecting in {:?} (attempt {}/{})",
+                    e, delay, retry_count, max_retries
+                );
+                tokio::time::sleep(delay).await;
+            }
+        }
+    }
 
     Ok(())
 }

@@ -42,7 +42,6 @@ async fn test_complete_simple_response() {
         base_url: mock_server.uri(),
         basecf_url: None,
         chat_path: Some("/chat/completions".into()),
-        draw_path: None,
         models: HashMap::new(),
     };
     let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();
@@ -98,7 +97,6 @@ async fn test_complete_with_tool_calls() {
         base_url: mock_server.uri(),
         basecf_url: None,
         chat_path: Some("/chat/completions".into()),
-        draw_path: None,
         models: HashMap::new(),
     };
     let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();
@@ -157,7 +155,6 @@ async fn test_complete_with_reasoning() {
         base_url: mock_server.uri(),
         basecf_url: None,
         chat_path: Some("/chat/completions".into()),
-        draw_path: None,
         models: HashMap::new(),
     };
     let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();
@@ -201,7 +198,6 @@ async fn test_complete_401_unauthorized() {
         base_url: mock_server.uri(),
         basecf_url: None,
         chat_path: Some("/chat/completions".into()),
-        draw_path: None,
         models: HashMap::new(),
     };
     let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();
@@ -241,7 +237,6 @@ async fn test_complete_429_rate_limit() {
         base_url: mock_server.uri(),
         basecf_url: None,
         chat_path: Some("/chat/completions".into()),
-        draw_path: None,
         models: HashMap::new(),
     };
     let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();
@@ -278,7 +273,6 @@ async fn test_complete_500_server_error() {
         base_url: mock_server.uri(),
         basecf_url: None,
         chat_path: Some("/chat/completions".into()),
-        draw_path: None,
         models: HashMap::new(),
     };
     let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();
@@ -318,7 +312,6 @@ async fn test_complete_503_overloaded() {
         base_url: mock_server.uri(),
         basecf_url: None,
         chat_path: Some("/chat/completions".into()),
-        draw_path: None,
         models: HashMap::new(),
     };
     let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();
@@ -361,7 +354,6 @@ async fn test_complete_402_insufficient_balance() {
         base_url: mock_server.uri(),
         basecf_url: None,
         chat_path: Some("/chat/completions".into()),
-        draw_path: None,
         models: HashMap::new(),
     };
     let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();
@@ -408,7 +400,6 @@ async fn test_complete_with_thinking_and_tools() {
         base_url: mock_server.uri(),
         basecf_url: None,
         chat_path: Some("/chat/completions".into()),
-        draw_path: None,
         models: HashMap::new(),
     };
     let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();
@@ -459,7 +450,6 @@ async fn test_complete_custom_chat_path() {
         base_url: mock_server.uri(),
         basecf_url: None,
         chat_path: Some("/v1/chat/completions".into()),
-        draw_path: None,
         models: HashMap::new(),
     };
     let provider = DeepSeekProvider::new(&config, "deepseek-v4-flash").unwrap();
@@ -507,7 +497,6 @@ async fn test_complete_multi_turn_conversation() {
         base_url: mock_server.uri(),
         basecf_url: None,
         chat_path: Some("/chat/completions".into()),
-        draw_path: None,
         models: HashMap::new(),
     };
     let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();
@@ -554,7 +543,6 @@ async fn test_complete_422_invalid_params() {
         base_url: mock_server.uri(),
         basecf_url: None,
         chat_path: Some("/chat/completions".into()),
-        draw_path: None,
         models: HashMap::new(),
     };
     let provider = DeepSeekProvider::new(&config, "invalid-model").unwrap();
@@ -609,7 +597,6 @@ async fn test_openrouter_complete_simple_response() {
         base_url: mock_server.uri(),
         basecf_url: None,
         chat_path: Some("/chat/completions".into()),
-        draw_path: None,
         models: HashMap::new(),
     };
     let provider = OpenRouterProvider::new(&config, "openai/gpt-4").unwrap();
@@ -664,7 +651,6 @@ async fn test_openrouter_complete_with_tools() {
         base_url: mock_server.uri(),
         basecf_url: None,
         chat_path: Some("/chat/completions".into()),
-        draw_path: None,
         models: HashMap::new(),
     };
     let provider = OpenRouterProvider::new(&config, "openai/gpt-4").unwrap();
@@ -716,7 +702,6 @@ async fn test_openrouter_complete_with_temperature() {
         base_url: mock_server.uri(),
         basecf_url: None,
         chat_path: Some("/chat/completions".into()),
-        draw_path: None,
         models: HashMap::new(),
     };
     let provider = OpenRouterProvider::new(&config, "openai/gpt-4").unwrap();
@@ -756,7 +741,6 @@ async fn test_openrouter_complete_401() {
         base_url: mock_server.uri(),
         basecf_url: None,
         chat_path: Some("/chat/completions".into()),
-        draw_path: None,
         models: HashMap::new(),
     };
     let provider = OpenRouterProvider::new(&config, "openai/gpt-4").unwrap();
@@ -796,7 +780,6 @@ async fn test_openrouter_complete_429() {
         base_url: mock_server.uri(),
         basecf_url: None,
         chat_path: Some("/chat/completions".into()),
-        draw_path: None,
         models: HashMap::new(),
     };
     let provider = OpenRouterProvider::new(&config, "openai/gpt-4").unwrap();
@@ -833,7 +816,6 @@ async fn test_openrouter_complete_500() {
         base_url: mock_server.uri(),
         basecf_url: None,
         chat_path: Some("/chat/completions".into()),
-        draw_path: None,
         models: HashMap::new(),
     };
     let provider = OpenRouterProvider::new(&config, "openai/gpt-4").unwrap();
@@ -883,7 +865,6 @@ async fn test_openrouter_complete_with_reasoning() {
         base_url: mock_server.uri(),
         basecf_url: None,
         chat_path: Some("/chat/completions".into()),
-        draw_path: None,
         models: HashMap::new(),
     };
     let provider = OpenRouterProvider::new(&config, "openai/gpt-4").unwrap();

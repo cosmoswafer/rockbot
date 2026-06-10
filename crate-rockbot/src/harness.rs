@@ -5,7 +5,7 @@ use webdav::{WebDavClient, WebDavPath};
 
 use crate::AppConfig;
 use crate::error::Result;
-use crate::memory::MemoryManager;
+use crate::memory::{ArchiveEntry, MemoryManager};
 use crate::provider::AiProvider;
 use crate::tool::ToolRegistry;
 use crate::types::{ChatMessage, ChatRequest, Role};
@@ -17,6 +17,7 @@ When you need information from the web, use the web_search tool. \
 When you need to fetch a URL, use web_fetch. \
 When you need to analyze an image, use the vision tool. \
 When you need to read, write, list, or manage files on remote storage, use the webdav tool. \
+When you need to generate an image, use the image_gen tool. \
 Answer in the same language as the user. \
 Keep responses clear and to the point.\
 ";
@@ -154,7 +155,9 @@ impl AgentHarness {
                                 tool_call.function.name, tool_call.id
                             );
 
-                            let arguments = if tool_call.function.name == "webdav" {
+                            let arguments = if tool_call.function.name == "webdav"
+                                || tool_call.function.name == "image_gen"
+                            {
                                 inject_room_id(&tool_call.function.arguments, room_id)
                             } else {
                                 tool_call.function.arguments.clone()
@@ -239,7 +242,8 @@ impl AgentHarness {
         if let Some((rid, msgs, seq)) = needs_archive {
             if let Some(ref webdav_client) = self.webdav {
                 let count = msgs.len();
-                let content = format_messages_as_markdown(&msgs);
+                let summary = self.summarize_for_archive(&msgs).await;
+                let content = format_messages_as_markdown(&summary, &msgs);
                 let path = WebDavPath::new("").archive_path(&rid, seq);
 
                 match webdav_client
@@ -247,7 +251,10 @@ impl AgentHarness {
                     .await
                 {
                     Ok(()) => {
-                        debug!("Archived {} messages for room {} to {}", count, rid, path);
+                        debug!(
+                            "Archived {} messages for room {} to {} (summary: {:.60}...)",
+                            count, rid, path, summary
+                        );
                     }
                     Err(e) => {
                         warn!(
@@ -268,10 +275,39 @@ impl AgentHarness {
         }
         Ok(())
     }
+
+    async fn summarize_for_archive(&self, messages: &[ChatMessage]) -> String {
+        let mut summary_parts: Vec<String> = Vec::new();
+        for msg in messages.iter().take(5) {
+            if let Some(text) = msg.text_content() {
+                if !text.is_empty() {
+                    let truncated = if text.len() > 80 {
+                        format!("{}...", &text[..80])
+                    } else {
+                        text.to_string()
+                    };
+                    summary_parts.push(truncated);
+                }
+            }
+        }
+        if summary_parts.is_empty() {
+            format!("{} messages archived", messages.len())
+        } else {
+            let preview = summary_parts.join(" | ");
+            format!("{} messages: {}", messages.len(), preview)
+        }
+    }
+
+    pub async fn load_archives_for_room(&self, _room_id: &str) -> Result<Vec<ArchiveEntry>> {
+        Ok(Vec::new())
+    }
 }
 
-fn format_messages_as_markdown(messages: &[ChatMessage]) -> String {
-    let mut md = String::from("# Conversation Archive\n\n");
+fn format_messages_as_markdown(summary: &str, messages: &[ChatMessage]) -> String {
+    let mut md = format!(
+        "# Conversation Archive\n\n**Summary**: {}\n\n---\n\n",
+        summary
+    );
     for msg in messages {
         let role = match msg.role {
             Role::System => "System",
@@ -511,7 +547,8 @@ chat = "mock-model"
             ChatMessage::user("Hello"),
             ChatMessage::assistant("Hi there!"),
         ];
-        let md = format_messages_as_markdown(&msgs);
+        let md = format_messages_as_markdown("Test summary", &msgs);
+        assert!(md.contains("Test summary"));
         assert!(md.contains("**System**: You are helpful"));
         assert!(md.contains("**User**: Hello"));
         assert!(md.contains("**Assistant**: Hi there!"));
@@ -521,7 +558,8 @@ chat = "mock-model"
     fn test_format_messages_as_markdown_with_tool_calls() {
         let tc = ToolCall::new("call_1", "get_weather", r#"{"location":"Paris"}"#);
         let msgs = vec![ChatMessage::assistant_with_tool_calls("", vec![tc], None)];
-        let md = format_messages_as_markdown(&msgs);
+        let md = format_messages_as_markdown("Summary", &msgs);
+        assert!(md.contains("Summary"));
         assert!(md.contains("get_weather"));
         assert!(md.contains("Paris"));
     }
@@ -560,5 +598,36 @@ chat = "mock-model"
             assert!(!msgs.is_empty());
             assert_eq!(seq, 0);
         }
+    }
+
+    #[tokio::test]
+    async fn test_summarize_for_archive() {
+        let config = make_test_config();
+        let provider = Box::new(MockProvider::new(vec![]));
+        let harness = AgentHarness::new(config, provider, None);
+
+        let msgs = vec![
+            ChatMessage::user("Hello, I need help with something"),
+            ChatMessage::assistant("Sure, what do you need?"),
+        ];
+        let summary = harness.summarize_for_archive(&msgs).await;
+        assert!(summary.starts_with("2 messages:"));
+    }
+
+    #[test]
+    fn test_inject_room_id() {
+        let args = r#"{"action":"read","path":"notes.txt"}"#;
+        let result = inject_room_id(args, "general");
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["room_id"], "general");
+        assert_eq!(parsed["action"], "read");
+    }
+
+    #[test]
+    fn test_inject_room_id_for_image_gen() {
+        let args = r#"{"prompt":"test","room_id":"x"}"#;
+        let result = inject_room_id(args, "general");
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["room_id"], "general");
     }
 }

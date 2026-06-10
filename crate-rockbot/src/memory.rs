@@ -3,6 +3,25 @@ use std::collections::HashMap;
 use crate::types::ChatMessage;
 
 #[derive(Debug, Clone)]
+pub struct ArchiveEntry {
+    pub seq: u64,
+    pub summary: String,
+    pub date_range: String,
+    pub msg_count: usize,
+}
+
+impl ArchiveEntry {
+    pub fn new(seq: u64, summary: String, date_range: String, msg_count: usize) -> Self {
+        Self {
+            seq,
+            summary,
+            date_range,
+            msg_count,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct ConversationHistory {
     pub room_id: String,
     pub messages: Vec<ChatMessage>,
@@ -166,6 +185,15 @@ mod tests {
             Role::System => ChatMessage::system(text),
             Role::Tool => ChatMessage::tool("id", text),
         }
+    }
+
+    #[test]
+    fn test_archive_entry_new() {
+        let entry = ArchiveEntry::new(0, "Summary".into(), "2025-01-01".into(), 10);
+        assert_eq!(entry.seq, 0);
+        assert_eq!(entry.summary, "Summary");
+        assert_eq!(entry.date_range, "2025-01-01");
+        assert_eq!(entry.msg_count, 10);
     }
 
     #[test]

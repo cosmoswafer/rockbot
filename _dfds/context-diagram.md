@@ -17,7 +17,7 @@ flowchart LR
     NextCloud[NextCloud WebDAV]
     ExaSearch[Exa Search API]
     WebPage[Web Page]
-    ImageGen[Image Generation API]
+    ImageGen[fal.ai Image Generation]
     Bot(("RockBot"))
 
     RocketChat -->|"incoming message event"| Bot
@@ -36,5 +36,5 @@ flowchart LR
     WebPage -->|"page html"| Bot
 
     Bot -->|"image generation prompt"| ImageGen
-    ImageGen -->|"generated image bytes"| Bot
+    ImageGen -->|"generated image URL"| Bot
 ```

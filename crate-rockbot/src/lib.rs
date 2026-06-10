@@ -11,7 +11,7 @@ pub use config::{AppConfig, ProviderConfig};
 pub use error::{Result, RockBotError};
 pub use harness::AgentHarness;
 pub use memory::{ConversationHistory, MemoryManager, RoomState};
-pub use provider::{AiProvider, DeepSeekProvider, OpenRouterProvider, ReplicateProvider};
+pub use provider::{AiProvider, DeepSeekProvider, FalAiProvider, OpenRouterProvider};
 pub use tool::{Tool, ToolRegistry, ToolResult};
 pub use types::{
     ChatMessage, ChatRequest, CompletionResult, ContentPart, FinishReason, MessageContent, Role,

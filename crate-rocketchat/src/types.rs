@@ -42,13 +42,6 @@ impl BotReply {
     }
 }
 
-/// A raw DDP event before routing.
-#[derive(Debug, Clone)]
-pub struct DdpEvent {
-    pub msg: String,
-    pub raw: serde_json::Value,
-}
-
 /// Builder for filtering incoming messages.
 pub struct MessageFilter<'a> {
     bot_user_id: &'a str,

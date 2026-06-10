@@ -423,7 +423,6 @@ mod tests {
             base_url: "https://api.deepseek.com/v1".into(),
             basecf_url: None,
             chat_path: None,
-            draw_path: None,
             models: std::collections::HashMap::new(),
         };
         let result = DeepSeekProvider::new(&config, "deepseek-chat");
@@ -438,7 +437,6 @@ mod tests {
             base_url: "https://api.deepseek.com/v1".into(),
             basecf_url: None,
             chat_path: None,
-            draw_path: None,
             models: std::collections::HashMap::new(),
         };
         let result = DeepSeekProvider::new(&config, "deepseek-chat");
@@ -453,7 +451,6 @@ mod tests {
             base_url: "https://api.deepseek.com/v1".into(),
             basecf_url: None,
             chat_path: None,
-            draw_path: None,
             models: std::collections::HashMap::new(),
         };
         let provider = DeepSeekProvider::new(&config, "deepseek-chat").unwrap();
@@ -471,7 +468,6 @@ mod tests {
             base_url: "https://custom.api.com".into(),
             basecf_url: None,
             chat_path: Some("/v2/chat".into()),
-            draw_path: None,
             models: std::collections::HashMap::new(),
         };
         let provider = DeepSeekProvider::new(&config, "model").unwrap();
@@ -486,7 +482,6 @@ mod tests {
             base_url: "https://api.deepseek.com/v1".into(),
             basecf_url: None,
             chat_path: None,
-            draw_path: None,
             models: std::collections::HashMap::new(),
         };
         let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();
