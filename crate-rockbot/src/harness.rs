@@ -5,10 +5,10 @@ use webdav::{WebDavClient, WebDavPath};
 
 use crate::AppConfig;
 use crate::error::Result;
-use crate::memory::{ArchiveEntry, MemoryManager};
+use crate::memory::{MemoryJson, MemoryManager, MessageRef};
 use crate::provider::AiProvider;
 use crate::tool::ToolRegistry;
-use crate::types::{ChatMessage, ChatRequest, Role};
+use crate::types::{ChatMessage, ChatRequest};
 
 const DEFAULT_SYSTEM_PROMPT: &str = "\
 You are RockBot, a helpful AI assistant running on a RocketChat server. \
@@ -95,9 +95,19 @@ impl AgentHarness {
             text.to_string()
         };
 
-        let room = self.memory.get_or_create(room_id, room_name, is_dm);
+        let needs_restore = {
+            let room = self.memory.get_or_create(room_id, room_name, is_dm);
+            room.history.messages.is_empty() && room.history.archive_seq == 0
+        };
+
+        if needs_restore && self.webdav.is_some() {
+            self.restore_history(room_id, room_name, is_dm).await;
+        }
+
         let user_msg = ChatMessage::user(format!("{}: {}", sender_name, clean_text));
-        room.history.append(user_msg);
+        if let Some(room) = self.memory.get_mut(room_id) {
+            room.history.append(user_msg);
+        }
 
         let system_prompt = self.build_system_prompt();
         let tool_defs = self.tools.definitions();
@@ -245,7 +255,7 @@ impl AgentHarness {
             if let Some(ref webdav_client) = self.webdav {
                 let count = msgs.len();
                 let summary = self.summarize_for_archive(&msgs).await;
-                let content = format_messages_as_markdown(&summary, &msgs);
+                let content = format_messages_as_json(&rid, seq, &summary, &msgs);
 
                 let wd = {
                     let room = self.memory.get(&rid);
@@ -308,40 +318,139 @@ impl AgentHarness {
         }
     }
 
-    pub async fn load_archives_for_room(&self, _room_id: &str) -> Result<Vec<ArchiveEntry>> {
-        Ok(Vec::new())
+    pub async fn load_archives_for_room(
+        &self,
+        _room_id: &str,
+        room_name: &str,
+        is_dm: bool,
+    ) -> Result<Vec<MemoryJson>> {
+        let webdav_client = match &self.webdav {
+            Some(c) => c,
+            None => return Ok(Vec::new()),
+        };
+
+        let wd = compute_webdav_dir(room_name, is_dm);
+        let mem_dir = WebDavPath::new("").memory_dir(&wd);
+
+        if !webdav_client.exists(&mem_dir).await.unwrap_or(false) {
+            return Ok(Vec::new());
+        }
+
+        let entries = webdav_client.list_directory(&mem_dir).await?;
+        let mut json_files: Vec<&str> = entries
+            .iter()
+            .filter(|e| e.name.ends_with("_memory.json") && !e.is_dir)
+            .map(|e| e.name.as_str())
+            .collect();
+        json_files.sort();
+
+        let mut archives = Vec::new();
+        for name in json_files.iter().take(5) {
+            let path = format!("{}{}", mem_dir, name);
+            match webdav_client.read_file_to_string(&path).await {
+                Ok(content) => match serde_json::from_str::<MemoryJson>(&content) {
+                    Ok(archive) => archives.push(archive),
+                    Err(e) => {
+                        warn!("Failed to parse memory archive {}: {}", path, e);
+                    }
+                },
+                Err(e) => {
+                    warn!("Failed to read memory archive {}: {}", path, e);
+                }
+            }
+        }
+
+        Ok(archives)
+    }
+
+    pub async fn restore_history(&mut self, room_id: &str, room_name: &str, is_dm: bool) {
+        match self.load_archives_for_room(room_id, room_name, is_dm).await {
+            Ok(archives) if !archives.is_empty() => {
+                debug!(
+                    "Restored {} memory archives for room {}",
+                    archives.len(),
+                    room_name
+                );
+                self.memory
+                    .restore_from_archives(room_id, room_name, is_dm, &archives);
+            }
+            Ok(_) => {
+                debug!("No memory archives found for room {}", room_name);
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to load memory archives for room {}: {}",
+                    room_name, e
+                );
+            }
+        }
     }
 }
 
-fn format_messages_as_markdown(summary: &str, messages: &[ChatMessage]) -> String {
-    let mut md = format!(
-        "# Conversation Archive\n\n**Summary**: {}\n\n---\n\n",
-        summary
-    );
-    for msg in messages {
-        let role = match msg.role {
-            Role::System => "System",
-            Role::User => "User",
-            Role::Assistant => "Assistant",
-            Role::Tool => "Tool",
-        };
-        let text = msg.text_content().unwrap_or("");
-        if !text.is_empty() {
-            md.push_str(&format!("**{}**: {}\n\n", role, text));
+fn format_messages_as_json(
+    room_id: &str,
+    seq: u64,
+    summary: &str,
+    messages: &[ChatMessage],
+) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let created_at = format!("{:?}", now);
+
+    let date_range = {
+        let first = messages.first().and_then(extract_msg_info);
+        let last = messages.last().and_then(extract_msg_info);
+        match (first, last) {
+            (Some((_, _, t1)), Some((_, _, t2))) => format!("{} to {}", t1, t2),
+            _ => "unknown".to_string(),
         }
-        if let Some(tool_calls) = &msg.tool_calls {
-            for tc in tool_calls {
-                md.push_str(&format!(
-                    "**{}**: [tool: {}](args: {})\n\n",
-                    role, tc.function.name, tc.function.arguments
-                ));
+    };
+
+    let msg_refs: Vec<MessageRef> = messages
+        .iter()
+        .filter_map(|m| {
+            let (id, author, timestamp) = extract_msg_info(m)?;
+            let content = m.text_content()?.to_string();
+            if content.is_empty() {
+                None
+            } else {
+                Some(MessageRef {
+                    id,
+                    author,
+                    content,
+                    timestamp,
+                })
             }
-        }
-        if text.is_empty() && msg.tool_calls.is_none() {
-            md.push_str(&format!("**{}**: (empty message)\n\n", role));
-        }
-    }
-    md.trim().to_string()
+        })
+        .collect();
+
+    let archive = MemoryJson {
+        schema: "rockbot-memory/1".into(),
+        seq,
+        room_id: room_id.to_string(),
+        summary: summary.to_string(),
+        date_range,
+        msg_count: messages.len(),
+        messages: msg_refs,
+        created_at,
+    };
+
+    serde_json::to_string(&archive).unwrap_or_else(|_| "{}".into())
+}
+
+fn extract_msg_info(msg: &ChatMessage) -> Option<(String, String, String)> {
+    let id = "".to_string();
+    let timestamp = {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        format!("{}", now)
+    };
+    let text = msg.text_content()?;
+    let (author, _) = text.split_once(": ").unwrap_or((text, ""));
+    Some((id, author.to_string(), timestamp))
 }
 
 fn inject_room_context(arguments: &str, room_id: &str, webdav_dir: &str) -> String {
@@ -560,27 +669,46 @@ chat = "mock-model"
     }
 
     #[test]
-    fn test_format_messages_as_markdown() {
+    fn test_format_messages_as_json() {
         let msgs = vec![
             ChatMessage::system("You are helpful"),
-            ChatMessage::user("Hello"),
+            ChatMessage::user("sender: Hello"),
             ChatMessage::assistant("Hi there!"),
         ];
-        let md = format_messages_as_markdown("Test summary", &msgs);
-        assert!(md.contains("Test summary"));
-        assert!(md.contains("**System**: You are helpful"));
-        assert!(md.contains("**User**: Hello"));
-        assert!(md.contains("**Assistant**: Hi there!"));
+        let json = format_messages_as_json("room1", 0, "Test summary", &msgs);
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["schema"], "rockbot-memory/1");
+        assert_eq!(parsed["seq"], 0);
+        assert_eq!(parsed["room_id"], "room1");
+        assert_eq!(parsed["summary"], "Test summary");
+        assert_eq!(parsed["msg_count"], 3);
     }
 
     #[test]
-    fn test_format_messages_as_markdown_with_tool_calls() {
-        let tc = ToolCall::new("call_1", "get_weather", r#"{"location":"Paris"}"#);
-        let msgs = vec![ChatMessage::assistant_with_tool_calls("", vec![tc], None)];
-        let md = format_messages_as_markdown("Summary", &msgs);
-        assert!(md.contains("Summary"));
-        assert!(md.contains("get_weather"));
-        assert!(md.contains("Paris"));
+    fn test_format_messages_as_json_empty_messages() {
+        let msgs: Vec<ChatMessage> = vec![];
+        let json = format_messages_as_json("room1", 5, "empty", &msgs);
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["seq"], 5);
+        assert_eq!(parsed["messages"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_extract_msg_info() {
+        let msg = ChatMessage::user("alice: hello world");
+        let info = extract_msg_info(&msg);
+        assert!(info.is_some());
+        let (_, author, _) = info.unwrap();
+        assert_eq!(author, "alice");
+    }
+
+    #[test]
+    fn test_extract_msg_info_no_colon() {
+        let msg = ChatMessage::assistant("plain reply");
+        let info = extract_msg_info(&msg);
+        assert!(info.is_some());
+        let (_, author, _) = info.unwrap();
+        assert_eq!(author, "plain reply");
     }
 
     #[tokio::test]

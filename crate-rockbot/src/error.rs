@@ -52,6 +52,9 @@ pub enum RockBotError {
 
     #[error("Tool call parse error: {0}")]
     ToolCallParse(String),
+
+    #[error("WebDAV error: {0}")]
+    WebDav(#[from] webdav::WebDavError),
 }
 
 pub type Result<T> = std::result::Result<T, RockBotError>;

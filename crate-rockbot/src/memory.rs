@@ -1,6 +1,28 @@
 use std::collections::HashMap;
 
+use serde::{Deserialize, Serialize};
+
 use crate::types::ChatMessage;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryJson {
+    pub schema: String,
+    pub seq: u64,
+    pub room_id: String,
+    pub summary: String,
+    pub date_range: String,
+    pub msg_count: usize,
+    pub messages: Vec<MessageRef>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageRef {
+    pub id: String,
+    pub author: String,
+    pub content: String,
+    pub timestamp: String,
+}
 
 #[derive(Debug, Clone)]
 pub struct ArchiveEntry {
@@ -27,6 +49,7 @@ pub struct ConversationHistory {
     pub messages: Vec<ChatMessage>,
     pub char_count: usize,
     pub archive_seq: u64,
+    pub restored_summary: Option<String>,
 }
 
 impl ConversationHistory {
@@ -36,6 +59,7 @@ impl ConversationHistory {
             messages: Vec::new(),
             char_count: 0,
             archive_seq: 0,
+            restored_summary: None,
         }
     }
 
@@ -66,6 +90,10 @@ impl ConversationHistory {
             }
         }
         self.archive_seq += 1;
+    }
+
+    pub fn set_archive_seq(&mut self, seq: u64) {
+        self.archive_seq = seq;
     }
 }
 
@@ -134,6 +162,40 @@ impl MemoryManager {
         }
     }
 
+    pub fn restore_from_archives(
+        &mut self,
+        room_id: &str,
+        room_name: &str,
+        is_dm: bool,
+        archives: &[MemoryJson],
+    ) {
+        if archives.is_empty() {
+            return;
+        }
+
+        let room = self.get_or_create(room_id, room_name, is_dm);
+
+        let max_seq = archives.iter().map(|a| a.seq).max().unwrap_or(0);
+        room.history.set_archive_seq(max_seq + 1);
+
+        let latest = archives.last().unwrap();
+        let mut summary = format!(
+            "[Restored conversation context from {} ({} messages archived across {} segments)]\n{}",
+            latest.date_range,
+            archives.iter().map(|a| a.msg_count).sum::<usize>(),
+            archives.len(),
+            latest.summary,
+        );
+
+        if archives.len() > 1 {
+            for a in archives.iter().rev().skip(1) {
+                summary.push_str(&format!("\nEarlier summary (#{}): {}", a.seq, a.summary));
+            }
+        }
+
+        room.history.restored_summary = Some(summary);
+    }
+
     pub fn prune_archived(&mut self, room_id: &str, count: usize) {
         if let Some(room) = self.rooms.get_mut(room_id) {
             room.history.prune_first(count);
@@ -152,6 +214,9 @@ impl MemoryManager {
         messages.push(ChatMessage::system(system_prompt));
 
         if let Some(room) = self.rooms.get(room_id) {
+            if let Some(ref restored) = room.history.restored_summary {
+                messages.push(ChatMessage::system(restored.as_str()));
+            }
             let history = &room.history.messages;
             let start = if history.len() > limit {
                 history.len() - limit

@@ -46,15 +46,15 @@ fn test_webdav_path_archive_path() {
     let path = WebDavPath::new("rockbot");
     assert_eq!(
         path.archive_path("general", 1),
-        "/rockbot/general/memory/000001_summary.md"
+        "/rockbot/general/memory/000001_memory.json"
     );
     assert_eq!(
         path.archive_path("general", 999),
-        "/rockbot/general/memory/000999_summary.md"
+        "/rockbot/general/memory/000999_memory.json"
     );
     assert_eq!(
         path.archive_path("project-x", 123456),
-        "/rockbot/project-x/memory/123456_summary.md"
+        "/rockbot/project-x/memory/123456_memory.json"
     );
 }
 
@@ -108,14 +108,14 @@ fn test_archive_path_zero_padding() {
     let path = WebDavPath::new("bot");
     assert_eq!(
         path.archive_path("room", 0),
-        "/bot/room/memory/000000_summary.md"
+        "/bot/room/memory/000000_memory.json"
     );
     assert_eq!(
         path.archive_path("room", 7),
-        "/bot/room/memory/000007_summary.md"
+        "/bot/room/memory/000007_memory.json"
     );
     assert_eq!(
         path.archive_path("room", 999999),
-        "/bot/room/memory/999999_summary.md"
+        "/bot/room/memory/999999_memory.json"
     );
 }
