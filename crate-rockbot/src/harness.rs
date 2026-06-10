@@ -772,11 +772,11 @@ impl AgentHarness {
             match webdav_client.write_file_with_fallback(&path, json).await {
                 Ok(()) => {
                     self.memory.clear_dirty(room_id);
-                    info!("Flushed snapshot for room {} on shutdown", room_id);
+                    info!("Flushed snapshot for room {}", room_id);
                 }
                 Err(e) => {
                     warn!(
-                        "Failed to flush snapshot for {} on shutdown: {}",
+                        "Failed to flush snapshot for {}: {}",
                         room_id, e
                     );
                 }
@@ -787,6 +787,10 @@ impl AgentHarness {
     pub async fn maintenance_tick(&mut self, memory_ttl_secs: u64) {
         // Phase 1: persist dirty snapshots
         if self.webdav.is_some() {
+            let dirty_count = self.memory.dirty_snapshots().len();
+            if dirty_count > 0 {
+                debug!("maintenance_tick: flushing {} dirty snapshot(s)", dirty_count);
+            }
             self.flush_all_snapshots().await;
         }
 

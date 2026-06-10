@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
+use tracing::debug;
 use webdav::WebDavPath;
 
 use crate::types::ChatMessage;
@@ -320,6 +321,7 @@ impl MemoryManager {
     }
 
     pub fn mark_snapshot_dirty(&mut self, room_id: &str) {
+        debug!("mark_snapshot_dirty: {}", room_id);
         self.dirty_snapshots.insert(room_id.to_string());
     }
 
