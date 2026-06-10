@@ -328,7 +328,11 @@ impl WebDavClient {
                 .trim_start_matches('/')
                 .to_string();
 
-            let name = href.rsplit('/').next().unwrap_or(&href).to_string();
+            let raw_name = href.rsplit('/').next().unwrap_or(&href);
+            let name = percent_encoding::percent_decode_str(raw_name)
+                .decode_utf8()
+                .map(|s| s.trim().to_string())
+                .unwrap_or_else(|_| raw_name.to_string());
 
             if name.is_empty() {
                 continue;
