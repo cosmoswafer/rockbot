@@ -27,17 +27,17 @@ agent only loads knowledge that matches the current conversation.
 Knowledge is saved via the `save_knowledge` tool, which the AI provider can
 call in two scenarios:
 
-1. **Explicit command** — user says `!learn <thing>` or `!jot <thing>`;
+1. **Explicit command** — user says `!remember <thing>`, `!note <thing>`, or `!save <thing>`;
    the AI parses the instruction and emits `save_knowledge`
 2. **Agent-initiated** — during normal conversation the AI determines
    something is worth persisting and emits `save_knowledge` autonomously
 
-Additional magic words suggested for future consideration:
+Magic words recognized by the system prompt:
 
 | Magic word | Category hint | Example |
 |------------|---------------|---------|
-| `!skill` | Explicitly saves as `skill` category | `!skill how to query the DB via web_fetch` |
-| `!secret` | Explicitly saves as `secret` category | `!secret my github token is ghp_abc123` |
+| `!remember` | Generic — lets the AI infer category | `!remember that I prefer Python over JavaScript` |
+| `!note` | Generic — lets the AI infer category | `!note the prod server IP is 10.0.0.5` |
 | `!save` | Generic — lets the AI infer category | `!save that I prefer Python over JavaScript` |
 | `!forget` | Maps to `forget_knowledge` tool | `!forget the old database instructions` |
 
@@ -76,7 +76,7 @@ flowchart TD
     IDX_SER[Serialize index.json]
     DAV[(NextCloud WebDAV)]
 
-    USER -->|"!learn / !jot / natural chat"| AI
+    USER -->|"!remember / !note / !save / natural chat"| AI
     AI -->|"tool_call: save_knowledge"| TOOL
     TOOL -->|"category + topic + content + when_useful"| CATEGORIZE
     CATEGORIZE -->|"markdown body"| MD
