@@ -1,5 +1,6 @@
 use rockbot::config::ProviderConfig;
 use rockbot::error::RockBotError;
+use rockbot::provider::fal::ImageGenParams;
 use rockbot::provider::{AiProvider, DeepSeekProvider, FalAiProvider, OpenRouterProvider};
 use rockbot::tool::Tool;
 use rockbot::types::{ChatMessage, ChatRequest, FinishReason, ThinkingConfig, ToolDef};
@@ -1586,7 +1587,7 @@ async fn test_fal_submit_request() {
 
     let config = make_fal_config(&mock_server.uri());
     let provider = FalAiProvider::new(&config, "fal-ai/flux/schnell").unwrap();
-    let url = provider.generate_image("a sunset").await.unwrap();
+    let url = provider.generate_image(&ImageGenParams::new("a sunset")).await.unwrap();
     assert_eq!(url, "https://fal.media/result.png");
 }
 
@@ -1604,7 +1605,7 @@ async fn test_fal_submit_unauthorized() {
 
     let config = make_fal_config(&mock_server.uri());
     let provider = FalAiProvider::new(&config, "fal-ai/flux/schnell").unwrap();
-    let result = provider.generate_image("test").await;
+    let result = provider.generate_image(&ImageGenParams::new("test")).await;
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("Invalid key"));
 }
@@ -1621,7 +1622,7 @@ async fn test_fal_submit_missing_request_id() {
 
     let config = make_fal_config(&mock_server.uri());
     let provider = FalAiProvider::new(&config, "fal-ai/flux/schnell").unwrap();
-    let result = provider.generate_image("test").await;
+    let result = provider.generate_image(&ImageGenParams::new("test")).await;
     assert!(result.is_err());
 }
 
@@ -1648,7 +1649,7 @@ async fn test_fal_poll_status_failed() {
 
     let config = make_fal_config(&mock_server.uri());
     let provider = FalAiProvider::new(&config, "fal-ai/flux/schnell").unwrap();
-    let result = provider.generate_image("test").await;
+    let result = provider.generate_image(&ImageGenParams::new("test")).await;
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("NSFW"));
 }

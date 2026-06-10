@@ -2,10 +2,11 @@
 
 ## 1. Purpose
 
-Loads `config.toml` at startup with typed deserialization via `serde`. The
-validated `AppConfig` struct is shared read-only across all subsystems.
-Supports `from_file` (with validation) and `from_str` (raw parse, no
-validation) entry points.
+Loads two TOML files at startup — a bundled `default.config.toml` (shipped
+with the repo, no secrets) and a user `config.toml` (gitignored, holds
+passwords and API keys). The two are deep-merged via Serde's merge strategy
+(user values override defaults). The validated `AppConfig` struct is shared
+read-only across all subsystems.
 
 - Downstream: [WebDAV Tool](../tools/webdav.md) consumes `WebDavConfig` for remote file
   access
@@ -20,15 +21,22 @@ validation) entry points.
 ```mermaid
 flowchart TD
     INIT(Initialize)
-    TOML_FILE[(Config File)]
-    LOAD(LoadToml)
+    DEF_TOML[(default.config.toml\nbundled defaults\nno secrets)]
+    USER_TOML[(config.toml\nuser overrides\npasswords + API keys)]
+    LOAD_DEF(LoadDefaults)
+    LOAD_USR(LoadUserConfig)
+    MERGE(MergeConfig\nuser wins)
     VALIDATE(ValidateConfig)
     SHARE(DistributeAppConfig)
     SUBSYS[Subsystems]
 
-    INIT -->|"config path"| LOAD
-    TOML_FILE -->|"toml text"| LOAD
-    LOAD -->|"appconfig struct"| VALIDATE
+    INIT -->|"built-in path"| LOAD_DEF
+    DEF_TOML -->|"toml text"| LOAD_DEF
+    INIT -->|"CONFIG_FILE env / 'config.toml'"| LOAD_USR
+    USER_TOML -->|"toml text"| LOAD_USR
+    LOAD_DEF -->|"default appconfig"| MERGE
+    LOAD_USR -->|"user appconfig"| MERGE
+    MERGE -->|"merged appconfig"| VALIDATE
     VALIDATE -->|"validated appconfig"| SHARE
     SHARE -->|"arc appconfig"| SUBSYS
 ```
@@ -37,14 +45,17 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    LOAD(LoadToml)
-    ERR_NO_CFG[Error: No Config Found]
+    LOAD_DEF(LoadDefaults)
+    LOAD_USR(LoadUserConfig)
+    ERR_MISSING_DEF[Error: default.config.toml\nnot found – corrupt install]
     ERR_PARSE[Error: TOML Parse]
     ERR_VALID[Error: Validation]
     VALIDATE(ValidateConfig)
 
-    LOAD -->|"error: file not found"| ERR_NO_CFG
-    LOAD -->|"error: parse failure"| ERR_PARSE
+    LOAD_DEF -->|"error: file not found"| ERR_MISSING_DEF
+    LOAD_DEF -->|"error: parse failure"| ERR_PARSE
+    LOAD_USR -->|"error: parse failure"| ERR_PARSE
+    LOAD_USR -->|"error: file not found\n(defaults used)"| VALIDATE
     VALIDATE -->|"error: provider not found"| ERR_VALID
 ```
 
@@ -70,39 +81,39 @@ flowchart TD
 
 #### `ServerConfig`
 
-| Field      | Type     | Notes                              |
-| ---------- | -------- | ---------------------------------- |
-| `url`      | `String` | RocketChat server host (no scheme) |
-| `username` | `String` | Bot login username                 |
-| `password` | `String` | Bot login password                 |
-| `debug`    | `bool`   | Enable verbose DDP logging         |
+| Field      | Type     | Notes                                                               |
+| ---------- | -------- | ------------------------------------------------------------------- |
+| `url`      | `String` | RocketChat server host (no scheme)                                  |
+| `username` | `String` | Bot login username (`""` in defaults, filled in user config)        |
+| `password` | `String` | Bot login password (`""` in defaults, filled in user config)        |
+| `debug`    | `bool`   | Enable verbose DDP logging                                          |
 
 #### `ModelConfig`
 
-| Field              | Type     | Notes                                    |
-| ------------------ | -------- | ---------------------------------------- |
-| `default_provider` | `String` | Must match a [[providers]].name          |
-| `default_model`    | `String` | Model alias key in provider's models map |
-| `max_history_size` | `usize`  | Max conversation turns (default 12)      |
-| `max_text_length`  | `usize`  | Layer 1 overflow threshold chars (default 50000)|
-| `max_iterations`   | `u32`    | Max agent loop iterations (default 8)    |
-| `max_summary_chars` | `usize`  | Layer 2 max chars across loaded summaries (default 8000)|
-| `max_soul_chars`   | `usize`  | Layer 3 max chars for soul.md content (default 2000)|
-| `summary_days`     | `u32`    | Layer 2 retention window in days (default 7)|
-| `memory_ttl_secs`  | `u64`    | Room idle timeout — snapshot to WebDAV then evict (default 300)|
-| `persist_interval_secs` | `u64` | Snapshot persist timer interval (default 60) |
+| Field                  | Type    | Notes                                                         |
+| ---------------------- | ------- | ------------------------------------------------------------- |
+| `default_provider`     | `String`| Must match a `[[chat_providers]].name`                        |
+| `default_model`        | `String`| Model alias key in provider's models map                      |
+| `max_history_size`     | `usize` | Max conversation turns (default 12)                           |
+| `max_text_length`      | `usize` | Layer 1 overflow threshold chars (default 50000)              |
+| `max_iterations`       | `u32`   | Max agent loop iterations (default 8)                         |
+| `max_summary_chars`    | `usize` | Layer 2 max chars across loaded summaries (default 8000)      |
+| `max_soul_chars`       | `usize` | Layer 3 max chars for soul.md content (default 2000)          |
+| `summary_days`         | `u32`   | Layer 2 retention window in days (default 7)                  |
+| `memory_ttl_secs`      | `u64`   | Room idle timeout — snapshot to WebDAV then evict (default 300)|
+| `persist_interval_secs`| `u64`   | Snapshot persist timer interval (default 60)                  |
 
 #### `ProviderConfig`
 
-| Field        | Type                     | Notes                                      |
-| ------------ | ------------------------ | ------------------------------------------ |
-| `name`       | `String`                 | Provider identifier ("openrouter", etc.)   |
-| `api_key`    | `String`                 | Provider API key                           |
-| `base_url`   | `String`                 | API endpoint base URL                      |
-| `basecf_url` | `Option<String>`         | Cloudflare worker proxy override (opt.)    |
-| `chat_path`  | `Option<String>`         | Chat completions path (Default: `/chat/completions`)|
-| `draw_path`  | `Option<String>`         | Image generation path (opt.)               |
-| `models`     | `HashMap<String, String>`| Alias → model-id map                       |
+| Field        | Type                     | Notes                                                             |
+| ------------ | ------------------------ | ----------------------------------------------------------------- |
+| `name`       | `String`                 | Provider identifier ("openrouter", etc.)                          |
+| `api_key`    | `String`                 | Provider API key (`""` in defaults, filled in user config)        |
+| `base_url`   | `String`                 | API endpoint base URL                                             |
+| `basecf_url` | `Option<String>`         | Cloudflare worker proxy override (opt.)                           |
+| `chat_path`  | `Option<String>`         | Chat completions path (Default: `/chat/completions`)             |
+| `draw_path`  | `Option<String>`         | Image generation path (opt.)                                      |
+| `models`     | `HashMap<String, String>`| Alias → model-id map                                              |
 
 > **Note:** `basecf_url` is deserialized but currently unused — both providers use `base_url` + `chat_path` via `ProviderConfig::chat_url()`.
 
@@ -121,3 +132,15 @@ flowchart TD
 | `password` | `String` | NextCloud app password                  |
 | `root`     | `String` | Base directory for bot data             |
 | `calendar_name` | `Option<String>` | CalDAV calendar name (enables calendar tool if set) |
+
+## 4. Config Files
+
+| File                  | Git   | Secrets | Purpose                                    |
+| --------------------- | ----- | ------- | ------------------------------------------ |
+| `default.config.toml` | Tracked | No   | Bundled defaults (model limits, URLs, empty secrets) |
+| `config.toml`         | Ignored | Yes  | User overrides (passwords, API keys)       |
+
+- `default.config.toml` is loaded first from the workspace root (shipped with the repo).
+- `config.toml` is loaded second; its path comes from the `CONFIG_FILE` env var (default `"config.toml"`).
+- User-provided values deep-merge over defaults. Empty strings in user config override defaults.
+- If `config.toml` is missing, the bot runs with only default values (all secrets will be empty — startup may fail validation).
