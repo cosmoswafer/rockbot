@@ -10,7 +10,9 @@ use rockbot::config::AppConfig;
 use rockbot::harness::AgentHarness;
 use rockbot::provider::{AiProvider, DeepSeekProvider, FalAiProvider, OpenRouterProvider};
 use rockbot::tool::ToolRegistry;
-use rockbot::tools::{ImageGenTool, VisionTool, WebDavTool, WebFetchTool, WebSearchTool};
+use rockbot::tools::{
+    DateTimeTool, ImageGenTool, VisionTool, WebDavTool, WebFetchTool, WebSearchTool,
+};
 
 fn setup_logging() {
     let subscriber = FmtSubscriber::builder()
@@ -114,6 +116,7 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     } else {
         tool_registry.register(Box::new(WebFetchTool::new()));
     }
+    tool_registry.register(Box::new(DateTimeTool::new()));
     tool_registry.register(Box::new(VisionTool::new()));
     if let Some(ref webdav_client) = webdav {
         tool_registry.register(Box::new(WebDavTool::new(webdav_client.clone())));

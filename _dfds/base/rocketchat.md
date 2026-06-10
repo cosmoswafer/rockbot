@@ -256,19 +256,15 @@ definition and how it is populated.
 | ------------- | ----------------- | --------------------------------------------------- |
 | `msg_id`      | `Option<String>`  | `raw["id"]` — DDP message ID                        |
 | `room_id`     | `String`          | `args[0]["rid"]` — RocketChat room ID               |
-| `room_name`   | `String`          | `args[1]["name"]` (display name) → `args[1]["roomName"]` (slug) → `args[1]["fname"]`. `""` or `"DIRECT_MESSAGES"` for DMs |
-| `sender_name` | `String`          | `args[0]["u"]["username"]` — sender username         |
-| `sender_id`   | `String`          | `args[0]["u"]["_id"]` — sender user ID               |
-| `text`        | `String`          | `args[0]["msg"]` — message body                      |
-| `is_dm`       | `bool`            | `true` when `room_name` is empty or `"DIRECT_MESSAGES"` |
-| `timestamp`   | `Option<i64>`     | `args[0]["ts"]["$date"]` — Unix ms epoch             |
+| `room_name`   | `String`          | `args[1]["roomName"]` (slug, e.g. `sen1-lin2-sheng1-tai4`). `""` or `"DIRECT_MESSAGES"` for DMs |
 
 The agent harness computes `webdav_dir` for WebDAV storage:
-- **Channel** (e.g. `#原子知识库`): DDP supplies `name: "原子知识库"` → `webdav_dir: "r-原子知识库"`
-- **Channel fallback** (`name` missing): DDP supplies `roomName: "atomkb"` → `webdav_dir: "r-atomkb"`
-- **Direct message** (e.g. from `saru`): DDP `name` empty → falls back to `sender_name: "saru"` → `webdav_dir: "d-saru"`
+- **Channel** (e.g. `#森林生态`): DDP supplies `roomName: "sen1-lin2-sheng1-tai4"` → `webdav_dir: "r-sen1-lin2-sheng1-tai4"`
+- **Direct message** (e.g. from `saru`): DDP `roomName` empty → falls back to `sender_name: "saru"` → `webdav_dir: "d-saru"`
 
-The flat `r-`/`d-` prefixes prevent collisions between a channel and a DM user with the same slug.
+The flat `r-`/`d-` prefixes prevent collisions. Note: DDP only exposes the
+internal slug via `roomName`, not the Chinese/Unicode display name; the real
+name requires a REST API call to RocketChat.
 
 #### `BotReply`
 
