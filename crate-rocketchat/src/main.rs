@@ -39,7 +39,12 @@ fn main() {
                     let location = if msg.is_dm {
                         format!("DM from {}", msg.sender_name)
                     } else {
-                        format!("#{} from {}", msg.room_name, msg.sender_name)
+                        let name = if msg.room_fname.is_empty() {
+                            &msg.room_name
+                        } else {
+                            &msg.room_fname
+                        };
+                        format!("#{} from {}", name, msg.sender_name)
                     };
                     println!("[{}] {}", location, msg.text);
                     let _ = io::stdout().flush();

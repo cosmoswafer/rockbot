@@ -7,8 +7,10 @@ pub struct IncomingMessage {
     pub msg_id: Option<String>,
     /// The room ID where the message was sent.
     pub room_id: String,
-    /// The room name. Empty string or "DIRECT_MESSAGES" for DMs.
+    /// The room name (URL slug from DDP `roomName`). Empty string or "DIRECT_MESSAGES" for DMs.
     pub room_name: String,
+    /// The room friendly name (from DDP `fname`). Empty string when not set or for DMs.
+    pub room_fname: String,
     /// The username of the sender (not user ID).
     pub sender_name: String,
     /// The message text. For @mentions, the bot name is stripped.
@@ -119,10 +121,21 @@ impl<'a> MessageFilter<'a> {
             (String::new(), true)
         };
 
+        let room_fname = if args.len() > 1 {
+            args[1]
+                .get("fname")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string()
+        } else {
+            String::new()
+        };
+
         Some(IncomingMessage {
             msg_id,
             room_id,
             room_name,
+            room_fname,
             sender_name,
             text,
             is_dm,

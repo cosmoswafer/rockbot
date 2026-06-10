@@ -30,6 +30,7 @@ fn make_changed_channel(
                 },
                 {
                     "roomName": room_name,
+                    "fname": "",
                     "roomType": "c"
                 }
             ]
@@ -67,35 +68,81 @@ fn make_changed_dm(
 }
 
 #[test]
-fn test_filter_channel_message_with_mention() {
+fn test_filter_channel_message_with_fname() {
     let bot_id = "bot123";
-    let bot_name = "@rockbot";
-    let rooms: HashMap<String, bool> = HashMap::new();
+    let _bot_name = "@rockbot";
+    let _rooms: HashMap<String, bool> = HashMap::new();
 
-    let event = make_changed_channel(
-        "msg1",
-        "room1",
-        "general",
-        "@rockbot hello bot!",
-        "user1",
-        "user456",
-    );
+    let event = json!({
+        "msg": "changed",
+        "collection": "stream-room-messages",
+        "id": "msg1",
+        "fields": {
+            "eventName": "room1",
+            "args": [
+                {
+                    "_id": "msg1",
+                    "rid": "room1",
+                    "msg": "@rockbot hello!",
+                    "u": {
+                        "_id": "user456",
+                        "username": "user1"
+                    },
+                    "ts": {"$date": 1480377601000i64}
+                },
+                {
+                    "roomName": "shit",
+                    "fname": "💩💩💩SHIT屎",
+                    "roomType": "c"
+                }
+            ]
+        }
+    });
 
     let filter = MessageFilter::new(bot_id);
-    let msg = filter
-        .filter(&event)
-        .expect("Should not filter out message");
+    let msg = filter.filter(&event).expect("Should parse message");
 
-    assert_eq!(msg.msg_id.as_deref(), Some("msg1"));
-    assert_eq!(msg.room_id, "room1");
-    assert_eq!(msg.room_name, "general");
-    assert_eq!(msg.sender_name, "user1");
-    assert_eq!(msg.sender_id, "user456");
-    assert_eq!(msg.text, "@rockbot hello bot!");
+    assert_eq!(msg.room_name, "shit");
+    assert_eq!(msg.room_fname, "💩💩💩SHIT屎");
     assert!(!msg.is_dm);
+}
 
-    // Verify dispatch logic
-    assert!(MessageFilter::is_dm_or_mention(&msg, bot_name, &rooms));
+#[test]
+fn test_filter_channel_message_no_fname() {
+    let bot_id = "bot123";
+    let _bot_name = "@rockbot";
+    let _rooms: HashMap<String, bool> = HashMap::new();
+
+    let event = json!({
+        "msg": "changed",
+        "collection": "stream-room-messages",
+        "id": "msg1",
+        "fields": {
+            "eventName": "room1",
+            "args": [
+                {
+                    "_id": "msg1",
+                    "rid": "room1",
+                    "msg": "@rockbot hello!",
+                    "u": {
+                        "_id": "user456",
+                        "username": "user1"
+                    },
+                    "ts": {"$date": 1480377601000i64}
+                },
+                {
+                    "roomName": "general"
+                }
+            ]
+        }
+    });
+
+    let filter = MessageFilter::new(bot_id);
+    let msg = filter.filter(&event).expect("Should parse message");
+
+    assert_eq!(msg.room_name, "general");
+    assert_eq!(msg.room_fname, "");
+    assert!(!msg.is_dm);
 }
 
 #[test]
@@ -388,6 +435,7 @@ fn test_incoming_message_dm_detection() {
         msg_id: Some("m1".into()),
         room_id: "rid1".into(),
         room_name: "".into(),
+        room_fname: "".into(),
         sender_name: "user".into(),
         text: "hi".into(),
         is_dm: true,
@@ -405,6 +453,7 @@ fn test_incoming_message_dm_detection() {
         msg_id: Some("m2".into()),
         room_id: "rid2".into(),
         room_name: "general".into(),
+        room_fname: "".into(),
         sender_name: "user".into(),
         text: "hello".into(),
         is_dm: false,
@@ -418,6 +467,7 @@ fn test_incoming_message_dm_detection() {
         msg_id: Some("m3".into()),
         room_id: "rid3".into(),
         room_name: "general".into(),
+        room_fname: "".into(),
         sender_name: "user".into(),
         text: "@rockbot help".into(),
         is_dm: false,
@@ -436,6 +486,7 @@ fn test_registered_room_dispatch() {
         msg_id: Some("m1".into()),
         room_id: "rid1".into(),
         room_name: "ops-room".into(),
+        room_fname: "".into(),
         sender_name: "user".into(),
         text: "deploy now".into(),
         is_dm: false,

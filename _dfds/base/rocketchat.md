@@ -256,15 +256,20 @@ definition and how it is populated.
 | ------------- | ----------------- | --------------------------------------------------- |
 | `msg_id`      | `Option<String>`  | `raw["id"]` — DDP message ID                        |
 | `room_id`     | `String`          | `args[0]["rid"]` — RocketChat room ID               |
-| `room_name`   | `String`          | `args[1]["roomName"]` (slug, e.g. `sen1-lin2-sheng1-tai4`). `""` or `"DIRECT_MESSAGES"` for DMs |
+| `room_name`   | `String`          | `args[1]["roomName"]` — URL slug (ASCII, e.g. `sen1-lin2-sheng1-tai4`). `""` or `"DIRECT_MESSAGES"` for DMs |
+| `room_fname`  | `String`          | `args[1]["fname"]` — friendly/display name (Unicode, e.g. `森林生態`). Empty for rooms without a custom fname |
 
-The agent harness computes `webdav_dir` for WebDAV storage:
-- **Channel** (e.g. `#森林生态`): DDP supplies `roomName: "sen1-lin2-sheng1-tai4"` → `webdav_dir: "r-sen1-lin2-sheng1-tai4"`
+Room name precedence:
+- **Matching/registration**: use `room_name` (slug) — always ASCII, deterministic
+- **Display/log messages**: prefer `room_fname` when non-empty, fall back to `room_name`
+
+The agent harness computes `webdav_dir` for WebDAV storage using the slug (`room_name`) for safe filesystem paths:
+- **Channel** (e.g. `#💩💩💩SHIT屎` with slug `shit`): DDP supplies `roomName: "shit"` + `fname: "💩💩💩SHIT屎"` → `webdav_dir: "r-shit"`
 - **Direct message** (e.g. from `saru`): DDP `roomName` empty → falls back to `sender_name: "saru"` → `webdav_dir: "d-saru"`
 
-The flat `r-`/`d-` prefixes prevent collisions. Note: DDP only exposes the
-internal slug via `roomName`, not the Chinese/Unicode display name; the real
-name requires a REST API call to RocketChat.
+The flat `r-`/`d-` prefixes prevent collisions. Both `roomName` and `fname` are
+available in DDP `args[1]` — no additional REST API call is needed for the
+display name.
 
 #### `BotReply`
 

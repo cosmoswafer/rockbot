@@ -213,9 +213,15 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                             msg.room_name.clone()
                         };
 
+                        let display_name = if msg.room_fname.is_empty() {
+                            room_name.clone()
+                        } else {
+                            msg.room_fname.clone()
+                        };
+
                         debug!(
                             "Processing message from {} in {} (is_dm={}): {}",
-                            msg.sender_name, room_name, msg.is_dm, text
+                            msg.sender_name, display_name, msg.is_dm, text
                         );
 
                         match h

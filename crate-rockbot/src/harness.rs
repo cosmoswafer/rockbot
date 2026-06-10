@@ -376,7 +376,7 @@ impl AgentHarness {
                     .restore_from_archives(room_id, room_name, is_dm, &archives);
             }
             Ok(_) => {
-                debug!("No memory archives found for room {}", room_name);
+                debug!("No memory archives found for room {}", room_id);
             }
             Err(e) => {
                 warn!(
