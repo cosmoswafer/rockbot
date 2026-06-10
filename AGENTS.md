@@ -60,13 +60,13 @@ No CI, no `rustfmt.toml`, no `clippy.toml`, no `rust-toolchain` file.
 ## Key facts
 
 - `Cargo.lock` is gitignored. Do not create or commit it.
-- `config.toml` is gitignored; use `example.config.toml` as a reference. Config uses `[rocketchat.server]` + `[rocketchat.model]` sub-sections and `[[providers]]` (TOML array-of-tables), **not** the old Python `config.json` format.
+- `config.toml` is gitignored; use `example.config.toml` as a reference. Config uses `[rocketchat.server]` + `[rocketchat.model]` sub-sections, `[[chat_providers]]` for LLM backends, and `[[image_providers]]` for image generation (TOML array-of-tables), **not** the old Python `config.json` format.
 - `CONFIG_FILE` env var sets the config path; defaults to `config.toml` (not a CLI argument).
 - The `rocketchat` crate has both `lib.rs` (public API) and `main.rs` (manual debug binary that connects to a RocketChat server and logs events — no real bot logic).
 - The `rocketchat` crate uses `thiserror`, `serde`/`serde_json`, `tokio-tungstenite` with `rustls-tls-native-roots` for WebSocket TLS.
 - The `rockbot` crate uses `async-trait` for the `AiProvider` trait (OpenRouter, DeepSeek, Fal).
 - Exa API key is read from `[tools.exa]` config section first, then falls back to `EXA_API_KEY` env var.
-- Tools are registered conditionally: `WebDavTool` and `ImageGenTool` only if WebDAV is configured; `ImageGenTool` also requires a `fal` provider in config.
+- Tools are registered conditionally: `WebDavTool` and `ImageGenTool` only if WebDAV is configured; `ImageGenTool` also requires an `image_provider` entry in config (uses `FalAiProvider` internally regardless of provider name).
 - The main loop has exponential backoff reconnect (2^attempt seconds, max 5 retries, then exits).
 - The `webdav` crate uses `quick-xml` and `base64` for WebDAV XML parsing and auth.
 

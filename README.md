@@ -1,7 +1,8 @@
 # RockBot
 
 AI-powered RocketChat bot written in Rust. Responds to DMs and @mentions with
-agentic capabilities — web search, URL fetching, and image vision — backed
+agentic capabilities — web search, URL fetching, image vision, image generation,
+calendar/todo management, knowledge storage, and file operations — backed
 by a NextCloud WebDAV server for persistent state.
 
 ## Quick Start
@@ -44,10 +45,10 @@ Three crates: `rocketchat` (DDP WebSocket client), `rockbot` (bot logic), `webda
 ### Key design decisions
 
 - **No local disk** — all persistent state on NextCloud WebDAV
-- **`AiProvider` trait** — single OpenAI-compatible interface for DeepSeek, OpenRouter, Fal
+- **`AiProvider` trait** — single OpenAI-compatible interface; separate `[[chat_providers]]` and `[[image_providers]]` tables for text and image backends (DeepSeek, OpenRouter, Fal)
 - **`Tool` trait with `ToolRegistry`** — tools registered dynamically; agent loop dispatches and feeds results back
-- **TOML array-of-tables config** — `[[providers]]` supports multiple backends with model aliases
-- **Per-room memory** — isolated history per channel/DM with WebDAV archival
+- **Three-layer memory** — chat history (short-term), daily summaries (mid-term), soul archive (long-term) on WebDAV per room
+- **Knowledge store** — persistent skill/secret/note entries per room with WebDAV-backed `index.json`
 
 ## Prerequisites
 
@@ -78,16 +79,17 @@ Test inventory and run instructions: [`_docs/test_suite/`](_docs/test_suite/).
 
 | Component | DFD | Detailed notes |
 | --------- | --- | -------------- |
-| Agent loop | [`_dfds/agent-loop.md`](_dfds/agent-loop.md) | [`_docs/agent-harness.md`](_docs/agent-harness.md) |
-| Agent harness | [`_dfds/agent-harness.md`](_dfds/agent-harness.md) | — |
+| Agent loop | [`_dfds/agent-loop.md`](_dfds/agent-loop.md) | — |
+| Agent harness | [`_dfds/agent-harness.md`](_dfds/agent-harness.md) | [`_docs/agent-harness.md`](_docs/agent-harness.md) |
 | RocketChat client | [`_dfds/base/rocketchat.md`](_dfds/base/rocketchat.md) | [`_docs/rocketchat-client.md`](_docs/rocketchat-client.md) |
-| WebDAV | [`_dfds/base/webdav.md`](_dfds/base/webdav.md) | — |
 | AI Provider | [`_dfds/base/ai-provider.md`](_dfds/base/ai-provider.md) | — |
 | Config | [`_dfds/base/config.md`](_dfds/base/config.md) | — |
 | Memory | [`_dfds/base/memory.md`](_dfds/base/memory.md) | — |
 | Knowledge | [`_dfds/base/knowledge.md`](_dfds/base/knowledge.md) | — |
 | Context diagram | [`_dfds/context-diagram.md`](_dfds/context-diagram.md) | — |
-| Web search / fetch | [`_dfds/tools/exa-search.md`](_dfds/tools/exa-search.md) | — |
+| WebDAV tool | [`_dfds/tools/webdav.md`](_dfds/tools/webdav.md) | — |
+| Calendar tool | [`_dfds/tools/calendar.md`](_dfds/tools/calendar.md) | — |
+| Web search / fetch | [`_dfds/tools/exa-search.md`](_dfds/tools/exa-search.md) | [`_dfds/tools/web-fetch.md`](_dfds/tools/web-fetch.md) |
 | Test suite | — | [`_docs/test_suite/running.md`](_docs/test_suite/running.md) |
 
 ## Environment variables
