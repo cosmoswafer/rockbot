@@ -7,7 +7,7 @@ validated `AppConfig` struct is shared read-only across all subsystems.
 Supports `from_file` (with validation) and `from_str` (raw parse, no
 validation) entry points.
 
-- Downstream: [WebDAV Directory](webdav-directory.md) consumes `WebDavConfig` for remote file
+- Downstream: [WebDAV Tool](../tools/webdav.md) consumes `WebDavConfig` for remote file
   access
 - Downstream: [RocketChat Connection](rocketchat.md), [AI Provider](ai-provider.md),
   [Memory Management](memory.md) and [Tools](tools/) each consume their respective

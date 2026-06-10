@@ -7,11 +7,11 @@ read/write/list/mkdir/delete with per-room directory isolation. Each room gets
 its own subtree created proactively on first use. Room names use type prefixes
 (`r-` for channels, `d-` for DMs) to prevent collisions.
 
-- Upstream: [Configuration Management](config.md) provides `WebDavConfig`
+- Upstream: [Configuration Management](../base/config.md) provides `WebDavConfig`
 - Downstream: [Agent Harness](../agent-harness.md) exposes `WebDavTool` to
   the AI agent
-- Downstream: [Knowledge Management](knowledge.md) persists `.md` files
-- Downstream: [WebDAV Memory](webdav-memory.md) uses PUT/GET/PROPFIND
+- Downstream: [Knowledge Management](../base/knowledge.md) persists `.md` files
+- Downstream: [WebDAV Memory](../base/webdav-memory.md) uses PUT/GET/PROPFIND
   operations for JSON archive persistence
 
 ## 2. Diagram
@@ -109,7 +109,7 @@ flowchart TD
 
 Each room (channel or DM) has three subdirectories: `memory/`, `images/`, and
 `workspace/`. A shared `config/` directory holds backups. The `calendars/`
-directory stores CalDAV events (see [WebDAV Calendar](webdav-calendar.md)).
+directory stores CalDAV events (see [Calendar](calendar.md)).
 
 ```mermaid
 flowchart TD

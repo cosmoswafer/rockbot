@@ -34,9 +34,9 @@ Intentionally absent — not needed for rockbot's scope:
   room and receives new messages for archival
 - Downstream: [Knowledge Management](base/knowledge.md) extracts and persists
   domain facts, loads entries into agent context on room init
-- Downstream: [WebDAV Directory](base/webdav-directory.md) persists generated image assets
+- Downstream: [WebDAV Tool](tools/webdav.md) persists generated image assets
   and provides file storage via `WebDavTool`
-- Downstream: [WebDAV Calendar](base/webdav-calendar.md) provides CalDAV event access
+- Downstream: [Calendar Tool](tools/calendar.md) provides CalDAV event access
   via `CalendarTool` (conditionally registered)
 
 ## 2. Diagram

@@ -6,7 +6,7 @@ CalDAV event access wrapping NextCloud's calendar service. Supports listing
 events by date range, create/read/update/delete individual events with
 iCalendar (RFC 5545) `VEVENT` payloads, and `VALARM` reminders.
 
-- Upstream: [Configuration Management](config.md) provides `WebDavConfig`
+- Upstream: [Configuration Management](../base/config.md) provides `WebDavConfig`
   plus calendar name
 - Downstream: [Agent Harness](../agent-harness.md) exposes calendar event
   access to the AI agent via the calendar tool

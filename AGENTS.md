@@ -90,9 +90,9 @@ Data Flow Diagrams in `_dfds/` define the system's architecture. When a DFD is m
 | `base/config.md` | `config.rs` | `example.config.toml` |
 | `base/memory.md` | `memory.rs` | `harness.rs` |
 | `base/rocketchat.md` | rocketchat crate (`client.rs`, `ddp.rs`, `types.rs`) | — |
-| `base/webdav-directory.md` | webdav crate (`client.rs`, `path.rs`) | `harness.rs` |
-| `base/webdav-calendar.md` | webdav crate (`client.rs`, `path.rs`) | `harness.rs` |
 | `base/webdav-memory.md` | webdav crate (`client.rs`, `path.rs`) | `harness.rs`, `memory.rs` |
+| `tools/webdav.md` | `tools/webdav.rs` | webdav crate (`client.rs`, `path.rs`) |
+| `tools/calendar.md` | `tools/calendar.rs` | webdav crate (`client.rs`, `path.rs`) |
 | `tools/exa-search.md` | `tools/web_search.rs` | `tools/web_fetch.rs` |
 | `tools/web-fetch.md` | `tools/web_fetch.rs` | `tools/web_search.rs` |
 | `base/knowledge.md` | `memory.rs` | `harness.rs` |

@@ -15,7 +15,7 @@ startup, recent archives are preloaded into the cache from WebDAV.
   conversation character-count threshold is exceeded, and loads recent
   archives on room init
 - Upstream: [Configuration Management](config.md) provides `WebDavConfig`
-- Downstream: [WebDAV Directory](webdav-directory.md) provides the underlying
+- Downstream: [WebDAV Tool](../tools/webdav.md) provides the underlying
   PUT/GET/PROPFIND operations
 
 ## 2. Diagram
