@@ -385,7 +385,7 @@ struct SoulMemory {
 ```
 
 The `content` is plain markdown with optional section headers (`## Preferences`,
-`## Identity`, `## Notes`). Sections are separated by `## ` headers for
+`## Identity`, `## Facts`). Sections are separated by `## ` headers for
 targeted editing via the `edit_soul` tool.
 
 ### File Layout

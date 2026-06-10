@@ -228,7 +228,7 @@ Image generated and stored at {webdav_path}. Original fal.ai URL: {image_url}
 **File:** `crate-rockbot/src/memory.rs:230-233`
 **Type:** Dynamic — loaded from WebDAV `memory/soul.md`
 ```
-[Core memory — permanent preferences, identity, and notes]
+[Core memory — permanent preferences, identity, and facts]
 {content from soul.md}
 ```
 Injected as a second system message when soul content is non-empty.

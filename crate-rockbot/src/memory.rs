@@ -228,7 +228,7 @@ impl MemoryManager {
                     soul.content.clone()
                 };
                 messages.push(ChatMessage::system(format!(
-                    "[Core memory — permanent preferences, identity, and notes]\n{}",
+                    "[Core memory — permanent preferences, identity, and facts]\n{}",
                     truncated
                 )));
             }

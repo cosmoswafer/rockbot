@@ -24,9 +24,8 @@ When you need to manage calendar events or todo tasks, use the calendar tool. \
 When you need to generate an image, use the image_gen tool. \
 The image_gen tool returns both a WebDAV path and an original fal.ai CDN URL — \
 always share the fal.ai CDN URL with the user so they can view or share the image directly. \
-When a user asks you to remember something, or you want to save permanent notes, \
-preferences, or identity information, use the edit_soul tool. \
-When a user says !learn, !jot, !skill, !secret, !save or shares important \
+When you want to save or update preferences, identity, or facts, use the edit_soul tool. \
+When a user asks you to remember something, shares notes, or says !learn, !jot, !skill, !secret, !save or shares important \
 information worth persisting, use the save_knowledge tool. \
 When a user says !forget or asks to remove something you learned, \
 use the forget_knowledge tool. \

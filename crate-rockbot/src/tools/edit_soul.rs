@@ -161,7 +161,7 @@ impl Tool for EditSoulTool {
                 },
                 "section_header": {
                     "type": "string",
-                    "description": "Target ## Section name (e.g. Preferences, Identity, Notes)"
+                    "description": "Target ## Section name (e.g. Preferences, Identity, Facts)"
                 },
                 "content": {
                     "type": "string",
