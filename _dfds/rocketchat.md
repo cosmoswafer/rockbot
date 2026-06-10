@@ -2,7 +2,7 @@
 
 ## 1. Purpose
 
-Python module (`RocketChatBot`) that manages the full lifecycle of a
+Rust crate (`crate-rocketchat`) that manages the full lifecycle of a
 RocketChat connection over **DDP (Distributed Data Protocol)** via WebSocket:
 authentication, subscription to message stream, event dispatch, message
 parsing/filtering, and reply delivery. DMs, messages starting with `@botname`,
@@ -14,10 +14,9 @@ and room-specific registered callbacks are forwarded to the agent.
 > or the [Apps-Engine](https://developer.rocket.chat/docs/rocketchat-apps-engine).
 
 - Upstream: [Configuration Management](config.md) provides configuration
-  (loaded as `SimpleNamespace` from `config.json` in the Python implementation)
-- Downstream: [Agent Loop](agent-harness.md) receives filtered messages via
-  callback `(sender_name, room_name, room_id, text)`; sends replies through
-  the `bot` helper class wrapping `sendMsg()`
+  (typed `RocketChatConfig` deserialized from TOML via `serde`)
+- Downstream: [Agent Loop](agent-harness.md) receives filtered `IncomingMessage`
+  structs via async callback; sends replies through `MessageSender::reply()`
 
 ## 2. Diagram
 
@@ -59,16 +58,18 @@ flowchart TD
 
 ### 2b. Error Handling & Fallbacks
 
-The Python implementation has minimal internal error recovery — any WebSocket
-exception propagates uncaught and terminates the process. External restart is
-provided by the shell wrapper (`manual_start.sh`) with a retry counter.
+The Rust implementation uses a typed `RocketChatError` enum (`thiserror`) that
+classifies WebSocket, protocol, auth, TLS, JSON, and config errors. `Result<T>`
+patterns propagate errors from `connect_async`, `read.next()`, and JSON parsing.
+The `"nosub"` DDP event triggers automatic re-subscription. No external restart
+wrapper is needed — errors bubble up through the `Result` chain to the caller.
 
 ```mermaid
 flowchart TD
     AUTH(Authenticate)
     CONNECT(ConnectWebSocket)
     STREAM(StreamEvents)
-    RESTART[Shell Restart Wrapper]
+    RESTART[Error Propagation via Result<T>]
 
     AUTH -->|"error details"| RESTART
     CONNECT -->|"error details"| RESTART
@@ -78,10 +79,11 @@ flowchart TD
 
 ### 2c. Message Filter Deep Dive
 
-The `_cb_changed` callback (`bot/RocketChatBot.py:116`) implements a four-stage
-decision chain. Messages from the bot itself are silently dropped. The bot
-responds to three cases: (1) `@botname` at the start of a channel message,
-(2) a specific registered room, or (3) a direct message with no room name.
+The `MessageFilter::filter()` method (`crate-rocketchat/src/types.rs:64`)
+implements a four-stage decision chain. Messages from the bot itself are
+silently dropped. The bot responds to: (1) `@botname` at the start of a
+channel message, (2) a specific registered room, or (3) a direct message
+with no room name.
 
 ```mermaid
 flowchart TD
@@ -98,10 +100,10 @@ flowchart TD
 ```
 
 The filter process internally:
-1. Skips events from the bot's own user ID
-2. Matches messages starting with `@botname` in channels
-3. Falls back to checking a registered-room list
-4. Accepts DMs with no room name (`rom == ""` or `rom == "DIRECT_MESSAGES"`)
+1. Skips events where `sender_id == bot_user_id` (self-messages)
+2. Checks `is_dm` flag from the parsed event
+3. Matches messages starting with `@botname` in channels
+4. Falls back to checking a registered-room list
 
 All other cases are silently dropped.
 
@@ -138,32 +140,31 @@ flowchart TD
     ACK_NOSUB -->|"re-subscribe"| WS
 ```
 
-**Dispatch table** — the `cbdist` dict maps each `msg` value to a callback:
+**Dispatch table** — the `msg` field routes to inline handling in the event loop:
 
-| `msg` value    | Callback           | Action                              |
-| -------------- | ------------------ | ----------------------------------- |
-| `"ping"`       | `_cb_ping`         | Send `{"msg": "pong"}`              |
-| `"connected"`  | `_cb_connected`    | Send login method                   |
-| `"result"`     | `_rt_dispatch`     | Extract userId, subscribe to room   |
-| `"changed"`    | `_cb_changed`      | Forward to ParseEvent               |
-| `"ready"`      | **missing**         | Gateway to StreamEvents (see fix)   |
-| `"nosub"`      | **missing**         | Re-subscribe on disconnect (see fix)|
+| `msg` value    | Handler                         | Action                              |
+| -------------- | ------------------------------- | ----------------------------------- |
+| `"ping"`       | `ddp::pong_message()`           | Send `{"msg": "pong"}`              |
+| `"connected"`  | `connect_and_run` setup         | Send login method (see 2f)          |
+| `"result"`     | `ddp::extract_login_result()`   | Extract userId, confirm login       |
+| `"changed"`    | `MessageFilter::filter()`       | Parse + filter + dispatch to agent  |
+| `"ready"`      | `expect_msg("ready")`           | Confirm subscription active         |
+| `"nosub"`      | re-subscribe inline             | Re-subscribe on subscription loss   |
 
-> **Known gaps**: `"ready"` and `"nosub"` are standard DDP lifecycle messages
-> sent after subscription/unsubscription. Neither is handled by the current
-> implementation. The bot never confirms its subscription actually succeeded,
-> and cannot detect subscription loss.
+All six message types are handled. The event loop waits for `"ready"` after
+subscription and re-subscribes on `"nosub"`.
 
 Note: the bot does **not** proactively send pings or monitor ping intervals —
 it only responds to server-initiated pings. A missing server ping will not be
-detected; a WebSocket error will propagate uncaught (see 2b).
+detected; a WebSocket read returning `None` or `Err` terminates the loop.
 
 ### 2e. Subscription Deep Dive
 
-After authentication succeeds (`_rt_dispatch` receives `result` with `id` and
-`token`), `_gologin()` subscribes to the `stream-room-messages` endpoint with
-the `__my_messages__` scope. Once subscribed, the server begins delivering
-`"changed"` events for all messages visible to the bot user.
+After authentication succeeds (`ddp::extract_login_result()` parses the
+`result` with `id` and `token`), `RocketChatClient::connect_and_run()` sends
+the subscription via `ddp::subscribe_message()`. Once the server responds with
+`"ready"`, the event loop begins delivering `"changed"` events for all messages
+visible to the bot user.
 
 ```mermaid
 flowchart TD
@@ -202,32 +203,13 @@ for a bot that only needs new incoming messages.
 
 ### 2f. Authentication Deep Dive
 
-The login flow uses DDP method calls over the WebSocket. The Rocket.Chat
-`login` method requires the password to be pre-hashed with **SHA-256**, sent
-as a lowercase hex digest alongside the algorithm name.
+The login flow uses DDP method calls over the WebSocket (`ddp::login_message()`
+in `crate-rocketchat/src/ddp.rs:21`). The Rocket.Chat `login` method requires
+the password to be pre-hashed with **SHA-256**, sent as a lowercase hex digest
+alongside the algorithm name. The Rust implementation uses `sha2::Digest` to
+hash the password before constructing the payload.
 
-**Current implementation** (`bot/RocketChatBot.py:79-87`):
-
-```json
-{
-    "msg": "method",
-    "method": "login",
-    "id": "42",
-    "params": [
-        {
-            "user": { "username": "rockbot" },
-            "password": "plaintext-password"
-        }
-    ]
-}
-```
-
-> **BUG**: The password is sent as a plain string. The Rocket.Chat login API
-> expects the password field to be an object with `"digest"` and `"algorithm"`
-> keys. The server may accept plaintext passwords if configured
-> non-standardly, but the documented protocol requires:
-
-**Correct payload** (per [Rocket.Chat Realtime API docs](https://web.archive.org/web/20220728050012/https://developer.rocket.chat/reference/api/realtime-api/method-calls/login)):
+**Implementation** (`ddp::login_message()`):
 
 ```json
 {
@@ -245,10 +227,6 @@ as a lowercase hex digest alongside the algorithm name.
     ]
 }
 ```
-
-The `_cb_connected` callback should hash the password with
-`hashlib.sha256(password.encode()).hexdigest()` before constructing the
-payload.
 
 **Server response** on success:
 
@@ -268,45 +246,48 @@ The `tokenExpires` field is **not consumed** by the current implementation.
 
 ## 3. Data Structures
 
-The Python implementation does not define formal typed structures (dataclasses,
-TypedDicts, etc.). Data flows through positional callback arguments and ad-hoc
-dicts. The tables below describe both the conceptual types and how each field
-maps to the current code.
+The Rust crate defines formal typed structs with `serde` (Serialize/Deserialize)
+in `crate-rocketchat/src/types.rs`. Tables below map each field to its struct
+definition and how it is populated.
 
 #### `IncomingMessage`
 
-| Field        | Type     | Python mapping                                       |
-| ------------ | -------- | ---------------------------------------------------- |
-| `msg_id`     | `String` | **Not parsed** — not available in callback           |
-| `room_id`    | `String` | `rid` arg passed to callback                         |
-| `room_name`  | `String` | `rom` arg passed to callback; `"DIRECT_MESSAGES"` for DMs, channel name otherwise |
-| `sender_name`| `String` | `usr` arg passed to callback (username, not user ID) |
-| `text`       | `String` | `txt` arg; mentions stripped via `.replace()` for @channel messages, **not stripped for DMs** |
-| `is_dm`      | `bool`   | **Not a boolean** — inferred from `rom == "DIRECT_MESSAGES"` or `rom == ""` |
-| `timestamp`  | `i64`    | **Not parsed** — not available in callback           |
+| Field         | Type              | Source / Notes                                      |
+| ------------- | ----------------- | --------------------------------------------------- |
+| `msg_id`      | `Option<String>`  | `raw["id"]` — DDP message ID                        |
+| `room_id`     | `String`          | `args[0]["rid"]` — RocketChat room ID               |
+| `room_name`   | `String`          | `args[1]["roomName"]` — `""` or `"DIRECT_MESSAGES"` for DMs |
+| `sender_name` | `String`          | `args[0]["u"]["username"]` — sender username         |
+| `sender_id`   | `String`          | `args[0]["u"]["_id"]` — sender user ID               |
+| `text`        | `String`          | `args[0]["msg"]` — message body                      |
+| `is_dm`       | `bool`            | `true` when `room_name` is empty or `"DIRECT_MESSAGES"` |
+| `timestamp`   | `Option<i64>`     | `args[0]["ts"]["$date"]` — Unix ms epoch             |
 
 #### `BotReply`
 
-| Field       | Type     | Python mapping                              |
-| ----------- | -------- | ------------------------------------------- |
-| `room_id`   | `String` | `bot.rid` on the `bot` helper class         |
-| `text`      | `String` | `msg` arg to `bot.reply(msg)`               |
-| `thread_id` | `Option<String>` | **Not implemented** — the DDP `sendMessage` method supports `tmid` (thread message ID), but `sendMsg()` doesn't expose it |
+| Field       | Type              | Constructor                          |
+| ----------- | ----------------- | ------------------------------------ |
+| `room_id`   | `String`          | `MessageSender::room_id()`           |
+| `text`      | `String`          | `MessageSender::reply(text)`         |
+| `thread_id` | `Option<String>`  | Reserved for threaded replies (`tmid`) |
 
-The `bot` helper class (`bot/bot.py`) also provides `replyQ(msg)` (code-block
-formatted reply) and `typing(state)` (typing indicator) which are not part of
-the `BotReply` concept.
+`MessageSender` also provides `reply_code(text)` (code-block format) and
+`typing(state, username)` (typing indicator).
 
-#### `DispatchTable`
+#### `DdpEvent`
 
-| Field    | Type         | Python mapping                             |
-| -------- | ------------ | ------------------------------------------ |
-| `msg`    | `String`     | Key in `cbdist` dict (e.g. `"ping"`)       |
-| `cb`     | `Callable`   | Value in `cbdist` dict (e.g. `_cb_ping`)   |
+| Field  | Type                  | Source                            |
+| ------ | --------------------- | --------------------------------- |
+| `msg`  | `String`              | Top-level `"msg"` field from JSON |
+| `raw`  | `serde_json::Value`   | Full parsed JSON object           |
 
-#### `RawEvent`
+#### `MessageFilter`
 
-| Field    | Type     | Python mapping                              |
-| -------- | -------- | ------------------------------------------- |
-| `msg`    | `String` | `jds["msg"]` after JSON parse in `_dispatch_ds` |
-| `fields` | `Value`  | The full parsed JSON object (`jds`) with `fields.args` for message payload |
+| Field         | Type      | Purpose                            |
+| ------------- | --------- | ---------------------------------- |
+| `bot_user_id` | `&str`    | User ID to filter out self-messages|
+
+Method `filter(&self, raw: &Value) -> Option<IncomingMessage>` parses and
+filters a raw DDP event, returning `None` for self-messages and `Some` for
+valid incoming messages. Callers then apply `is_dm_or_mention()` to decide
+dispatch.
