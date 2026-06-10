@@ -167,9 +167,10 @@ flowchart TD
 
 #### `WebDavPath`
 
-All methods accept a `dir_key` — a flat type-prefixed room slug such
-as `r-atomkb` or `d-saru`. The harness computes `webdav_dir` from the
-display name; the raw RocketChat room UUID is never used as a path segment.
+All methods accept a `dir_key` — a flat type-prefixed directory name such
+as `r-森林生態` or `d-saru`. The harness computes `webdav_dir` preferring
+`room_fname` (the friendly display name) over `room_name` (the ASCII slug);
+the raw RocketChat room UUID is never used as a path segment.
 
 | Method                   | Returns  | Notes                                       |
 | ------------------------ | -------- | ------------------------------------------- |

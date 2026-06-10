@@ -101,17 +101,24 @@ impl ConversationHistory {
 pub struct RoomState {
     pub room_id: String,
     pub room_name: String,
+    pub room_fname: String,
     pub is_dm: bool,
     pub history: ConversationHistory,
 }
 
 impl RoomState {
-    pub fn new(room_id: impl Into<String>, room_name: impl Into<String>, is_dm: bool) -> Self {
+    pub fn new(
+        room_id: impl Into<String>,
+        room_name: impl Into<String>,
+        room_fname: impl Into<String>,
+        is_dm: bool,
+    ) -> Self {
         let room_id = room_id.into();
         Self {
             history: ConversationHistory::new(&room_id),
             room_id,
             room_name: room_name.into(),
+            room_fname: room_fname.into(),
             is_dm,
         }
     }
@@ -133,10 +140,21 @@ impl MemoryManager {
         }
     }
 
-    pub fn get_or_create(&mut self, room_id: &str, room_name: &str, is_dm: bool) -> &mut RoomState {
-        self.rooms
-            .entry(room_id.to_string())
-            .or_insert_with(|| RoomState::new(room_id.to_string(), room_name.to_string(), is_dm))
+    pub fn get_or_create(
+        &mut self,
+        room_id: &str,
+        room_name: &str,
+        room_fname: &str,
+        is_dm: bool,
+    ) -> &mut RoomState {
+        self.rooms.entry(room_id.to_string()).or_insert_with(|| {
+            RoomState::new(
+                room_id.to_string(),
+                room_name.to_string(),
+                room_fname.to_string(),
+                is_dm,
+            )
+        })
     }
 
     pub fn get(&self, room_id: &str) -> Option<&RoomState> {
@@ -166,6 +184,7 @@ impl MemoryManager {
         &mut self,
         room_id: &str,
         room_name: &str,
+        room_fname: &str,
         is_dm: bool,
         archives: &[MemoryJson],
     ) {
@@ -173,7 +192,7 @@ impl MemoryManager {
             return;
         }
 
-        let room = self.get_or_create(room_id, room_name, is_dm);
+        let room = self.get_or_create(room_id, room_name, room_fname, is_dm);
 
         let max_seq = archives.iter().map(|a| a.seq).max().unwrap_or(0);
         room.history.set_archive_seq(max_seq + 1);
@@ -391,19 +410,21 @@ mod tests {
     #[test]
     fn test_memory_manager_get_or_create() {
         let mut mgr = MemoryManager::new(1000, 12);
-        let room = mgr.get_or_create("room1", "general", false);
+        let room = mgr.get_or_create("room1", "general", "", false);
         assert_eq!(room.room_id, "room1");
         assert_eq!(room.room_name, "general");
+        assert_eq!(room.room_fname, "");
         assert!(!room.is_dm);
 
-        let room2 = mgr.get_or_create("room1", "other", true);
+        let room2 = mgr.get_or_create("room1", "other", "fname_other", true);
         assert_eq!(room2.room_name, "general");
+        assert_eq!(room2.room_fname, "");
     }
 
     #[test]
     fn test_memory_manager_build_context() {
         let mut mgr = MemoryManager::new(1000, 3);
-        let room = mgr.get_or_create("room1", "general", false);
+        let room = mgr.get_or_create("room1", "general", "", false);
         for i in 0..5 {
             room.history
                 .append(make_msg(Role::User, &format!("msg {}", i)));
@@ -426,25 +447,36 @@ mod tests {
 
     #[test]
     fn test_room_state_new() {
-        let state = RoomState::new("rid1", "general", false);
+        let state = RoomState::new("rid1", "general", "", false);
         assert_eq!(state.room_id, "rid1");
         assert_eq!(state.room_name, "general");
+        assert_eq!(state.room_fname, "");
         assert!(!state.is_dm);
         assert_eq!(state.history.room_id, "rid1");
     }
 
     #[test]
     fn test_room_state_dm() {
-        let state = RoomState::new("dm-uuid-123", "saru", true);
+        let state = RoomState::new("dm-uuid-123", "saru", "", true);
         assert_eq!(state.room_id, "dm-uuid-123");
         assert_eq!(state.room_name, "saru");
+        assert_eq!(state.room_fname, "");
         assert!(state.is_dm);
+    }
+
+    #[test]
+    fn test_room_state_fname_chinese() {
+        let state = RoomState::new("rid-ch", "sen1-lin2-sheng1-tai4", "森林生態", false);
+        assert_eq!(state.room_id, "rid-ch");
+        assert_eq!(state.room_name, "sen1-lin2-sheng1-tai4");
+        assert_eq!(state.room_fname, "森林生態");
+        assert!(!state.is_dm);
     }
 
     #[test]
     fn test_build_context_with_dm_name() {
         let mut mgr = MemoryManager::new(1000, 12);
-        let room = mgr.get_or_create("dm-xyz", "alice", true);
+        let room = mgr.get_or_create("dm-xyz", "alice", "", true);
         assert_eq!(room.room_name, "alice");
         assert!(room.is_dm);
         room.history.append(ChatMessage::user("alice: hello"));

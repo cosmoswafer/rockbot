@@ -86,6 +86,7 @@ impl AgentHarness {
         &mut self,
         room_id: &str,
         room_name: &str,
+        room_fname: &str,
         is_dm: bool,
         sender_name: &str,
         text: &str,
@@ -97,12 +98,12 @@ impl AgentHarness {
         };
 
         let needs_restore = {
-            let room = self.memory.get_or_create(room_id, room_name, is_dm);
+            let room = self.memory.get_or_create(room_id, room_name, room_fname, is_dm);
             room.history.messages.is_empty() && room.history.archive_seq == 0
         };
 
         if needs_restore && self.webdav.is_some() {
-            self.restore_history(room_id, room_name, is_dm).await;
+            self.restore_history(room_id, room_name, room_fname, is_dm).await;
         }
 
         let user_msg = ChatMessage::user(format!("{}: {}", sender_name, clean_text));
@@ -170,7 +171,7 @@ impl AgentHarness {
                             let arguments = if tool_call.function.name == "webdav"
                                 || tool_call.function.name == "image_gen"
                             {
-                                let wd = compute_webdav_dir(room_name, is_dm);
+                                let wd = compute_webdav_dir(room_name, room_fname, is_dm);
                                 inject_room_context(&tool_call.function.arguments, room_id, &wd)
                             } else {
                                 tool_call.function.arguments.clone()
@@ -260,10 +261,10 @@ impl AgentHarness {
 
                 let wd = {
                     let room = self.memory.get(&rid);
-                    let (rn, dm) = room
-                        .map(|r| (r.room_name.as_str(), r.is_dm))
-                        .unwrap_or((&rid, false));
-                    compute_webdav_dir(rn, dm)
+                    let (rn, rf, dm) = room
+                        .map(|r| (r.room_name.as_str(), r.room_fname.as_str(), r.is_dm))
+                        .unwrap_or((&rid, "", false));
+                    compute_webdav_dir(rn, rf, dm)
                 };
                 let path = WebDavPath::new("").archive_path(&wd, seq);
 
@@ -323,6 +324,7 @@ impl AgentHarness {
         &self,
         _room_id: &str,
         room_name: &str,
+        room_fname: &str,
         is_dm: bool,
     ) -> Result<Vec<MemoryJson>> {
         let webdav_client = match &self.webdav {
@@ -330,7 +332,7 @@ impl AgentHarness {
             None => return Ok(Vec::new()),
         };
 
-        let wd = compute_webdav_dir(room_name, is_dm);
+        let wd = compute_webdav_dir(room_name, room_fname, is_dm);
         let mem_dir = WebDavPath::new("").memory_dir(&wd);
 
         if !webdav_client.exists(&mem_dir).await.unwrap_or(false) {
@@ -364,8 +366,17 @@ impl AgentHarness {
         Ok(archives)
     }
 
-    pub async fn restore_history(&mut self, room_id: &str, room_name: &str, is_dm: bool) {
-        match self.load_archives_for_room(room_id, room_name, is_dm).await {
+    pub async fn restore_history(
+        &mut self,
+        room_id: &str,
+        room_name: &str,
+        room_fname: &str,
+        is_dm: bool,
+    ) {
+        match self
+            .load_archives_for_room(room_id, room_name, room_fname, is_dm)
+            .await
+        {
             Ok(archives) if !archives.is_empty() => {
                 debug!(
                     "Restored {} memory archives for room {}",
@@ -373,7 +384,7 @@ impl AgentHarness {
                     room_name
                 );
                 self.memory
-                    .restore_from_archives(room_id, room_name, is_dm, &archives);
+                    .restore_from_archives(room_id, room_name, room_fname, is_dm, &archives);
             }
             Ok(_) => {
                 debug!("No memory archives found for room {}", room_id);
@@ -462,11 +473,16 @@ fn inject_room_context(arguments: &str, room_id: &str, webdav_dir: &str) -> Stri
     serde_json::to_string(&args).unwrap_or_else(|_| arguments.to_string())
 }
 
-fn compute_webdav_dir(room_name: &str, is_dm: bool) -> String {
-    if is_dm {
-        format!("d-{}", room_name)
+fn compute_webdav_dir(room_name: &str, room_fname: &str, is_dm: bool) -> String {
+    let name = if room_fname.is_empty() {
+        room_name
     } else {
-        format!("r-{}", room_name)
+        room_fname
+    };
+    if is_dm {
+        format!("d-{}", name)
+    } else {
+        format!("r-{}", name)
     }
 }
 
@@ -555,7 +571,7 @@ chat = "mock-model"
 
         let mut harness = AgentHarness::new(config, provider, None);
         let result = harness
-            .process_message("room1", "general", false, "user", "Hi")
+            .process_message("room1", "general", "", false, "user", "Hi")
             .await;
 
         assert!(result.is_ok());
@@ -577,7 +593,7 @@ chat = "mock-model"
 
         let mut harness = AgentHarness::new(config, provider, None);
         let result = harness
-            .process_message("dm-alice", "", true, "alice", "Hello bot")
+            .process_message("dm-alice", "", "", true, "alice", "Hello bot")
             .await;
 
         assert!(result.is_ok());
@@ -591,7 +607,7 @@ chat = "mock-model"
 
         let mut harness = AgentHarness::new(config, provider, None);
         let result = harness
-            .process_message("room1", "general", false, "user", "Hi")
+            .process_message("room1", "general", "", false, "user", "Hi")
             .await;
 
         assert!(result.is_ok());
@@ -637,7 +653,7 @@ chat = "mock-model"
         let mut harness = AgentHarness::new(config, provider, None);
 
         let result = harness
-            .process_message("room1", "general", false, "user", "search something")
+            .process_message("room1", "general", "", false, "user", "search something")
             .await;
 
         assert!(result.is_ok());
@@ -720,7 +736,7 @@ chat = "mock-model"
 
         let room = harness
             .memory_mut()
-            .get_or_create("room1", "general", false);
+            .get_or_create("room1", "general", "", false);
         for i in 0..10 {
             room.history.append(ChatMessage::user(format!("msg {}", i)));
         }
@@ -732,7 +748,7 @@ chat = "mock-model"
     #[test]
     fn test_check_and_archive_returns_seq() {
         let mut mgr = MemoryManager::new(50, 12);
-        let room = mgr.get_or_create("room1", "general", false);
+        let room = mgr.get_or_create("room1", "general", "", false);
         for i in 0..10 {
             room.history.append(ChatMessage::user(format!(
                 "Message number {} with some padding text",
@@ -783,33 +799,55 @@ chat = "mock-model"
 
     #[test]
     fn test_compute_webdav_dir_channel() {
-        assert_eq!(compute_webdav_dir("atomkb", false), "r-atomkb");
+        assert_eq!(compute_webdav_dir("atomkb", "", false), "r-atomkb");
     }
 
     #[test]
     fn test_compute_webdav_dir_dm() {
-        assert_eq!(compute_webdav_dir("saru", true), "d-saru");
+        assert_eq!(compute_webdav_dir("saru", "", true), "d-saru");
     }
 
     #[test]
     fn test_compute_webdav_dir_channel_with_hyphens() {
-        assert_eq!(compute_webdav_dir("my-team-room", false), "r-my-team-room");
+        assert_eq!(
+            compute_webdav_dir("my-team-room", "", false),
+            "r-my-team-room"
+        );
     }
 
     #[test]
     fn test_compute_webdav_dir_dm_with_dots() {
-        assert_eq!(compute_webdav_dir("john.doe", true), "d-john.doe");
+        assert_eq!(
+            compute_webdav_dir("john.doe", "", true),
+            "d-john.doe"
+        );
     }
 
     #[test]
     fn test_compute_webdav_dir_unicode_name() {
-        assert_eq!(compute_webdav_dir("日本語", false), "r-日本語");
-        assert_eq!(compute_webdav_dir("中文", true), "d-中文");
+        assert_eq!(compute_webdav_dir("日本語", "", false), "r-日本語");
+        assert_eq!(compute_webdav_dir("中文", "", true), "d-中文");
     }
 
     #[test]
     fn test_compute_webdav_dir_empty_name() {
-        assert_eq!(compute_webdav_dir("", false), "r-");
-        assert_eq!(compute_webdav_dir("", true), "d-");
+        assert_eq!(compute_webdav_dir("", "", false), "r-");
+        assert_eq!(compute_webdav_dir("", "", true), "d-");
+    }
+
+    #[test]
+    fn test_compute_webdav_dir_prefers_fname() {
+        assert_eq!(
+            compute_webdav_dir("sen1-lin2-sheng1-tai4", "森林生態", false),
+            "r-森林生態"
+        );
+    }
+
+    #[test]
+    fn test_compute_webdav_dir_fallback_when_fname_empty() {
+        assert_eq!(
+            compute_webdav_dir("general", "", false),
+            "r-general"
+        );
     }
 }

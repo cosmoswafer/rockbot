@@ -262,10 +262,12 @@ definition and how it is populated.
 Room name precedence:
 - **Matching/registration**: use `room_name` (slug) — always ASCII, deterministic
 - **Display/log messages**: prefer `room_fname` when non-empty, fall back to `room_name`
+- **WebDAV directory naming**: prefer `room_fname` when non-empty, fall back to `room_name` (slug) for safe filesystem paths
 
-The agent harness computes `webdav_dir` for WebDAV storage using the slug (`room_name`) for safe filesystem paths:
-- **Channel** (e.g. `#💩💩💩SHIT屎` with slug `shit`): DDP supplies `roomName: "shit"` + `fname: "💩💩💩SHIT屎"` → `webdav_dir: "r-shit"`
-- **Direct message** (e.g. from `saru`): DDP `roomName` empty → falls back to `sender_name: "saru"` → `webdav_dir: "d-saru"`
+The agent harness computes `webdav_dir` using the friendly name when available:
+- **Channel** (e.g. `#森林生態` with slug `sen1-lin2-sheng1-tai4`): DDP supplies `roomName: "sen1-lin2-sheng1-tai4"` + `fname: "森林生態"` → `webdav_dir: "r-森林生態"`
+- **Channel without fname** (e.g. `#general`): DDP supplies `roomName: "general"` + `fname: ""` → `webdav_dir: "r-general"`
+- **Direct message** (e.g. from `saru`): DDP `roomName` empty, `fname` empty → falls back to `sender_name: "saru"` → `webdav_dir: "d-saru"`
 
 The flat `r-`/`d-` prefixes prevent collisions. Both `roomName` and `fname` are
 available in DDP `args[1]` — no additional REST API call is needed for the

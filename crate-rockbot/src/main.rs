@@ -228,6 +228,7 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                             .process_message(
                                 &msg.room_id,
                                 &room_name,
+                                &msg.room_fname,
                                 msg.is_dm,
                                 &msg.sender_name,
                                 &text,
