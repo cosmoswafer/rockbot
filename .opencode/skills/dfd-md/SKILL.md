@@ -18,8 +18,9 @@ DFD must be:
   read/write, or message queue in the codebase
 - **Constraint-verified** — DFDs are verified against explicit constraints (e.g.,
   top-10 user stories, nonfunctional requirements); every constraint must be
-  traceable to ≥1 flow in the diagram, and the diagram must not include flows
-  unrelated to any specified constraint
+  traceable to ≥1 flow in the diagram. Constraints are never complete — extra
+  flows beyond those required by the specified constraints are expected and
+  allowed
 - **Compact & cohesive** — one DFD per subsystem; split large systems across
   multiple files
 - **Low redundancy** — cross-reference instead of duplicating flows. Never
