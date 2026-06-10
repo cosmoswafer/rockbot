@@ -135,8 +135,9 @@ impl Tool for ImageGenTool {
          in the prompt — the user's image attachments will be automatically \
          provided as image_urls input. Optional parameters: quality, image_size, \
          output_format, num_images. \
-         Returns both the WebDAV path and the original fal.ai CDN URL — prefer \
-         the fal.ai URL when sharing the image with the user."
+         Returns a JSON object: {\"ok\": true, \"fal_url\": \"...\", \"webdav_path\": \"...\"}. \
+         Always share the fal_url with the user so they can view the image directly. \
+         After a successful image_gen call, respond to the user — do not call image_gen again."
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -261,10 +262,12 @@ impl Tool for ImageGenTool {
 
         let webdav_path = self.upload_to_webdav(webdav_dir, ext, image_bytes).await?;
 
-        Ok(format!(
-            "Image generated and stored at {}. Original fal.ai URL: {}",
-            webdav_path, image_url
-        ))
+        Ok(serde_json::json!({
+            "ok": true,
+            "webdav_path": webdav_path,
+            "fal_url": image_url,
+        })
+        .to_string())
     }
 }
 
