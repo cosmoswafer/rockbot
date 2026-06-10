@@ -568,4 +568,61 @@ mod tests {
         assert_eq!(resp.href, "/general/notes.txt");
         assert_eq!(resp.propstats.len(), 1);
     }
+
+    #[test]
+    fn test_parse_propstat_with_status_sibling() {
+        let xml = r#"<propstat><prop><getlastmodified>Mon, 01 Jan 2024 00:00:00 GMT</getlastmodified><getcontentlength>2048</getcontentlength><resourcetype></resourcetype></prop><status>HTTP/1.1 200 OK</status></propstat>"#;
+        let ps: crate::types::PropStat = quick_xml::de::from_str(xml).unwrap();
+        assert_eq!(ps.prop.getcontentlength, Some(2048));
+    }
+
+    #[test]
+    fn test_parse_propfind_full_nextcloud_style() {
+        let client = make_test_client();
+        let xml = r#"<?xml version="1.0"?>
+<d:multistatus xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns" xmlns:nc="http://nextcloud.org/ns">
+  <d:response>
+    <d:href>/remote.php/dav/files/user/rockbot/r-general/</d:href>
+    <d:propstat>
+      <d:prop>
+        <d:resourcetype><d:collection/></d:resourcetype>
+        <d:getlastmodified>Mon, 01 Jan 2024 00:00:00 GMT</d:getlastmodified>
+        <d:getetag>"abc123"</d:getetag>
+        <oc:permissions>RDNVW</oc:permissions>
+        <oc:size>0</oc:size>
+        <oc:favorite>0</oc:favorite>
+        <nc:has-preview>false</nc:has-preview>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+  <d:response>
+    <d:href>/remote.php/dav/files/user/rockbot/r-general/notes.txt</d:href>
+    <d:propstat>
+      <d:prop>
+        <d:resourcetype/>
+        <d:getlastmodified>Mon, 02 Jan 2024 12:00:00 GMT</d:getlastmodified>
+        <d:getcontentlength>4096</d:getcontentlength>
+        <d:getcontenttype>text/plain</d:getcontenttype>
+        <d:getetag>"def456"</d:getetag>
+        <oc:permissions>RDNVW</oc:permissions>
+        <oc:size>4096</oc:size>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+  <d:responsedescription>SabreDAV 1.8</d:responsedescription>
+</d:multistatus>"#;
+        let entries = client.parse_propfind_response(xml).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert!(entries[0].is_dir);
+        assert_eq!(entries[0].name, "r-general");
+        assert!(!entries[1].is_dir);
+        assert_eq!(entries[1].name, "notes.txt");
+        assert_eq!(entries[1].size, 4096);
+        assert_eq!(
+            entries[1].modified,
+            "Mon, 02 Jan 2024 12:00:00 GMT"
+        );
+    }
 }

@@ -176,6 +176,37 @@ impl MemoryManager {
 }
 
 fn strip_orphaned_tool_calls(messages: &mut Vec<ChatMessage>) {
+    // Phase 1: remove orphaned tool messages that lack a preceding
+    // assistant with tool_calls. This happens when history truncation
+    // cuts off the assistant but leaves its tool results behind.
+    let mut i = 0;
+    while i < messages.len() {
+        if messages[i].role == crate::types::Role::Tool {
+            let mut preceded_by_tool_calls = false;
+            let mut j = i;
+            while j > 0 {
+                j -= 1;
+                if messages[j].role == crate::types::Role::Assistant
+                    && messages[j].tool_calls.is_some()
+                {
+                    preceded_by_tool_calls = true;
+                    break;
+                }
+                if messages[j].role != crate::types::Role::Tool {
+                    break;
+                }
+            }
+            if !preceded_by_tool_calls {
+                messages.remove(i);
+                continue;
+            }
+        }
+        i += 1;
+    }
+
+    // Phase 2: remove trailing assistant tool_calls that have no tool
+    // replies (e.g. the AI's last message was a tool call that never
+    // completed before the loop was interrupted).
     let mut i = 0;
     while i < messages.len() {
         if messages[i].role == crate::types::Role::Assistant && messages[i].tool_calls.is_some() {
@@ -396,5 +427,52 @@ mod tests {
         ];
         strip_orphaned_tool_calls(&mut msgs);
         assert_eq!(msgs.len(), 3);
+    }
+
+    #[test]
+    fn test_strip_orphaned_tool_messages_at_start() {
+        let mut msgs = vec![
+            ChatMessage::system("sys"),
+            ChatMessage::tool("c1", "result"),
+            ChatMessage::user("next message"),
+        ];
+        strip_orphaned_tool_calls(&mut msgs);
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].role, Role::System);
+        assert_eq!(msgs[1].role, Role::User);
+    }
+
+    #[test]
+    fn test_strip_orphaned_tool_messages_mid_list() {
+        let mut msgs = vec![
+            ChatMessage::system("sys"),
+            ChatMessage::user("hi"),
+            ChatMessage::assistant("reply"),
+            ChatMessage::tool("orphan", "result"),
+            ChatMessage::user("next"),
+        ];
+        strip_orphaned_tool_calls(&mut msgs);
+        assert_eq!(msgs.len(), 4);
+        assert_eq!(msgs[3].role, Role::User);
+    }
+
+    #[test]
+    fn test_strip_orphaned_tool_messages_with_valid_pair_preserved() {
+        let tc = crate::types::ToolCall::new("c1", "search", r#"{"q":"x"}"#);
+        let mut msgs = vec![
+            ChatMessage::system("sys"),
+            ChatMessage::tool("orphan_start", "oops"),
+            ChatMessage::user("hi"),
+            ChatMessage::assistant_with_tool_calls("", vec![tc], None),
+            ChatMessage::tool("c1", "result"),
+            ChatMessage::assistant("final"),
+        ];
+        strip_orphaned_tool_calls(&mut msgs);
+        assert_eq!(msgs.len(), 5);
+        assert_eq!(msgs[0].role, Role::System);
+        assert_eq!(msgs[1].role, Role::User);
+        assert_eq!(msgs[2].role, Role::Assistant);
+        assert_eq!(msgs[3].role, Role::Tool);
+        assert_eq!(msgs[4].role, Role::Assistant);
     }
 }
