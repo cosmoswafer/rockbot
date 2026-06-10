@@ -1,16 +1,11 @@
 # AGENTS.md — rockbot
 
-## User directives
-
-- **Ignore all Python code.** Do not read, edit, or reason about `bot/`, `util/`, `rock.py`, `requirements.txt`, or any `.py` files.
-
 ## Project layout
 
 ```
 crate-rocketchat/     # lib + debug binary — standalone RocketChat DDP WebSocket client
 crate-rockbot/        # lib + application binary — config, AiProvider trait, agent loop, tools, memory
 crate-webdav/         # lib only — WebDAV client for NextCloud storage operations
-bot/                  # Python app (IGNORED per user directive)
 _dfds/ _docs/         # Mermaid data flow diagrams and architecture docs
 example.config.toml   # template for config; real config.toml is gitignored
 ```
