@@ -59,3 +59,43 @@ let fname = args[1]
 
 When both are present, prefer `fname` for display/log messages and
 `name` (or `roomName`) for matching/registration lookup.
+
+### DDP `__my_messages__` subscription caveat
+
+The bot uses the DDP subscription `["__my_messages__", false]` (`crate-rocketchat/src/ddp.rs:38-45`)
+to receive all room messages. This subscription is **non-persistent** and only sends "changed"
+events — it never sends "added" events with full room metadata.
+
+In practice, the `args[1]` room-metadata object in "changed" events **does not always include
+`fname`**. RocketChat only includes it conditionally (e.g. when the room actually has a non-empty
+`fname`). When `fname` is absent or `""`, the bot has no way to know the display name from this
+subscription alone.
+
+### WebDAV directory fallback
+
+`crate-rockbot/src/harness.rs:476-487` resolves the WebDAV directory name with this priority:
+
+1. **`room_fname`** — preferred, used when non-empty
+2. **`room_name`** — fallback (the `roomName` URL slug from DDP, or `sender_name` for DMs)
+
+```rust
+fn compute_webdav_dir(room_name: &str, room_fname: &str, is_dm: bool) -> String {
+    let name = if room_fname.is_empty() {
+        room_name   // ← URL slug / internal name, can look like "sen1-lin2-sheng1-tai4"
+    } else {
+        room_fname  // ← display name, e.g. "森林生態"
+    };
+    format!("{}-{}", if is_dm { "d" } else { "r" }, name)
+}
+```
+
+When `fname` is empty, the resulting WebDAV directory uses the URL slug (`room_name`), which
+for rooms created without an explicit ASCII slug is indistinguishable from an internal codename.
+This is the most common cause of unexpected WebDAV directory names.
+
+### No fallback from REST API (yet)
+
+The bot currently does **not** query the RocketChat REST API for room details. If `fname` is
+missing from the DDP "changed" event, there is no other source of room display names. A future
+improvement could call `GET /api/v1/rooms.info?roomId={id}` at startup or on first message to
+retrieve the room's `fname` and cache it.
