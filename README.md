@@ -95,10 +95,6 @@ Test inventory and run instructions: [`_docs/test_suite/`](_docs/test_suite/).
 | Variable | Purpose |
 | -------- | ------- |
 | `CONFIG_FILE` | Config path (default: `config.toml`) |
-| `EXA_API_KEY` | Exa API key (fallback after `[tools.exa]` config) |
-| `WEBDAV_URL` | WebDAV server (real integration tests) |
-| `WEBDAV_USERNAME` | WebDAV username (real integration tests) |
-| `WEBDAV_PASSWORD` | WebDAV password (real integration tests) |
 
 ## License
 
