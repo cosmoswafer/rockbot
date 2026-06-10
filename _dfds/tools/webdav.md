@@ -11,7 +11,7 @@ its own subtree created proactively on first use. Room names use type prefixes
 - Downstream: [Agent Harness](../agent-harness.md) exposes `WebDavTool` to
   the AI agent
 - Downstream: [Knowledge Management](../base/knowledge.md) persists `.md` files
-- Downstream: [WebDAV Memory](../base/webdav-memory.md) uses PUT/GET/PROPFIND
+- Downstream: [Memory Management](../base/memory.md) uses PUT/GET/PROPFIND
   operations for JSON archive persistence
 
 ## 2. Diagram

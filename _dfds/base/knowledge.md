@@ -1,5 +1,11 @@
 # Knowledge Management
 
+> **Status: Planned — Not Implemented.** The knowledge extraction pipeline
+> (`!remember` commands, frequency-based pattern detection, indexed `.md` files
+> on WebDAV) is designed in this DFD but has no corresponding Rust code.
+> Structures like `KnowledgeEntry`, `KnowledgeIndex`, and `KnowledgeConfig`
+> do not yet exist. The agent loop runs without knowledge injection.
+
 ## 1. Purpose
 
 Extracts remembered facts about users and rooms from conversation history and

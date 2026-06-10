@@ -3,85 +3,92 @@
 ## 1. Purpose
 
 Per-room conversation memory store with character-count threshold monitoring.
-When the local in-memory history exceeds the configured maximum, the oldest
-messages are summarized via the AI provider and the full memory (summary +
-metadata + messages) is serialized to a structured JSON file and archived to
-the room's WebDAV directory. On startup, recent `.json` archives are loaded
-from WebDAV to seed context.
+When the local in-memory history exceeds `max_text_length` chars (and has more
+than 4 messages), the oldest half of messages is truncated into a text
+preview, serialized as a JSON archive, and PUT directly to WebDAV at
+`{root}/{room_id}/memory/{seq:06}_memory.json`. On room initialization,
+the 5 most recent archives are downloaded from WebDAV and a `restored_summary`
+is injected into the system prompt for context continuity.
 
-**Memory cache layer:** JSON archive reads and writes go through a local
-in-memory `MemoryCache` (write-back) to avoid blocking the agent loop on
-WebDAV I/O. Writes return immediately after cache update; dirty entries are
-flushed to WebDAV on a configurable sync interval or graceful shutdown.
+Archives are written **synchronously** to WebDAV — there is no write-back
+cache layer. The harness orchestrates the full archive lifecycle: check →
+summarize → serialize → PUT → prune.
 
-- Upstream: [Configuration Management](config.md) provides `MemoryConfig`
-- Upstream: [Agent Harness](../agent-harness.md) loads archives on startup and
-  triggers per-room history operations after each message
-- Downstream: [WebDAV Memory](webdav-memory.md) persists `.json` archive files
-- Downstream: [AI Provider](ai-provider.md) is called to generate summaries
+- Upstream: [Configuration Management](config.md) provides `ModelConfig`
+  (`max_text_length`, `max_history_size`)
+- Upstream: [Agent Harness](../agent-harness.md) triggers `archive_room_if_needed`
+  after each message and `restore_history` on first message in a room
+- Downstream: WebDAV crate (`WebDavClient`, `WebDavPath`) provides synchronous
+  PUT/GET/PROPFIND for archive persistence
+- Downstream: [AI Provider](ai-provider.md) provides the `AiProvider` trait
+  (used in the agent loop; *not* called for archive summarization)
 
 ## 2. Diagram
 
-### 2a. Happy Flow (Main Success Path)
+### 2a. Happy Flow — Archive
 
 ```mermaid
 flowchart TD
     MSG[ChatMessage]
+    APPEND[AppendMessage]
     STORE[(InMemoryHistory)]
-    CACHE[(MemoryCache)]
-    APPEND(AppendMessage)
-    COUNT(CheckCharCount)
-    THRESHOLD(AssessThreshold)
-    SUMMARIZE(SummarizeOldest)
-    ARCHIVE(WriteArchive)
-    PRUNE(PruneSummarized)
-    WEBDAV[(WebDAV Archive Dir)]
-    AI[AiProvider]
-    LOAD(LoadRecentArchives)
-    INIT(Initialize)
+    COUNT{CheckCharCount}
+    THRESHOLD{AssessThreshold}
+    SUMMARIZE[SummarizeForArchive]
+    ARCHIVE[WriteArchive]
+    PRUNE[PruneSummarized]
+    WEBDAV[(NextCloud WebDAV)]
 
     MSG -->|"chat message"| APPEND
     APPEND -->|"stored message"| STORE
     APPEND -->|"updated char count"| COUNT
-    COUNT -->|"char count + threshold config"| THRESHOLD
-    THRESHOLD -->|"overflow trigger + oldest messages"| SUMMARIZE
-    STORE -->|"oldest messages"| SUMMARIZE
-    SUMMARIZE -->|"summary prompt"| AI
-    AI -->|"summary text"| SUMMARIZE
-    SUMMARIZE -->|"memory.json content"| ARCHIVE
-    ARCHIVE -->|"store in cache"| CACHE
-    CACHE -->|"sync on timeout/exit"| WEBDAV
+    COUNT -->|"char_count > max_text_length"| THRESHOLD
+    THRESHOLD -->|"messages.len() > 4"| SUMMARIZE
+    STORE -->|"oldest half"| SUMMARIZE
+    SUMMARIZE -->|"text preview (first 5 msgs, 80 chars each)"| ARCHIVE
+    ARCHIVE -->|"PUT memory.json"| WEBDAV
     ARCHIVE -->|"archive confirmation"| PRUNE
     STORE -->|"pruned message ids"| PRUNE
-    INIT -->|"room id"| LOAD
-    LOAD -->|"get *.json request"| WEBDAV
-    WEBDAV -->|"archive files"| LOAD
-    LOAD -->|"preload cache"| CACHE
-    LOAD -->|"archived messages"| STORE
 ```
 
-### 2b. Error Handling & Fallbacks
+### 2b. Happy Flow — Restore
 
 ```mermaid
 flowchart TD
-    SUMMARIZE(SummarizeOldest)
-    ARCHIVE(WriteArchive)
-    AI[AiProvider]
-    WEBDAV[(WebDAV)]
-    DEFER(DeferArchive)
-    TRUNCATE(TruncateOldest)
+    INIT[RoomInitialization]
+    LOAD[LoadRecentArchives]
+    LIST[PROPFIND memory/]
+    WEBDAV[(NextCloud WebDAV)]
+    RESTORE[RestoreFromArchives]
     STORE[(InMemoryHistory)]
 
-    AI -.->|"error: summarization failed"| DEFER
-    DEFER -.->|"retry signal"| SUMMARIZE
-    ARCHIVE -.->|"error: webdav put failed"| DEFER
-    DEFER -.->|"truncation trigger"| TRUNCATE
-    STORE -->|"oldest messages to drop"| TRUNCATE
+    INIT -->|"room id"| LOAD
+    LOAD -->|"list_dir *.json"| LIST
+    LIST -->|"archive entries"| WEBDAV
+    WEBDAV -->|"5 most recent .json"| LOAD
+    LOAD -->|"Vec MemoryJson"| RESTORE
+    RESTORE -->|"restored_summary + archive_seq"| STORE
 ```
 
-### 2c. Memory Partitioning Deep Dive
+### 2c. Error Handling
 
-Each room (channel or DM) gets an isolated memory partition with its own
+```mermaid
+flowchart TD
+    ARCHIVE[WriteArchive]
+    WEBDAV[(NextCloud WebDAV)]
+    TRUNCATE[TruncateOldest]
+    LOAD[LoadRecentArchives]
+    WARN[Warn + Continue]
+
+    ARCHIVE -.->|"error: webdav PUT failed"| TRUNCATE
+    TRUNCATE -->|"prune_first: discard from memory"| TRUNCATE
+    LOAD -.->|"error: webdav GET/PROPFIND failed"| WARN
+    WARN -->|"proceed without history"| LOAD
+```
+
+### 2d. Memory Partitioning
+
+Each room (channel or DM) gets an isolated partition with its own
 in-memory history and WebDAV archive directory.
 
 ```mermaid
@@ -106,16 +113,71 @@ flowchart TD
 
 ## 3. Data Structures
 
-#### `ConversationHistory`
+All structs live in `crate-rockbot/src/memory.rs` unless noted.
 
-| Field          | Type                  | Notes                               |
-| -------------- | --------------------- | ----------------------------------- |
-| `room_id`      | `String`              | Owning room identifier              |
-| `messages`     | `Vec<ChatMessage>`    | In-memory message buffer            |
-| `char_count`   | `usize`               | Running character count             |
-| `archive_seq`  | `u64`                 | Next archive sequence number        |
+### `MemoryManager`
 
-#### Archive File Naming
+| Field                  | Type                         | Notes                              |
+| ---------------------- | ---------------------------- | ---------------------------------- |
+| `rooms`                | `HashMap<String, RoomState>` | Per-room state map                 |
+| `max_chars`            | `usize`                      | From `ModelConfig.max_text_length` |
+| `max_history_messages` | `usize`                      | From `ModelConfig.max_history_size`|
+
+### `RoomState`
+
+| Field       | Type                  | Notes                      |
+| ----------- | --------------------- | -------------------------- |
+| `room_id`   | `String`              | RocketChat room/channel id |
+| `room_name` | `String`              | Display name               |
+| `is_dm`     | `bool`                | Direct message flag        |
+| `history`   | `ConversationHistory` | Per-room message buffer    |
+
+### `ConversationHistory`
+
+| Field              | Type               | Notes                                |
+| ------------------ | ------------------ | ------------------------------------ |
+| `room_id`          | `String`           | Owning room identifier               |
+| `messages`         | `Vec<ChatMessage>` | In-memory message buffer             |
+| `char_count`       | `usize`            | Running character count              |
+| `archive_seq`      | `u64`              | Next archive sequence number         |
+| `restored_summary` | `Option<String>`   | Restored context from prior archives |
+
+### `ArchiveEntry`
+
+Lightweight descriptor for listing archives without loading full content.
+
+| Field        | Type     | Notes                  |
+| ------------ | -------- | ---------------------- |
+| `seq`        | `u64`    | Sequence number        |
+| `summary`    | `String` | Truncated text preview |
+| `date_range` | `String` | `"ISO to ISO"`         |
+| `msg_count`  | `usize`  | Messages in archive    |
+
+### `MemoryJson` (serialized archive)
+
+On-disk format, persisted at `{root}/{room_id}/memory/{seq:06}_memory.json`.
+
+| Field        | Type               | Notes                                       |
+| ------------ | ------------------ | ------------------------------------------- |
+| `schema`     | `String`           | `"rockbot-memory/1"` version marker         |
+| `seq`        | `u64`              | Sequence number (zero-padded for ordering)  |
+| `room_id`    | `String`           | Owning room                                 |
+| `summary`    | `String`           | Truncated text preview of archived messages |
+| `date_range` | `String`           | `"ISO to ISO"`                              |
+| `msg_count`  | `usize`            | Number of messages archived                 |
+| `messages`   | `Vec<MessageRef>`  | Message references                          |
+| `created_at` | `String`           | Archive creation timestamp (`Duration::as_secs`)|
+
+### `MessageRef`
+
+| Field       | Type     | Notes                               |
+| ----------- | -------- | ----------------------------------- |
+| `id`        | `String` | Empty for current implementation    |
+| `author`    | `String` | Display name from `name: text` prefix|
+| `content`   | `String` | Message text content                |
+| `timestamp` | `String` | Unix epoch seconds as string        |
+
+### Archive File Naming
 
 ```
 {root}/{room_id}/memory/{seq:06}_memory.json
@@ -123,22 +185,17 @@ flowchart TD
 
 Example: `rockbot/general/memory/000001_memory.json`
 
-#### `MemoryArchive`
+## 4. Archive Lifecycle (harness.rs)
 
-| Field        | Type               | Notes                                       |
-| ------------ | ------------------ | ------------------------------------------- |
-| `seq`        | `u64`              | Sequence number (zero-padded for ordering)  |
-| `summary`    | `String`           | AI-generated conversation summary           |
-| `date_range` | `String`           | `"2026-06-01 to 2026-06-08"`               |
-| `msg_count`  | `usize`            | Number of messages summarized               |
-| `messages`   | `Vec<MessageRef>`  | Summarized message references               |
-| `created_at` | `String`           | ISO 8601 archive creation timestamp         |
+The `AgentHarness` in `crate-rockbot/src/harness.rs` orchestrates the full cycle:
 
-#### `MessageRef`
-
-| Field       | Type     | Notes                                |
-| ----------- | -------- | ------------------------------------ |
-| `id`        | `String` | RocketChat message UUID              |
-| `author`    | `String` | Display name of the message author   |
-| `content`   | `String` | Message text content (truncated)     |
-| `timestamp` | `String` | ISO 8601 message timestamp           |
+| Step              | Harness method                          | Memory / WebDAV interaction                 |
+| ----------------- | --------------------------------------- | ------------------------------------------- |
+| Trigger check     | `archive_room_if_needed()`              | Called after every incoming message         |
+| Needs check       | —                                       | `MemoryManager::check_and_archive()` — returns `Option<(room_id, msgs, seq)>` |
+| Summarize         | `summarize_for_archive()`               | First 5 messages, 80 chars each, joined by `\|` |
+| Serialize         | `format_messages_as_json()`             | Builds `MemoryJson`, serde to string        |
+| Persist           | —                                       | `WebDavClient::write_file_with_fallback()` — synchronous PUT |
+| Prune             | —                                       | `MemoryManager::prune_archived()` — removes archived half, increments `archive_seq` |
+| Restore           | `restore_history()` → `load_archives_for_room()` | `PROPFIND` memory dir, `GET` 5 most recent `.json` |
+| Context injection | —                                       | `MemoryManager::build_context()` — prepends `restored_summary` as system message |

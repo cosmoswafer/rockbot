@@ -16,7 +16,7 @@ standard harness mechanisms are present:
 |-------------|----------|---------|
 | **Tools**   | Full     | `web_search`, `web_fetch`, `vision`, `webdav`, `image_gen` (fal.ai), `calendar` (CalDAV), `datetime` — each tool has its own DFD |
 | **Context** | Full     | Per-room conversation history buffer, summarization, archive loading — see [Memory Management](base/memory.md); plus iteration limits, room state routing, system prompt assembly |
-| **Knowledge** | Full  | Domain facts extracted from conversations, stored as indexed `.md` files on WebDAV — see [Knowledge Management](base/knowledge.md) |
+| **Knowledge** | Planned | Domain facts extracted from conversations, stored as indexed `.md` files on WebDAV — see [Knowledge Management](base/knowledge.md) (not yet implemented) |
 
 Intentionally absent — not needed for rockbot's scope:
 

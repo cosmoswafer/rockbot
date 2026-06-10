@@ -17,7 +17,7 @@ manages per-room memory, and persists everything to WebDAV.
 - Downstream: [Memory Management](base/memory.md) manages per-room conversation history
   (see base/memory.md for archive and threshold flows)
 - Downstream: [WebDAV Tool](tools/webdav.md) persists image assets
-- Downstream: [WebDAV Memory](base/webdav-memory.md) persists conversation archives
+- Downstream: [Memory Management](base/memory.md) handles archive persistence
 
 ## 2. Diagram
 
