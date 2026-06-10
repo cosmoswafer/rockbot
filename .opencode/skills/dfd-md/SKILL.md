@@ -16,6 +16,9 @@ DFD must be:
 - **Level-appropriate** — one level per diagram; don't mix levels
 - **Verifiable** — every flow maps to a real API call, function parameter, DB
   read/write, or message queue in the codebase
+- **Constraint-scoped** — DFDs may be scoped by explicit constraints (e.g.,
+  top-10 user stories, nonfunctional requirements) to limit diagram size and
+  focus on what matters
 - **Compact & cohesive** — one DFD per subsystem; split large systems across
   multiple files
 - **Low redundancy** — cross-reference instead of duplicating flows. Never
