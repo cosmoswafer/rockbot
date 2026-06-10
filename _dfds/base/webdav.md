@@ -8,6 +8,13 @@ archives, and image assets — is stored remotely; the bot never writes to local
 disk. Each room gets its own directory subtree, created proactively on first
 use.
 
+**Room name isolation:** Directories use human-readable room names with
+namespace prefixes — `rooms/{name}/` for channels (e.g. `rooms/atomkb/`) and
+`dms/{name}/` for direct messages (e.g. `dms/saru/`). The prefixes prevent
+collisions between a channel and a DM user with the same slug. The harness
+computes the `webdav_dir` from `room_name` + `is_dm` and injects it into tool
+arguments; the raw `room_id` UUID is never used for WebDAV path construction.
+
 The WebDAV client is used both internally (by `harness.rs` for room message
 archiving) and as an AI-callable tool (`WebDavTool` in `tools/webdav.rs`) that
 exposes read, write, list, mkdir, delete, and exists operations scoped to room
@@ -115,36 +122,44 @@ flowchart TD
 
 ### 2d. Directory Structure Deep Dive
 
+All room data is namespaced under `rooms/` (channels) or `dms/` (direct messages).
+The harness injects `webdav_dir` (e.g. `"rooms/atomkb"`) into tool arguments so
+every read, write, and archive call targets the correct room subtree.
+
 ```mermaid
 flowchart TD
     ROOT[(WebDAV Root)]
-    CH[(ch-general)]
-    CH2[(ch-project-x)]
-    DM[(dm-alice)]
-    MEM_CH[(general/memory)]
-    MEM_CH2[(project-x/memory)]
-    MEM_DM[(alice/memory)]
-    IMG_CH[(general/images)]
-    IMG_CH2[(project-x/images)]
-    IMG_DM[(alice/images)]
-    WSP_CH[(general/workspace)]
-    WSP_CH2[(project-x/workspace)]
-    WSP_DM[(alice/workspace)]
-    CFG_DIR[(Config Backups)]
+    ROOMS[(rooms/)]
+    DMS[(dms/)]
+    CH_ATOM[(atomkb)]
+    CH_PROJ[(project-x)]
+    DM_SARU[(saru)]
+    MEM_CH_ATOM[(atomkb/memory)]
+    MEM_CH_PROJ[(project-x/memory)]
+    MEM_DM_SARU[(saru/memory)]
+    IMG_CH_ATOM[(atomkb/images)]
+    IMG_CH_PROJ[(project-x/images)]
+    IMG_DM_SARU[(saru/images)]
+    WSP_CH_ATOM[(atomkb/workspace)]
+    WSP_CH_PROJ[(project-x/workspace)]
+    WSP_DM_SARU[(saru/workspace)]
+    CFG_DIR[(config/)]
 
-    ROOT -->|"channel messages + assets"| CH
-    ROOT -->|"channel messages + assets"| CH2
-    ROOT -->|"dm messages + assets"| DM
-    ROOT -->|"config backups"| CFG_DIR
-    CH -->|"memory archives"| MEM_CH
-    CH -->|"image assets"| IMG_CH
-    CH -->|"workspace files"| WSP_CH
-    CH2 -->|"memory archives"| MEM_CH2
-    CH2 -->|"image assets"| IMG_CH2
-    CH2 -->|"workspace files"| WSP_CH2
-    DM -->|"memory archives"| MEM_DM
-    DM -->|"image assets"| IMG_DM
-    DM -->|"workspace files"| WSP_DM
+    ROOT --> ROOMS
+    ROOT --> DMS
+    ROOT --> CFG_DIR
+    ROOMS --> CH_ATOM
+    ROOMS --> CH_PROJ
+    DMS --> DM_SARU
+    CH_ATOM --> MEM_CH_ATOM
+    CH_ATOM --> IMG_CH_ATOM
+    CH_ATOM --> WSP_CH_ATOM
+    CH_PROJ --> MEM_CH_PROJ
+    CH_PROJ --> IMG_CH_PROJ
+    CH_PROJ --> WSP_CH_PROJ
+    DM_SARU --> MEM_DM_SARU
+    DM_SARU --> IMG_DM_SARU
+    DM_SARU --> WSP_DM_SARU
 ```
 
 ## 3. Data Structures
@@ -169,15 +184,20 @@ flowchart TD
 
 #### `WebDavPath`
 
+All methods accept a `dir_key` — either a plain room name (for backwards
+compatibility) or a namespaced `webdav_dir` such as `rooms/atomkb` or
+`dms/saru`. The harness computes and injects `webdav_dir`; the raw
+RocketChat room UUID is never used as a path segment.
+
 | Method                  | Returns    | Notes                                    |
 | ----------------------- | ---------- | ---------------------------------------- |
-| `room_dir(id)`          | `String`   | `/{root}/{room_id}/`                     |
-| `memory_dir(id)`        | `String`   | `/{root}/{room_id}/memory/`              |
-| `image_dir(id)`         | `String`   | `/{root}/{room_id}/images/`              |
-| `workspace_dir(id)`     | `String`   | `/{root}/{room_id}/workspace/`           |
-| `image_path(id, name)`  | `String`   | `/{root}/{room_id}/images/{name}`        |
-| `archive_path(id, seq)` | `String`   | `/{root}/{room_id}/memory/{seq:06}_summary.md` |
-| `room_path(id, file)`   | `String`   | `/{root}/{room_id}/{file_path}`          |
+| `room_dir(key)`         | `String`   | `/{root}/{key}/`                         |
+| `memory_dir(key)`       | `String`   | `/{root}/{key}/memory/`                  |
+| `image_dir(key)`        | `String`   | `/{root}/{key}/images/`                  |
+| `workspace_dir(key)`    | `String`   | `/{root}/{key}/workspace/`               |
+| `image_path(key, name)` | `String`   | `/{root}/{key}/images/{name}`            |
+| `archive_path(key, seq)`| `String`   | `/{root}/{key}/memory/{seq:06}_summary.md` |
+| `room_path(key, file)`  | `String`   | `/{root}/{key}/{file_path}`              |
 | `parent_path(path)`     | `String`   | Strips last path segment                 |
 
 ## 4. NextCloud API Reference
