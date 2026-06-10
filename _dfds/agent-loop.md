@@ -14,10 +14,9 @@ manages per-room memory, and persists everything to WebDAV.
 - Downstream: [RocketChat Connection](base/rocketchat.md) handles auth, WebSocket
   streaming, and message filtering
 - Downstream: [AI Provider](base/ai-provider.md) handles chat completion requests
-- Downstream: [Memory Management](base/memory.md) manages per-room conversation history
-  (see base/memory.md for archive and threshold flows)
+- Downstream: [Memory Management](base/memory.md) manages per-room conversation history,
+  archive (threshold-based daily compress), and snapshot persist (timer-based)
 - Downstream: [WebDAV Tool](tools/webdav.md) persists image assets
-- Downstream: [Memory Management](base/memory.md) handles archive persistence
 
 ## 2. Diagram
 
@@ -29,10 +28,12 @@ flowchart TD
     AI[AI Provider API]
     DAV[(NextCloud WebDAV)]
     EXA[Exa Search API]
+    TIMER[5-Minute Timer]
     DISPATCH(ReceiveMessage)
     LOOP(AgentLoop)
-    ARCHIVE(ArchiveMemory)
-    PERSIST(PersistAssets)
+    ARCHIVE(CompressDaily)
+    PERSIST_SNAP(PersistSnapshot)
+    PERSIST_ASSETS(PersistAssets)
     CFG[(AppConfig)]
     HISTORY[(ConversationHistory)]
     TOOLS[(ToolRegistry)]
@@ -51,14 +52,17 @@ flowchart TD
     EXA -->|"search results"| LOOP
     LOOP -->|"bot reply"| RC
     LOOP -->|"new message"| ARCHIVE
-    LOOP -->|"image asset"| PERSIST
+    LOOP -->|"image asset"| PERSIST_ASSETS
     ARCHIVE -->|"summary prompt"| AI
     AI -->|"summary text"| ARCHIVE
-    ARCHIVE -->|"daily summary + soul"| PERSIST
-    PERSIST -->|"file data"| DAV
-    DAV -->|"file data"| PERSIST
+    ARCHIVE -->|"daily summary + soul"| PERSIST_ASSETS
+    PERSIST_ASSETS -->|"file data"| DAV
+    DAV -->|"file data"| PERSIST_ASSETS
     ARCHIVE -->|"pruned history"| HISTORY
     LOOP -->|"updated room state"| ROOMS
+    TIMER -->|"tick"| PERSIST_SNAP
+    ROOMS -->|"all rooms with messages"| PERSIST_SNAP
+    PERSIST_SNAP -->|"snapshot JSON"| DAV
 ```
 
 ### 2b. Error Handling & Fallbacks

@@ -184,8 +184,9 @@ flowchart TD
 Each room maintains independent state — conversation history, agent context, and
 WebDAV archive path. The agent routes incoming messages to the correct room's
 pipeline. Room context (`room_id` UUID + `webdav_dir` path key) is computed from
-`room_name`, `room_fname`, and `is_dm` and injected into `webdav` and `image_gen`
-tool calls.
+`room_name`, `room_fname`, and `is_dm` and injected into all WebDAV-backed tool
+calls (`webdav`, `image_gen`, `edit_soul`, `save_knowledge`, `forget_knowledge`,
+`recall_knowledge`).
 
 ```mermaid
 flowchart TD
