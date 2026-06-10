@@ -82,8 +82,10 @@ flowchart TD
 | `default_provider` | `String` | Must match a [[providers]].name          |
 | `default_model`    | `String` | Model alias key in provider's models map |
 | `max_history_size` | `usize`  | Max conversation turns (default 12)      |
-| `max_text_length`  | `usize`  | Max total text chars (default 50000)     |
+| `max_text_length`  | `usize`  | Layer 1 overflow threshold chars (default 50000)|
 | `max_iterations`   | `u32`    | Max agent loop iterations (default 8)    |
+| `max_summary_chars` | `usize`  | Layer 2 max chars across loaded summaries (default 8000)|
+| `summary_days`     | `u32`    | Layer 2 retention window in days (default 7)|
 
 #### `ProviderConfig`
 

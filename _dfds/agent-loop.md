@@ -54,7 +54,7 @@ flowchart TD
     LOOP -->|"image asset"| PERSIST
     ARCHIVE -->|"summary prompt"| AI
     AI -->|"summary text"| ARCHIVE
-    ARCHIVE -->|"archive file"| PERSIST
+    ARCHIVE -->|"daily summary + soul"| PERSIST
     PERSIST -->|"file data"| DAV
     DAV -->|"file data"| PERSIST
     ARCHIVE -->|"pruned history"| HISTORY
