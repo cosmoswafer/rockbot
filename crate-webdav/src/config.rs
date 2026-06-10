@@ -3,6 +3,10 @@ use serde::Deserialize;
 use crate::client::WebDavClient;
 use crate::error::{Result, WebDavError};
 
+fn default_dav_path() -> String {
+    "/remote.php/dav".to_string()
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct WebDavConfig {
     pub url: String,
@@ -11,6 +15,8 @@ pub struct WebDavConfig {
     pub root: String,
     #[serde(default)]
     pub calendar_name: Option<String>,
+    #[serde(default = "default_dav_path")]
+    pub dav_path: String,
 }
 
 impl WebDavConfig {
@@ -31,25 +37,17 @@ impl WebDavConfig {
 
     fn base_url(&self) -> String {
         let url = self.url.trim_end_matches('/');
+        let dav = self.dav_path.trim_matches('/');
         let root = self.root.trim_matches('/');
-        format!("{url}/{root}")
-    }
-
-    fn server_origin(&self) -> String {
-        let url = self.url.trim_end_matches('/');
-        // Strip the WebDAV path suffix (/remote.php/dav/files/...) to get the server base
-        if let Some(pos) = url.find("/remote.php/dav/") {
-            url[..pos].to_string()
-        } else {
-            url.to_string()
-        }
+        format!("{url}/{dav}/files/{}/{root}", self.username)
     }
 
     pub fn caldav_base_url(&self, calendar_name: &str) -> String {
-        let origin = self.server_origin();
+        let url = self.url.trim_end_matches('/');
+        let dav = self.dav_path.trim_matches('/');
         format!(
-            "{}/remote.php/dav/calendars/{}/{}/",
-            origin, self.username, calendar_name
+            "{url}/{dav}/calendars/{}/{}/",
+            self.username, calendar_name
         )
     }
 

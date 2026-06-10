@@ -12,6 +12,7 @@ use crate::tool::Tool;
 pub struct CalendarTool {
     client: WebDavClient,
     server_url: String,
+    dav_path: String,
     username: String,
     room_calendars: Mutex<HashMap<String, String>>,
 }
@@ -21,24 +22,18 @@ impl CalendarTool {
         Self {
             client,
             server_url: config.url.clone(),
+            dav_path: config.dav_path.clone(),
             username: config.username.clone(),
             room_calendars: Mutex::new(HashMap::new()),
         }
     }
 
-    fn server_origin(&self) -> String {
-        if let Some(pos) = self.server_url.find("/remote.php/dav/") {
-            self.server_url[..pos].to_string()
-        } else {
-            self.server_url.trim_end_matches('/').to_string()
-        }
-    }
-
     fn build_caldav_url(&self, calendar_name: &str) -> String {
-        let origin = self.server_origin();
+        let url = self.server_url.trim_end_matches('/');
+        let dav = self.dav_path.trim_matches('/');
         format!(
-            "{}/remote.php/dav/calendars/{}/{}/",
-            origin, self.username, calendar_name
+            "{url}/{dav}/calendars/{}/{}/",
+            self.username, calendar_name
         )
     }
 
@@ -420,10 +415,16 @@ mod tests {
     use super::*;
 
     fn make_test_tool() -> CalendarTool {
-        let client = webdav::WebDavClient::new("https://example.com", "user", "pass").unwrap();
+        let client = webdav::WebDavClient::new(
+            "https://example.com/remote.php/dav/files/user/rockbot",
+            "user",
+            "pass",
+        )
+        .unwrap();
         CalendarTool {
             client,
-            server_url: "https://example.com/remote.php/dav/files/user".into(),
+            server_url: "https://example.com".into(),
+            dav_path: "/remote.php/dav".into(),
             username: "user".into(),
             room_calendars: Mutex::new(HashMap::new()),
         }
@@ -460,8 +461,14 @@ mod tests {
     #[test]
     fn test_build_caldav_url_no_dav_prefix() {
         let tool = CalendarTool {
-            client: webdav::WebDavClient::new("https://cloud.example.com", "admin", "pass").unwrap(),
+            client: webdav::WebDavClient::new(
+                "https://cloud.example.com/remote.php/dav/files/admin",
+                "admin",
+                "pass",
+            )
+            .unwrap(),
             server_url: "https://cloud.example.com".into(),
+            dav_path: "/remote.php/dav".into(),
             username: "admin".into(),
             room_calendars: Mutex::new(HashMap::new()),
         };
