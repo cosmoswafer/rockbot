@@ -89,6 +89,7 @@ flowchart TD
 | `max_summary_chars` | `usize`  | Layer 2 max chars across loaded summaries (default 8000)|
 | `max_soul_chars`   | `usize`  | Layer 3 max chars for soul.md content (default 2000)|
 | `summary_days`     | `u32`    | Layer 2 retention window in days (default 7)|
+| `memory_ttl_secs`  | `u64`    | Room idle timeout — snapshot to WebDAV then evict (default 300)|
 
 #### `ProviderConfig`
 

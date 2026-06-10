@@ -3,8 +3,12 @@
 ## 1. Purpose
 
 Three-layer per-room conversation memory, each layer progressively condensed
-from the one before. All layers are loaded on room init and injected into the
-agent context as system messages.
+from the one before. Rooms stay in memory while actively communicating and are
+evicted after a configurable idle TTL — the snapshot is persisted to WebDAV
+before eviction, then restored on next interaction.
+
+All layers are loaded on room init and injected into the agent context as
+system messages.
 
 | Layer | Name | Storage | Limit | Contents |
 |-------|------|---------|-------|----------|
@@ -69,9 +73,9 @@ flowchart TD
 
 Layer 1 is populated by incoming messages. Layer 2 is populated by the
 [Archive Flow](#2b-archive-flow--layer-1--layer-2-threshold). Layer 3 is
-populated by the [Soul Editing](#2d-happy-flow--soul-editing) tool. The raw
-snapshot ([Persist Flow](#2c-persist-flow--raw-snapshot-timer)) provides
-crash recovery for Layer 1.
+populated by the [Soul Editing](#2d-happy-flow--soul-editing) tool. The
+[Persist & Evict Flow](#2c-persist--evict-flow--timer) provides crash recovery
+for Layer 1 and TTL-based room eviction.
 
 ### 2b. Archive Flow — Layer 1 → Layer 2 (Threshold)
 
@@ -104,22 +108,38 @@ flowchart TD
     DELETE -->|"DELETE old .md"| WEBDAV
 ```
 
-### 2c. Persist Flow — Raw Snapshot (Timer)
+### 2c. Persist & Evict Flow — Timer
+
+A single periodic timer handles both crash-recovery snapshot persistence and
+TTL-based eviction. After persisting, rooms idle longer than `memory_ttl_secs`
+are saved and removed from the in-memory map.
 
 ```mermaid
 flowchart TD
-    TIMER[Persist Timer]
+    TIMER[Evict Timer]
     L1[(Layer 1<br/>Chat History)]
     WEBDAV[(NextCloud WebDAV)]
+    LOAD_ROOM{More Rooms?}
+    EMPTY{Room Empty?}
     PERSIST(Persist Snapshot)
-    SKIP{Room Empty?}
+    STALE{"now - last_activity<br/>> memory_ttl_secs"}
+    EVICT(Save Snapshot +<br/>Remove Room)
+    ROOMS[(RoomStateMap)]
+    DONE[Done]
 
-    TIMER -->|"every persist_interval_secs"| PERSIST
-    PERSIST -->|"iterate rooms"| L1
-    L1 -->|"room_id + messages + char_count + archive_seq"| SKIP
-    SKIP -->|"yes"| PERSIST
-    SKIP -->|"no"| PERSIST
-    PERSIST -->|"PUT snapshot.json"| WEBDAV
+    TIMER -->|"every memory_ttl_secs"| ROOMS
+    ROOMS -->|"iterate rooms"| LOAD_ROOM
+    LOAD_ROOM -->|"next room"| L1
+    LOAD_ROOM -->|"no more"| DONE
+    L1 -->|"room_id + messages + char_count + archive_seq"| EMPTY
+    EMPTY -->|"no"| STALE
+    EMPTY -->|"yes: skip"| LOAD_ROOM
+    STALE -->|"yes: snapshot + evict"| EVICT
+    STALE -->|"no: keep in memory"| LOAD_ROOM
+    EVICT -->|"PUT snapshot.json"| WEBDAV
+    EVICT -->|"remove HashMap entry"| ROOMS
+    ROOMS -->|"confirm"| EVICT
+    EVICT --> LOAD_ROOM
 ```
 
 ### 2d. Happy Flow — Soul Editing
@@ -266,16 +286,18 @@ Saved every `persist_interval_secs` at
 | `max_history_messages` | `usize`                      | Layer 1 message count limit for context  |
 | `max_summary_chars`    | `usize`                      | Layer 2 total chars across loaded summaries |
 | `summary_days`         | `u32`                        | Layer 2 retention window (default 7)     |
+| `memory_ttl_secs`      | `u64`                        | Idle timeout before eviction (default 300) |
 
 ### `RoomState`
 
-| Field        | Type                  | Notes                      |
-| ------------ | --------------------- | -------------------------- |
-| `room_id`    | `String`              | RocketChat room UUID       |
-| `room_name`  | `String`              | URL slug (ASCII)           |
-| `room_fname` | `String`              | Friendly display name (Unicode); used for WebDAV directory naming when non-empty |
-| `is_dm`      | `bool`                | Direct message flag        |
-| `history`    | `ConversationHistory` | Layer 1: in-memory buffer  |
+| Field           | Type                  | Notes                                         |
+| --------------- | --------------------- | --------------------------------------------- |
+| `room_id`       | `String`              | RocketChat room UUID                          |
+| `room_name`     | `String`              | URL slug (ASCII)                              |
+| `room_fname`    | `String`              | Friendly display name (Unicode); used for WebDAV directory naming when non-empty |
+| `is_dm`         | `bool`                | Direct message flag                           |
+| `history`       | `ConversationHistory` | Layer 1: in-memory buffer                     |
+| `last_activity` | `u64`                 | Unix timestamp of last interaction; checked against `memory_ttl_secs` for eviction |
 
 ### `ConversationHistory` (Layer 1)
 
@@ -357,16 +379,18 @@ Fields from `ModelConfig` in [Configuration Management](config.md):
 | `max_summary_chars`    | `usize` | 8000    | Layer 2 total chars across loaded summaries         |
 | `max_soul_chars`       | `usize` | 2000    | Layer 3 max chars for soul.md content              |
 | `summary_days`         | `u32`   | 7       | Layer 2 retention window (days)                    |
+| `memory_ttl_secs`      | `u64`   | 300     | Room idle timeout — snapshot to WebDAV then evict from memory |
 
 ## 5. Integration with Agent Harness
 
 ### Triggers
 
-| Trigger            | Method                        | Frequency                      | Condition                       | Action                                        |
-| ------------------ | ----------------------------- | ------------------------------ | ------------------------------- | --------------------------------------------- |
-| **Timer persist**  | `persist_room_snapshots()`    | Every `persist_interval_secs`  | Room has ≥ 1 message            | Write `snapshot.json` to WebDAV              |
-| **Archive**        | `archive_room_if_needed()`    | After every message response   | `char_count > max_text_length` AND `messages.len() > 4` | AI-summarize oldest half → daily `.md`, prune L1 |
-| **Room init**      | `restore_history()`           | Once per room, on first message| Always                          | Load snapshot + soul + summaries             |
+| Trigger             | Method                        | Frequency                      | Condition                                                    | Action                                        |
+| ------------------- | ----------------------------- | ------------------------------ | ------------------------------------------------------------ | --------------------------------------------- |
+| **Timer evict**     | `evict_stale_rooms()`         | Every `memory_ttl_secs`        | Room has ≥ 1 message AND `now - last_activity > memory_ttl_secs` | Write `snapshot.json` to WebDAV, remove room from `HashMap` |
+| **Archive**         | `archive_room_if_needed()`    | After every message response   | `char_count > max_text_length` AND `messages.len() > 4`      | AI-summarize oldest half → daily `.md`, prune L1 |
+| **Room init**       | `restore_history()`           | Once per room, on first message| Room not in memory (fresh or evicted)                        | Load snapshot + soul + summaries             |
+| **Touch activity**  | `update_last_activity()`      | On every incoming message      | Room exists in memory                                        | Update `last_activity` timestamp to prevent eviction |
 
 ### Tool: `edit_soul`
 
@@ -393,13 +417,14 @@ restored into the chat history buffer before injection.
 
 ### Archival Lifecycle (harness.rs)
 
-| Step               | Harness method                     | Notes                                      |
-| ------------------ | ---------------------------------- | ------------------------------------------ |
-| Timer persist      | `persist_room_snapshots()`         | Called every `persist_interval_secs`       |
-| Archive check      | `memory.check_and_archive()`       | Returns oldest half if Layer 1 overflowed  |
-| AI summarize       | `summarize_for_archive()`          | Calls AI provider with oldest messages     |
-| Merge daily        | `upsert_daily_summary()`           | Reads today's `.md`, appends, writes back  |
-| Prune Layer 1      | `memory.prune_archived()`          | Removes archived messages from buffer      |
-| Age out summaries  | `delete_old_summaries()`           | Deletes `.md` older than `summary_days`    |
-| Room init          | `restore_history()`                | Loads snapshot + soul + summaries          |
-| Context injection  | `MemoryManager::build_context()`   | Prepend soul + summaries before history    |
+| Step               | Harness method                     | Notes                                              |
+| ------------------ | ---------------------------------- | -------------------------------------------------- |
+| Timer evict        | `evict_stale_rooms()`              | Called every `memory_ttl_secs`; saves snapshot + removes stale rooms |
+| Archive check      | `memory.check_and_archive()`       | Returns oldest half if Layer 1 overflowed           |
+| AI summarize       | `summarize_for_archive()`          | Calls AI provider with oldest messages              |
+| Merge daily        | `upsert_daily_summary()`           | Reads today's `.md`, appends, writes back           |
+| Prune Layer 1      | `memory.prune_archived()`          | Removes archived messages from buffer               |
+| Age out summaries  | `delete_old_summaries()`           | Deletes `.md` older than `summary_days`             |
+| Room init          | `restore_history()`                | Loads snapshot + soul + summaries                   |
+| Touch activity     | `process_message()`                | Updates `last_activity` on every incoming message   |
+| Context injection  | `MemoryManager::build_context()`   | Prepend soul + summaries before history             |

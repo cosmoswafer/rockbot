@@ -15,7 +15,7 @@ manages per-room memory, and persists everything to WebDAV.
   streaming, and message filtering
 - Downstream: [AI Provider](base/ai-provider.md) handles chat completion requests
 - Downstream: [Memory Management](base/memory.md) manages per-room conversation history,
-  archive (threshold-based daily compress), and snapshot persist (timer-based)
+  archive (threshold-based daily compress), snapshot persist, and TTL-based room eviction
 - Downstream: [WebDAV Tool](tools/webdav.md) persists image assets
 
 ## 2. Diagram
@@ -28,11 +28,11 @@ flowchart TD
     AI[AI Provider API]
     DAV[(NextCloud WebDAV)]
     EXA[Exa Search API]
-    TIMER[5-Minute Timer]
+    TIMER[Evict Timer]
     DISPATCH(ReceiveMessage)
     LOOP(AgentLoop)
     ARCHIVE(CompressDaily)
-    PERSIST_SNAP(PersistSnapshot)
+    EVICT_ROOMS(EvictStaleRooms)
     PERSIST_ASSETS(PersistAssets)
     CFG[(AppConfig)]
     HISTORY[(ConversationHistory)]
@@ -60,9 +60,10 @@ flowchart TD
     DAV -->|"file data"| PERSIST_ASSETS
     ARCHIVE -->|"pruned history"| HISTORY
     LOOP -->|"updated room state"| ROOMS
-    TIMER -->|"tick"| PERSIST_SNAP
-    ROOMS -->|"all rooms with messages"| PERSIST_SNAP
-    PERSIST_SNAP -->|"snapshot JSON"| DAV
+    TIMER -->|"every memory_ttl_secs"| EVICT_ROOMS
+    ROOMS -->|"all rooms"| EVICT_ROOMS
+    EVICT_ROOMS -->|"snapshot.json for stale rooms"| DAV
+    EVICT_ROOMS -->|"remove stale entries"| ROOMS
 ```
 
 ### 2b. Error Handling & Fallbacks
@@ -132,12 +133,13 @@ flowchart TD
 
 #### `RoomState`
 
-| Field        | Type                | Notes                                      |
-| ------------ | ------------------- | ------------------------------------------ |
-| `room_id`    | `String`            | RocketChat room UUID (in-memory lookup key, not a path segment) |
-| `is_dm`      | `bool`              | True if direct message room                |
-| `history`    | `ConversationHistory`| In-memory message buffer for this room     |
-| `webdav_dir` | `String`            | Type-prefixed WebDAV path key (`r-`/`d-`), computed from `room_name`/`room_fname`/`is_dm` |
+| Field           | Type                | Notes                                      |
+| --------------- | ------------------- | ------------------------------------------ |
+| `room_id`       | `String`            | RocketChat room UUID (in-memory lookup key, not a path segment) |
+| `is_dm`         | `bool`              | True if direct message room                |
+| `history`       | `ConversationHistory`| In-memory message buffer for this room     |
+| `webdav_dir`    | `String`            | Type-prefixed WebDAV path key (`r-`/`d-`), computed from `room_name`/`room_fname`/`is_dm` |
+| `last_activity` | `u64`               | Unix timestamp of last interaction; checked against `memory_ttl_secs` for eviction |
 
 #### `LifecycleSignal`
 
