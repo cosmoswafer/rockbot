@@ -38,6 +38,8 @@ base_url = "https://queue.fal.run"
 [image_providers.models]
 seedream = "fal-ai/bytedance/seedream/v4.5/text-to-image"
 gptimage = "openai/gpt-image-2"
+gptimage_edit = "openai/gpt-image-2/edit"
+grok_edit = "xai/grok-imagine-image/quality/edit"
 
 [image_model]
 default_provider = "fal"
