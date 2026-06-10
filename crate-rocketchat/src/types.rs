@@ -261,3 +261,217 @@ impl RoomCache {
         self.rooms.is_empty()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_room_cache_insert_from_added() {
+        let mut cache = RoomCache::new();
+        let added = serde_json::json!({
+            "msg": "added",
+            "collection": "rooms",
+            "id": "room-uuid-1",
+            "fields": {
+                "_id": "room-uuid-1",
+                "name": "general",
+                "fname": "General Chat",
+                "t": "c"
+            }
+        });
+        cache.insert_from_added(&added);
+        assert_eq!(cache.len(), 1);
+        assert_eq!(cache.get_fname("room-uuid-1"), Some("General Chat"));
+    }
+
+    #[test]
+    fn test_room_cache_get_fname_missing_room() {
+        let cache = RoomCache::new();
+        assert_eq!(cache.get_fname("nonexistent"), None);
+    }
+
+    #[test]
+    fn test_room_cache_get_fname_empty_fname() {
+        let mut cache = RoomCache::new();
+        let added = serde_json::json!({
+            "msg": "added",
+            "collection": "rooms",
+            "id": "bare-room",
+            "fields": {
+                "_id": "bare-room",
+                "name": "bare",
+                "fname": "",
+                "t": "c"
+            }
+        });
+        cache.insert_from_added(&added);
+        assert_eq!(cache.get_fname("bare-room"), None);
+    }
+
+    #[test]
+    fn test_room_cache_multiple_rooms() {
+        let mut cache = RoomCache::new();
+        let rooms = vec![
+            ("r1", "general", "General"),
+            ("r2", "random", "RandomChat"),
+            ("r3", "dev", ""),
+        ];
+        for (id, name, fname) in &rooms {
+            let added = serde_json::json!({
+                "msg": "added",
+                "collection": "rooms",
+                "id": id,
+                "fields": {
+                    "_id": id,
+                    "name": name,
+                    "fname": fname,
+                    "t": "c"
+                }
+            });
+            cache.insert_from_added(&added);
+        }
+        assert_eq!(cache.len(), 3);
+        assert_eq!(cache.get_fname("r1"), Some("General"));
+        assert_eq!(cache.get_fname("r2"), Some("RandomChat"));
+        assert_eq!(cache.get_fname("r3"), None);
+    }
+
+    #[test]
+    fn test_room_cache_chinese_fname() {
+        let mut cache = RoomCache::new();
+        let added = serde_json::json!({
+            "msg": "added",
+            "collection": "rooms",
+            "id": "ch-room",
+            "fields": {
+                "_id": "ch-room",
+                "name": "sen1-lin2",
+                "fname": "森林生態",
+                "t": "c"
+            }
+        });
+        cache.insert_from_added(&added);
+        assert_eq!(cache.get_fname("ch-room"), Some("森林生態"));
+    }
+
+    #[test]
+    fn test_room_cache_is_empty() {
+        let cache = RoomCache::new();
+        assert!(cache.is_empty());
+        assert_eq!(cache.len(), 0);
+    }
+
+    #[test]
+    fn test_message_filter_resolves_fname_from_cache() {
+        let mut cache = RoomCache::new();
+        let added = serde_json::json!({
+            "msg": "added",
+            "collection": "rooms",
+            "id": "room-uuid-cached",
+            "fields": {
+                "_id": "room-uuid-cached",
+                "name": "general",
+                "fname": "Cached Fname",
+                "t": "c"
+            }
+        });
+        cache.insert_from_added(&added);
+
+        let event = serde_json::json!({
+            "msg": "changed",
+            "collection": "stream-room-messages",
+            "id": "msg1",
+            "fields": {
+                "eventName": "room1",
+                "args": [
+                    {
+                        "_id": "msg1",
+                        "rid": "room-uuid-cached",
+                        "msg": "hello",
+                        "u": {"_id": "user456", "username": "user1"},
+                        "ts": {"$date": 1480377601000i64}
+                    },
+                    {
+                        "roomName": "general"
+                    }
+                ]
+            }
+        });
+
+        let filter = MessageFilter::new("bot123");
+        let msg = filter.filter(&event, Some(&cache)).unwrap();
+        assert_eq!(msg.room_fname, "Cached Fname");
+    }
+
+    #[test]
+    fn test_message_filter_keeps_per_event_fname() {
+        let mut cache = RoomCache::new();
+        let added = serde_json::json!({
+            "msg": "added",
+            "collection": "rooms",
+            "id": "room-uuid-ev",
+            "fields": {
+                "_id": "room-uuid-ev",
+                "name": "general",
+                "fname": "Cached Fname",
+                "t": "c"
+            }
+        });
+        cache.insert_from_added(&added);
+
+        let event = serde_json::json!({
+            "msg": "changed",
+            "collection": "stream-room-messages",
+            "id": "msg1",
+            "fields": {
+                "eventName": "room1",
+                "args": [
+                    {
+                        "_id": "msg1",
+                        "rid": "room-uuid-ev",
+                        "msg": "hello",
+                        "u": {"_id": "user456", "username": "user1"},
+                        "ts": {"$date": 1480377601000i64}
+                    },
+                    {
+                        "roomName": "general",
+                        "fname": "Per-Event Fname"
+                    }
+                ]
+            }
+        });
+
+        let filter = MessageFilter::new("bot123");
+        let msg = filter.filter(&event, Some(&cache)).unwrap();
+        assert_eq!(msg.room_fname, "Per-Event Fname");
+    }
+
+    #[test]
+    fn test_message_filter_no_cache_keeps_empty_fname() {
+        let event = serde_json::json!({
+            "msg": "changed",
+            "collection": "stream-room-messages",
+            "id": "msg1",
+            "fields": {
+                "eventName": "room1",
+                "args": [
+                    {
+                        "_id": "msg1",
+                        "rid": "room-no-cache",
+                        "msg": "hello",
+                        "u": {"_id": "user456", "username": "user1"},
+                        "ts": {"$date": 1480377601000i64}
+                    },
+                    {
+                        "roomName": "bare"
+                    }
+                ]
+            }
+        });
+
+        let filter = MessageFilter::new("bot123");
+        let msg = filter.filter(&event, None).unwrap();
+        assert_eq!(msg.room_fname, "");
+    }
+}

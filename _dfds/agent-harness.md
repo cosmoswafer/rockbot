@@ -114,8 +114,8 @@ flowchart TD
 ### 2d. Tool Execution Deep Dive
 
 Room context (`room_id` UUID + `webdav_dir` path key) is injected into
-`webdav` and `image_gen` tool calls. Stateless tools (`web_search`, `web_fetch`,
-`vision`, `datetime`, `calendar`) receive no room context.
+`webdav`, `image_gen`, and `edit_soul` tool calls. Stateless tools (`web_search`,
+`web_fetch`, `vision`, `datetime`, `calendar`) receive no room context.
 
 ```mermaid
 flowchart TD
@@ -133,7 +133,7 @@ flowchart TD
 
     CALL -->|"tool name + args"| INJECT
     ROOM_CTX -->|"room_id + webdav_dir"| INJECT
-    INJECT -->|"webdav / image_gen: enriched args"| EXEC
+    INJECT -->|"webdav / image_gen / edit_soul: enriched args"| EXEC
     INJECT -->|"other tools: raw args"| EXEC
     REG -->|"tool definitions"| EXEC
     EXEC -->|"search query"| EXA
