@@ -107,14 +107,31 @@ For the original file, use `attachments[0].title_link`:
 {server_base_url}{title_link}
 ```
 
-For example:
-```
-https://rc.tokyofy.top/file-upload/6a29a19267d3d1722cebb263/Clipboard%20-%20June%2011th%2C%202026%201%3A40%20AM.png
-```
-
 For the thumbnail, use `attachments[0].image_url`:
 ```
 {server_base_url}{image_url}
+```
+
+## Verified download results
+
+Both endpoints were tested against a real RocketChat v8.4 server with auth headers:
+
+| Field | Source | Size | Dimensions | Auth |
+|-------|--------|------|------------|------|
+| `image_url` (thumbnail) | `args[0].attachments[0].image_url` | 237 KB | 240×360 | Required |
+| `title_link` (original) | `args[0].attachments[0].title_link` | 2.8 MB | 1024×1536 | Required |
+
+- The `image_dimensions` field in the DDP payload (`{width: 240, height: 360}`) describes the **thumbnail**, not the original file.
+- Both endpoints require `X-Auth-Token` + `X-User-Id` HTTP headers — returns **403** without auth.
+- Auth tokens come from the DDP `login` method response: `result.token` and `result.id`.
+
+### curl example
+
+```bash
+curl -o image.png \
+  -H "X-Auth-Token: <token>" \
+  -H "X-User-Id: <user_id>" \
+  "https://rc.example.com/file-upload/<file_id>/<filename>"
 ```
 
 ## Current parser gap
