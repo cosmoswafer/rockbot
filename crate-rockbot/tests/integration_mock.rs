@@ -1,6 +1,7 @@
 use rockbot::config::ProviderConfig;
 use rockbot::error::RockBotError;
 use rockbot::provider::{AiProvider, DeepSeekProvider, OpenRouterProvider};
+use rockbot::tool::Tool;
 use rockbot::types::{ChatMessage, ChatRequest, FinishReason, ThinkingConfig, ToolDef};
 use std::collections::HashMap;
 use wiremock::matchers::{header, method, path};
@@ -902,4 +903,240 @@ async fn test_openrouter_complete_with_reasoning() {
     let result = provider.complete(request).await.unwrap();
     assert!(result.text.is_some());
     assert!(result.reasoning_content.is_some());
+}
+
+// ─── Mock HTTP Tests: WebDavTool ──────────────────────────────────────────────
+
+fn make_test_client(mock_uri: &str) -> webdav::WebDavClient {
+    webdav::WebDavClient::new(mock_uri, "testuser", "testpass").unwrap()
+}
+
+fn propfind_xml_response(href: &str, _name: &str, size: u64, modified: &str) -> String {
+    format!(
+        r#"  <response>
+    <href>{href}</href>
+    <propstat>
+      <prop>
+        <getlastmodified>{modified}</getlastmodified>
+        <getcontentlength>{size}</getcontentlength>
+        <resourcetype></resourcetype>
+      </prop>
+    </propstat>
+  </response>"#
+    )
+}
+
+fn propfind_xml_body(responses: &[String]) -> String {
+    let responses_xml = responses.join("\n");
+    format!(
+        r#"<?xml version="1.0"?>
+<multistatus>
+{responses_xml}
+</multistatus>"#
+    )
+}
+
+#[tokio::test]
+async fn test_webdav_read() {
+    let mock_server = MockServer::start().await;
+    let file_content = "Hello, WebDAV!";
+
+    Mock::given(method("GET"))
+        .and(path("/general/notes.txt"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(file_content))
+        .mount(&mock_server)
+        .await;
+
+    let client = make_test_client(&mock_server.uri());
+    let tool = rockbot::tools::WebDavTool::new(client);
+
+    let result = tool
+        .execute(r#"{"action": "read", "room_id": "general", "path": "notes.txt"}"#)
+        .await
+        .unwrap();
+    assert_eq!(result, file_content);
+}
+
+#[tokio::test]
+async fn test_webdav_write() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("PUT"))
+        .and(path("/general/newnotes.txt"))
+        .and(header("X-NC-WebDAV-AutoMkcol", "1"))
+        .respond_with(ResponseTemplate::new(201))
+        .mount(&mock_server)
+        .await;
+
+    let client = make_test_client(&mock_server.uri());
+    let tool = rockbot::tools::WebDavTool::new(client);
+
+    let result = tool
+        .execute(
+            r#"{"action": "write", "room_id": "general", "path": "newnotes.txt", "content": "new content"}"#,
+        )
+        .await
+        .unwrap();
+    assert!(result.contains("bytes"));
+    assert!(result.contains("general/newnotes.txt"));
+}
+
+#[tokio::test]
+async fn test_webdav_list_empty() {
+    let mock_server = MockServer::start().await;
+
+    let empty_xml = r#"<?xml version="1.0"?>
+<multistatus />"#;
+
+    Mock::given(method("PROPFIND"))
+        .and(header("Depth", "1"))
+        .respond_with(ResponseTemplate::new(207).set_body_string(empty_xml))
+        .mount(&mock_server)
+        .await;
+
+    let client = make_test_client(&mock_server.uri());
+    let tool = rockbot::tools::WebDavTool::new(client);
+
+    let result = tool
+        .execute(r#"{"action": "list", "room_id": "general", "path": ""}"#)
+        .await
+        .unwrap();
+    assert!(result.contains("empty"));
+}
+
+#[tokio::test]
+async fn test_webdav_list_with_entries() {
+    let mock_server = MockServer::start().await;
+
+    let responses = vec![propfind_xml_response(
+        "/general/notes.txt",
+        "notes.txt",
+        2048,
+        "Mon, 01 Jan 2024 00:00:00 GMT",
+    )];
+    let xml = propfind_xml_body(&responses);
+
+    Mock::given(method("PROPFIND"))
+        .and(header("Depth", "1"))
+        .respond_with(ResponseTemplate::new(207).set_body_string(xml))
+        .mount(&mock_server)
+        .await;
+
+    let client = make_test_client(&mock_server.uri());
+    let tool = rockbot::tools::WebDavTool::new(client);
+
+    let result = tool
+        .execute(r#"{"action": "list", "room_id": "general", "path": ""}"#)
+        .await
+        .unwrap();
+    assert!(result.contains("notes.txt"));
+    assert!(result.contains("2.0 KB"));
+}
+
+#[tokio::test]
+async fn test_webdav_mkdir() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("MKCOL"))
+        .and(path("/general"))
+        .respond_with(ResponseTemplate::new(405))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("MKCOL"))
+        .and(path("/general/workspace"))
+        .respond_with(ResponseTemplate::new(201))
+        .mount(&mock_server)
+        .await;
+
+    let client = make_test_client(&mock_server.uri());
+    let tool = rockbot::tools::WebDavTool::new(client);
+
+    let result = tool
+        .execute(r#"{"action": "mkdir", "room_id": "general", "path": "workspace"}"#)
+        .await
+        .unwrap();
+    assert!(result.contains("created"));
+}
+
+#[tokio::test]
+async fn test_webdav_delete() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("DELETE"))
+        .and(path("/general/old.txt"))
+        .respond_with(ResponseTemplate::new(204))
+        .mount(&mock_server)
+        .await;
+
+    let client = make_test_client(&mock_server.uri());
+    let tool = rockbot::tools::WebDavTool::new(client);
+
+    let result = tool
+        .execute(r#"{"action": "delete", "room_id": "general", "path": "old.txt"}"#)
+        .await
+        .unwrap();
+    assert!(result.contains("Deleted"));
+}
+
+#[tokio::test]
+async fn test_webdav_exists_true() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("PROPFIND"))
+        .and(header("Depth", "0"))
+        .respond_with(ResponseTemplate::new(207))
+        .mount(&mock_server)
+        .await;
+
+    let client = make_test_client(&mock_server.uri());
+    let tool = rockbot::tools::WebDavTool::new(client);
+
+    let result = tool
+        .execute(r#"{"action": "exists", "room_id": "general", "path": "notes.txt"}"#)
+        .await
+        .unwrap();
+    assert!(result.contains("exists"));
+}
+
+#[tokio::test]
+async fn test_webdav_exists_false() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("PROPFIND"))
+        .and(header("Depth", "0"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&mock_server)
+        .await;
+
+    let client = make_test_client(&mock_server.uri());
+    let tool = rockbot::tools::WebDavTool::new(client);
+
+    let result = tool
+        .execute(r#"{"action": "exists", "room_id": "general", "path": "missing.txt"}"#)
+        .await
+        .unwrap();
+    assert!(result.contains("not found"));
+}
+
+#[tokio::test]
+async fn test_webdav_mkdir_deep() {
+    let mock_server = MockServer::start().await;
+
+    let dirs = vec!["/general", "/general/sub", "/general/sub/deep"];
+    for dir in dirs {
+        Mock::given(method("MKCOL"))
+            .and(path(dir))
+            .respond_with(ResponseTemplate::new(201))
+            .mount(&mock_server)
+            .await;
+    }
+
+    let client = make_test_client(&mock_server.uri());
+    let tool = rockbot::tools::WebDavTool::new(client);
+
+    let result = tool
+        .execute(r#"{"action": "mkdir", "room_id": "general", "path": "sub/deep"}"#)
+        .await
+        .unwrap();
+    assert!(result.contains("created"));
 }

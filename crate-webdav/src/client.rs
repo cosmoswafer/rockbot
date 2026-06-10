@@ -309,3 +309,228 @@ impl WebDavClient {
         Ok(entries)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_test_client() -> WebDavClient {
+        WebDavClient::new("https://example.com", "user", "pass").unwrap()
+    }
+
+    #[test]
+    fn test_parse_propfind_empty() {
+        let client = make_test_client();
+        let xml = r#"<?xml version="1.0"?>
+<multistatus />"#;
+        let entries = client.parse_propfind_response(xml).unwrap();
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn test_parse_propfind_single_entry_ns() {
+        let client = make_test_client();
+        let xml = r#"<?xml version="1.0"?>
+<d:multistatus xmlns:d="DAV:">
+  <d:response>
+    <d:href>/general/notes.txt</d:href>
+    <d:propstat>
+      <d:prop>
+        <d:getlastmodified>Mon, 01 Jan 2024 00:00:00 GMT</d:getlastmodified>
+        <d:getcontentlength>2048</d:getcontentlength>
+        <d:resourcetype></d:resourcetype>
+      </d:prop>
+    </d:propstat>
+  </d:response>
+</d:multistatus>"#;
+        let entries = client.parse_propfind_response(xml).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "notes.txt");
+        assert_eq!(entries[0].size, 2048);
+    }
+
+    #[test]
+    fn test_parse_propfind_single_entry_no_ws() {
+        let client = make_test_client();
+        let xml = "<?xml version=\"1.0\"?><multistatus><response><href>/general/notes.txt</href><propstat><prop><getlastmodified>Mon, 01 Jan 2024 00:00:00 GMT</getlastmodified><getcontentlength>2048</getcontentlength><resourcetype></resourcetype></prop></propstat></response></multistatus>";
+        let entries = client.parse_propfind_response(xml).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "notes.txt");
+        assert_eq!(entries[0].size, 2048);
+    }
+
+    #[test]
+    fn test_parse_response_href_only() {
+        #[derive(Debug, serde::Deserialize)]
+        struct HrefOnly {
+            href: String,
+        }
+        let xml = r#"<response><href>/general/notes.txt</href></response>"#;
+        let resp: HrefOnly = quick_xml::de::from_str(xml).unwrap();
+        assert_eq!(resp.href, "/general/notes.txt");
+    }
+
+    #[test]
+    fn test_parse_response_two_strings() {
+        #[derive(Debug, serde::Deserialize)]
+        struct TwoStrings {
+            href: String,
+            status: String,
+        }
+        let xml = r#"<response><href>/general/notes.txt</href><status>HTTP/1.1 200 OK</status></response>"#;
+        let resp: TwoStrings = quick_xml::de::from_str(xml).unwrap();
+        assert_eq!(resp.href, "/general/notes.txt");
+        assert_eq!(resp.status, "HTTP/1.1 200 OK");
+    }
+
+    #[test]
+    fn test_parse_response_string_then_vec() {
+        #[derive(Debug, serde::Deserialize)]
+        struct StringThenVec {
+            href: String,
+            #[serde(rename = "item")]
+            items: Vec<String>,
+        }
+        let xml =
+            r#"<response><href>/general/notes.txt</href><item>a</item><item>b</item></response>"#;
+        let resp: StringThenVec = quick_xml::de::from_str(xml).unwrap();
+        assert_eq!(resp.href, "/general/notes.txt");
+        assert_eq!(resp.items, vec!["a".to_string(), "b".to_string()]);
+    }
+
+    #[test]
+    fn test_parse_response_string_then_struct_vec() {
+        #[derive(Debug, serde::Deserialize)]
+        struct Inner {
+            value: String,
+        }
+        #[derive(Debug, serde::Deserialize)]
+        struct StringThenStructVec {
+            href: String,
+            #[serde(rename = "item")]
+            items: Vec<Inner>,
+        }
+        let xml = r#"<response><href>/notes.txt</href><item><value>a</value></item><item><value>b</value></item></response>"#;
+        let resp: StringThenStructVec = quick_xml::de::from_str(xml).unwrap();
+        assert_eq!(resp.href, "/notes.txt");
+        assert_eq!(resp.items[0].value, "a");
+        assert_eq!(resp.items[1].value, "b");
+    }
+
+    #[test]
+    fn test_parse_prop_minimal() {
+        #[derive(Debug, serde::Deserialize)]
+        struct MinProp {
+            #[serde(rename = "getcontentlength", default)]
+            getcontentlength: Option<u64>,
+        }
+        let xml = r#"<prop><getcontentlength>2048</getcontentlength></prop>"#;
+        let p: MinProp = quick_xml::de::from_str(xml).unwrap();
+        assert_eq!(p.getcontentlength, Some(2048));
+    }
+
+    #[test]
+    fn test_parse_prop_with_resourcetype() {
+        #[derive(Debug, serde::Deserialize, Default)]
+        struct ResourceType {
+            #[serde(rename = "collection", default)]
+            collection: Option<Empty>,
+        }
+        #[derive(Debug, serde::Deserialize)]
+        struct Empty {}
+        #[derive(Debug, serde::Deserialize)]
+        struct PropWithRT {
+            #[serde(rename = "getcontentlength", default)]
+            getcontentlength: Option<u64>,
+            #[serde(rename = "resourcetype", default)]
+            resourcetype: ResourceType,
+        }
+        let xml = r#"<prop><getcontentlength>2048</getcontentlength><resourcetype></resourcetype></prop>"#;
+        let p: PropWithRT = quick_xml::de::from_str(xml).unwrap();
+        assert_eq!(p.getcontentlength, Some(2048));
+    }
+
+    #[test]
+    fn test_parse_prop_with_rt_collection() {
+        #[derive(Debug, serde::Deserialize, Default)]
+        struct ResourceType {
+            #[serde(rename = "collection", default)]
+            collection: Option<Empty>,
+        }
+        #[derive(Debug, serde::Deserialize)]
+        struct Empty {}
+        #[derive(Debug, serde::Deserialize)]
+        struct PropWithRT {
+            #[serde(rename = "getcontentlength", default)]
+            getcontentlength: Option<u64>,
+            #[serde(rename = "resourcetype", default)]
+            resourcetype: ResourceType,
+        }
+        let xml = r#"<prop><getcontentlength>2048</getcontentlength><resourcetype><collection></collection></resourcetype></prop>"#;
+        let p: PropWithRT = quick_xml::de::from_str(xml).unwrap();
+        assert_eq!(p.getcontentlength, Some(2048));
+    }
+
+    #[test]
+    fn test_parse_prop_with_opt_string() {
+        #[derive(Debug, serde::Deserialize)]
+        struct PropWithOpt {
+            #[serde(rename = "getcontentlength", default)]
+            getcontentlength: Option<u64>,
+            #[serde(rename = "getlastmodified", default)]
+            getlastmodified: Option<String>,
+        }
+        let xml = r#"<prop><getcontentlength>2048</getcontentlength><getlastmodified>Mon, 01 Jan 2024 00:00:00 GMT</getlastmodified></prop>"#;
+        let p: PropWithOpt = quick_xml::de::from_str(xml).unwrap();
+        assert_eq!(p.getcontentlength, Some(2048));
+        assert_eq!(
+            p.getlastmodified.as_deref(),
+            Some("Mon, 01 Jan 2024 00:00:00 GMT")
+        );
+    }
+
+    #[test]
+    fn test_parse_prop_all_fields() {
+        use crate::types::Prop;
+        let xml = r#"<prop><getlastmodified>Mon, 01 Jan 2024 00:00:00 GMT</getlastmodified><getcontentlength>2048</getcontentlength><getcontenttype>text/plain</getcontenttype><resourcetype></resourcetype><getetag>"abc123"</getetag></prop>"#;
+        let p: Prop = quick_xml::de::from_str(xml).unwrap();
+        assert_eq!(p.getcontentlength, Some(2048));
+        assert_eq!(p.getcontenttype.as_deref(), Some("text/plain"));
+        assert_eq!(
+            p.getlastmodified.as_deref(),
+            Some("Mon, 01 Jan 2024 00:00:00 GMT")
+        );
+    }
+
+    #[test]
+    fn test_parse_prop_getetag_with_quote() {
+        use crate::types::Prop;
+        let xml = r#"<prop><getetag>"abc123"</getetag></prop>"#;
+        let p: Prop = quick_xml::de::from_str(xml).unwrap();
+        assert_eq!(p.getetag.as_deref(), Some("\"abc123\""));
+    }
+
+    #[test]
+    fn test_parse_prop_directly() {
+        use crate::types::Prop;
+        let xml = r#"<prop><getlastmodified>Mon, 01 Jan 2024 00:00:00 GMT</getlastmodified><getcontentlength>2048</getcontentlength><resourcetype></resourcetype></prop>"#;
+        let p: Prop = quick_xml::de::from_str(xml).unwrap();
+        assert_eq!(p.getcontentlength, Some(2048));
+    }
+
+    #[test]
+    fn test_parse_propstat_directly() {
+        use crate::types::PropStat;
+        let xml = r#"<propstat><prop><getlastmodified>Mon, 01 Jan 2024 00:00:00 GMT</getlastmodified><getcontentlength>2048</getcontentlength><resourcetype></resourcetype></prop></propstat>"#;
+        let ps: PropStat = quick_xml::de::from_str(xml).unwrap();
+        assert_eq!(ps.prop.getcontentlength, Some(2048));
+    }
+
+    #[test]
+    fn test_parse_response_directly() {
+        let xml = r#"<response><href>/general/notes.txt</href><propstat><prop><getlastmodified>Mon, 01 Jan 2024 00:00:00 GMT</getlastmodified><getcontentlength>2048</getcontentlength><resourcetype></resourcetype></prop></propstat></response>"#;
+        let resp: crate::types::Response = quick_xml::de::from_str(xml).unwrap();
+        assert_eq!(resp.href, "/general/notes.txt");
+        assert_eq!(resp.propstats.len(), 1);
+    }
+}

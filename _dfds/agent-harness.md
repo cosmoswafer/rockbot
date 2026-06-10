@@ -14,7 +14,7 @@ standard harness mechanisms are present:
 
 | Mechanism   | Coverage | Details |
 |-------------|----------|---------|
-| **Tools**   | Full     | `web_search`, `web_fetch`, `vision`, image generation — each tool has its own DFD |
+| **Tools**   | Full     | `web_search`, `web_fetch`, `vision`, `webdav`, image generation — each tool has its own DFD |
 | **Knowledge** | Full  | On-demand context via [Memory Management](memory.md): archive loading, conversation history, system prompt assembly |
 | **Context** | Full     | Per-room history, loop iteration limits, truncation/summarization, room state routing |
 

@@ -72,23 +72,6 @@ fn deserialize_opt_string<'de, D>(deserializer: D) -> std::result::Result<Option
 where
     D: Deserializer<'de>,
 {
-    use serde::de;
-    struct StringOrEmpty;
-    impl<'de> de::Visitor<'de> for StringOrEmpty {
-        type Value = Option<String>;
-        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-            f.write_str("a string")
-        }
-        fn visit_str<E: de::Error>(self, v: &str) -> std::result::Result<Self::Value, E> {
-            if v.is_empty() {
-                Ok(None)
-            } else {
-                Ok(Some(v.to_string()))
-            }
-        }
-        fn visit_string<E: de::Error>(self, v: String) -> std::result::Result<Self::Value, E> {
-            if v.is_empty() { Ok(None) } else { Ok(Some(v)) }
-        }
-    }
-    deserializer.deserialize_any(StringOrEmpty)
+    let s: Option<String> = Option::deserialize(deserializer).unwrap_or_default();
+    Ok(s.filter(|v| !v.is_empty()))
 }

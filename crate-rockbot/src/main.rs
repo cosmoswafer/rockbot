@@ -9,7 +9,7 @@ use rockbot::config::AppConfig;
 use rockbot::harness::AgentHarness;
 use rockbot::provider::{AiProvider, DeepSeekProvider, OpenRouterProvider};
 use rockbot::tool::ToolRegistry;
-use rockbot::tools::{VisionTool, WebFetchTool, WebSearchTool};
+use rockbot::tools::{VisionTool, WebDavTool, WebFetchTool, WebSearchTool};
 
 fn setup_logging() {
     let subscriber = FmtSubscriber::builder()
@@ -103,7 +103,7 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
         .or_else(|| env::var("EXA_API_KEY").ok())
         .unwrap_or_default();
 
-    let mut harness = AgentHarness::new(config, provider, webdav);
+    let mut harness = AgentHarness::new(config, provider, webdav.clone());
 
     let mut tool_registry = ToolRegistry::new();
     let has_exa = !exa_key.is_empty();
@@ -114,6 +114,9 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
         tool_registry.register(Box::new(WebFetchTool::new()));
     }
     tool_registry.register(Box::new(VisionTool::new()));
+    if let Some(ref webdav_client) = webdav {
+        tool_registry.register(Box::new(WebDavTool::new(webdav_client.clone())));
+    }
 
     if !tool_registry.is_empty() {
         info!(

@@ -7,6 +7,11 @@ read/write/list/mkdir/delete operations. All bot state — configuration backups
 archives, and image assets — is stored remotely; the bot never writes to local
 disk. Each room gets its own directory subtree.
 
+The WebDAV client is used both internally (by `harness.rs` for room message
+archiving) and as an AI-callable tool (`WebDavTool` in `tools/webdav.rs`) that
+exposes read, write, list, mkdir, delete, and exists operations scoped to room
+directories.
+
 The client targets NextCloud's WebDAV API at the path:
 `{base_url}/remote.php/dav/files/{username}`. Authentication uses HTTP Basic Auth
 with an app password (generated via NextCloud's personal security settings).
@@ -14,6 +19,7 @@ with an app password (generated via NextCloud's personal security settings).
 - Upstream: [Configuration Management](config.md) provides `WebDavConfig`
 - Upstream: [Memory Management](memory.md) stores and retrieves `.md` archives
 - Upstream: [Agent Loop](agent-harness.md) (vision tool) reads images from WebDAV
+- Upstream: [Agent Loop](agent-harness.md) (webdav tool) exposes storage to the AI agent
 
 ## 2. Diagram
 
