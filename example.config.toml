@@ -30,6 +30,7 @@ base_url = "https://queue.fal.run"
 
 [providers.models]
 seedream = "fal-ai/bytedance/seedream/v4.5/text-to-image"
+gptimg = "openai/gpt-image-2"
 
 [rocketchat.model]
 default_provider = "deepseek"
