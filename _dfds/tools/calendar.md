@@ -121,12 +121,11 @@ flowchart TD
     CAL_RETRY(RetryUpdate)
 
     CAL_UPD -.->|"409 conflict: etag mismatch"| ERR_CONFLICT
-    ERR_CONFLICT -.->|"GET current event"| CAL_REFETCH
-    CAL_REFETCH -.->|"merge + PUT with new etag"| CAL_RETRY
-    CAL_RETRY -.->|"retry update"| HTTP
     HTTP -.->|"400 bad request"| ERR_BAD_ICS
     HTTP -.->|"404 not found"| ERR_404
 ```
+
+Note: The 409 Conflict retry loop (refetch → merge → retry with new etag) is not yet implemented. Calendar update returns an error on etag mismatch.
 
 ## 3. Data Structures
 

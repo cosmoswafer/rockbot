@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use serde_json::Value;
+use tracing::warn;
 
 use crate::error::{Result, RockBotError};
 use crate::tool::Tool;
@@ -48,26 +49,56 @@ impl WebSearchTool {
             }
         });
 
-        let response = self
-            .http_client
-            .post("https://api.exa.ai/search")
-            .header("x-api-key", api_key)
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
-            .await?;
+        let max_retries: u32 = 3;
+        let mut delay_ms: u64 = 1000;
 
-        let status = response.status();
-        if !status.is_success() {
-            let error_body = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "unknown error".into());
-            return Err(RockBotError::Provider(format!(
-                "Exa search failed with status {}: {}",
-                status, error_body
-            )));
-        }
+        let response = 'retry: {
+            for attempt in 1..=max_retries {
+                let resp = self
+                    .http_client
+                    .post("https://api.exa.ai/search")
+                    .header("x-api-key", api_key)
+                    .header("Content-Type", "application/json")
+                    .json(&body)
+                    .send()
+                    .await?;
+
+                let status = resp.status();
+                if status.is_success() {
+                    break 'retry resp;
+                }
+
+                if status.as_u16() == 429 || status.as_u16() >= 500 {
+                    let error_body = resp
+                        .text()
+                        .await
+                        .unwrap_or_else(|_| "unknown error".into());
+                    if attempt < max_retries {
+                        warn!(
+                            "Exa search returned {} (attempt {}/{}), retrying in {}ms: {}",
+                            status, attempt, max_retries, delay_ms, error_body
+                        );
+                        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                        delay_ms *= 2;
+                        continue;
+                    }
+                    return Err(RockBotError::Provider(format!(
+                        "Exa search failed with status {} after {} retries: {}",
+                        status, max_retries, error_body
+                    )));
+                }
+
+                let error_body = resp
+                    .text()
+                    .await
+                    .unwrap_or_else(|_| "unknown error".into());
+                return Err(RockBotError::Provider(format!(
+                    "Exa search failed with status {}: {}",
+                    status, error_body
+                )));
+            }
+            unreachable!()
+        };
 
         let body: Value = response.json().await?;
         let results = body

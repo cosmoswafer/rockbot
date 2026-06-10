@@ -58,6 +58,7 @@ flowchart TD
     L2[(Layer 2<br/>Daily Summaries)]
     WEBDAV[(NextCloud WebDAV)]
     L1[(Layer 1<br/>Chat History)]
+    KNOWLEDGE[(Knowledge<br/>Entries)]
     BUILD[BuildContext]
 
     subgraph "Load from stores"
@@ -68,6 +69,7 @@ flowchart TD
     end
 
     SOUL_OUT -->|"1. inject"| BUILD
+    KNOWLEDGE -->|"1.5 inject"| BUILD
     SUM_OUT -->|"2. inject"| BUILD
     HIST_OUT -->|"3. inject"| BUILD
     BUILD -->|"soul + summaries + history"| CONTEXT[Agent Context]
@@ -227,7 +229,7 @@ flowchart TD
     LIST_SUM --> DAV
     DAV -->|"soul content or 404"| INJECT
     DAV -->|"all summaries"| FILTER
-    FILTER[Filter Last<br/>summary_days Days]
+    FILTER[Filter Last summary_days Days<br/>+ max 10 files]
     FILTER --> LOAD_FILES
     LOAD_FILES -->|"GET each .md"| DAV
     DAV -->|"summary texts"| INJECT
@@ -235,6 +237,8 @@ flowchart TD
     RESTORED --> INJECT
     INJECT -->|"soul + summaries + history"| CTX[Agent Context]
 ```
+
+Knowledge entries are also restored during room init — see [Knowledge Management](knowledge.md).
 
 Key properties:
 - **Single read on cache hit**: one `GET snapshot.json` replaces 3+ WebDAV round trips
@@ -414,14 +418,16 @@ Fields from `ModelConfig` in [Configuration Management](config.md):
 | `memory_ttl_secs`      | `u64`   | 300     | Room idle timeout — evict from memory (after snapshot persisted) |
 | `persist_interval_secs`| `u64`   | 60      | How often the timer writes dirty snapshots to WebDAV |
 
+Note: `set_daily_summaries()` (memory.rs:287) applies a hard cap of `.take(10)` summary files regardless of `max_summary_chars`.
+
 ## 5. Integration with Agent Harness
 
 ### Triggers
 
 | Trigger             | Method                        | Frequency                      | Condition                                                    | Action                                        |
 | ------------------- | ----------------------------- | ------------------------------ | ------------------------------------------------------------ | --------------------------------------------- |
-| **Timer persist**   | `persist_room_snapshots()`    | Every `persist_interval_secs`  | `dirty_snapshots` is non-empty                               | Build full snapshot (L1+L2+L3), PUT `snapshot.json`, clear dirty flag |
-| **Timer evict**     | `evict_stale_rooms()`         | Every `memory_ttl_secs`        | Room has ≥ 1 message AND `now - last_activity > memory_ttl_secs` | Persist snapshot if dirty, then remove room from `HashMap` |
+| **Timer persist**   | `maintenance_tick()` (Phase 1) | Every `persist_interval_secs`  | `dirty_snapshots` is non-empty                               | Build full snapshot (L1+L2+L3), PUT `snapshot.json`, clear dirty flag |
+| **Timer evict**     | `maintenance_tick()` (Phase 2) | Every `persist_interval_secs`  | Room has ≥ 1 message AND `now - last_activity > memory_ttl_secs` | Persist snapshot if dirty, then remove room from `HashMap` |
 | **Archive**         | `archive_room_if_needed()`    | After every message response   | `char_count > max_text_length` AND `messages.len() > 4`      | AI-summarize oldest half → daily `.md`, prune L1, mark snapshot dirty |
 | **Room init**       | `restore_history()`           | Once per room, on first message| Room not in memory (fresh or evicted)                        | Load snapshot (cache-first), fall back to individual files |
 | **Soul edit**       | `edit_soul()` tool            | On user request                | LLM invokes `edit_soul` tool                                 | Write `soul.md`, update in-memory soul, mark snapshot dirty |
@@ -453,8 +459,8 @@ Knowledge entries are injected between soul and summaries (see
 
 | Step               | Harness method                     | Notes                                              |
 | ------------------ | ---------------------------------- | -------------------------------------------------- |
-| Timer persist      | `persist_room_snapshots()`         | Called every `persist_interval_secs`; writes dirty snapshot.json |
-| Timer evict        | `evict_stale_rooms()`              | Called every `memory_ttl_secs`; persists snapshot then removes stale rooms |
+| Timer persist      | `maintenance_tick()` (Phase 1)     | Called every `persist_interval_secs`; writes dirty snapshot.json |
+| Timer evict        | `maintenance_tick()` (Phase 2)     | Called every `persist_interval_secs`; persists snapshot then removes stale rooms |
 | Archive check      | `memory.check_and_archive()`       | Returns oldest half if Layer 1 overflowed           |
 | AI summarize       | `summarize_for_archive()`          | Calls AI provider with oldest messages              |
 | Merge daily        | `upsert_daily_summary()`           | Reads today's `.md`, appends, writes back; marks snapshot dirty |

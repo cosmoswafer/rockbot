@@ -54,15 +54,19 @@ flowchart TD
 
     BUILD -.->|"missing key"| ERR_KEY
     ERR_KEY -->|"skip search"| AGENT
-    EXA -->|"401"| ERR_AUTH
+    EXA -.->|"401"| ERR_AUTH
     EXA -.->|"429"| RETRY
     RETRY -.->|"max retries"| ERR_RATE
-    EXA -->|"500"| ERR_SVR
+    EXA -.->|"500"| RETRY
     RETRY -.->|"all attempts fail"| ERR_SVR
     PARSE -.->|"zero results"| ERR_EMPTY
     ERR_EMPTY -->|"return empty context"| WARN_FALLBACK
     WARN_FALLBACK -->|"empty search results"| AGENT
 ```
+
+Note: RetryWithBackoff is not yet implemented — all HTTP errors are returned immediately.
+
+Note: 401 is not currently differentiated from other HTTP errors.
 
 ### 2c. Search Request Construction Deep Dive
 
@@ -126,8 +130,8 @@ enables multi-step reasoning with structured outputs via `outputSchema`.
 | Field                | Type                    | Notes                                             |
 | -------------------- | ----------------------- | ------------------------------------------------- |
 | `query`              | `String`                | Natural-language search query                     |
-| `type`               | `String`                | `auto` (default), `fast`, `instant`, `deep-lite`, `deep`, `deep-reasoning` |
-| `num_results`        | `u32`                   | Results to return (1-100, default 5)              |
+| `type`               | `String`                | `auto` (default), `fast`, `deep` |
+| `num_results`        | `u32`                   | Results to return (1-20, default 5)              |
 | `category`           | `Option<String>`        | `company`, `people`, `research paper`, `news`, `personal site`, `financial report` |
 | `include_domains`    | `Option<Vec<String>>`   | Restrict to these domains (max 1200)              |
 | `exclude_domains`    | `Option<Vec<String>>`   | Exclude these domains (max 1200)                  |
@@ -181,10 +185,12 @@ enables multi-step reasoning with structured outputs via `outputSchema`.
 | `text`           | `Option<String>`      | Full page markdown text (if requested)      |
 | `summary`        | `Option<String>`      | LLM-generated summary (if requested)        |
 
+Note: The tool currently (web_search.rs:39-49) only sends `query`, `numResults`, `type`, and `contents.highlights`. The following SearchRequest fields are defined but not yet wired to the tool: `category`, `include_domains`, `exclude_domains`, `start_published_date`, `end_published_date`, `user_location`, `output_schema`. Content modes 'text' and 'deep' are also not wired.
+
 ### `SearchResponse`
 
 | Field            | Type                   | Notes                                    |
-| ---------------- | ---------------------- | ---------------------------------------- |
+| ----------------- | ---------------------- | ---------------------------------------- |
 | `request_id`     | `String`               | Unique request identifier               |
 | `search_type`    | `String`               | Resolved search type (for `auto` queries) |
 | `results`        | `Vec<SearchResult>`    | List of search results                   |
@@ -232,11 +238,8 @@ key from the [Exa Dashboard](https://dashboard.exa.ai/api-keys).
 | Type              | Latency       | Use Case                                          |
 | ----------------- | ------------- | ------------------------------------------------- |
 | `auto`            | ~1 second     | Default; balances speed and quality               |
-| `instant`         | ~250 ms       | Real-time apps (chat, voice)                      |
 | `fast`            | ~450 ms       | Reduced latency with minimal quality sacrifice    |
-| `deep-lite`       | 4 seconds     | Lightweight synthesized output                    |
 | `deep`            | 4-15 seconds  | Multi-step reasoning with structured outputs      |
-| `deep-reasoning`  | 12-40 seconds | Maximum reasoning for hard research tasks         |
 
 ### Category Filters
 

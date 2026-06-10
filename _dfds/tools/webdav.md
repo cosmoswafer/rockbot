@@ -28,20 +28,26 @@ flowchart TD
     LIST(ListDirectory)
     MKDIR(EnsureDirectory)
     DELETE(DeleteFile)
+    EDIT(EditFile)
+    EXISTS(CheckExists)
     ENSURE(EnsureRoomDir)
     HTTP(HttpClient)
     NC[(NextCloud WebDAV)]
 
     CALLER -->|"path + operation"| RESOLVE
-    CALLER -->|"room on first use"| ENSURE
+    CALLER -.->|"room on first use"| ENSURE
     CFG -->|"root + credentials"| RESOLVE
-    CFG -->|"root + credentials"| ENSURE
+    CFG -.->|"root + credentials"| ENSURE
     RESOLVE -->|"get request"| READ
     RESOLVE -->|"put request"| WRITE
     RESOLVE -->|"propfind request"| LIST
     RESOLVE -->|"mkcol request"| MKDIR
     RESOLVE -->|"delete request"| DELETE
-    ENSURE -->|"mkcol request"| MKDIR
+    RESOLVE -->|"edit request"| EDIT
+    RESOLVE -->|"exists request"| EXISTS
+    EDIT -->|"GET + content update + PUT"| WRITE
+    EXISTS -->|"GET request"| READ
+    ENSURE -.->|"mkcol request"| MKDIR
     READ -->|"GET"| HTTP
     WRITE -->|"PUT with body + AutoMkcol header"| HTTP
     LIST -->|"PROPFIND depth=1"| HTTP
@@ -51,6 +57,8 @@ flowchart TD
     NC -->|"response"| HTTP
     HTTP -->|"response body / status"| RESOLVE
 ```
+
+Note: `ensure_room_directory()` (client.rs:264) exists but is not currently called — directories are created implicitly by `write_file_with_fallback()` via AutoMkcol.
 
 ### 2b. Error Handling & Fallbacks
 

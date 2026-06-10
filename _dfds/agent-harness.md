@@ -56,7 +56,7 @@ flowchart TD
     RC -->|"incoming message"| ROUTE
     ROUTE -->|"routed message"| CTX
     MEM -->|"history for room"| CTX
-    TOOLS_DEF -->|"tool definitions"| CTX
+    TOOLS_DEF -->|"tool definitions"| INTERACT
     CTX -->|"chat request"| INTERACT
     INTERACT -->|"chat request"| AI
     AI -->|"completion result"| INTERACT
@@ -70,15 +70,14 @@ flowchart TD
     AI[AiProvider]
     TOOL_EXEC(ExecuteTool)
     LOOP_LIMIT(CheckMaxIterations)
+    APPEND(AppendToolResult)
     FALLBACK(SendFallbackReply)
-    TRUNC(TruncateAndSummarize)
     REPLY[BotReply]
 
     AI -.->|"api error response"| FALLBACK
-    TOOL_EXEC -.->|"tool execution error"| FALLBACK
+    TOOL_EXEC -.->|"tool execution error"| APPEND
+    LOOP_LIMIT -.->|"max iterations exceeded"| FALLBACK
     FALLBACK -->|"error reply text"| REPLY
-    LOOP_LIMIT -.->|"overflow context"| TRUNC
-    TRUNC -->|"summarized reply"| REPLY
 ```
 
 ### 2c. Agent Loop Deep Dive
@@ -229,15 +228,7 @@ flowchart TD
 
 ## 3. Data Structures
 
-#### `AgentContext`
-
-| Field           | Type                  | Notes                              |
-| --------------- | --------------------- | ---------------------------------- |
-| `system_prompt` | `String`              | Bot personality and instructions   |
-| `history`       | `Vec<ChatMessage>`    | Conversation history for room      |
-| `tools`         | `Vec<ToolDef>`        | Registered tool definitions        |
-| `room_id`       | `String`              | RocketChat room UUID (not the WebDAV directory key — see `webdav_dir` below) |
-| `webdav_dir`    | `String`              | Type-prefixed WebDAV path key (e.g. `r-森林生態`, `d-saru`), computed from `room_name`/`room_fname`/`is_dm` |
+- **AgentContext** — does not exist as a struct. The harness constructs these values on the fly: `system_prompt` is built by `build_system_prompt()`, `history` by `build_context()`, `tools` by `ToolRegistry::definitions()`, `room_id` is a method parameter, `webdav_dir` is computed by `compute_webdav_dir()`.
 
 #### `ToolResult`
 
@@ -256,11 +247,13 @@ flowchart TD
 
 #### `ToolDef`
 
-| Field        | Type     | Notes                                   |
-| ------------ | -------- | --------------------------------------- |
-| `name`       | `String` | Function name                           |
-| `description`| `String` | Human-readable description for the LLM  |
-| `parameters` | `Value`  | JSON Schema for arguments               |
+| Field        | Type            | Notes                                   |
+| ------------ | --------------- | --------------------------------------- |
+| `name`       | `String`        | Function name                           |
+| `description`| `Option<String>`| Human-readable description for the LLM  |
+| `parameters` | `Option<Value>` | JSON Schema for arguments               |
+| `tool_type`  | `String`        | Always `"function"`                     |
+| `strict`     | `Option<bool>`  | Whether to enforce strict schema        |
 
 #### Registered Tools
 

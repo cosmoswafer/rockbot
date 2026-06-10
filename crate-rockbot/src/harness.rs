@@ -319,20 +319,23 @@ impl AgentHarness {
                     .filter_map(|m| m.text_content())
                     .map(|t| t.chars().count())
                     .sum();
-                if let Err(e) = self.upsert_daily_summary(webdav_client, &wd, &summary, count, char_count).await {
-                    warn!("Failed to write daily summary: {}", e);
+                let summary_ok = self.upsert_daily_summary(webdav_client, &wd, &summary, count, char_count).await.is_ok();
+                if !summary_ok {
+                    warn!("Failed to write daily summary, skipping prune");
                 }
 
-                // Mark snapshot dirty after Layer 2 write
-                self.memory.mark_snapshot_dirty(&rid);
+                if summary_ok {
+                    // Mark snapshot dirty after Layer 2 write
+                    self.memory.mark_snapshot_dirty(&rid);
 
-                // Age out old summaries
-                let summary_days = self.memory.summary_days;
-                if let Err(e) = self.delete_old_summaries(webdav_client, &wd, summary_days).await {
-                    warn!("Failed to clean up old summaries: {}", e);
+                    // Age out old summaries
+                    let summary_days = self.memory.summary_days;
+                    if let Err(e) = self.delete_old_summaries(webdav_client, &wd, summary_days).await {
+                        warn!("Failed to clean up old summaries: {}", e);
+                    }
+
+                    self.memory.prune_archived(&rid, count);
                 }
-
-                self.memory.prune_archived(&rid, count);
             } else {
                 debug!(
                     "No WebDAV client, truncating instead of archiving for room {}",

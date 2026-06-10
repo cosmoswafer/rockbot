@@ -246,6 +246,20 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                     let harness = harness.clone();
                     let bot_name = bot_name.clone();
                     async move {
+                        let username = bot_name.trim_start_matches('@').to_string();
+                        let _ = sender.typing(true, &username).await;
+
+                        let hb_sender = sender.clone();
+                        let hb_username = username.clone();
+                        let heartbeat = tokio::spawn(async move {
+                            loop {
+                                tokio::time::sleep(Duration::from_secs(2)).await;
+                                if hb_sender.typing(true, &hb_username).await.is_err() {
+                                    break;
+                                }
+                            }
+                        });
+
                         let mut h = harness.lock().await;
 
                         let text = if msg.is_dm {
@@ -287,6 +301,8 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                             .await
                         {
                             Ok(Some(reply)) => {
+                                heartbeat.abort();
+                                let _ = sender.typing(false, &username).await;
                                 if let Err(e) = sender.reply(&reply).await {
                                     error!("Failed to send reply: {}", e);
                                 }
@@ -295,11 +311,15 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             }
                             Ok(None) => {
+                                heartbeat.abort();
+                                let _ = sender.typing(false, &username).await;
                                 if let Err(e) = h.archive_room_if_needed(&msg.room_id).await {
                                     warn!("Memory archiving failed: {}", e);
                                 }
                             }
                             Err(e) => {
+                                heartbeat.abort();
+                                let _ = sender.typing(false, &username).await;
                                 error!("Failed to process message: {}", e);
                                 let _ = sender
                                     .reply(&format!("Error processing message: {}", e))

@@ -156,6 +156,11 @@ flowchart TD
 All six message types are handled. The event loop waits for `"ready"` after
 subscription and re-subscribes on `"nosub"`.
 
+> **Note**: `"connected"`, `"result"`, and `"ready"` are consumed during connection
+> setup (via `expect_msg()` in `client.rs:127,134,143`), **not** in the runtime
+> event loop. The event loop (`client.rs:151-207`) only handles `"ping"`,
+> `"changed"`, and `"nosub"`.
+
 Note: the bot does **not** proactively send pings or monitor ping intervals —
 it only responds to server-initiated pings. A missing server ping will not be
 detected; a WebSocket read returning `None` or `Err` terminates the loop.
@@ -252,7 +257,7 @@ The Rust crate defines formal typed structs with `serde` (Serialize/Deserialize)
 in `crate-rocketchat/src/types.rs`. Tables below map each field to its struct
 definition and how it is populated.
 
-#### `IncomingMessage`
+#### `IncomingMessage` (fields defined in `types.rs:5-15`)
 
 | Field         | Type              | Source / Notes                                      |
 | ------------- | ----------------- | --------------------------------------------------- |
@@ -260,6 +265,11 @@ definition and how it is populated.
 | `room_id`     | `String`          | `args[0]["rid"]` — RocketChat room ID               |
 | `room_name`   | `String`          | `args[1]["roomName"]` — URL slug (ASCII, e.g. `sen1-lin2-sheng1-tai4`). `""` or `"DIRECT_MESSAGES"` for DMs |
 | `room_fname`  | `String`          | Per-event `args[1]["fname"]`. Empty when absent from the DDP event or for rooms without a custom fname |
+| `sender_name` | `String`          | `args[0]["u"]["username"]` — sender's RocketChat username |
+| `text`        | `String`          | `args[0]["msg"]` — message body text                |
+| `is_dm`       | `bool`            | `true` if `room_name` is empty or `"DIRECT_MESSAGES"` |
+| `timestamp`   | `Option<i64>`     | `args[0]["ts"]` — message timestamp (`$date`)       |
+| `sender_id`   | `String`          | `args[0]["u"]["_id"]` — sender's RocketChat user ID |
 
 Room name precedence:
 - **Matching/registration**: use `room_name` (slug) — always ASCII, deterministic
@@ -290,12 +300,9 @@ is available, the display name is used; otherwise the URL slug is the fallback.
 `MessageSender` also provides `reply_code(text)` (code-block format) and
 `typing(state, username)` (typing indicator).
 
-#### `DdpEvent`
-
-| Field  | Type                  | Source                            |
-| ------ | --------------------- | --------------------------------- |
-| `msg`  | `String`              | Top-level `"msg"` field from JSON |
-| `raw`  | `serde_json::Value`   | Full parsed JSON object           |
+No `DdpEvent` struct exists. Raw DDP frames are handled as `serde_json::Value`
+with the `"msg"` field extracted via helper functions: `msg_field()`, `is_ping()`,
+`is_changed()`, etc. (`ddp.rs:68-101`).
 
 #### `MessageFilter`
 

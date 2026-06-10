@@ -64,7 +64,7 @@ flowchart TD
     DAV -->|"file data"| PERSIST_ASSETS
     ARCHIVE -->|"pruned history"| HISTORY
     LOOP -->|"updated room state"| ROOMS
-    TIMER -->|"every memory_ttl_secs"| EVICT_ROOMS
+    TIMER -->|"every persist_interval_secs"| EVICT_ROOMS
     ROOMS -->|"all rooms"| EVICT_ROOMS
     EVICT_ROOMS -->|"snapshot.json for stale rooms"| DAV
     EVICT_ROOMS -->|"remove stale entries"| ROOMS
@@ -125,6 +125,8 @@ flowchart TD
     SEED -->|"ready"| LOOP
 ```
 
+Note: History loading is lazy — each room's archives are restored on first message via `restore_history()`, not eagerly at startup. The `ListMemoryArchives` and `SeedAllRooms` steps shown above are illustrative of what happens per room, not a boot-time batch.
+
 ### 2d. Typing Indicator Heartbeat
 
 Level 2 decomposition of `ToggleTyping` and the typing flows during `AgentLoop`. The bot sends an initial `typing=true` signal before the agent loop begins, then a background task refreshes it every 2 seconds while the loop runs. When the loop produces a reply (or errors out), typing is set to `false`.
@@ -157,15 +159,16 @@ Typing indicator state is intentionally not retried or persisted — it is a tra
 
 ## 3. Data Structures
 
-#### `HarnessState`
+#### `AgentHarness` (harness.rs:37-44)
 
-| Field    | Type                       | Notes                                       |
-| -------- | -------------------------- | ------------------------------------------- |
-| `config` | `Arc<AppConfig>`           | Immutable configuration shared across subsystems |
-| `rooms`  | `HashMap<String, RoomState>` | Per-room state map (room_id → state)     |
-| `client` | `rocketchat::Client`       | RocketChat connection handle                |
-| `memory` | `MemoryManager`            | Per-room conversation history               |
-| `webdav` | `WebDavClient`             | WebDAV handle for persistent storage        |
+| Field            | Type                  | Notes                                      |
+| ---------------- | --------------------- | ------------------------------------------ |
+| `config`         | `Arc<AppConfig>`      | Immutable configuration shared across subsystems |
+| `provider`       | `Box<dyn AiProvider>` | AI provider for chat completions           |
+| `memory`         | `MemoryManager`       | Per-room conversation history              |
+| `tools`          | `ToolRegistry`        | Registered tool definitions                |
+| `webdav`         | `Option<WebDavClient>`| Optional WebDAV handle for persistent storage |
+| `max_iterations` | `u32`                 | Max agent loop iterations per message      |
 
 #### `RoomState`
 
@@ -174,14 +177,7 @@ Typing indicator state is intentionally not retried or persisted — it is a tra
 | `room_id`       | `String`            | RocketChat room UUID (in-memory lookup key, not a path segment) |
 | `is_dm`         | `bool`              | True if direct message room                |
 | `history`       | `ConversationHistory`| In-memory message buffer for this room     |
-| `webdav_dir`    | `String`            | Type-prefixed WebDAV path key (`r-`/`d-`), computed from `room_name`/`room_fname`/`is_dm` |
+| `webdav_dir`    | `String`            | Computed on-the-fly from `room_name`/`room_fname`/`is_dm` via `compute_webdav_dir()`; not a stored field |
 | `last_activity` | `u64`               | Unix timestamp of last interaction; checked against `memory_ttl_secs` for eviction |
 
-#### `LifecycleSignal`
-
-| Variant     | Fields             | Notes                                      |
-| ----------- | ------------------ | ------------------------------------------ |
-| `Startup`   | —                  | Bot is initializing                        |
-| `Running`   | —                  | Main event loop active                     |
-| `Shutdown`  | `exit_code: i32`   | Graceful shutdown triggered                |
-| `Reconnect` | `attempt: u32`     | WebSocket reconnection in progress         |
+No `LifecycleSignal` enum exists. The main loop uses inline `tokio::signal::ctrl_c()` for shutdown and a local `retry_count: u32` variable for reconnect backoff.

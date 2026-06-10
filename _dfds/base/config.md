@@ -90,6 +90,7 @@ flowchart TD
 | `max_soul_chars`   | `usize`  | Layer 3 max chars for soul.md content (default 2000)|
 | `summary_days`     | `u32`    | Layer 2 retention window in days (default 7)|
 | `memory_ttl_secs`  | `u64`    | Room idle timeout — snapshot to WebDAV then evict (default 300)|
+| `persist_interval_secs` | `u64` | Snapshot persist timer interval (default 60) |
 
 #### `ProviderConfig`
 
@@ -99,9 +100,11 @@ flowchart TD
 | `api_key`    | `String`                 | Provider API key                           |
 | `base_url`   | `String`                 | API endpoint base URL                      |
 | `basecf_url` | `Option<String>`         | Cloudflare worker proxy override (opt.)    |
-| `chat_path`  | `Option<String>`         | Chat completions path (default /chat/comp.)|
+| `chat_path`  | `Option<String>`         | Chat completions path (Default: `/chat/completions`)|
 | `draw_path`  | `Option<String>`         | Image generation path (opt.)               |
 | `models`     | `HashMap<String, String>`| Alias → model-id map                       |
+
+> **Note:** `basecf_url` is deserialized but currently unused — both providers use `base_url` + `chat_path` via `ProviderConfig::chat_url()`.
 
 #### `ToolServiceConfig`
 
