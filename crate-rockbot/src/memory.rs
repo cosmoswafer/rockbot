@@ -149,6 +149,7 @@ pub struct MemoryManager {
     pub summary_days: u32,
     daily_summaries: HashMap<String, Vec<DailySummary>>,
     souls: HashMap<String, SoulMemory>,
+    knowledge: HashMap<String, String>,
 }
 
 impl MemoryManager {
@@ -166,6 +167,7 @@ impl MemoryManager {
             summary_days,
             daily_summaries: HashMap::new(),
             souls: HashMap::new(),
+            knowledge: HashMap::new(),
         }
     }
 
@@ -270,6 +272,12 @@ impl MemoryManager {
             }
         }
 
+        if let Some(knowledge_text) = self.knowledge.get(room_id) {
+            if !knowledge_text.is_empty() {
+                messages.push(ChatMessage::system(knowledge_text));
+            }
+        }
+
         let summaries = self.daily_summaries.get(room_id).map(|v| v.as_slice()).unwrap_or(&[]);
         if !summaries.is_empty() {
             let mut summary_text = String::from("[Recent conversation summaries]\n");
@@ -343,6 +351,14 @@ impl MemoryManager {
 
     pub fn get_soul(&self, room_id: &str) -> Option<&SoulMemory> {
         self.souls.get(room_id)
+    }
+
+    pub fn set_knowledge(&mut self, room_id: &str, entries: String) {
+        self.knowledge.insert(room_id.to_string(), entries);
+    }
+
+    pub fn get_knowledge(&self, room_id: &str) -> Option<&str> {
+        self.knowledge.get(room_id).map(|s| s.as_str())
     }
 }
 

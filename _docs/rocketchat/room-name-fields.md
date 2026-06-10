@@ -93,6 +93,23 @@ When `fname` is empty, the resulting WebDAV directory uses the URL slug (`room_n
 for rooms created without an explicit ASCII slug is indistinguishable from an internal codename.
 This is the most common cause of unexpected WebDAV directory names.
 
+### RoomCache removed (2026-06-10)
+
+The `"rooms"` DDP subscription on `rc.tokyofy.top` never sends a `"ready"` response,
+so the **RoomCache** (populated from `"rooms"` subscription to fill missing `fname`
+values) was **removed entirely** — both from code and DFDs:
+
+- `RoomCache` / `CachedRoom` structs removed from `types.rs`
+- `subscribe_rooms_message` / `is_added` removed from `ddp.rs`
+- `wait_for_rooms_ready` and rooms subscription logic removed from `client.rs`
+- `MessageFilter::filter()` no longer takes a `room_cache` parameter
+- DFD sections 2g (Room Name Cache) and 2h (Subscription Ordering) deleted
+
+Without the cache, `room_fname` is sourced **only** from the per-event
+`args[1].fname` field. When absent, `room_fname` stays empty and downstream
+code falls back to `room_name` (the URL slug) or `sender_name` (for DMs) —
+identical behavior to a cache miss in the old design.
+
 ### No fallback from REST API (yet)
 
 The bot currently does **not** query the RocketChat REST API for room details. If `fname` is

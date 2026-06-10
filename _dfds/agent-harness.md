@@ -258,7 +258,7 @@ flowchart TD
 | `web_search`  | Search the web using Exa                         | `query: string`                    |
 | `web_fetch`   | Fetch a URL, optionally as markdown              | `url: string, markdown: bool`      |
 | `vision`      | Download an image and report metadata _(true vision — sending image data to AI provider — is planned)_ | `url: string, prompt: string`      |
-| `webdav`      | Read, write, list, and delete files in the room's WebDAV directory | `action: string, path: string, content?: string` |
+| `webdav`      | Read, write, edit, list, mkdir, delete, and check existence in the room's WebDAV directory | `action: string, path: string, content?: string, oldString?: string, newString?: string` |
 | `image_gen`   | Generate an image using fal.ai models _(requires `fal` provider in config)_ | `prompt: string, model_id: string` |
 | `calendar`    | Manage calendar events via CalDAV _(requires WebDAV + calendar_name)_ | `action: string, uid?: string, summary?: string, ...` |
 | `datetime`    | Get current date/time in various formats           | `timezone: string, format: string` |

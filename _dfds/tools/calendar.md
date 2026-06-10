@@ -159,10 +159,16 @@ Stored as `{uid}.ics` within the calendar collection.
 
 #### `WebDavPath` (calendar methods)
 
+Calendar paths are built via `CalendarTool::caldav_url()` and
+`WebDavConfig::caldav_base_url()` — the CalDAV endpoint is a separate URL
+(`/remote.php/dav/calendars/{user}/{calendar}/`) independent of the WebDAV
+file storage root. `WebDavPath` does **not** provide calendar-specific
+methods.
+
 | Method                      | Returns  | Notes                             |
 | --------------------------- | -------- | --------------------------------- |
-| `calendar_path(calendar)`   | `String` | `/calendars/{calendar}/`          |
-| `event_path(calendar, uid)` | `String` | `/calendars/{calendar}/{uid}.ics` |
+| `caldav_base_url(calendar)` | `String` | `/remote.php/dav/calendars/{user}/{calendar}/` (via `WebDavConfig`) |
+| `caldav_url()`              | `String` | Same URL, constructed by `CalendarTool` from stored config |
 
 ## 4. NextCloud API Reference
 

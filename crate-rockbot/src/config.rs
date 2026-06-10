@@ -15,6 +15,8 @@ pub struct AppConfig {
     pub tools: HashMap<String, ToolServiceConfig>,
     #[serde(default)]
     pub webdav: Option<WebDavConfig>,
+    #[serde(default)]
+    pub knowledge: Option<KnowledgeConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -52,6 +54,16 @@ pub struct ModelConfig {
 pub struct ImageModelConfig {
     pub default_provider: String,
     pub default_model: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct KnowledgeConfig {
+    #[serde(default = "default_true_bool")]
+    pub knowledge_enabled: bool,
+}
+
+fn default_true_bool() -> bool {
+    true
 }
 
 fn default_max_iterations() -> u32 {

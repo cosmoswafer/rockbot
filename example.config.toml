@@ -69,3 +69,7 @@ password = "EDITME"
 root = "rockbot"
 # Optional: calendar name for CalDAV calendar/todo tool
 # calendar_name = "personal"
+
+# Optional: enable knowledge persistence (save_knowledge, forget_knowledge, recall_knowledge tools)
+[knowledge]
+knowledge_enabled = true

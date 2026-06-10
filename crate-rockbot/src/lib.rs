@@ -1,6 +1,7 @@
 pub mod config;
 pub mod error;
 pub mod harness;
+pub mod knowledge;
 pub mod memory;
 pub mod provider;
 pub mod tool;

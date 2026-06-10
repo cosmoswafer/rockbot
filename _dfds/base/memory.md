@@ -10,7 +10,7 @@ agent context as system messages.
 |-------|------|---------|-------|----------|
 | 1 | **Chat History** | In-memory only | `max_text_length` chars, `max_history_messages` msgs | Raw `Vec<ChatMessage>` — the current working window |
 | 2 | **Daily Summaries** | WebDAV `.md` files | `max_summary_chars` total, 7-day rolling window | AI-summarized daily digests of overflowed Layer 1 messages |
-| 3 | **Soul** | WebDAV `soul.md` file | Unbounded | Persistent core memory editable by user via chat |
+| 3 | **Soul** | WebDAV `soul.md` file | `max_soul_chars` chars | Persistent core memory editable by user via chat |
 
 **Flow:** Messages accumulate in Layer 1. When Layer 1 exceeds limits, the
 oldest half is AI-summarized into today's Layer 2 daily summary. Summaries
@@ -19,7 +19,7 @@ add, revise, or remove entries through normal conversation (e.g. "remember
 I prefer short answers"). The agent edits soul via the `edit_soul` tool.
 
 - Upstream: [Configuration Management](config.md) provides `ModelConfig`
-  (`max_text_length`, `max_history_size`, `max_summary_chars`, `summary_days`)
+  (`max_text_length`, `max_history_size`, `max_summary_chars`, `max_soul_chars`, `summary_days`)
 - Upstream: [Agent Harness](../agent-harness.md) triggers
   `archive_room_if_needed` after each message, `restore_history` on room init,
   and handles `edit_soul` tool calls
@@ -325,6 +325,7 @@ New fields added to `ModelConfig` in [Configuration Management](config.md):
 | `max_text_length`   | `usize` | 50000   | Layer 1 overflow threshold (chars)        |
 | `max_history_size`  | `usize` | 12      | Layer 1 max messages in context           |
 | `max_summary_chars` | `usize` | 8000    | Layer 2 total chars across loaded summaries|
+| `max_soul_chars`    | `usize` | 2000    | Layer 3 max chars for soul.md content     |
 | `summary_days`      | `u32`   | 7       | Layer 2 retention window (days)           |
 
 Example TOML:
@@ -335,6 +336,7 @@ default_model = "chat"
 max_text_length = 50000
 max_history_size = 12
 max_summary_chars = 8000
+max_soul_chars = 2000
 summary_days = 7
 ```
 

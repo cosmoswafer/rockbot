@@ -59,6 +59,7 @@ flowchart TD
 | `image_providers`| `Vec<ProviderConfig>`    | Image generation provider definitions          |
 | `image_model`    | `Option<ImageModelConfig>`| Default image provider + model alias           |
 | `webdav`     | `Option<WebDavConfig>`       | NextCloud WebDAV endpoint and credentials      |
+| `knowledge`   | `Option<KnowledgeConfig>`    | Knowledge persistence configuration            |
 | `tools`      | `HashMap<String, ToolSvcCfg>`| Tool-specific API keys (generic map)           |
 
 #### `RocketChatSection`
@@ -87,6 +88,7 @@ flowchart TD
 | `max_text_length`  | `usize`  | Layer 1 overflow threshold chars (default 50000)|
 | `max_iterations`   | `u32`    | Max agent loop iterations (default 8)    |
 | `max_summary_chars` | `usize`  | Layer 2 max chars across loaded summaries (default 8000)|
+| `max_soul_chars`   | `usize`  | Layer 3 max chars for soul.md content (default 2000)|
 | `summary_days`     | `u32`    | Layer 2 retention window in days (default 7)|
 
 #### `ProviderConfig`
@@ -115,3 +117,10 @@ flowchart TD
 | `username` | `String` | NextCloud username                      |
 | `password` | `String` | NextCloud app password                  |
 | `root`     | `String` | Base directory for bot data             |
+| `calendar_name` | `Option<String>` | CalDAV calendar name (enables calendar tool if set) |
+
+#### `KnowledgeConfig`
+
+| Field              | Type   | Notes                                       |
+| ------------------ | ------ | ------------------------------------------- |
+| `knowledge_enabled`| `bool` | Enable knowledge persistence and retrieval  |

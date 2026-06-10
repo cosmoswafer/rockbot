@@ -5,6 +5,7 @@ use webdav::{WebDavClient, WebDavPath};
 
 use crate::AppConfig;
 use crate::error::Result;
+use crate::knowledge::KnowledgeManager;
 use crate::memory::{DailySummary, MemoryJson, MemoryManager, MessageRef, SoulMemory};
 use crate::provider::AiProvider;
 use crate::tool::ToolRegistry;
@@ -121,6 +122,9 @@ impl AgentHarness {
 
         let model = self.resolve_model();
 
+        let wd = compute_webdav_dir(room_name, room_fname, is_dm);
+        let _ = self.refresh_knowledge_context(room_id, &wd).await;
+
         let mut messages = self
             .memory
             .build_context(room_id, &system_prompt, None, None);
@@ -175,6 +179,9 @@ impl AgentHarness {
                             let arguments = if tool_call.function.name == "webdav"
                                 || tool_call.function.name == "image_gen"
                                 || tool_call.function.name == "edit_soul"
+                                || tool_call.function.name == "save_knowledge"
+                                || tool_call.function.name == "forget_knowledge"
+                                || tool_call.function.name == "recall_knowledge"
                             {
                                 let wd = compute_webdav_dir(room_name, room_fname, is_dm);
                                 inject_room_context(&tool_call.function.arguments, room_id, &wd)
@@ -540,6 +547,22 @@ impl AgentHarness {
                     );
                 }
             }
+
+            // Knowledge: load index and match against context
+            match self.load_knowledge_for_room(webdav_client, room_id, &wd).await {
+                Ok(text) => {
+                    if !text.is_empty() {
+                        self.memory.set_knowledge(room_id, text);
+                    }
+                    debug!("Loaded knowledge context for room {}", room_name);
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to load knowledge for room {}: {}",
+                        room_name, e
+                    );
+                }
+            }
         }
 
         // Legacy: load MemoryJson archives for backward compat
@@ -631,6 +654,84 @@ impl AgentHarness {
             content,
             updated_at,
         })
+    }
+
+    async fn load_knowledge_for_room(
+        &self,
+        webdav: &WebDavClient,
+        room_id: &str,
+        webdav_dir: &str,
+    ) -> Result<String> {
+        let index = KnowledgeManager::load_index(webdav, webdav_dir).await?;
+        if index.entries.is_empty() {
+            return Ok(String::new());
+        }
+
+        let recent: Vec<String> = {
+            self.memory
+                .get(room_id)
+                .map(|r| {
+                    r.history
+                        .messages
+                        .iter()
+                        .filter(|m| m.role == crate::types::Role::User)
+                        .filter_map(|m| m.text_content())
+                        .map(|t| t.to_string())
+                        .rev()
+                        .take(10)
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+
+        let recent_refs: Vec<&str> = recent.iter().map(|s| s.as_str()).collect();
+        let matching = KnowledgeManager::match_relevant(&index, &recent_refs);
+
+        let mut parts = Vec::new();
+        for entry in &matching {
+            let md_path = format!(
+                "{}knowledge/{}",
+                WebDavPath::new("").room_dir(webdav_dir),
+                entry.filename
+            );
+            match webdav.read_file_to_string(&md_path).await {
+                Ok(body) => {
+                    parts.push(format!(
+                        "[Knowledge: {}/{}]\nUse when: {}\n{}",
+                        entry.category, entry.title, entry.when_useful, body
+                    ));
+                }
+                Err(e) => {
+                    warn!("Failed to read knowledge entry {}: {}", entry.filename, e);
+                }
+            }
+        }
+
+        if parts.is_empty() {
+            return Ok(String::new());
+        }
+
+        Ok(format!(
+            "[Knowledge — automatically recalled for this conversation]\n{}",
+            parts.join("\n---\n")
+        ))
+    }
+
+    pub async fn refresh_knowledge_context(
+        &mut self,
+        room_id: &str,
+        webdav_dir: &str,
+    ) -> Result<()> {
+        let webdav = self.webdav.clone();
+        if let Some(ref webdav) = webdav {
+            let text = self
+                .load_knowledge_for_room(webdav, room_id, webdav_dir)
+                .await?;
+            if !text.is_empty() {
+                self.memory.set_knowledge(room_id, text);
+            }
+        }
+        Ok(())
     }
 }
 

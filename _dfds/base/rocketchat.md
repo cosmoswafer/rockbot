@@ -244,86 +244,6 @@ hash the password before constructing the payload.
 
 The `tokenExpires` field is **not consumed** by the current implementation.
 
-### 2g. Room Name Cache Deep Dive
-
-`args[1].fname` is **conditionally present** in `stream-room-messages` `"changed"`
-events — it may be `""` or absent entirely. To fill the gap, a second DDP
-subscription (`"rooms"`) fetches every room's metadata at startup and builds an
-in-memory cache. When a message event arrives with a missing/empty `fname`, the
-cache is consulted by `room_id`.
-
-```mermaid
-flowchart TD
-    RC_DDP[RocketChat DDP over WebSocket]
-    SUB_ROOMS(SubscribeRooms)
-    COLLECT(CollectRoomAdded)
-    CACHE[(RoomCache)]
-    PARSE(ParseEvent)
-    LOOKUP(ResolveFname)
-    FALLBACK(FallbackToRoomName)
-
-    SUB_ROOMS -->|"msg: sub rooms"| RC_DDP
-    RC_DDP -->|"msg: added {_id, name, fname}"| COLLECT
-    COLLECT -->|"room_id → CachedRoom"| CACHE
-    RC_DDP -->|"msg: changed (stream-room-messages)"| PARSE
-    PARSE -->|"room_id, room_name, partial fname"| LOOKUP
-    CACHE -->|"cached fname"| LOOKUP
-    LOOKUP -->|"resolved room_fname"| DISPATCH_PROC[MessageFilter::filter]
-    CACHE -.->|"cache miss"| LOOKUP
-    LOOKUP -.->|"fname still empty"| FALLBACK
-    FALLBACK -.->|"use room_name"| DISPATCH_PROC
-    RC_DDP -->|"msg: nosub"| SUB_ROOMS
-    RC_DDP -.->|"resubscribe"| SUB_ROOMS
-```
-
-**ResolveFname precedence** (per message):
-
-1. If `args[1].fname` is present and non-empty → use it (per-event wins)
-2. Else, look up `room_id` (from `args[0].rid`) in `RoomCache` → use cached `fname`
-3. Else → `room_fname` stays empty; downstream falls back to `room_name`
-
-The cache is keyed by `room_id` (RocketChat UUID), not by room name slug. This
-guarantees a stable lookup independent of renames.
-
-**Error handling & fallbacks**:
-
-- **`"nosub"` for `"rooms"`**: re-subscribe automatically (same pattern as
-  existing `stream-room-messages` `"nosub"` handling). Cache survives
-  re-subscription — the server re-sends all `"added"` events.
-- **Cache miss**: room not in cache (e.g. created after startup, or DM room not
-  in `"rooms"` collection). Degrades to pre-cache behavior — `room_fname` stays
-  empty; downstream uses `room_name` slug or `sender_name` (DMs).
-- **Rooms subscription never completes** (no `"ready"`): `stream-room-messages`
-  still works. Cache stays empty; behavior identical to current state.
-
-### 2h. Room Name Cache — Subscription Ordering
-
-The `"rooms"` subscription is sent **before** `stream-room-messages` and its
-`"ready"` is awaited. This guarantees the cache is fully populated before any
-message `"changed"` events arrive, eliminating a race where a message arrives
-before its room's `fname` is cached.
-
-```mermaid
-flowchart TD
-    RC_DDP[RocketChat DDP over WebSocket]
-    AUTH_WAIT(WaitForLoginResult)
-    SUB_ROOMS(SubscribeRooms)
-    WAIT_ROOMS(WaitForRoomsReady)
-    SUB_MSG(SubscribeStreamRoomMessages)
-    WAIT_MSG(WaitForMessagesReady)
-    ENTER_LOOP(EnterEventLoop)
-
-    RC_DDP -->|"msg: result"| AUTH_WAIT
-    AUTH_WAIT -->|"sub rooms"| SUB_ROOMS
-    SUB_ROOMS -->|"msg: sub"| RC_DDP
-    RC_DDP -->|"msg: added (× N)"| SUB_ROOMS
-    RC_DDP -->|"msg: ready"| WAIT_ROOMS
-    WAIT_ROOMS -->|"sub stream-room-messages"| SUB_MSG
-    SUB_MSG -->|"msg: sub"| RC_DDP
-    RC_DDP -->|"msg: ready"| WAIT_MSG
-    WAIT_MSG -->|"both subscriptions active"| ENTER_LOOP
-```
-
 ## 3. Data Structures
 
 The Rust crate defines formal typed structs with `serde` (Serialize/Deserialize)
@@ -337,7 +257,7 @@ definition and how it is populated.
 | `msg_id`      | `Option<String>`  | `raw["id"]` — DDP message ID                        |
 | `room_id`     | `String`          | `args[0]["rid"]` — RocketChat room ID               |
 | `room_name`   | `String`          | `args[1]["roomName"]` — URL slug (ASCII, e.g. `sen1-lin2-sheng1-tai4`). `""` or `"DIRECT_MESSAGES"` for DMs |
-| `room_fname`  | `String`          | Per-event `args[1]["fname"]`, or resolved from `RoomCache` by `room_id` when absent. Empty for rooms without a custom fname |
+| `room_fname`  | `String`          | Per-event `args[1]["fname"]`. Empty when absent from the DDP event or for rooms without a custom fname |
 
 Room name precedence:
 - **Matching/registration**: use `room_name` (slug) — always ASCII, deterministic
@@ -349,9 +269,8 @@ The agent harness computes `webdav_dir` using the friendly name when available:
 - **Channel without fname** (e.g. `#general`): DDP supplies `roomName: "general"` + `fname: ""` → `webdav_dir: "r-general"`
 - **Direct message** (e.g. from `saru`): DDP `roomName` empty, `fname` empty → falls back to `sender_name: "saru"` → `webdav_dir: "d-saru"`
 
-The flat `r-`/`d-` prefixes prevent collisions. When `fname` is available
-(via per-event `args[1]` or `RoomCache` lookup), the display name is used;
-otherwise the URL slug is the fallback.
+The flat `r-`/`d-` prefixes prevent collisions. When per-event `args[1].fname`
+is available, the display name is used; otherwise the URL slug is the fallback.
 
 > **Important distinction**: `room_id` (the RocketChat UUID from DDP `args[0].rid`)
 > and `webdav_dir` (the `r-`/`d-`-prefixed path key) are **separate values**.
@@ -385,25 +304,7 @@ otherwise the URL slug is the fallback.
 Method `filter(&self, raw: &Value) -> Option<IncomingMessage>` parses and
 filters a raw DDP event, returning `None` for self-messages and `Some` for
 valid incoming messages. Callers then apply `is_dm_or_mention()` to decide
-dispatch.
+dispatch. `room_fname` is parsed directly from the per-event `args[1].fname`
+field; there is no secondary cache lookup.
 
-#### `CachedRoom`
-
-Stored in `RoomCache`, keyed by RocketChat room UUID (`_id`). Populated from
-the DDP `"rooms"` subscription `"added"` events.
-
-| Field      | Type     | Source                  | Notes                                      |
-| ---------- | -------- | ----------------------- | ------------------------------------------ |
-| `room_id`  | `String` | `added.fields._id`      | RocketChat UUID, stable lookup key         |
-| `name`     | `String` | `added.fields.name`     | URL slug (ASCII), may be empty for DMs     |
-| `fname`    | `String` | `added.fields.fname`    | Friendly display name (Unicode), may be empty |
-| `t`        | `String` | `added.fields.t`        | Room type: `"c"` (channel), `"d"` (DM), `"p"` (private group) |
-
-#### `RoomCache`
-
-In-memory `HashMap<String, CachedRoom>` keyed by `room_id`. Populated at
-startup from the `"rooms"` subscription. Read on every incoming message to
-resolve `fname` when the per-event `args[1].fname` is absent or empty.
-
-No persistent storage — rebuilt from scratch on every bot restart via the
-`"rooms"` subscription.
+*(Room name cache removed — see `room-name-fields.md` for the rationale.)*
