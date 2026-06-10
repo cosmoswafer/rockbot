@@ -15,8 +15,6 @@ pub struct AppConfig {
     pub tools: HashMap<String, ToolServiceConfig>,
     #[serde(default)]
     pub webdav: Option<WebDavConfig>,
-    #[serde(default)]
-    pub knowledge: Option<KnowledgeConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -48,22 +46,14 @@ pub struct ModelConfig {
     pub summary_days: u32,
     #[serde(default = "default_max_summary_chars")]
     pub max_summary_chars: usize,
+    #[serde(default = "default_max_soul_chars")]
+    pub max_soul_chars: usize,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ImageModelConfig {
     pub default_provider: String,
     pub default_model: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct KnowledgeConfig {
-    #[serde(default = "default_true_bool")]
-    pub knowledge_enabled: bool,
-}
-
-fn default_true_bool() -> bool {
-    true
 }
 
 fn default_max_iterations() -> u32 {
@@ -84,6 +74,10 @@ fn default_summary_days() -> u32 {
 
 fn default_max_summary_chars() -> usize {
     8000
+}
+
+fn default_max_soul_chars() -> usize {
+    2000
 }
 
 #[derive(Debug, Clone, Deserialize)]

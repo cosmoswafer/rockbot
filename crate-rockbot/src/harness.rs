@@ -47,11 +47,12 @@ impl AgentHarness {
         let max_iterations = config.rocketchat.model.max_iterations;
         let max_summary_chars = config.rocketchat.model.max_summary_chars;
         let summary_days = config.rocketchat.model.summary_days;
+        let max_soul_chars = config.rocketchat.model.max_soul_chars;
         let config = Arc::new(config);
         Self {
             config,
             provider,
-            memory: MemoryManager::new(max_chars, max_history, max_summary_chars, summary_days),
+            memory: MemoryManager::new(max_chars, max_history, max_summary_chars, summary_days, max_soul_chars),
             tools: ToolRegistry::new(),
             webdav,
             max_iterations,
@@ -1157,7 +1158,7 @@ chat = "mock-model"
 
     #[test]
     fn test_check_and_archive_returns_seq() {
-        let mut mgr = MemoryManager::new(50, 12, 8000, 7);
+        let mut mgr = MemoryManager::new(50, 12, 8000, 7, 2000);
         let room = mgr.get_or_create("room1", "general", "", false);
         for i in 0..10 {
             room.history.append(ChatMessage::user(format!(

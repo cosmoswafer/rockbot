@@ -147,6 +147,7 @@ pub struct MemoryManager {
     max_history_messages: usize,
     pub max_summary_chars: usize,
     pub summary_days: u32,
+    pub max_soul_chars: usize,
     daily_summaries: HashMap<String, Vec<DailySummary>>,
     souls: HashMap<String, SoulMemory>,
     knowledge: HashMap<String, String>,
@@ -158,6 +159,7 @@ impl MemoryManager {
         max_history_messages: usize,
         max_summary_chars: usize,
         summary_days: u32,
+        max_soul_chars: usize,
     ) -> Self {
         Self {
             rooms: HashMap::new(),
@@ -165,6 +167,7 @@ impl MemoryManager {
             max_history_messages,
             max_summary_chars,
             summary_days,
+            max_soul_chars,
             daily_summaries: HashMap::new(),
             souls: HashMap::new(),
             knowledge: HashMap::new(),
@@ -265,9 +268,18 @@ impl MemoryManager {
 
         if let Some(soul) = self.souls.get(room_id) {
             if !soul.content.is_empty() {
+                let truncated = if soul.content.chars().count() > self.max_soul_chars {
+                    let mut chars: Vec<char> = soul.content.chars().collect();
+                    chars.truncate(self.max_soul_chars);
+                    let mut t: String = chars.into_iter().collect();
+                    t.push_str("\n\n[truncated]");
+                    t
+                } else {
+                    soul.content.clone()
+                };
                 messages.push(ChatMessage::system(format!(
                     "[Core memory — permanent preferences, identity, and notes]\n{}",
-                    soul.content
+                    truncated
                 )));
             }
         }
@@ -532,7 +544,7 @@ mod tests {
 
     #[test]
     fn test_memory_manager_get_or_create() {
-        let mut mgr = MemoryManager::new(1000, 12, 8000, 7);
+        let mut mgr = MemoryManager::new(1000, 12, 8000, 7, 2000);
         let room = mgr.get_or_create("room1", "general", "", false);
         assert_eq!(room.room_id, "room1");
         assert_eq!(room.room_name, "general");
@@ -546,7 +558,7 @@ mod tests {
 
     #[test]
     fn test_memory_manager_build_context() {
-        let mut mgr = MemoryManager::new(1000, 3, 8000, 7);
+        let mut mgr = MemoryManager::new(1000, 3, 8000, 7, 2000);
         let room = mgr.get_or_create("room1", "general", "", false);
         for i in 0..5 {
             room.history
@@ -563,7 +575,7 @@ mod tests {
 
     #[test]
     fn test_memory_manager_build_context_nonexistent_room() {
-        let mgr = MemoryManager::new(1000, 12, 8000, 7);
+        let mgr = MemoryManager::new(1000, 12, 8000, 7, 2000);
         let ctx = mgr.build_context("nonexistent", "prompt", None, None);
         assert_eq!(ctx.len(), 1);
     }
@@ -598,7 +610,7 @@ mod tests {
 
     #[test]
     fn test_build_context_with_dm_name() {
-        let mut mgr = MemoryManager::new(1000, 12, 8000, 7);
+        let mut mgr = MemoryManager::new(1000, 12, 8000, 7, 2000);
         let room = mgr.get_or_create("dm-xyz", "alice", "", true);
         assert_eq!(room.room_name, "alice");
         assert!(room.is_dm);

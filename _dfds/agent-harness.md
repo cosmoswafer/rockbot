@@ -16,7 +16,7 @@ standard harness mechanisms are present:
 |-------------|----------|---------|
 | **Tools**   | Full     | `web_search`, `web_fetch`, `vision`, `webdav`, `image_gen` (fal.ai), `calendar` (CalDAV), `datetime` — each tool has its own DFD |
 | **Context** | Full     | Per-room conversation history buffer, summarization, archive loading — see [Memory Management](base/memory.md); plus iteration limits, room state routing, system prompt assembly |
-| **Knowledge** | Planned | Domain facts extracted from conversations, stored as indexed `.md` files on WebDAV — see [Knowledge Management](base/knowledge.md) (not yet implemented) |
+| **Knowledge** | Full     | `save_knowledge`, `forget_knowledge`, `recall_knowledge` — see [Knowledge Management](base/knowledge.md) |
 
 Intentionally absent — not needed for rockbot's scope:
 
@@ -114,7 +114,8 @@ flowchart TD
 ### 2d. Tool Execution Deep Dive
 
 Room context (`room_id` UUID + `webdav_dir` path key) is injected into
-`webdav`, `image_gen`, and `edit_soul` tool calls. Stateless tools (`web_search`,
+`webdav`, `image_gen`, `edit_soul`, `save_knowledge`, `forget_knowledge`, and
+`recall_knowledge` tool calls. Stateless tools (`web_search`,
 `web_fetch`, `vision`, `datetime`, `calendar`) receive no room context.
 
 ```mermaid
@@ -133,7 +134,7 @@ flowchart TD
 
     CALL -->|"tool name + args"| INJECT
     ROOM_CTX -->|"room_id + webdav_dir"| INJECT
-    INJECT -->|"webdav / image_gen / edit_soul: enriched args"| EXEC
+    INJECT -->|"webdav / image_gen / edit_soul / save_knowledge / forget_knowledge / recall_knowledge: enriched args"| EXEC
     INJECT -->|"other tools: raw args"| EXEC
     REG -->|"tool definitions"| EXEC
     EXEC -->|"search query"| EXA
@@ -262,5 +263,9 @@ flowchart TD
 | `image_gen`   | Generate an image using fal.ai models _(requires `fal` provider in config)_ | `prompt: string, model_id: string` |
 | `calendar`    | Manage calendar events via CalDAV _(requires WebDAV + calendar_name)_ | `action: string, uid?: string, summary?: string, ...` |
 | `datetime`    | Get current date/time in various formats           | `timezone: string, format: string` |
+| `edit_soul`   | Edit the bot's permanent core memory per room (Layer 3) | `action: string, section_header: string, content: string` |
+| `save_knowledge` | Persist a knowledge entry (.md + index.json) on WebDAV | `category: string, topic: string, content: string, when_useful: string, tags: string` |
+| `forget_knowledge` | Remove a knowledge entry and its index record | `topic: string` |
+| `recall_knowledge` | Search the knowledge index and return matching entries | `query: string` |
 | `infograph`   | _(planned)_ Generate an infographic image         | `prompt: string`                   |
 | `anime`       | _(planned)_ Generate a Japanese anime-style image | `prompt: string`                   |

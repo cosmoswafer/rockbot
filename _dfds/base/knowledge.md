@@ -1,9 +1,9 @@
 # Knowledge Management
 
-> **Status: Planned — Not Implemented.** No Rust code exists for knowledge
-> extraction, storage, or retrieval. Structures like `KnowledgeEntry`,
-> `KnowledgeIndex`, and `KnowledgeConfig` are defined in this DFD only.
-> The agent loop runs without knowledge injection.
+Knowledge persistence is **always enabled** when WebDAV is configured — no
+separate config toggle required. The `save_knowledge`, `forget_knowledge`, and
+`recall_knowledge` tools are automatically registered alongside other
+WebDAV-backed tools.
 
 ## 1. Purpose
 
@@ -53,7 +53,8 @@ agent fetch additional entries on demand during the agent loop.
 
 - Upstream: [Agent Harness](../agent-harness.md) detects `save_knowledge` tool
   calls and loads knowledge on room init
-- Upstream: [Configuration Management](config.md) provides `KnowledgeConfig`
+- Upstream: [Configuration Management](config.md) provides WebDAV access
+  (knowledge is always enabled when WebDAV is configured)
 - Downstream: WebDAV crate persists `.md` files and `index.json`
 - Downstream: [AI Provider](ai-provider.md) synthesizes knowledge entries from
   user instructions via `save_knowledge` tool calls
@@ -256,14 +257,6 @@ enum KnowledgeCategory {
     Note,    // factual: contact info, preference, reminder
 }
 ```
-
-### `KnowledgeConfig`
-
-Added to `AppConfig` in [Configuration Management](config.md).
-
-| Field              | Type   | Notes                                       |
-| ------------------ | ------ | ------------------------------------------- |
-| `knowledge_enabled`| `bool` | Enable knowledge persistence and retrieval   |
 
 ### Markdown Entry Format
 
