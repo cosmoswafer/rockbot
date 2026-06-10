@@ -275,6 +275,20 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
 
                         let mut h = harness.lock().await;
 
+                        // Initialize REST client on first message
+                        if !h.has_rest_client() {
+                            let rc_config = rocketchat::RocketChatConfig {
+                                server: rocketchat::config::ServerConfig {
+                                    url: h.config().rocketchat.server.url.clone(),
+                                    username: h.config().rocketchat.server.username.clone(),
+                                    password: h.config().rocketchat.server.password.clone(),
+                                    debug: false,
+                                    use_tls: true,
+                                },
+                            };
+                            h.set_rest_client(sender.rest_client(&rc_config));
+                        }
+
                         let text = if msg.is_dm {
                             msg.text.clone()
                         } else {
@@ -295,6 +309,17 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                             room_name.clone()
                         } else {
                             msg.room_fname.clone()
+                        };
+
+                        // REST API fallback for Unicode room names
+                        let display_name = if !msg.is_dm && (display_name.is_empty() || display_name == room_name) {
+                            if let Some(fname) = h.resolve_room_fname(&msg.room_id).await {
+                                fname
+                            } else {
+                                display_name
+                            }
+                        } else {
+                            display_name
                         };
 
                         debug!(

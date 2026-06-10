@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use tracing::{debug, error, info, warn};
 use webdav::{WebDavClient, WebDavPath};
+use rocketchat::RestApiClient;
 
 use crate::AppConfig;
 use crate::error::Result;
@@ -40,6 +41,7 @@ pub struct AgentHarness {
     memory: MemoryManager,
     tools: ToolRegistry,
     webdav: Option<WebDavClient>,
+    rest_client: Option<RestApiClient>,
     max_iterations: u32,
 }
 
@@ -63,6 +65,7 @@ impl AgentHarness {
             memory: MemoryManager::new(max_chars, max_history, max_summary_chars, summary_days, max_soul_chars, persist_interval),
             tools: ToolRegistry::new(),
             webdav,
+            rest_client: None,
             max_iterations,
         }
     }
@@ -94,6 +97,22 @@ impl AgentHarness {
 
     pub fn tools(&self) -> &ToolRegistry {
         &self.tools
+    }
+
+    pub fn set_rest_client(&mut self, client: RestApiClient) {
+        self.rest_client = Some(client);
+    }
+
+    pub fn has_rest_client(&self) -> bool {
+        self.rest_client.is_some()
+    }
+
+    pub async fn resolve_room_fname(&mut self, room_id: &str) -> Option<String> {
+        if let Some(ref mut client) = self.rest_client {
+            client.resolve_room_fname(room_id).await
+        } else {
+            None
+        }
     }
 
     pub async fn process_message(

@@ -109,6 +109,67 @@ The filter process internally:
 
 All other cases are silently dropped.
 
+### 2g. Image Attachment Reception
+
+When a user sends a message with an image/file upload, the DDP `"changed"` event
+carries the full file metadata and attachment data in `args[0]`. The parser must
+extract these fields and populate `IncomingMessage` so the agent can "see" images.
+
+```mermaid
+flowchart TD
+    WS[RocketChat DDP over WebSocket]
+    RCV(ReceiveFrame)
+    PARSE(ParseJson)
+    ROUTE(RouteByMsgField)
+    EXTRACT_MSG(ExtractMessageText)
+    EXTRACT_FILE(ExtractFileMetadata)
+    EXTRACT_ATTACH(ExtractAttachments)
+    BUILD_MESSAGE(BuildIncomingMessage)
+    DISPATCH(DispatchToAgent)
+
+    WS -->|"changed event"| RCV
+    RCV -->|"frame string"| PARSE
+    PARSE -->|"json object"| ROUTE
+    ROUTE -->|"args[0] message object"| EXTRACT_MSG
+    ROUTE -->|"args[0] message object"| EXTRACT_FILE
+    ROUTE -->|"args[0] message object"| EXTRACT_ATTACH
+    EXTRACT_MSG -->|"text, sender, room"| BUILD_MESSAGE
+    EXTRACT_FILE -->|"file metadata"| BUILD_MESSAGE
+    EXTRACT_ATTACH -->|"attachment list"| BUILD_MESSAGE
+    BUILD_MESSAGE -->|"IncomingMessage with images"| DISPATCH
+```
+
+**File metadata** (`args[0]["file"]` and `args[0]["files"]`):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `_id` | `String` | File ID on the RocketChat server |
+| `name` | `String` | Original filename |
+| `type` | `String` | MIME type (e.g. `image/png`) |
+| `size` | `u64` | File size in bytes |
+| `format` | `String` | File extension (e.g. `png`) |
+| `typeGroup` | `String` | `"image"`, `"video"`, `"audio"`, `"document"`, `"thumb"` |
+
+**Attachment metadata** (`args[0]["attachments"]` array):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `title` | `String` | Attachment display title (filename) |
+| `title_link` | `String` | Relative path to **original file**: `/file-upload/{file_id}/{name}` |
+| `title_link_download` | `bool` | `true` for file uploads |
+| `image_url` | `String` | Relative path to **thumbnail**: `/file-upload/{thumb_id}/{name}` |
+| `image_type` | `String` | MIME type of the image |
+| `image_size` | `u64` | Original file size in bytes |
+| `image_dimensions` | `{width, height}` | Pixel dimensions |
+| `image_preview` | `String` | Base64-encoded small inline preview |
+| `type` | `String` | `"file"` for uploads |
+| `fileId` | `String` | Back-reference to the original `file._id` |
+
+**Download URL construction**: `{server_base_url}{title_link}` for the original,
+`{server_base_url}{image_url}` for the thumbnail. `title_link` and `image_url`
+are URL-encoded relative paths — they must be joined with the server base URL
+scheme/host before use.
+
 ### 2d. Ping/Pong Keepalive Deep Dive
 
 The RocketChat server periodically sends `{"msg": "ping"}` to keep the
@@ -283,7 +344,7 @@ The Rust crate defines formal typed structs with `serde` (Serialize/Deserialize)
 in `crate-rocketchat/src/types.rs`. Tables below map each field to its struct
 definition and how it is populated.
 
-#### `IncomingMessage` (fields defined in `types.rs:5-15`)
+#### `IncomingMessage` (fields defined in `types.rs`)
 
 | Field         | Type              | Source / Notes                                      |
 | ------------- | ----------------- | --------------------------------------------------- |
@@ -296,6 +357,10 @@ definition and how it is populated.
 | `is_dm`       | `bool`            | `true` if `room_name` is empty or `"DIRECT_MESSAGES"` |
 | `timestamp`   | `Option<i64>`     | `args[0]["ts"]` — message timestamp (`$date`)       |
 | `sender_id`   | `String`          | `args[0]["u"]["_id"]` — sender's RocketChat user ID |
+| `alias`       | `Option<String>`  | `args[0]["alias"]` — sender alias                   |
+| `file`        | `Option<FileInfo>` | `args[0]["file"]` — primary file metadata (present when message has an attachment) |
+| `files`       | `Vec<FileInfo>`   | `args[0]["files"]` — all file variants (original + thumbnails) |
+| `attachments` | `Vec<AttachmentInfo>` | `args[0]["attachments"]` — attachment objects with download URLs |
 
 Room name precedence:
 - **Matching/registration**: use `room_name` (slug) — always ASCII, deterministic
@@ -329,6 +394,34 @@ is available, the display name is used; otherwise the URL slug is the fallback.
 No `DdpEvent` struct exists. Raw DDP frames are handled as `serde_json::Value`
 with the `"msg"` field extracted via helper functions: `msg_field()`, `is_ping()`,
 `is_changed()`, etc. (`ddp.rs:68-101`).
+
+#### `FileInfo`
+
+| Field      | Type     | Source                                   |
+| ---------- | -------- | ---------------------------------------- |
+| `_id`      | `String` | `args[0]["file"]["_id"]`                 |
+| `name`     | `String` | `args[0]["file"]["name"]`                |
+| `type`     | `String` | MIME type (e.g. `image/png`)             |
+| `size`     | `u64`    | File size in bytes                       |
+| `format`   | `String` | File extension (e.g. `png`)              |
+| `type_group` | `String` | `"image"`, `"video"`, `"thumb"`, etc.  |
+
+#### `AttachmentInfo`
+
+| Field             | Type                | Source                                       |
+| ----------------- | ------------------- | -------------------------------------------- |
+| `title`           | `String`            | Display title (filename)                     |
+| `title_link`      | `String`            | Relative path to **original file** download  |
+| `title_link_download` | `bool`          | True for file uploads                        |
+| `image_url`       | `String`            | Relative path to **thumbnail** image         |
+| `image_type`      | `String`            | MIME type                                    |
+| `image_size`      | `u64`               | Original file size in bytes                  |
+| `image_dimensions`| `Option<ImageDim>`  | `{width, height}` pixel dimensions           |
+| `image_preview`   | `String`            | Base64-encoded inline preview                |
+| `type`            | `String`            | `"file"` for uploads                         |
+| `file_id`         | `String`            | Back-reference to original `file._id`        |
+
+To construct the full download URL: join `{server_config.host()}{attachment.title_link}`. The `image_url` field points to a thumbnail variant — use `title_link` for the original, full-quality image.
 
 #### `MessageFilter`
 

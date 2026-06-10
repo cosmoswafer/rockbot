@@ -194,6 +194,42 @@ flowchart TD
     PUT -->|"webdav path"| RESULT
 ```
 
+### 2g. Auto-Attachment Vision Pipeline
+
+When an incoming message contains image attachments (`IncomingMessage.attachments`
+is non-empty), the harness automatically constructs a prompt describing the
+attached images and passes the original file URL to the vision tool. This allows
+the agent to "see" images without the user needing to explicitly invoke the
+vision tool.
+
+```mermaid
+flowchart TD
+    RC[IncomingMessage]
+    CHECK{HasAttachments?}
+    EXTRACT(Extract image URLs)
+    TOOL[VisionTool]
+    SERVER_URL[(Server Base URL)]
+    CTX(BuildContext)
+    AI[AiProvider]
+
+    RC -->|"message with text + attachments"| CHECK
+    CHECK -->|"yes"| EXTRACT
+    CHECK -->|"no"| CTX
+    EXTRACT -->|"title_link (relative path)"| SERVER_URL
+    SERVER_URL -->|"full download URL"| TOOL
+    RC -->|"user prompt text"| TOOL
+    TOOL -->|"image data URI + prompt"| AI
+    AI -->|"vision completion"| CTX
+```
+
+**Image selection**: uses `attachments[0].title_link` (original file) over
+`image_url` (thumbnail). The server base URL is prepended to construct the full
+download URL: `{server_config.host()}{title_link}`.
+
+**Prompt construction**: if the user included text with the image (e.g. "B78"),
+that text becomes the prompt to the vision tool. If no text is present, a default
+prompt ("Describe this image in detail.") is used.
+
 ### 2f. Per-Room State Routing
 
 Each room maintains independent state — conversation history, agent context, and
@@ -268,7 +304,7 @@ flowchart TD
 | ------------- | ------------------------------------------------ | ---------------------------------- |
 | `web_search`  | Search the web using Exa                         | `query: string`                    |
 | `web_fetch`   | Fetch a URL, optionally as markdown              | `url: string, markdown: bool`      |
-| `vision`      | Download an image and report metadata _(true vision — sending image data to AI provider — is planned)_ | `url: string, prompt: string`      |
+| `vision`      | Download an image, encode as base64, and send to the AI provider for multimodal vision analysis; auto-invoked by the harness when an incoming message has image attachments _(requires an AI provider with vision support)_ | `url: string, prompt: string`      |
 | `webdav`      | Read, write, edit, list, mkdir, delete, and check existence in the room's WebDAV directory | `action: string, path: string, content?: string, oldString?: string, newString?: string` |
 | `image_gen`   | Generate an image using fal.ai models; returns both the WebDAV path and the original fal.ai CDN URL — prefer the fal.ai URL in responses _(requires `fal` provider in config)_ | `prompt: string, model_id: string` |
 | `calendar`    | Manage calendar events via CalDAV _(requires WebDAV + calendar_name)_ | `action: string, uid?: string, summary?: string, ...` |
