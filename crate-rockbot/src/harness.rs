@@ -154,12 +154,15 @@ impl AgentHarness {
                                 tool_call.function.name, tool_call.id
                             );
 
+                            let arguments = if tool_call.function.name == "webdav" {
+                                inject_room_id(&tool_call.function.arguments, room_id)
+                            } else {
+                                tool_call.function.arguments.clone()
+                            };
+
                             let tool_result = self
                                 .tools
-                                .execute_by_name(
-                                    &tool_call.function.name,
-                                    &tool_call.function.arguments,
-                                )
+                                .execute_by_name(&tool_call.function.name, &arguments)
                                 .await?;
 
                             let tool_msg = ChatMessage::tool(&tool_call.id, &tool_result.content);
@@ -293,6 +296,13 @@ fn format_messages_as_markdown(messages: &[ChatMessage]) -> String {
         }
     }
     md.trim().to_string()
+}
+
+fn inject_room_id(arguments: &str, room_id: &str) -> String {
+    let mut args: serde_json::Value =
+        serde_json::from_str(arguments).unwrap_or(serde_json::json!({}));
+    args["room_id"] = serde_json::Value::String(room_id.to_string());
+    serde_json::to_string(&args).unwrap_or_else(|_| arguments.to_string())
 }
 
 #[cfg(test)]

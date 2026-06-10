@@ -129,10 +129,10 @@ impl Tool for WebDavTool {
 
     fn description(&self) -> &str {
         "Manage files on remote WebDAV storage (NextCloud). \
+         Each room has its own file space — paths are automatically scoped. \
          Actions: read (get file content), write (create/overwrite a file), \
          list (list directory contents), mkdir (create directory tree), \
-         delete (remove file/directory), exists (check if path exists). \
-         All paths are scoped to the given room_id."
+         delete (remove file/directory), exists (check if path exists)."
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -146,7 +146,7 @@ impl Tool for WebDavTool {
                 },
                 "room_id": {
                     "type": "string",
-                    "description": "The room ID for scoping the operation"
+                    "description": "Room ID for scoping the operation (injected automatically if omitted)"
                 },
                 "path": {
                     "type": "string",
