@@ -292,6 +292,7 @@ fn test_provider_chat_url_default() {
         base_url: "https://api.example.com".into(),
         basecf_url: None,
         chat_path: None,
+        draw_path: None,
         models: HashMap::new(),
     };
     assert_eq!(
@@ -308,6 +309,7 @@ fn test_provider_chat_url_custom() {
         base_url: "https://api.example.com/v1".into(),
         basecf_url: None,
         chat_path: Some("/v2/chat".into()),
+        draw_path: None,
         models: HashMap::new(),
     };
     assert_eq!(config.chat_url(), "https://api.example.com/v1/v2/chat");
@@ -321,6 +323,7 @@ fn test_provider_chat_url_trailing_slash() {
         base_url: "https://api.example.com/".into(),
         basecf_url: None,
         chat_path: None,
+        draw_path: None,
         models: HashMap::new(),
     };
     assert_eq!(
@@ -649,6 +652,7 @@ fn test_deepseek_provider_new_success() {
         base_url: "https://api.deepseek.com/v1".into(),
         basecf_url: None,
         chat_path: None,
+        draw_path: None,
         models,
     };
     let provider = DeepSeekProvider::new(&config, "deepseek-chat").unwrap();
@@ -664,6 +668,7 @@ fn test_deepseek_provider_with_client() {
         base_url: "https://api.deepseek.com/v1".into(),
         basecf_url: None,
         chat_path: None,
+        draw_path: None,
         models: HashMap::new(),
     };
     let client = reqwest::Client::new();
@@ -679,6 +684,7 @@ fn test_openrouter_provider_new_success() {
         base_url: "https://openrouter.ai/api/v1".into(),
         basecf_url: None,
         chat_path: Some("/chat/completions".into()),
+        draw_path: None,
         models: HashMap::new(),
     };
     let provider = OpenRouterProvider::new(&config, "openai/gpt-4").unwrap();
@@ -694,6 +700,7 @@ fn test_deepseek_new_rejects_editme_key() {
         base_url: "https://api.deepseek.com/v1".into(),
         basecf_url: None,
         chat_path: None,
+        draw_path: None,
         models: HashMap::new(),
     };
     let result = DeepSeekProvider::new(&config, "chat");
@@ -712,6 +719,7 @@ fn test_openrouter_new_rejects_empty_key() {
         base_url: "https://openrouter.ai/api/v1".into(),
         basecf_url: None,
         chat_path: None,
+        draw_path: None,
         models: HashMap::new(),
     };
     let result = OpenRouterProvider::new(&config, "gpt");
@@ -732,6 +740,7 @@ fn test_ai_provider_is_object_safe() {
         base_url: "https://api.deepseek.com/v1".into(),
         basecf_url: None,
         chat_path: None,
+        draw_path: None,
         models: HashMap::new(),
     };
     let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();

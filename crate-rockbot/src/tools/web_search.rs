@@ -36,22 +36,17 @@ impl WebSearchTool {
             )
         })?;
 
-        let mut body = serde_json::json!({
+        let body = serde_json::json!({
             "query": query,
             "numResults": num_results,
             "type": search_type,
             "contents": {
                 "highlights": {
-                    "numSentences": 3,
-                    "highlightsPerUrl": 3,
+                    "enabled": true,
                     "query": query
                 }
             }
         });
-
-        if search_type == "auto" {
-            body["useAutoprompt"] = serde_json::Value::Bool(true);
-        }
 
         let response = self
             .http_client
@@ -267,20 +262,19 @@ mod tests {
     }
 
     #[test]
-    fn test_exa_request_body_contains_contents_highlights() {
+    fn test_exa_request_body_contains_highlights_enabled() {
         let body = serde_json::json!({
             "query": "rust",
             "numResults": 5,
             "type": "auto",
             "contents": {
                 "highlights": {
-                    "numSentences": 3,
-                    "highlightsPerUrl": 3,
+                    "enabled": true,
                     "query": "rust"
                 }
             }
         });
-        assert!(body["contents"]["highlights"]["numSentences"] == 3);
+        assert!(body["contents"]["highlights"]["enabled"] == true);
         assert_eq!(body["contents"]["highlights"]["query"], "rust");
     }
 
@@ -290,7 +284,7 @@ mod tests {
             "query": "test",
             "numResults": 5,
             "type": "auto",
-            "contents": {"highlights": {"numSentences": 3, "highlightsPerUrl": 3, "query": "test"}}
+            "contents": {"highlights": {"enabled": true, "query": "test"}}
         });
         assert_ne!(
             body["type"], "neural",
@@ -299,18 +293,16 @@ mod tests {
     }
 
     #[test]
-    fn test_exa_request_body_no_deprecated_use_autoprompt() {
+    fn test_exa_request_body_no_deprecated_params() {
         let body = serde_json::json!({
             "query": "test",
             "numResults": 5,
             "type": "auto",
-            "useAutoprompt": true,
-            "contents": {"highlights": {"numSentences": 3, "highlightsPerUrl": 3, "query": "test"}}
+            "contents": {"highlights": {"enabled": true, "query": "test"}}
         });
-        assert_eq!(
-            body["type"], "auto",
-            "useAutoprompt=true is only valid with type=auto"
-        );
+        assert!(body.get("useAutoprompt").is_none(), "useAutoprompt is deprecated");
+        assert!(body.get("numSentences").is_none());
+        assert!(body.get("highlightsPerUrl").is_none());
     }
 
     #[test]

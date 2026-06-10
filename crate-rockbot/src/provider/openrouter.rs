@@ -214,6 +214,7 @@ mod tests {
             base_url: "https://openrouter.ai/api/v1".into(),
             basecf_url: None,
             chat_path: Some("/chat/completions".into()),
+            draw_path: None,
             models: std::collections::HashMap::new(),
         };
         OpenRouterProvider::new(&config, model).unwrap()
@@ -485,6 +486,7 @@ mod tests {
             base_url: "https://openrouter.ai/api/v1".into(),
             basecf_url: None,
             chat_path: None,
+            draw_path: None,
             models: std::collections::HashMap::new(),
         };
         let result = OpenRouterProvider::new(&config, "openai/gpt-4");
@@ -499,6 +501,7 @@ mod tests {
             base_url: "https://openrouter.ai/api/v1".into(),
             basecf_url: None,
             chat_path: None,
+            draw_path: None,
             models: std::collections::HashMap::new(),
         };
         let result = OpenRouterProvider::new(&config, "gpt");
@@ -520,6 +523,7 @@ mod tests {
             base_url: "https://custom.api.com".into(),
             basecf_url: None,
             chat_path: Some("/v2/chat".into()),
+            draw_path: None,
             models: std::collections::HashMap::new(),
         };
         let provider = OpenRouterProvider::new(&config, "model").unwrap();
@@ -534,6 +538,7 @@ mod tests {
             base_url: "https://openrouter.ai/api/v1".into(),
             basecf_url: None,
             chat_path: None,
+            draw_path: None,
             models: std::collections::HashMap::new(),
         };
         let client = reqwest::Client::new();

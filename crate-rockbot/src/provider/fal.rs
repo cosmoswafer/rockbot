@@ -175,6 +175,7 @@ mod tests {
             base_url: "https://queue.fal.run".into(),
             basecf_url: None,
             chat_path: None,
+            draw_path: None,
             models: HashMap::new(),
         }
     }

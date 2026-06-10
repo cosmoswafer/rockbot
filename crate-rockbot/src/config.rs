@@ -67,6 +67,8 @@ pub struct ProviderConfig {
     #[serde(default)]
     pub chat_path: Option<String>,
     #[serde(default)]
+    pub draw_path: Option<String>,
+    #[serde(default)]
     pub models: HashMap<String, String>,
 }
 
