@@ -24,6 +24,12 @@ When you need to analyze an image, use the vision tool. \
 When you need to read, write, list, or manage files on remote storage, use the webdav tool. \
 When you need to manage calendar events or todo tasks, use the calendar tool. \
 When you need to generate an image, use the image_gen tool. \
+When a user sends an image and asks to edit, modify, transform, or use it \
+as a basis for image generation, use the image_gen tool — the attachment \
+images will be automatically provided as input to the tool. \
+If the user asks to edit a previously generated image (no new attachment), \
+you MUST include the fal.ai CDN URL from the previous result in the \
+image_urls parameter yourself. \
 The image_gen tool returns both a WebDAV path and an original fal.ai CDN URL — \
 always share the fal.ai CDN URL with the user so they can view or share the image directly. \
 When a user says !soul or asks to save or update preferences, identity, or facts, use the edit_soul tool. \
@@ -979,9 +985,25 @@ fn inject_room_context_with_images(
         // Only inject if the agent didn't already provide image_urls.
         // Agent-provided URLs take precedence (e.g. web URLs the agent found).
         if !args.get("image_urls").is_some() {
-            args["image_urls"] = serde_json::Value::Array(
-                image_urls.iter().map(|u| serde_json::Value::String(u.clone())).collect(),
-            );
+            const MAX_DATA_URI_BYTES: usize = 25_000_000;
+            let filtered: Vec<serde_json::Value> = image_urls
+                .iter()
+                .filter(|u| {
+                    if u.len() > MAX_DATA_URI_BYTES {
+                        warn!(
+                            "Skipping oversized data URI ({} bytes) for image_gen — exceeds fal.ai 30MB limit",
+                            u.len()
+                        );
+                        false
+                    } else {
+                        true
+                    }
+                })
+                .map(|u| serde_json::Value::String(u.clone()))
+                .collect();
+            if !filtered.is_empty() {
+                args["image_urls"] = serde_json::Value::Array(filtered);
+            }
         }
     }
     serde_json::to_string(&args).unwrap_or_else(|_| arguments.to_string())

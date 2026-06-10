@@ -1,6 +1,7 @@
 use async_trait::async_trait;
+use base64::Engine;
 use serde_json::Value;
-use tracing::debug;
+use tracing::{debug, warn};
 use webdav::{WebDavClient, WebDavPath};
 
 use crate::error::{Result, RockBotError};
@@ -10,15 +11,17 @@ use crate::tool::Tool;
 pub struct ImageGenTool {
     fal: FalAiProvider,
     fal_img2img: Option<FalAiProvider>,
+    default_quality: String,
     webdav: WebDavClient,
     http_client: reqwest::Client,
 }
 
 impl ImageGenTool {
-    pub fn new(fal: FalAiProvider, webdav: WebDavClient) -> Self {
+    pub fn new(fal: FalAiProvider, default_quality: String, webdav: WebDavClient) -> Self {
         Self {
             fal,
             fal_img2img: None,
+            default_quality,
             webdav,
             http_client: reqwest::Client::new(),
         }
@@ -27,11 +30,13 @@ impl ImageGenTool {
     pub fn with_img2img(
         fal_text2img: FalAiProvider,
         fal_img2img: FalAiProvider,
+        default_quality: String,
         webdav: WebDavClient,
     ) -> Self {
         Self {
             fal: fal_text2img,
             fal_img2img: Some(fal_img2img),
+            default_quality,
             webdav,
             http_client: reqwest::Client::new(),
         }
@@ -41,9 +46,24 @@ impl ImageGenTool {
         Self {
             fal,
             fal_img2img: None,
+            default_quality: "medium".into(),
             webdav,
             http_client: client,
         }
+    }
+
+    async fn upload_data_uri(&self, data_uri: &str) -> Result<String> {
+        // Parse data URI: data:<mime>;base64,<data>
+        let after_data = data_uri
+            .strip_prefix("data:")
+            .ok_or_else(|| RockBotError::ToolCallParse("Invalid data URI".into()))?;
+        let (mime_part, b64) = after_data
+            .split_once(";base64,")
+            .ok_or_else(|| RockBotError::ToolCallParse("Data URI missing ;base64,".into()))?;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(b64)
+            .map_err(|e| RockBotError::ToolCallParse(format!("Base64 decode failed: {e}")))?;
+        self.fal.upload_file(&bytes, mime_part).await
     }
 
     async fn download_image(&self, url: &str) -> Result<Vec<u8>> {
@@ -110,12 +130,11 @@ impl Tool for ImageGenTool {
     }
 
     fn description(&self) -> &str {
-        "Generate an image using fal.ai. Specify a prompt and optional parameters \
-         (quality, image_size, output_format, num_images, model_id). \
-         model_id defaults to fal-ai/flux/schnell (fast). \
-         Use openai/gpt-image-2 for GPT Image 2 with higher quality. \
-         For GPT Image 2, recommend quality: medium, output_format: png, and \
-         image_size: landscape_16_9 (4K) or portrait_16_9 / square_hd / landscape_4_3. \
+        "Generate or edit an image. For text-to-image, provide a prompt. \
+         To edit or transform an image the user sent, just describe what to do \
+         in the prompt — the user's image attachments will be automatically \
+         provided as image_urls input. Optional parameters: quality, image_size, \
+         output_format, num_images. \
          Returns both the WebDAV path and the original fal.ai CDN URL — prefer \
          the fal.ai URL when sharing the image with the user."
     }
@@ -132,14 +151,10 @@ impl Tool for ImageGenTool {
                     "type": "string",
                     "description": "Room ID for image storage (injected automatically if omitted)"
                 },
-                "model_id": {
-                    "type": "string",
-                    "description": "fal.ai model ID (default: fal-ai/flux/schnell; use openai/gpt-image-2 for GPT Image 2)"
-                },
                 "quality": {
                     "type": "string",
                     "enum": ["low", "medium", "high", "auto"],
-                    "description": "Image quality / reasoning budget. Default: high. For gpt-image-2, medium is recommended for cost balance."
+                    "description": "Image quality / reasoning budget. Default: medium. For gpt-image-2, medium is recommended for cost balance."
                 },
                 "image_size": {
                     "type": "string",
@@ -157,7 +172,7 @@ impl Tool for ImageGenTool {
                 "image_urls": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "Optional list of image URLs or data URIs to use as input/reference images for image-to-image generation or editing. Pass public URLs or base64 data URIs. The agent can use image attachments the user sent as input — you just need to include them here. Use this when the user asks to edit, transform, or generate based on existing images."
+                    "description": "Image URLs for editing/transformations. When the user sends images, they are automatically injected. Do NOT try to reference data URIs from vision context — they will be provided automatically."
                 }
             },
             "required": ["prompt"]
@@ -184,10 +199,14 @@ impl Tool for ImageGenTool {
             .unwrap_or(room_id);
 
         let mut params = ImageGenParams::new(prompt);
-        params.quality = args.get("quality").and_then(|v| v.as_str()).map(String::from);
+        params.quality = Some(
+            args.get("quality")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&self.default_quality)
+                .to_string(),
+        );
         params.output_format = args.get("output_format").and_then(|v| v.as_str()).map(String::from);
         params.num_images = args.get("num_images").and_then(|v| v.as_u64()).map(|n| n as u32);
-        params.model_id = args.get("model_id").and_then(|v| v.as_str()).map(String::from);
 
         if let Some(size_val) = args.get("image_size") {
             params.image_size = size_val.as_str().map(|s| ImageSizeValue::Preset(s.to_string())).or_else(|| {
@@ -200,10 +219,23 @@ impl Tool for ImageGenTool {
         }
 
         if let Some(image_urls) = args.get("image_urls").and_then(|v| v.as_array()) {
-            let urls: Vec<String> = image_urls
-                .iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect();
+            const MAX_DATA_URI_BYTES: usize = 5_000_000;
+            let mut urls: Vec<String> = Vec::with_capacity(image_urls.len());
+            for v in image_urls {
+                let raw = v.as_str().map(String::from);
+                match raw.as_deref() {
+                    Some(uri) if uri.len() > MAX_DATA_URI_BYTES && uri.starts_with("data:") => {
+                        if let Ok(uploaded_url) = self.upload_data_uri(uri).await {
+                            debug!("Uploaded oversized image to fal storage: {}", uploaded_url);
+                            urls.push(uploaded_url);
+                        } else {
+                            warn!("Failed to upload oversized data URI, skipping it");
+                        }
+                    }
+                    Some(s) => urls.push(s.to_string()),
+                    None => {}
+                }
+            }
             if !urls.is_empty() {
                 params.image_urls = Some(urls);
             }
@@ -219,13 +251,12 @@ impl Tool for ImageGenTool {
 
         debug!(
             "Generating image with fal.ai model={}: {}",
-            params.model_id.as_deref().unwrap_or(provider.model_id()),
+            provider.model_id(),
             prompt
         );
 
         let image_url = provider.generate_image(&params).await?;
         debug!("Image generated, URL: {}", image_url);
-
         let image_bytes = self.download_image(&image_url).await?;
 
         let webdav_path = self.upload_to_webdav(webdav_dir, ext, image_bytes).await?;
@@ -260,10 +291,10 @@ mod tests {
         let config = make_fal_config();
         let fal = FalAiProvider::new(&config, "fal-ai/flux/schnell").unwrap();
         let webdav = webdav::WebDavClient::new("https://example.com", "user", "pass").unwrap();
-        let tool = ImageGenTool::new(fal, webdav);
+        let tool = ImageGenTool::new(fal, "medium".into(), webdav);
 
         assert_eq!(tool.name(), "image_gen");
-        assert!(tool.description().contains("Generate an image"));
+        assert!(tool.description().contains("Generate or edit an image"));
         let params = tool.parameters();
         assert_eq!(params["type"], "object");
         assert!(
@@ -285,7 +316,7 @@ mod tests {
         let config = make_fal_config();
         let fal = FalAiProvider::new(&config, "fal-ai/flux/schnell").unwrap();
         let webdav = webdav::WebDavClient::new("https://example.com", "user", "pass").unwrap();
-        let tool = ImageGenTool::new(fal, webdav);
+        let tool = ImageGenTool::new(fal, "medium".into(), webdav);
         let result = tool.execute(r#"{}"#).await;
         assert!(result.is_err());
     }
@@ -295,7 +326,7 @@ mod tests {
         let config = make_fal_config();
         let fal = FalAiProvider::new(&config, "fal-ai/flux/schnell").unwrap();
         let webdav = webdav::WebDavClient::new("https://example.com", "user", "pass").unwrap();
-        let tool = ImageGenTool::new(fal, webdav);
+        let tool = ImageGenTool::new(fal, "medium".into(), webdav);
         let result = tool.execute("not json").await;
         assert!(result.is_err());
     }
@@ -348,22 +379,19 @@ mod tests {
             "quality": "medium",
             "image_size": "landscape_16_9",
             "output_format": "png",
-            "num_images": 2,
-            "model_id": "openai/gpt-image-2"
+            "num_images": 2
         }"#).unwrap();
 
         let mut params = ImageGenParams::new(args["prompt"].as_str().unwrap());
         params.quality = args.get("quality").and_then(|v| v.as_str()).map(String::from);
         params.output_format = args.get("output_format").and_then(|v| v.as_str()).map(String::from);
         params.num_images = args.get("num_images").and_then(|v| v.as_u64()).map(|n| n as u32);
-        params.model_id = args.get("model_id").and_then(|v| v.as_str()).map(String::from);
         if let Some(size_val) = args.get("image_size") {
             params.image_size = size_val.as_str().map(|s| ImageSizeValue::Preset(s.to_string()));
         }
 
         assert_eq!(params.quality.as_deref(), Some("medium"));
         assert_eq!(params.num_images, Some(2));
-        assert_eq!(params.model_id.as_deref(), Some("openai/gpt-image-2"));
 
         let resolved = params.resolve_image_size().unwrap();
         assert_eq!(resolved["width"], 3840);
@@ -382,13 +410,7 @@ mod tests {
     #[test]
     fn test_image_gen_params_no_optional() {
         let args: Value = serde_json::from_str(r#"{"prompt": "a cat"}"#).unwrap();
-        let mut params = ImageGenParams::new(args["prompt"].as_str().unwrap());
-        params.quality = args.get("quality").and_then(|v| v.as_str()).map(String::from);
-        params.output_format = args.get("output_format").and_then(|v| v.as_str()).map(String::from);
-        params.num_images = args.get("num_images").and_then(|v| v.as_u64()).map(|n| n as u32);
-        if let Some(size_val) = args.get("image_size") {
-            params.image_size = size_val.as_str().map(|s| ImageSizeValue::Preset(s.to_string()));
-        }
+        let params = ImageGenParams::new(args["prompt"].as_str().unwrap());
 
         assert!(params.quality.is_none());
         assert!(params.output_format.is_none());

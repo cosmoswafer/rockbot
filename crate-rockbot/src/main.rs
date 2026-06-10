@@ -137,18 +137,15 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
             info!("Registered calendar tool (per-room, auto-created)");
         }
 
-        let (image_provider_name, t2i_model_name, edit_model_name) = harness
-            .config()
-            .image_model
-            .as_ref()
-            .map(|im| {
-                (
-                    im.default_provider.as_str(),
-                    im.default_text_model.as_str(),
-                    im.default_edit_model.as_str(),
-                )
-            })
-            .unwrap_or(("fal", "fal-ai/flux/schnell", "fal-ai/nano-banana-pro/edit"));
+        let (image_provider_name, t2i_model_name, edit_model_name, default_quality) = {
+            let im = &harness.config().image_model;
+            (
+                im.default_provider.as_str(),
+                im.default_text_model.as_str(),
+                im.default_edit_model.as_str(),
+                im.default_quality.as_str(),
+            )
+        };
 
         let image_cfg = harness.config().find_image_provider(image_provider_name);
         if let Some(img_cfg) = image_cfg {
@@ -187,6 +184,7 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                         tool_registry.register(Box::new(ImageGenTool::with_img2img(
                             fal_t2i,
                             fal_edit,
+                            default_quality.to_string(),
                             webdav_client.clone(),
                         )));
                     }

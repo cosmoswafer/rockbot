@@ -45,6 +45,7 @@ grok_edit = "xai/grok-imagine-image/quality/edit"
 default_provider = "fal"
 default_text_model = "seedream"
 default_edit_model = "fal-ai/nano-banana-pro/edit"
+default_quality = "medium"
 
 [rocketchat.model]
 default_provider = "openrouter"

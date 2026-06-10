@@ -197,38 +197,49 @@ flowchart TD
 ### 2g. Auto-Attachment Vision Pipeline
 
 When an incoming message contains image attachments (`IncomingMessage.attachments`
-is non-empty), the harness automatically constructs a prompt describing the
-attached images and passes the original file URL to the vision tool. This allows
-the agent to "see" images without the user needing to explicitly invoke the
-vision tool.
+is non-empty), the harness downloads each attachment, encodes it as a base64 data
+URI, and embeds it directly in the user's `ChatMessage` as `ContentPart::ImageUrl`
+parts. This allows the agent to "see" images without the user needing to invoke
+the vision tool. The vision tool is only used when the LLM needs to analyze an
+image at an arbitrary URL.
 
 ```mermaid
 flowchart TD
     RC[IncomingMessage]
     CHECK{HasAttachments?}
     EXTRACT(Extract image URLs)
-    TOOL[VisionTool]
-    SERVER_URL[(Server Base URL)]
-    CTX(BuildContext)
+    DOWNLOAD(Download attachments)
+    ENCODE(Base64 encode)
+    EMBED(ChatMessage::user_with_images)
+    HIST[(ConversationHistory)]
+    BUILD(BuildContext)
     AI[AiProvider]
 
     RC -->|"message with text + attachments"| CHECK
     CHECK -->|"yes"| EXTRACT
-    CHECK -->|"no"| CTX
-    EXTRACT -->|"title_link (relative path)"| SERVER_URL
-    SERVER_URL -->|"full download URL"| TOOL
-    RC -->|"user prompt text"| TOOL
-    TOOL -->|"image data URI + prompt"| AI
-    AI -->|"vision completion"| CTX
+    CHECK -->|"no"| BUILD
+    EXTRACT -->|"full download URLs"| DOWNLOAD
+    DOWNLOAD -->|"image bytes"| ENCODE
+    ENCODE -->|"data uris"| EMBED
+    RC -->|"user text"| EMBED
+    EMBED -->|"user msg + ImageUrl parts"| HIST
+    HIST -->|"messages with images"| BUILD
+    BUILD -->|"chat request with images"| AI
 ```
 
 **Image selection**: uses `attachments[0].title_link` (original file) over
 `image_url` (thumbnail). The server base URL is prepended to construct the full
-download URL: `{server_config.host()}{title_link}`.
+download URL: `{server_config.host()}{title_link}`. Multiple attachments are
+supported — all are encoded and embedded in the same message.
 
 **Prompt construction**: if the user included text with the image (e.g. "B78"),
-that text becomes the prompt to the vision tool. If no text is present, a default
-prompt ("Describe this image in detail.") is used.
+that text is prepended with the sender name (e.g. "User: B78"). If no text is
+present, the prompt becomes `"SenderName: Describe this image in detail."`.
+
+**Chat history preservation**: when `build_context()` builds messages for the AI
+provider, `ContentPart::ImageUrl` parts are preserved only on the most recent
+user message. Earlier user messages with images are collapsed to `[image]` text
+placeholders (see [Vision](tools/vision.md) section 2e).
 
 ### 2f. Per-Room State Routing
 

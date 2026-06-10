@@ -41,9 +41,9 @@ impl EditSoulTool {
 
         fn find_section(text: &str, header: &str) -> Option<(usize, usize)> {
             if let Some(pos) = text.find(&format!("\n## {} ", header)) {
-                Some((pos + 1, format!("\n## {} ", header).len()))
+                Some((pos, format!("\n## {} ", header).len()))
             } else if let Some(pos) = text.find(&format!("\n## {}", header)) {
-                Some((pos + 1, format!("\n## {}", header).len()))
+                Some((pos, format!("\n## {}", header).len()))
             } else if text.starts_with(&format!("## {} ", header)) {
                 Some((0, format!("## {} ", header).len()))
             } else if text.starts_with(&format!("## {}", header)) {
@@ -53,15 +53,15 @@ impl EditSoulTool {
             }
         }
 
-        let (before_pos, marker_len) = find_section(&existing, section_header).ok_or_else(|| {
+        let (section_start, marker_len) = find_section(&existing, section_header).ok_or_else(|| {
             RockBotError::ToolCallParse(format!(
                 "Section '## {}' not found in soul memory.",
                 section_header
             ))
         })?;
 
-        let before = &existing[..before_pos];
-        let rest = &existing[before_pos + marker_len..];
+        let before = &existing[..section_start];
+        let rest = &existing[section_start + marker_len..];
 
         let next_header = rest.find("\n## ").unwrap_or(rest.len());
         let new_content = format!(
@@ -89,9 +89,9 @@ impl EditSoulTool {
 
         fn find_section(text: &str, header: &str) -> Option<(usize, usize)> {
             if let Some(pos) = text.find(&format!("\n## {} ", header)) {
-                Some((pos + 1, format!("\n## {} ", header).len()))
+                Some((pos, format!("\n## {} ", header).len()))
             } else if let Some(pos) = text.find(&format!("\n## {}", header)) {
-                Some((pos + 1, format!("\n## {}", header).len()))
+                Some((pos, format!("\n## {}", header).len()))
             } else if text.starts_with(&format!("## {} ", header)) {
                 Some((0, format!("## {} ", header).len()))
             } else if text.starts_with(&format!("## {}", header)) {

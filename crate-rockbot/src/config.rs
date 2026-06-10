@@ -12,7 +12,7 @@ pub struct AppConfig {
     #[serde(default)]
     pub image_providers: Vec<ProviderConfig>,
     #[serde(default)]
-    pub image_model: Option<ImageModelConfig>,
+    pub image_model: ImageModelConfig,
     #[serde(default)]
     pub tools: HashMap<String, ToolServiceConfig>,
     #[serde(default)]
@@ -58,9 +58,38 @@ pub struct ModelConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ImageModelConfig {
+    #[serde(default = "default_image_provider")]
     pub default_provider: String,
+    #[serde(default = "default_image_text_model")]
     pub default_text_model: String,
+    #[serde(default = "default_image_edit_model")]
     pub default_edit_model: String,
+    #[serde(default = "default_image_quality")]
+    pub default_quality: String,
+}
+
+fn default_image_provider() -> String {
+    "fal".into()
+}
+fn default_image_text_model() -> String {
+    "seedream".into()
+}
+fn default_image_edit_model() -> String {
+    "fal-ai/nano-banana-pro/edit".into()
+}
+fn default_image_quality() -> String {
+    "medium".into()
+}
+
+impl Default for ImageModelConfig {
+    fn default() -> Self {
+        Self {
+            default_provider: default_image_provider(),
+            default_text_model: default_image_text_model(),
+            default_edit_model: default_image_edit_model(),
+            default_quality: default_image_quality(),
+        }
+    }
 }
 
 fn default_max_iterations() -> u32 {

@@ -61,6 +61,7 @@ impl ImageGenParams {
 pub struct FalAiProvider {
     api_key: String,
     base_url: String,
+    storage_url: String,
     model_id: String,
     http_client: reqwest::Client,
 }
@@ -78,9 +79,17 @@ impl FalAiProvider {
     pub fn new(config: &ProviderConfig, model_id: impl Into<String>) -> Result<Self> {
         config.validate_api_key()?;
 
+        let storage_url = config
+            .basecf_url
+            .as_deref()
+            .unwrap_or("https://rest.fal.ai")
+            .trim_end_matches('/')
+            .to_string();
+
         Ok(Self {
             api_key: config.api_key.clone(),
             base_url: config.base_url.trim_end_matches('/').to_string(),
+            storage_url,
             model_id: model_id.into(),
             http_client: reqwest::Client::new(),
         })
@@ -93,9 +102,17 @@ impl FalAiProvider {
     ) -> Result<Self> {
         config.validate_api_key()?;
 
+        let storage_url = config
+            .basecf_url
+            .as_deref()
+            .unwrap_or("https://rest.fal.ai")
+            .trim_end_matches('/')
+            .to_string();
+
         Ok(Self {
             api_key: config.api_key.clone(),
             base_url: config.base_url.trim_end_matches('/').to_string(),
+            storage_url,
             model_id: model_id.into(),
             http_client: client,
         })
@@ -242,6 +259,67 @@ impl FalAiProvider {
     pub async fn generate_image(&self, params: &ImageGenParams) -> Result<String> {
         let request_id = self.submit_request(params).await?;
         self.poll_status(&request_id).await
+    }
+
+    pub async fn upload_file(&self, data: &[u8], content_type: &str) -> Result<String> {
+        // Step 1: initiate upload
+        let init_url = format!("{}/storage/upload/initiate?storage_type=fal-cdn-v3", self.storage_url);
+        let ext = content_type.strip_prefix("image/").unwrap_or("png");
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let filename = format!("rockbot-{}.{}", ts, ext);
+        let init_body = serde_json::json!({
+            "content_type": content_type,
+            "file_name": filename,
+        });
+        let response = self
+            .http_client
+            .post(&init_url)
+            .header("Authorization", format!("Key {}", self.api_key))
+            .header("Content-Type", "application/json")
+            .json(&init_body)
+            .send()
+            .await?;
+
+        let status = response.status();
+        let body: serde_json::Value = response.json().await?;
+        if !status.is_success() {
+            return Err(RockBotError::Provider(format!(
+                "fal.ai upload init failed: {}",
+                body.get("detail").and_then(|d| d.as_str()).unwrap_or("Unknown error")
+            )));
+        }
+        let file_url = body
+            .get("file_url")
+            .and_then(|u| u.as_str())
+            .ok_or_else(|| RockBotError::Provider("fal.ai upload init missing file_url".into()))?;
+        let upload_url = body
+            .get("upload_url")
+            .and_then(|u| u.as_str())
+            .ok_or_else(|| RockBotError::Provider("fal.ai upload init missing upload_url".into()))?;
+
+        // Step 2: PUT the file binary
+        let put_response = self
+            .http_client
+            .put(upload_url)
+            .header("Content-Type", content_type)
+            .body(data.to_vec())
+            .send()
+            .await?;
+
+        let put_status = put_response.status();
+        if !put_status.is_success() {
+            let put_body: serde_json::Value = put_response.json().await?;
+            return Err(RockBotError::Provider(format!(
+                "fal.ai upload PUT failed (HTTP {}): {}",
+                put_status,
+                put_body.get("detail").and_then(|d| d.as_str()).unwrap_or("Unknown error")
+            )));
+        }
+
+        Ok(file_url.to_string())
     }
 }
 

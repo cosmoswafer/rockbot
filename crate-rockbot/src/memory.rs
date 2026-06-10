@@ -262,7 +262,19 @@ impl MemoryManager {
             } else {
                 0
             };
-            messages.extend_from_slice(&history[start..]);
+            let slice = &history[start..];
+            // Find the index of the last user message — preserve its images.
+            let last_user_idx = slice
+                .iter()
+                .rposition(|m| m.role == crate::types::Role::User);
+            for (i, msg) in slice.iter().enumerate() {
+                let msg = if Some(i) == last_user_idx {
+                    msg.clone()
+                } else {
+                    strip_images_from_message(msg.clone())
+                };
+                messages.push(msg);
+            }
         }
 
         if let Some(extra) = extra_context {
@@ -470,6 +482,27 @@ pub fn date_to_days(date: &str) -> Option<i64> {
     let doy = (153 * (m as u64 - 3) + 2) / 5 + d as u64 - 1;
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
     Some((era as i64) * 146097 + doe as i64 - 719468)
+}
+
+fn strip_images_from_message(msg: ChatMessage) -> ChatMessage {
+    let crate::types::MessageContent::Multipart(ref parts) = msg.content else {
+        return msg;
+    };
+    let has_image = parts.iter().any(|p| matches!(p, crate::types::ContentPart::ImageUrl { .. }));
+    if !has_image {
+        return msg;
+    }
+    let text = parts
+        .iter()
+        .filter_map(|p| match p {
+            crate::types::ContentPart::Text { text } => Some(text.as_str()),
+            crate::types::ContentPart::ImageUrl { .. } => Some("[image]"),
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut stripped = msg;
+    stripped.content = crate::types::MessageContent::Text(text);
+    stripped
 }
 
 fn strip_orphaned_tool_calls(messages: &mut Vec<ChatMessage>) {
