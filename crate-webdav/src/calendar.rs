@@ -208,6 +208,7 @@ pub fn build_vevent_ics(
     dtend: &str,
     description: Option<&str>,
     location: Option<&str>,
+    rrule: Option<&str>,
     reminders: Option<&[Reminder]>,
 ) -> String {
     let mut ics = format!(
@@ -226,6 +227,11 @@ pub fn build_vevent_ics(
     if let Some(loc) = location {
         if !loc.is_empty() {
             ics.push_str(&format!("LOCATION:{}\r\n", escape_ical(loc)));
+        }
+    }
+    if let Some(rule) = rrule {
+        if !rule.is_empty() {
+            ics.push_str(&format!("RRULE:{}\r\n", escape_ical(rule)));
         }
     }
 
@@ -320,6 +326,7 @@ mod tests {
             Some("A test event description"),
             Some("Room 1"),
             None,
+            None,
         );
         assert!(ics.contains("UID:evt-1"));
         assert!(ics.contains("SUMMARY:Test event"));
@@ -338,6 +345,7 @@ mod tests {
             "With alarm",
             "20260615T090000Z",
             "20260615T100000Z",
+            None,
             None,
             None,
             Some(&reminders),

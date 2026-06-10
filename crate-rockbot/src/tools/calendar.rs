@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use serde_json::Value;
 use tracing::debug;
-use webdav::{CaldavEvent, CaldavTodo, Reminder, WebDavClient, WebDavConfig, build_vevent_ics, quick_uid};
+use webdav::{CaldavEvent, Reminder, WebDavClient, WebDavConfig, build_vevent_ics, quick_uid};
 
 use crate::error::{Result, RockBotError};
 use crate::tool::Tool;
@@ -64,60 +64,16 @@ impl CalendarTool {
         out
     }
 
-    fn format_todo(todo: &CaldavTodo) -> String {
-        let mut out = format!(
-            "Todo: {}\n  UID: {}\n  Status: {}\n",
-            todo.summary, todo.uid, todo.status
-        );
-        if let Some(ref desc) = todo.description {
-            if !desc.is_empty() {
-                out.push_str(&format!("  Description: {}\n", desc));
-            }
-        }
-        if let Some(due) = &todo.due {
-            out.push_str(&format!("  Due: {}\n", due));
-        }
-        if let Some(pri) = todo.priority {
-            out.push_str(&format!("  Priority: {}\n", pri));
-        }
-        out
-    }
 }
 
 fn build_ics_for_event(args: &serde_json::Value, uid: &str) -> Result<String> {
-    let summary = args
-        .get("summary")
-        .and_then(|s| s.as_str())
-        .ok_or_else(|| RockBotError::ToolCallParse("calendar requires 'summary' field".into()))?;
-
-    let dtstart = args
-        .get("dtstart")
-        .and_then(|s| s.as_str())
-        .ok_or_else(|| {
-            RockBotError::ToolCallParse(
-                "calendar requires 'dtstart' (ISO 8601) field".into(),
-            )
-        })?;
-
-    let dtend = args
-        .get("dtend")
-        .and_then(|s| s.as_str())
-        .ok_or_else(|| {
-            RockBotError::ToolCallParse("calendar requires 'dtend' (ISO 8601) field".into())
-        })?;
-
+    let summary = required_str(args, "summary")?;
+    let dtstart = required_str(args, "dtstart")?;
+    let dtend = required_str(args, "dtend")?;
     let description = args.get("description").and_then(|d| d.as_str());
     let location = args.get("location").and_then(|l| l.as_str());
-
-    let reminders = args
-        .get("reminder_minutes")
-        .and_then(|m| m.as_i64())
-        .map(|mins| {
-            vec![Reminder {
-                action: "DISPLAY".into(),
-                trigger: format!("-PT{}M", mins),
-            }]
-        });
+    let rrule = args.get("rrule").and_then(|r| r.as_str());
+    let reminders = parse_reminders(args);
 
     Ok(build_vevent_ics(
         uid,
@@ -126,8 +82,75 @@ fn build_ics_for_event(args: &serde_json::Value, uid: &str) -> Result<String> {
         dtend,
         description,
         location,
-        reminders.as_deref(),
+        rrule,
+        (!reminders.is_empty()).then_some(reminders.as_slice()),
     ))
+}
+
+fn build_ics_for_update(args: &serde_json::Value, uid: &str, existing: &CaldavEvent) -> Result<String> {
+    let summary = args
+        .get("summary")
+        .and_then(|s| s.as_str())
+        .unwrap_or(&existing.summary);
+    let dtstart = args
+        .get("dtstart")
+        .and_then(|s| s.as_str())
+        .unwrap_or(&existing.dtstart);
+    let dtend = args
+        .get("dtend")
+        .and_then(|s| s.as_str())
+        .unwrap_or(&existing.dtend);
+    let description = args
+        .get("description")
+        .and_then(|d| d.as_str())
+        .or(existing.description.as_deref());
+    let location = args
+        .get("location")
+        .and_then(|l| l.as_str())
+        .or(existing.location.as_deref());
+    let rrule = args
+        .get("rrule")
+        .and_then(|r| r.as_str())
+        .or(existing.rrule.as_deref());
+
+    let reminders = if args.get("reminder_minutes").is_some() {
+        parse_reminders(args)
+    } else {
+        existing.reminders.clone()
+    };
+
+    Ok(build_vevent_ics(
+        uid,
+        summary,
+        dtstart,
+        dtend,
+        description,
+        location,
+        rrule,
+        (!reminders.is_empty()).then_some(reminders.as_slice()),
+    ))
+}
+
+fn required_str<'a>(args: &'a serde_json::Value, field: &str) -> Result<&'a str> {
+    args.get(field)
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            RockBotError::ToolCallParse(
+                format!("calendar requires '{field}' field")
+            )
+        })
+}
+
+fn parse_reminders(args: &serde_json::Value) -> Vec<Reminder> {
+    args.get("reminder_minutes")
+        .and_then(|m| m.as_i64())
+        .map(|mins| {
+            vec![Reminder {
+                action: "DISPLAY".into(),
+                trigger: format!("-PT{}M", mins),
+            }]
+        })
+        .unwrap_or_default()
 }
 
 #[async_trait]
@@ -137,12 +160,16 @@ impl Tool for CalendarTool {
     }
 
     fn description(&self) -> &str {
-        "Manage calendar events and todo tasks on NextCloud CalDAV. \
+        "Manage calendar events on NextCloud CalDAV. \
          Actions: list_events (list events in a date range), \
+         get_event (fetch a single event by UID), \
          add_event (create a new event), update_event (modify an existing event by UID), \
-         delete_event (remove an event by UID), list_todos (list active todo items). \
-         Events require summary, dtstart (ISO 8601), dtend (ISO 8601). \
-         Optional: description, location, reminder_minutes (e.g. 15)."
+         delete_event (remove an event by UID). \
+         add_event requires summary, dtstart (ISO 8601), dtend (ISO 8601). \
+         update_event uses merge semantics: specify only the fields you want to change; \
+         omitted fields keep their existing values. \
+         Optional for both: description, location, rrule (recurrence rule, RFC 5545), \
+         reminder_minutes (e.g. 15)."
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -151,7 +178,7 @@ impl Tool for CalendarTool {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["list_events", "add_event", "update_event", "delete_event", "list_todos"],
+                    "enum": ["list_events", "get_event", "add_event", "update_event", "delete_event"],
                     "description": "Calendar operation to perform"
                 },
                 "start": {
@@ -185,6 +212,10 @@ impl Tool for CalendarTool {
                 "location": {
                     "type": "string",
                     "description": "Optional event location."
+                },
+                "rrule": {
+                    "type": "string",
+                    "description": "Optional recurrence rule in RFC 5545 format (e.g. FREQ=WEEKLY;BYDAY=MO)."
                 },
                 "reminder_minutes": {
                     "type": "integer",
@@ -241,6 +272,22 @@ impl Tool for CalendarTool {
                     Ok(out)
                 }
             }
+            "get_event" => {
+                let uid = args
+                    .get("uid")
+                    .and_then(|u| u.as_str())
+                    .ok_or_else(|| {
+                        RockBotError::ToolCallParse(
+                            "calendar get_event requires 'uid' field".into(),
+                        )
+                    })?;
+                let event = self
+                    .client
+                    .get_event(&self.caldav_url(), uid)
+                    .await
+                    .map_err(|e| RockBotError::Provider(format!("Calendar get failed: {e}")))?;
+                Ok(Self::format_event(&event))
+            }
             "add_event" => {
                 let uid = quick_uid();
                 let ics = build_ics_for_event(&args, &uid)?;
@@ -276,7 +323,7 @@ impl Tool for CalendarTool {
                 let existing =
                     existing.ok_or_else(|| RockBotError::Provider(format!("Event not found: {uid}")))?;
 
-                let ics = build_ics_for_event(&args, uid)?;
+                let ics = build_ics_for_update(&args, uid, &existing)?;
                 self.client
                     .update_event(&self.caldav_url(), uid, &ics, &existing.etag)
                     .await
@@ -302,27 +349,8 @@ impl Tool for CalendarTool {
                     })?;
                 Ok(format!("Event deleted: {}", uid))
             }
-            "list_todos" => {
-                debug!("calendar list_todos");
-                let todos = self
-                    .client
-                    .list_todos(&self.caldav_url())
-                    .await
-                    .map_err(|e| RockBotError::Provider(format!("Todo list failed: {e}")))?;
-
-                if todos.is_empty() {
-                    Ok("No active todo items found.".to_string())
-                } else {
-                    let mut out = format!("{} active todo(s):\n\n", todos.len());
-                    for todo in &todos {
-                        out.push_str(&Self::format_todo(todo));
-                        out.push('\n');
-                    }
-                    Ok(out)
-                }
-            }
             other => Err(RockBotError::ToolCallParse(format!(
-                "Unknown calendar action: {other}. Valid: list_events, add_event, update_event, delete_event, list_todos"
+                "Unknown calendar action: {other}. Valid: list_events, get_event, add_event, update_event, delete_event"
             ))),
         }
     }
