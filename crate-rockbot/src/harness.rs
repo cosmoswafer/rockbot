@@ -10,7 +10,7 @@ use crate::memory::{DailySummary, MemoryManager, SoulMemory};
 use crate::provider::AiProvider;
 use crate::tool::ToolRegistry;
 use crate::types::{ChatMessage, ChatRequest, Role};
-use crate::utils::{civil_from_days, now_iso_string, today_iso_date};
+use crate::utils::{now_iso_string, today_iso_date};
 
 const DEFAULT_SYSTEM_PROMPT: &str = "\
 You are RockBot, a helpful AI assistant running on a RocketChat server. \

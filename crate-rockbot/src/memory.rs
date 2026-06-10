@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use webdav::WebDavPath;
 
 use crate::types::ChatMessage;
-use crate::utils::{civil_from_days, now_iso_string};
+use crate::utils::now_iso_string;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersistSnapshot {
