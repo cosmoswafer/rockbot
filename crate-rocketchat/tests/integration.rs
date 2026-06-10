@@ -296,7 +296,7 @@ password = "pw"
 
 #[test]
 fn test_send_message_payload() {
-    let msg = rocketchat::ddp::send_message_payload("room1", "hello world", None);
+    let msg = rocketchat::ddp::send_message_payload("room1", "hello world");
     assert_eq!(msg["msg"], "method");
     assert_eq!(msg["method"], "sendMessage");
     assert_eq!(msg["params"][0]["rid"], "room1");
@@ -306,7 +306,7 @@ fn test_send_message_payload() {
 
 #[test]
 fn test_send_message_payload_with_alias() {
-    let msg = rocketchat::ddp::send_message_payload("room1", "hello world", Some("香菜"));
+    let msg = rocketchat::ddp::send_message_payload("room1", "hello world");
     assert!(msg["params"][0]["_id"].as_str().unwrap().parse::<u64>().is_ok());
 }
 

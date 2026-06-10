@@ -29,15 +29,15 @@ impl MessageSender {
         Self { writer, room_id }
     }
 
-    pub async fn reply(&self, text: &str, alias: Option<&str>) -> Result<()> {
-        let payload = ddp::send_message_payload(&self.room_id, text, alias);
+    pub async fn reply(&self, text: &str) -> Result<()> {
+        let payload = ddp::send_message_payload(&self.room_id, text);
         let mut writer = self.writer.lock().await;
         writer.send(&payload).await
     }
 
-    pub async fn reply_code(&self, text: &str, alias: Option<&str>) -> Result<()> {
+    pub async fn reply_code(&self, text: &str) -> Result<()> {
         let formatted = format!("```\n{}\n```", text);
-        self.reply(&formatted, alias).await
+        self.reply(&formatted).await
     }
 
     pub async fn typing(&self, is_typing: bool, username: &str) -> Result<()> {

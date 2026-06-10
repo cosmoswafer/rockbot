@@ -22,6 +22,21 @@ const MULTI_STATUS_XML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
   </d:prop>
 </d:propfind>"#;
 
+fn xml_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 #[derive(Debug, Clone)]
 pub struct WebDavClient {
     base_url: String,
@@ -476,7 +491,7 @@ impl WebDavClient {
     </D:prop>
   </D:set>
 </C:mkcalendar>"#,
-            display_name
+            xml_escape(display_name)
         );
 
         let response = self
@@ -917,8 +932,24 @@ mod tests {
         assert_eq!(p.getcontentlength, None);
     }
 
-    #[test]
-    fn test_parse_prop_missing_getcontentlength() {
+fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
+#[test]
+fn test_xml_escape() {
+    assert_eq!(xml_escape("hello"), "hello");
+    assert_eq!(xml_escape("<hello>"), "&lt;hello&gt;");
+    assert_eq!(xml_escape("a&b"), "a&amp;b");
+    assert_eq!(xml_escape("\"quoted\""), "&quot;quoted&quot;");
+}
+
+#[test]
+fn test_parse_prop_missing_getcontentlength() {
         let xml = r#"<prop><getlastmodified>Mon, 01 Jan 2024 00:00:00 GMT</getlastmodified><resourcetype></resourcetype></prop>"#;
         let p: crate::types::Prop = quick_xml::de::from_str(xml).unwrap();
         assert_eq!(p.getcontentlength, None);

@@ -283,7 +283,7 @@ impl Tool for CalendarTool {
         let caldav_url = self
             .ensure_room_calendar(room_id)
             .await
-            .unwrap_or_else(|| self.build_caldav_url(room_id));
+            .unwrap_or_else(|| self.build_caldav_url(&format!("rockbot-{}", room_id)));
 
         let action = args
             .get("action")
