@@ -18,7 +18,6 @@ static INIT_CRYPTO: Once = Once::new();
 type WsStream =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
-/// A handle for sending replies back to the server.
 #[derive(Clone)]
 pub struct MessageSender {
     writer: Arc<Mutex<WriteHalf>>,
@@ -30,20 +29,17 @@ impl MessageSender {
         Self { writer, room_id }
     }
 
-    /// Send a text reply to the room.
     pub async fn reply(&self, text: &str) -> Result<()> {
         let payload = ddp::send_message_payload(&self.room_id, text);
         let mut writer = self.writer.lock().await;
         writer.send(&payload).await
     }
 
-    /// Send a code-block formatted reply.
     pub async fn reply_code(&self, text: &str) -> Result<()> {
         let formatted = format!("```\n{}\n```", text);
         self.reply(&formatted).await
     }
 
-    /// Send typing indicator.
     pub async fn typing(&self, is_typing: bool, username: &str) -> Result<()> {
         let payload = ddp::typing_payload(&self.room_id, username, is_typing);
         let mut writer = self.writer.lock().await;
@@ -55,7 +51,6 @@ impl MessageSender {
     }
 }
 
-/// Internal write-half wrapper.
 struct WriteHalf {
     inner: futures_util::stream::SplitSink<WsStream, Message>,
 }
@@ -69,7 +64,6 @@ impl WriteHalf {
     }
 }
 
-/// The main RocketChat client.
 pub struct RocketChatClient {
     config: RocketChatConfig,
     user_id: Option<String>,
@@ -79,7 +73,6 @@ pub struct RocketChatClient {
 }
 
 impl RocketChatClient {
-    /// Create a new client with configuration.
     pub fn new(config: RocketChatConfig) -> Self {
         let bot_name = format!("@{}", config.server.username);
         let username = config.server.username.clone();
@@ -92,32 +85,23 @@ impl RocketChatClient {
         }
     }
 
-    /// Create a new client from a TOML config file path.
     pub fn from_config_file(path: &str) -> Result<Self> {
         let config = RocketChatConfig::from_file(path)?;
         Ok(Self::new(config))
     }
 
-    /// Register a room for callback-based message dispatching.
     pub fn register_room(&mut self, room_name: &str) {
         self.registered_rooms.insert(room_name.to_string(), true);
     }
 
-    /// Get the bot's user ID (available after successful connection).
     pub fn user_id(&self) -> Option<&str> {
         self.user_id.as_deref()
     }
 
-    /// Get the bot's username with @ prefix (e.g. "@rockbot").
     pub fn bot_name(&self) -> &str {
         &self.bot_name
     }
 
-    /// Connect and run the event loop with a callback.
-    ///
-    /// This is the primary entry point that combines connection + event loop.
-    /// The `handler` receives parsed `IncomingMessage` and a `MessageSender`
-    /// for sending replies. Spawned as a tokio task per message.
     pub async fn connect_and_run<F, Fut>(mut self, handler: F) -> Result<()>
     where
         F: Fn(IncomingMessage, MessageSender) -> Fut + Send + Sync + 'static,
@@ -137,31 +121,25 @@ impl RocketChatClient {
         let (write, mut read) = ws_stream.split();
         let writer = Arc::new(Mutex::new(WriteHalf { inner: write }));
 
-        // Send connect message
         let connect_msg = ddp::connect_message();
         writer.lock().await.send(&connect_msg).await?;
 
-        // Wait for "connected"
         let _connected = Self::expect_msg(&mut read, "connected").await?;
         debug!("Connected response received");
 
-        // Send login
         let login_msg =
             ddp::login_message(&self.config.server.username, &self.config.server.password);
         writer.lock().await.send(&login_msg).await?;
 
-        // Wait for login result
         let result = Self::expect_msg(&mut read, "result").await?;
         let (user_id, _token) = ddp::extract_login_result(&result)
             .ok_or_else(|| RocketChatError::AuthFailed("Missing id/token in result".into()))?;
         info!("Login successful, user_id={}", user_id);
         self.user_id = Some(user_id.clone());
 
-        // Subscribe to stream-room-messages
         let sub_msg = ddp::subscribe_message(SUBSCRIPTION_ID);
         writer.lock().await.send(&sub_msg).await?;
 
-        // Wait for "ready" confirmation
         let _ready = Self::expect_msg(&mut read, "ready").await?;
         info!("Subscription confirmed");
 
@@ -169,7 +147,6 @@ impl RocketChatClient {
         let _username = self.username.clone();
         let registered_rooms = self.registered_rooms.clone();
 
-        // Main event loop
         info!("Entering event loop");
         loop {
             let frame = match read.next().await {
@@ -189,8 +166,7 @@ impl RocketChatClient {
                 }
             };
 
-            let text_str: &str = &frame;
-            debug!("WS<<< {}", text_str);
+            debug!("WS<<< {}", &frame);
 
             let value: serde_json::Value = match serde_json::from_str(&frame) {
                 Ok(v) => v,
@@ -205,7 +181,7 @@ impl RocketChatClient {
                 writer.lock().await.send(&pong).await?;
             } else if ddp::is_changed(&value) {
                 let filter = MessageFilter::new(user_id.as_str());
-                if let Some(msg) = filter.filter(&value, Some(&self.room_cache)) {
+                if let Some(msg) = filter.filter(&value) {
                     let should_dispatch = msg.is_dm
                         || (!msg.room_name.is_empty() && msg.text.starts_with(&bot_name))
                         || (!registered_rooms.is_empty()
@@ -232,7 +208,6 @@ impl RocketChatClient {
         Ok(())
     }
 
-    /// Read the next text frame with a specific `msg` field value.
     async fn expect_msg(
         read: &mut futures_util::stream::SplitStream<WsStream>,
         expected_msg: &str,
@@ -246,8 +221,7 @@ impl RocketChatClient {
 
             match frame {
                 Message::Text(text) => {
-                    let text_str: &str = &text;
-                    debug!("WS<<< {}", text_str);
+                    debug!("WS<<< {}", &text);
                     let value: serde_json::Value = serde_json::from_str(&text)?;
                     if ddp::msg_field(&value) == Some(expected_msg) {
                         return Ok(value);

@@ -2,7 +2,6 @@ use rocketchat::{IncomingMessage, MessageFilter};
 use serde_json::json;
 use std::collections::HashMap;
 
-/// Build a realistic "changed" event JSON for a channel message.
 fn make_changed_channel(
     msg_id: &str,
     rid: &str,
@@ -38,7 +37,6 @@ fn make_changed_channel(
     })
 }
 
-/// Build a realistic "changed" event JSON for a direct message.
 fn make_changed_dm(
     msg_id: &str,
     rid: &str,
@@ -70,8 +68,6 @@ fn make_changed_dm(
 #[test]
 fn test_filter_channel_message_with_fname() {
     let bot_id = "bot123";
-    let _bot_name = "@rockbot";
-    let _rooms: HashMap<String, bool> = HashMap::new();
 
     let event = json!({
         "msg": "changed",
@@ -100,7 +96,7 @@ fn test_filter_channel_message_with_fname() {
     });
 
     let filter = MessageFilter::new(bot_id);
-    let msg = filter.filter(&event, None).expect("Should parse message");
+    let msg = filter.filter(&event).expect("Should parse message");
 
     assert_eq!(msg.room_name, "shit");
     assert_eq!(msg.room_fname, "💩💩💩SHIT屎");
@@ -110,8 +106,6 @@ fn test_filter_channel_message_with_fname() {
 #[test]
 fn test_filter_channel_message_no_fname() {
     let bot_id = "bot123";
-    let _bot_name = "@rockbot";
-    let _rooms: HashMap<String, bool> = HashMap::new();
 
     let event = json!({
         "msg": "changed",
@@ -138,7 +132,7 @@ fn test_filter_channel_message_no_fname() {
     });
 
     let filter = MessageFilter::new(bot_id);
-    let msg = filter.filter(&event, None).expect("Should parse message");
+    let msg = filter.filter(&event).expect("Should parse message");
 
     assert_eq!(msg.room_name, "general");
     assert_eq!(msg.room_fname, "");
@@ -148,32 +142,23 @@ fn test_filter_channel_message_no_fname() {
 #[test]
 fn test_filter_skips_own_messages() {
     let bot_id = "bot123";
-    let _bot_name = "@rockbot";
-    let _rooms: HashMap<String, bool> = HashMap::new();
 
     let event = make_changed_channel(
-        "msg1",
-        "room1",
-        "general",
-        "hello from bot",
-        "rockbot",
-        "bot123",
+        "msg1", "room1", "general", "hello from bot", "rockbot", "bot123",
     );
 
     let filter = MessageFilter::new(bot_id);
-    assert!(filter.filter(&event, None).is_none(), "Should skip own messages");
+    assert!(filter.filter(&event).is_none(), "Should skip own messages");
 }
 
 #[test]
 fn test_filter_direct_message() {
     let bot_id = "bot123";
-    let _bot_name = "@rockbot";
-    let _rooms: HashMap<String, bool> = HashMap::new();
 
     let event = make_changed_dm("msg1", "dmRoom1", "hello!", "user1", "user456");
 
     let filter = MessageFilter::new(bot_id);
-    let msg = filter.filter(&event, None).expect("Should not filter DM");
+    let msg = filter.filter(&event).expect("Should not filter DM");
 
     assert_eq!(msg.room_id, "dmRoom1");
     assert_eq!(msg.sender_name, "user1");
@@ -190,18 +175,11 @@ fn test_filter_registered_room() {
     rooms.insert("secret-room".to_string(), true);
 
     let event = make_changed_channel(
-        "msg1",
-        "room1",
-        "secret-room",
-        "hello there",
-        "user1",
-        "user456",
+        "msg1", "room1", "secret-room", "hello there", "user1", "user456",
     );
 
     let filter = MessageFilter::new(bot_id);
-    let msg = filter
-        .filter(&event, None)
-        .expect("Should accept registered room msg");
+    let msg = filter.filter(&event).expect("Should accept registered room msg");
 
     assert_eq!(msg.room_name, "secret-room");
     assert!(MessageFilter::is_dm_or_mention(&msg, bot_name, &rooms));
@@ -214,20 +192,12 @@ fn test_filter_non_registered_channel_no_mention() {
     let rooms: HashMap<String, bool> = HashMap::new();
 
     let event = make_changed_channel(
-        "msg1",
-        "room1",
-        "general",
-        "random chat",
-        "user1",
-        "user456",
+        "msg1", "room1", "general", "random chat", "user1", "user456",
     );
 
     let filter = MessageFilter::new(bot_id);
-    let msg = filter
-        .filter(&event, None)
-        .expect("Should parse but not dispatch");
+    let msg = filter.filter(&event).expect("Should parse but not dispatch");
 
-    // The filter returns the message; dispatch decision is separate
     assert!(
         !MessageFilter::is_dm_or_mention(&msg, bot_name, &rooms),
         "Should not dispatch non-mention in non-registered room"
@@ -250,22 +220,14 @@ fn test_strip_mention() {
 #[test]
 fn test_parse_message_timestamp() {
     let event = make_changed_channel(
-        "msg1",
-        "room1",
-        "general",
-        "@rockbot hi",
-        "user1",
-        "user456",
+        "msg1", "room1", "general", "@rockbot hi", "user1", "user456",
     );
 
     let bot_id = "bot123";
-    let _bot_name = "@rockbot";
-    let _rooms: HashMap<String, bool> = HashMap::new();
 
     let filter = MessageFilter::new(bot_id);
-    let msg = filter.filter(&event, None).unwrap();
+    let msg = filter.filter(&event).unwrap();
 
-    // timestamp is parsed from ts.$date
     assert_eq!(msg.timestamp, Some(1480377601000));
 }
 
@@ -282,7 +244,6 @@ fn test_ddp_login_message_hashed() {
     let params = &msg["params"][0];
     assert_eq!(params["user"]["username"], "testuser");
     assert_eq!(params["password"]["algorithm"], "sha-256");
-    // Verify the digest is a valid SHA-256 hex string
     let digest = params["password"]["digest"].as_str().unwrap();
     assert_eq!(digest.len(), 64);
     assert!(digest.chars().all(|c| c.is_ascii_hexdigit()));
@@ -300,7 +261,7 @@ password = "secret"
     assert_eq!(config.server.url, "chat.example.com");
     assert_eq!(config.server.username, "rockbot");
     assert_eq!(config.server.password, "secret");
-    assert!(config.server.use_tls); // default true
+    assert!(config.server.use_tls);
 
     let uri = config.ws_uri().unwrap();
     assert_eq!(uri, "wss://chat.example.com/websocket");
@@ -448,7 +409,6 @@ fn test_incoming_message_dm_detection() {
 
     assert!(MessageFilter::is_dm_or_mention(&msg, bot_name, &rooms));
 
-    // Channel message without mention
     let msg2 = IncomingMessage {
         msg_id: Some("m2".into()),
         room_id: "rid2".into(),
@@ -462,7 +422,6 @@ fn test_incoming_message_dm_detection() {
     };
     assert!(!MessageFilter::is_dm_or_mention(&msg2, bot_name, &rooms));
 
-    // Channel message with mention
     let msg3 = IncomingMessage {
         msg_id: Some("m3".into()),
         room_id: "rid3".into(),
@@ -499,7 +458,6 @@ fn test_registered_room_dispatch() {
 
 #[test]
 fn test_sha256_digest_known_value() {
-    // Known SHA-256 of "hello" for verification
     let digest = rocketchat::ddp::sha256_digest("hello");
     assert_eq!(
         digest,

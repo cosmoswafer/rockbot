@@ -1,14 +1,12 @@
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-/// Compute SHA-256 hex digest of a password string.
 pub fn sha256_digest(password: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(password.as_bytes());
     hex::encode(hasher.finalize())
 }
 
-/// Build the DDP connect message.
 pub fn connect_message() -> Value {
     json!({
         "msg": "connect",
@@ -17,7 +15,6 @@ pub fn connect_message() -> Value {
     })
 }
 
-/// Build the DDP login method message with SHA-256 hashed password.
 pub fn login_message(username: &str, password: &str) -> Value {
     let digest = sha256_digest(password);
     json!({
@@ -34,7 +31,6 @@ pub fn login_message(username: &str, password: &str) -> Value {
     })
 }
 
-/// Build the DDP subscription message for stream-room-messages.
 pub fn subscribe_message(sub_id: &str) -> Value {
     json!({
         "msg": "sub",
@@ -44,12 +40,10 @@ pub fn subscribe_message(sub_id: &str) -> Value {
     })
 }
 
-/// Build a pong response.
 pub fn pong_message() -> Value {
     json!({"msg": "pong"})
 }
 
-/// Build a sendMessage method call.
 pub fn send_message_payload(room_id: &str, text: &str) -> Value {
     json!({
         "msg": "method",
@@ -62,7 +56,6 @@ pub fn send_message_payload(room_id: &str, text: &str) -> Value {
     })
 }
 
-/// Build a stream-notify-room (typing indicator) method call.
 pub fn typing_payload(room_id: &str, username: &str, is_typing: bool) -> Value {
     json!({
         "msg": "method",
@@ -72,12 +65,10 @@ pub fn typing_payload(room_id: &str, username: &str, is_typing: bool) -> Value {
     })
 }
 
-/// Extract the `msg` field from a DDP frame.
 pub fn msg_field(value: &Value) -> Option<&str> {
     value.get("msg").and_then(|v| v.as_str())
 }
 
-/// Extract user ID and token from a login result.
 pub fn extract_login_result(value: &Value) -> Option<(String, String)> {
     let result = value.get("result")?;
     let user_id = result.get("id")?.as_str()?.to_string();
@@ -85,38 +76,30 @@ pub fn extract_login_result(value: &Value) -> Option<(String, String)> {
     Some((user_id, token))
 }
 
-/// Check if a DDP message is a "ready" event.
 pub fn is_ready(value: &Value) -> bool {
     msg_field(value) == Some("ready")
 }
 
-/// Check if a DDP message is a "nosub" event.
 pub fn is_nosub(value: &Value) -> bool {
     msg_field(value) == Some("nosub")
 }
 
-/// Check if a DDP message is a "connected" event.
 pub fn is_connected(value: &Value) -> bool {
     msg_field(value) == Some("connected")
 }
 
-/// Check if a DDP message is a "ping" event.
 pub fn is_ping(value: &Value) -> bool {
     msg_field(value) == Some("ping")
 }
 
-/// Check if a DDP message is a "changed" event.
 pub fn is_changed(value: &Value) -> bool {
     msg_field(value) == Some("changed")
 }
 
-/// Check if a DDP message is a "result" event.
 pub fn is_result(value: &Value) -> bool {
     msg_field(value) == Some("result")
 }
 
-/// Extract the `subs` array from a DDP "ready" or "nosub" event to
-/// identify which subscription the event is for.
 pub fn subs_list(value: &Value) -> Vec<String> {
     value
         .get("subs")
@@ -144,7 +127,6 @@ mod tests {
 
     #[test]
     fn test_sha256_digest_known() {
-        // The password from the DFD example
         let password = "hello";
         let digest = sha256_digest(password);
         assert_eq!(digest.len(), 64);
@@ -254,8 +236,8 @@ mod tests {
 
     #[test]
     fn test_subs_list() {
-        let v = serde_json::json!({"msg": "ready", "subs": ["ROCKROOMS"]});
-        assert_eq!(subs_list(&v), vec!["ROCKROOMS"]);
+        let v = serde_json::json!({"msg": "ready", "subs": ["ABCROCK"]});
+        assert_eq!(subs_list(&v), vec!["ABCROCK"]);
         let v = serde_json::json!({"msg": "ready", "subs": ["A", "B"]});
         assert_eq!(subs_list(&v), vec!["A", "B"]);
         let v = serde_json::json!({"msg": "ready"});
