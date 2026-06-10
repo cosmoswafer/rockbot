@@ -184,6 +184,32 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Bot initialized. Starting RocketChat connection...");
 
+    // Spawn combined maintenance timer: persist dirty snapshots, then evict stale rooms
+    {
+        let harness = harness.clone();
+        let persist_secs = {
+            let h = harness.lock().await;
+            h.memory().persist_interval_secs
+        };
+        let ttl_secs = {
+            let h = harness.lock().await;
+            h.config().rocketchat.model.memory_ttl_secs
+        };
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(persist_secs.max(1)));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                interval.tick().await;
+                let mut h = harness.lock().await;
+                h.maintenance_tick(ttl_secs).await;
+            }
+        });
+        info!(
+            "Maintenance timer started (persist every {}s, evict after {}s idle)",
+            persist_secs, ttl_secs
+        );
+    }
+
     let bot_name = {
         let h = harness.lock().await;
         format!("@{}", h.config().rocketchat.server.username)

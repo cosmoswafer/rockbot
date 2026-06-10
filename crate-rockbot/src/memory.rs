@@ -1,9 +1,23 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 use webdav::WebDavPath;
 
 use crate::types::ChatMessage;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersistSnapshot {
+    pub schema: String,
+    pub room_id: String,
+    pub messages: Vec<ChatMessage>,
+    pub char_count: usize,
+    pub archive_seq: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub soul: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub daily_summaries: Vec<DailySummary>,
+    pub updated_at: String,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DailySummary {
@@ -75,6 +89,7 @@ pub struct RoomState {
     pub room_fname: String,
     pub is_dm: bool,
     pub history: ConversationHistory,
+    pub last_activity: u64,
 }
 
 impl RoomState {
@@ -91,7 +106,16 @@ impl RoomState {
             room_name: room_name.into(),
             room_fname: room_fname.into(),
             is_dm,
+            last_activity: 0,
         }
+    }
+
+    pub fn touch(&mut self) {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        self.last_activity = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
     }
 }
 
@@ -106,6 +130,8 @@ pub struct MemoryManager {
     daily_summaries: HashMap<String, Vec<DailySummary>>,
     souls: HashMap<String, SoulMemory>,
     knowledge: HashMap<String, String>,
+    dirty_snapshots: HashSet<String>,
+    pub persist_interval_secs: u64,
 }
 
 impl MemoryManager {
@@ -115,6 +141,7 @@ impl MemoryManager {
         max_summary_chars: usize,
         summary_days: u32,
         max_soul_chars: usize,
+        persist_interval_secs: u64,
     ) -> Self {
         Self {
             rooms: HashMap::new(),
@@ -126,6 +153,8 @@ impl MemoryManager {
             daily_summaries: HashMap::new(),
             souls: HashMap::new(),
             knowledge: HashMap::new(),
+            dirty_snapshots: HashSet::new(),
+            persist_interval_secs,
         }
     }
 
@@ -288,6 +317,104 @@ impl MemoryManager {
     pub fn get_knowledge(&self, room_id: &str) -> Option<&str> {
         self.knowledge.get(room_id).map(|s| s.as_str())
     }
+
+    pub fn mark_snapshot_dirty(&mut self, room_id: &str) {
+        self.dirty_snapshots.insert(room_id.to_string());
+    }
+
+    pub fn dirty_snapshots(&self) -> Vec<String> {
+        self.dirty_snapshots.iter().cloned().collect()
+    }
+
+    pub fn clear_dirty(&mut self, room_id: &str) {
+        self.dirty_snapshots.remove(room_id);
+    }
+
+    pub fn build_snapshot(&self, room_id: &str) -> Option<PersistSnapshot> {
+        let room = self.rooms.get(room_id)?;
+        let updated_at = now_iso_string();
+
+        let mut snapshot = PersistSnapshot {
+            schema: "rockbot-snapshot/1".into(),
+            room_id: room_id.to_string(),
+            messages: room.history.messages.clone(),
+            char_count: room.history.char_count,
+            archive_seq: room.history.archive_seq,
+            soul: None,
+            daily_summaries: Vec::new(),
+            updated_at,
+        };
+
+        if let Some(soul) = self.souls.get(room_id) {
+            if !soul.content.is_empty() {
+                snapshot.soul = Some(soul.content.clone());
+            }
+        }
+
+        if let Some(summaries) = self.daily_summaries.get(room_id) {
+            snapshot.daily_summaries = summaries.clone();
+        }
+
+        Some(snapshot)
+    }
+
+    pub fn restore_snapshot(&mut self, snapshot: &PersistSnapshot) {
+        if let Some(room) = self.rooms.get_mut(&snapshot.room_id) {
+            room.history.messages = snapshot.messages.clone();
+            room.history.char_count = snapshot.char_count;
+            room.history.archive_seq = snapshot.archive_seq;
+        }
+
+        if let Some(ref soul_content) = snapshot.soul {
+            let soul = SoulMemory {
+                room_id: snapshot.room_id.clone(),
+                content: soul_content.clone(),
+                updated_at: snapshot.updated_at.clone(),
+            };
+            self.souls.insert(snapshot.room_id.clone(), soul);
+        }
+
+        if !snapshot.daily_summaries.is_empty() {
+            self.daily_summaries.insert(
+                snapshot.room_id.clone(),
+                snapshot.daily_summaries.clone(),
+            );
+        }
+    }
+
+    pub fn room_ids(&self) -> Vec<String> {
+        self.rooms.keys().cloned().collect()
+    }
+
+    pub fn evict_room(&mut self, room_id: &str) -> Option<RoomState> {
+        self.daily_summaries.remove(room_id);
+        self.souls.remove(room_id);
+        self.knowledge.remove(room_id);
+        self.dirty_snapshots.remove(room_id);
+        self.rooms.remove(room_id)
+    }
+
+    pub fn stale_rooms(&self, ttl_secs: u64) -> Vec<String> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        self.rooms
+            .iter()
+            .filter(|(_, room)| {
+                !room.history.messages.is_empty()
+                    && room.last_activity > 0
+                    && now.saturating_sub(room.last_activity) > ttl_secs
+            })
+            .map(|(id, _)| id.clone())
+            .collect()
+    }
+
+    pub fn touch_room(&mut self, room_id: &str) {
+        if let Some(room) = self.rooms.get_mut(room_id) {
+            room.touch();
+        }
+    }
 }
 
 pub fn date_to_days(date: &str) -> Option<i64> {
@@ -362,6 +489,34 @@ fn strip_orphaned_tool_calls(messages: &mut Vec<ChatMessage>) {
         }
         i += 1;
     }
+}
+
+fn now_iso_string() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = now.as_secs();
+    let days = (secs / 86400) as i64;
+    let time = secs % 86400;
+    let h = time / 3600;
+    let m = (time % 3600) / 60;
+    let s = time % 60;
+    let (y, mo, d) = civil_from_days(days);
+    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", y, mo, d, h, m, s)
+}
+
+fn civil_from_days(days: i64) -> (i64, u32, u32) {
+    let z = days + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = (z - era * 146097) as u32;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    (y, m, d)
 }
 
 #[cfg(test)]
@@ -451,7 +606,7 @@ mod tests {
 
     #[test]
     fn test_memory_manager_get_or_create() {
-        let mut mgr = MemoryManager::new(1000, 12, 8000, 7, 2000);
+        let mut mgr = MemoryManager::new(1000, 12, 8000, 7, 2000, 60);
         let room = mgr.get_or_create("room1", "general", "", false);
         assert_eq!(room.room_id, "room1");
         assert_eq!(room.room_name, "general");
@@ -465,7 +620,7 @@ mod tests {
 
     #[test]
     fn test_memory_manager_build_context() {
-        let mut mgr = MemoryManager::new(1000, 3, 8000, 7, 2000);
+        let mut mgr = MemoryManager::new(1000, 3, 8000, 7, 2000, 60);
         let room = mgr.get_or_create("room1", "general", "", false);
         for i in 0..5 {
             room.history
@@ -482,7 +637,7 @@ mod tests {
 
     #[test]
     fn test_memory_manager_build_context_nonexistent_room() {
-        let mgr = MemoryManager::new(1000, 12, 8000, 7, 2000);
+        let mgr = MemoryManager::new(1000, 12, 8000, 7, 2000, 60);
         let ctx = mgr.build_context("nonexistent", "prompt", None, None);
         assert_eq!(ctx.len(), 1);
     }
@@ -517,7 +672,7 @@ mod tests {
 
     #[test]
     fn test_build_context_with_dm_name() {
-        let mut mgr = MemoryManager::new(1000, 12, 8000, 7, 2000);
+        let mut mgr = MemoryManager::new(1000, 12, 8000, 7, 2000, 60);
         let room = mgr.get_or_create("dm-xyz", "alice", "", true);
         assert_eq!(room.room_name, "alice");
         assert!(room.is_dm);

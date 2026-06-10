@@ -48,6 +48,10 @@ pub struct ModelConfig {
     pub max_summary_chars: usize,
     #[serde(default = "default_max_soul_chars")]
     pub max_soul_chars: usize,
+    #[serde(default = "default_persist_interval_secs")]
+    pub persist_interval_secs: u64,
+    #[serde(default = "default_memory_ttl_secs")]
+    pub memory_ttl_secs: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -78,6 +82,14 @@ fn default_max_summary_chars() -> usize {
 
 fn default_max_soul_chars() -> usize {
     2000
+}
+
+fn default_persist_interval_secs() -> u64 {
+    60
+}
+
+fn default_memory_ttl_secs() -> u64 {
+    300
 }
 
 #[derive(Debug, Clone, Deserialize)]

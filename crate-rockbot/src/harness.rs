@@ -53,11 +53,12 @@ impl AgentHarness {
         let max_summary_chars = config.rocketchat.model.max_summary_chars;
         let summary_days = config.rocketchat.model.summary_days;
         let max_soul_chars = config.rocketchat.model.max_soul_chars;
+        let persist_interval = config.rocketchat.model.persist_interval_secs;
         let config = Arc::new(config);
         Self {
             config,
             provider,
-            memory: MemoryManager::new(max_chars, max_history, max_summary_chars, summary_days, max_soul_chars),
+            memory: MemoryManager::new(max_chars, max_history, max_summary_chars, summary_days, max_soul_chars, persist_interval),
             tools: ToolRegistry::new(),
             webdav,
             max_iterations,
@@ -110,6 +111,7 @@ impl AgentHarness {
 
         let needs_restore = {
             let room = self.memory.get_or_create(room_id, room_name, room_fname, is_dm);
+            room.touch();
             room.history.messages.is_empty() && room.history.archive_seq == 0
         };
 
@@ -176,11 +178,23 @@ impl AgentHarness {
                         );
                         self.append_to_history(room_id, assistant_msg);
 
+                        let mut altered_soul = false;
+                        let mut altered_knowledge = false;
+
                         for tool_call in &result.tool_calls {
                             debug!(
                                 "Executing tool {} (call_id: {})",
                                 tool_call.function.name, tool_call.id
                             );
+
+                            if tool_call.function.name == "edit_soul" {
+                                altered_soul = true;
+                            }
+                            if tool_call.function.name == "save_knowledge"
+                                || tool_call.function.name == "forget_knowledge"
+                            {
+                                altered_knowledge = true;
+                            }
 
                             let arguments = if tool_call.function.name == "webdav"
                                 || tool_call.function.name == "image_gen"
@@ -202,6 +216,19 @@ impl AgentHarness {
 
                             let tool_msg = ChatMessage::tool(&tool_call.id, &tool_result.content);
                             self.append_to_history(room_id, tool_msg);
+                        }
+
+                        if altered_soul {
+                            if let Some(ref webdav_client) = self.webdav {
+                                let wd = compute_webdav_dir(room_name, room_fname, is_dm);
+                                if let Ok(soul) = self.load_soul(webdav_client, &wd).await {
+                                    self.memory.set_soul(room_id, soul);
+                                }
+                            }
+                            self.memory.mark_snapshot_dirty(room_id);
+                        }
+                        if altered_knowledge {
+                            self.memory.mark_snapshot_dirty(room_id);
                         }
 
                         messages = self
@@ -293,6 +320,9 @@ impl AgentHarness {
                 if let Err(e) = self.upsert_daily_summary(webdav_client, &wd, &summary, count, char_count).await {
                     warn!("Failed to write daily summary: {}", e);
                 }
+
+                // Mark snapshot dirty after Layer 2 write
+                self.memory.mark_snapshot_dirty(&rid);
 
                 // Age out old summaries
                 let summary_days = self.memory.summary_days;
@@ -455,8 +485,38 @@ impl AgentHarness {
     ) {
         let wd = compute_webdav_dir(room_name, room_fname, is_dm);
 
-        // Layer 2: load daily summaries from WebDAV
-        if let Some(ref webdav_client) = self.webdav {
+        let webdav_client = match &self.webdav {
+            Some(c) => c,
+            None => return,
+        };
+
+        // Cache-first: try snapshot.json for single-read restore
+        let snap_path = format!("{}memory/snapshot.json", WebDavPath::new("").room_dir(&wd));
+        let mut got_soul = false;
+        let mut got_summaries = false;
+
+        if let Ok(content) = webdav_client.read_file_to_string(&snap_path).await {
+            if let Ok(snapshot) = serde_json::from_str::<crate::memory::PersistSnapshot>(&content) {
+                // Schema version check: reject unknown schemas
+                if snapshot.schema == "rockbot-snapshot/1" {
+                    self.memory.restore_snapshot(&snapshot);
+                    got_soul = snapshot.soul.is_some();
+                    got_summaries = !snapshot.daily_summaries.is_empty();
+                    debug!(
+                        "Restored snapshot for room {} (soul={}, summaries={})",
+                        room_name, got_soul, got_summaries
+                    );
+                } else {
+                    warn!(
+                        "Unknown snapshot schema '{}' for room {}, using individual files",
+                        snapshot.schema, room_name
+                    );
+                }
+            }
+        }
+
+        // Fallback: load individual files for any missing layers
+        if !got_summaries {
             match self.load_daily_summaries(webdav_client, &wd).await {
                 Ok(summaries) if !summaries.is_empty() => {
                     debug!(
@@ -476,7 +536,9 @@ impl AgentHarness {
                     );
                 }
             }
+        }
 
+        if !got_soul {
             // Layer 3: load soul.md from WebDAV
             match self.load_soul(webdav_client, &wd).await {
                 Ok(soul) => {
@@ -492,24 +554,23 @@ impl AgentHarness {
                     );
                 }
             }
-
-            // Knowledge: load index and match against context
-            match self.load_knowledge_for_room(webdav_client, room_id, &wd).await {
-                Ok(text) => {
-                    if !text.is_empty() {
-                        self.memory.set_knowledge(room_id, text);
-                    }
-                    debug!("Loaded knowledge context for room {}", room_name);
-                }
-                Err(e) => {
-                    warn!(
-                        "Failed to load knowledge for room {}: {}",
-                        room_name, e
-                    );
-                }
-            }
         }
 
+        // Knowledge: load index and match against context
+        match self.load_knowledge_for_room(webdav_client, room_id, &wd).await {
+            Ok(text) => {
+                if !text.is_empty() {
+                    self.memory.set_knowledge(room_id, text);
+                }
+                debug!("Loaded knowledge context for room {}", room_name);
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to load knowledge for room {}: {}",
+                    room_name, e
+                );
+            }
+        }
     }
 
     async fn load_daily_summaries(
@@ -653,6 +714,80 @@ impl AgentHarness {
             }
         }
         Ok(())
+    }
+
+    pub async fn maintenance_tick(&mut self, memory_ttl_secs: u64) {
+        // Phase 1: persist dirty snapshots (crash recovery)
+        let webdav_client = match &self.webdav {
+            Some(c) => c,
+            None => {
+                // No WebDAV — just evict without persisting
+                let stale: Vec<String> = self.memory.stale_rooms(memory_ttl_secs);
+                for room_id in &stale {
+                    self.memory.evict_room(room_id);
+                }
+                return;
+            }
+        };
+
+        let dirty: Vec<String> = self.memory.dirty_snapshots();
+        for room_id in &dirty {
+            let snapshot = match self.memory.build_snapshot(room_id) {
+                Some(s) => s,
+                None => {
+                    self.memory.clear_dirty(room_id);
+                    continue;
+                }
+            };
+
+            // Skip empty rooms
+            if snapshot.messages.is_empty() {
+                self.memory.clear_dirty(room_id);
+                continue;
+            }
+
+            let wd = {
+                let room = self.memory.get(room_id);
+                room.map(|r| compute_webdav_dir(&r.room_name, &r.room_fname, r.is_dm))
+                    .unwrap_or_default()
+            };
+
+            if wd.is_empty() {
+                self.memory.clear_dirty(room_id);
+                continue;
+            }
+
+            let path = format!("{}memory/snapshot.json", WebDavPath::new("").room_dir(&wd));
+            let json = match serde_json::to_vec(&snapshot) {
+                Ok(j) => j,
+                Err(e) => {
+                    warn!("Failed to serialize snapshot for {}: {}", room_id, e);
+                    continue;
+                }
+            };
+
+            match webdav_client.write_file_with_fallback(&path, json).await {
+                Ok(()) => {
+                    self.memory.clear_dirty(room_id);
+                    debug!("Persisted snapshot for room {} to {}", room_id, path);
+                }
+                Err(e) => {
+                    warn!("Failed to write snapshot for {}: {}", room_id, e);
+                }
+            }
+        }
+
+        // Phase 2: evict stale rooms (persist is done, safe to remove)
+        let stale: Vec<String> = self.memory.stale_rooms(memory_ttl_secs);
+        for room_id in &stale {
+            let room_name = self
+                .memory
+                .get(room_id)
+                .map(|r| r.room_name.clone())
+                .unwrap_or_default();
+            debug!("Evicting stale room {} ({})", room_name, room_id);
+            self.memory.evict_room(room_id);
+        }
     }
 }
 
@@ -969,7 +1104,7 @@ chat = "mock-model"
 
     #[test]
     fn test_check_and_archive_returns_seq() {
-        let mut mgr = MemoryManager::new(50, 12, 8000, 7, 2000);
+        let mut mgr = MemoryManager::new(50, 12, 8000, 7, 2000, 60);
         let room = mgr.get_or_create("room1", "general", "", false);
         for i in 0..10 {
             room.history.append(ChatMessage::user(format!(
