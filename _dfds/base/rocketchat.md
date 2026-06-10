@@ -273,6 +273,11 @@ The flat `r-`/`d-` prefixes prevent collisions. Both `roomName` and `fname` are
 available in DDP `args[1]` — no additional REST API call is needed for the
 display name.
 
+> **Important distinction**: `room_id` (the RocketChat UUID from DDP `args[0].rid`)
+> and `webdav_dir` (the `r-`/`d-`-prefixed path key) are **separate values**.
+> `room_id` is used as a stable in-memory lookup key. `webdav_dir` is used for
+> WebDAV path construction. Tool calls receive both via `inject_room_context`.
+
 #### `BotReply`
 
 | Field       | Type              | Constructor                          |

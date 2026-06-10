@@ -181,10 +181,10 @@ Each room gets isolated three-layer memory under its own WebDAV directory.
 
 ```mermaid
 flowchart TD
-    ROOM_A[general]
-    ROOM_B[dm-alice]
-    DAV_A[(WebDAV general/memory/)]
-    DAV_B[(WebDAV dm-alice/memory/)]
+    ROOM_A["r-general"]
+    ROOM_B["d-alice"]
+    DAV_A[(WebDAV r-general/memory/)]
+    DAV_B[(WebDAV d-alice/memory/)]
     L1_A[(Layer 1<br/>In-Memory)]
     L1_B[(Layer 1<br/>In-Memory)]
     L2_A[(Layer 2<br/>summaries/*.md)]
@@ -218,12 +218,13 @@ All structs live in `crate-rockbot/src/memory.rs` unless noted.
 
 ### `RoomState`
 
-| Field       | Type                  | Notes                      |
-| ----------- | --------------------- | -------------------------- |
-| `room_id`   | `String`              | RocketChat room/channel id |
-| `room_name` | `String`              | Display name               |
-| `is_dm`     | `bool`                | Direct message flag        |
-| `history`   | `ConversationHistory` | Layer 1: in-memory buffer  |
+| Field        | Type                  | Notes                      |
+| ------------ | --------------------- | -------------------------- |
+| `room_id`    | `String`              | RocketChat room UUID       |
+| `room_name`  | `String`              | URL slug (ASCII)           |
+| `room_fname` | `String`              | Friendly display name (Unicode); used for WebDAV directory naming when non-empty |
+| `is_dm`      | `bool`                | Direct message flag        |
+| `history`    | `ConversationHistory` | Layer 1: in-memory buffer  |
 
 ### `ConversationHistory` (Layer 1)
 
@@ -296,8 +297,12 @@ daily summaries instead.
 
 ### File Layout
 
+Memory is stored per-room under the prefixed `webdav_dir` key (see
+[rocketchat.md](rocketchat.md) for naming conventions — `r-` for channels,
+`d-` for DMs, preferring `room_fname` over `room_name`).
+
 ```
-{root}/{room_id}/memory/
+{root}/{webdav_dir}/memory/
 ├── soul.md                    # Layer 3: permanent core memory
 ├── summaries/                 # Layer 2: daily AI summaries
 │   ├── 2026-06-08.md
@@ -305,6 +310,11 @@ daily summaries instead.
 │   └── 2026-06-10.md
 └── 000001_memory.json         # Legacy (pre-Layer-2 archives)
 ```
+
+Examples:
+- Channel `#森林生態` (slug `sen1-lin2-sheng1-tai4`, fname `森林生態`): `{root}/r-森林生態/memory/`
+- Channel `#general` (no fname): `{root}/r-general/memory/`
+- DM from `saru`: `{root}/d-saru/memory/`
 
 ## 4. Configuration
 

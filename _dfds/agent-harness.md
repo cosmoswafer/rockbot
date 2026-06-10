@@ -113,9 +113,15 @@ flowchart TD
 
 ### 2d. Tool Execution Deep Dive
 
+Room context (`room_id` UUID + `webdav_dir` path key) is injected into
+`webdav` and `image_gen` tool calls. Stateless tools (`web_search`, `web_fetch`,
+`vision`, `datetime`, `calendar`) receive no room context.
+
 ```mermaid
 flowchart TD
     CALL[ToolCall]
+    INJECT{InjectRoomContext?}
+    ROOM_CTX[(RoomState<br/>room_id + webdav_dir)]
     REG[(ToolRegistry)]
     EXEC(ExecuteToolByName)
     EXA[Exa API]
@@ -125,7 +131,10 @@ flowchart TD
     WEBDAV_STORE[(WebDAV images)]
     RESULT[ToolResult]
 
-    CALL -->|"tool name + args"| EXEC
+    CALL -->|"tool name + args"| INJECT
+    ROOM_CTX -->|"room_id + webdav_dir"| INJECT
+    INJECT -->|"webdav / image_gen: enriched args"| EXEC
+    INJECT -->|"other tools: raw args"| EXEC
     REG -->|"tool definitions"| EXEC
     EXEC -->|"search query"| EXA
     EXA -->|"search results"| EXEC
@@ -173,7 +182,9 @@ flowchart TD
 
 Each room maintains independent state — conversation history, agent context, and
 WebDAV archive path. The agent routes incoming messages to the correct room's
-pipeline.
+pipeline. Room context (`room_id` UUID + `webdav_dir` path key) is computed from
+`room_name`, `room_fname`, and `is_dm` and injected into `webdav` and `image_gen`
+tool calls.
 
 ```mermaid
 flowchart TD
@@ -182,6 +193,8 @@ flowchart TD
     RESOLVE(ResolveRoomState)
     NEW_ROOM(InitializeRoom)
     MEM[(InMemoryHistory)]
+    COMPUTE(ComputeWebdavDir)
+    INJECT(InjectRoomContext)
     INACT(InteractWithAi)
     REPLY[BotReply]
     DAV[(WebDAV room memory)]
@@ -196,6 +209,9 @@ flowchart TD
     NEW_ROOM -->|"archived messages"| MEM
     NEW_ROOM -->|"initialized state"| ROOM_MAP
     MEM -->|"conversation history"| INACT
+    MEM -->|"room_name + room_fname + is_dm"| COMPUTE
+    COMPUTE -->|"webdav_dir"| INJECT
+    INJECT -->|"enriched tool args"| INACT
     INACT -->|"bot reply"| REPLY
     INACT -->|"generated image"| DAV_IMG
 ```
@@ -209,7 +225,8 @@ flowchart TD
 | `system_prompt` | `String`              | Bot personality and instructions   |
 | `history`       | `Vec<ChatMessage>`    | Conversation history for room      |
 | `tools`         | `Vec<ToolDef>`        | Registered tool definitions        |
-| `room_id`       | `String`              | Source room/DM identifier          |
+| `room_id`       | `String`              | RocketChat room UUID (not the WebDAV directory key — see `webdav_dir` below) |
+| `webdav_dir`    | `String`              | Type-prefixed WebDAV path key (e.g. `r-森林生態`, `d-saru`), computed from `room_name`/`room_fname`/`is_dm` |
 
 #### `ToolResult`
 

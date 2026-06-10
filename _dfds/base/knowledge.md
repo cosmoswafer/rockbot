@@ -194,12 +194,13 @@ flowchart TD
 
 ### `KnowledgeEntry`
 
-A single `.md` file stored at `{root}/{room_id}/knowledge/{category}_{slug}.md`.
+A single `.md` file stored at `{root}/{webdav_dir}/knowledge/{category}_{slug}.md`.
+`webdav_dir` is the type-prefixed room key (`r-`/`d-` prefix, see [rocketchat.md](rocketchat.md)).
 
 | Field        | Type             | Notes                                     |
 | ------------ | ---------------- | ----------------------------------------- |
 | `id`         | `String`         | Unique slug, e.g. `skill_db_api`          |
-| `room_id`    | `String`         | Owning room                               |
+| `room_id`    | `String`         | WebDAV directory key (`r-general`, `d-alice`, etc.) |
 | `category`   | `KnowledgeCategory` | `skill`, `secret`, or `note`           |
 | `title`      | `String`         | Human-readable title                      |
 | `content`    | `String`         | Full markdown body                        |
@@ -208,12 +209,12 @@ A single `.md` file stored at `{root}/{room_id}/knowledge/{category}_{slug}.md`.
 
 ### `KnowledgeIndex`
 
-Machine-readable JSON file at `{root}/{room_id}/knowledge/index.json`.
+Machine-readable JSON file at `{root}/{webdav_dir}/knowledge/index.json`.
 
 | Field     | Type              | Notes                         |
 | --------- | ----------------- | ----------------------------- |
 | `version` | `String`          | `"rockbot-knowledge/1"`       |
-| `room_id` | `String`          | Owning room                   |
+| `room_id` | `String`          | WebDAV directory key          |
 | `entries` | `Vec<IndexEntry>` | One descriptor per `.md` file |
 | `updated` | `String`          | ISO 8601 last modification    |
 
@@ -267,7 +268,7 @@ Each `.md` file uses a simple structure with optional frontmatter:
 ### File Layout
 
 ```
-{root}/{room_id}/knowledge/
+{root}/{webdav_dir}/knowledge/
 ├── index.json
 ├── skill_db_api.md
 ├── secret_openai_key.md
@@ -278,10 +279,10 @@ Each `.md` file uses a simple structure with optional frontmatter:
 Examples:
 
 ```
-rockbot/general/knowledge/index.json
-rockbot/general/knowledge/skill_db_api.md
-rockbot/dm-alice/knowledge/secret_github_token.md
-rockbot/project-x/knowledge/note_build_commands.md
+rockbot/r-general/knowledge/index.json
+rockbot/r-general/knowledge/skill_db_api.md
+rockbot/d-alice/knowledge/secret_github_token.md
+rockbot/r-project-x/knowledge/note_build_commands.md
 ```
 
 ## 4. Integration with Agent Harness

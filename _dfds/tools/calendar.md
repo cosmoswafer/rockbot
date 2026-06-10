@@ -6,6 +6,11 @@ CalDAV event access wrapping NextCloud's calendar service. Supports listing
 events by date range, create/read/update/delete individual events with
 iCalendar (RFC 5545) `VEVENT` payloads, and `VALARM` reminders.
 
+**Scope**: Calendar events are globally scoped — stored at the WebDAV root level
+(`/calendars/{calendar_name}/`), not per-room. All rooms share the same calendar.
+This is by design: calendar events (meetings, deadlines) typically span across
+rooms and should be visible to any agent in any room.
+
 - Upstream: [Configuration Management](../base/config.md) provides `WebDavConfig`
   plus calendar name
 - Downstream: [Agent Harness](../agent-harness.md) exposes calendar event
