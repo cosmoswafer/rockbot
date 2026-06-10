@@ -42,6 +42,60 @@ impl WebDavTool {
         Ok(format!("Written {} bytes to {}", content.len(), full))
     }
 
+    async fn do_edit(
+        &self,
+        dir_key: &str,
+        path: &str,
+        old_string: &str,
+        new_string: &str,
+    ) -> Result<String> {
+        let full = self.room_path(dir_key, path);
+        debug!("webdav edit: {}, old_len={}, new_len={}", full, old_string.len(), new_string.len());
+
+        let content = self
+            .client
+            .read_file_to_string(&full)
+            .await
+            .map_err(|e| RockBotError::Provider(format!("WebDAV read for edit failed: {e}")))?;
+
+        if content.len() > 500_000 {
+            return Err(RockBotError::ToolCallParse(format!(
+                "File at {} is too large for 'edit' action ({} bytes, max 500 KB). \
+                 Use 'read' + 'write' instead.",
+                full,
+                content.len()
+            )));
+        }
+
+        let count = content.matches(old_string).count();
+        if count == 0 {
+            return Err(RockBotError::ToolCallParse(format!(
+                "oldString not found in {}. File may have been modified since last read. \
+                 Use 'read' to get current content, then retry.",
+                full
+            )));
+        }
+        if count > 1 {
+            return Err(RockBotError::ToolCallParse(format!(
+                "oldString found {count} times in {}. \
+                 Provide more surrounding context to make it unique.",
+                full
+            )));
+        }
+
+        let new_content = content.replace(old_string, new_string);
+        self.client
+            .write_file_with_fallback(&full, new_content.as_bytes().to_vec())
+            .await
+            .map_err(|e| RockBotError::Provider(format!("WebDAV write after edit failed: {e}")))?;
+
+        Ok(format!(
+            "Edited {}: replaced 1 occurrence ({} bytes written)",
+            full,
+            new_content.len()
+        ))
+    }
+
     async fn do_list(&self, dir_key: &str, path: &str) -> Result<String> {
         let dir = if path.is_empty() {
             self.room_dir(dir_key)
@@ -131,6 +185,8 @@ impl Tool for WebDavTool {
         "Manage files on remote WebDAV storage (NextCloud). \
          Each room has its own file space — paths are automatically scoped. \
          Actions: read (get file content), write (create/overwrite a file), \
+         edit (replace oldString with newString — reads file first, fails if oldString \
+         not found or matches multiple times, 500 KB max), \
          list (list directory contents), mkdir (create directory tree), \
          delete (remove file/directory), exists (check if path exists)."
     }
@@ -141,7 +197,7 @@ impl Tool for WebDavTool {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["read", "write", "list", "mkdir", "delete", "exists"],
+                    "enum": ["read", "write", "edit", "list", "mkdir", "delete", "exists"],
                     "description": "The WebDAV operation to perform"
                 },
                 "room_id": {
@@ -155,6 +211,14 @@ impl Tool for WebDavTool {
                 "content": {
                     "type": "string",
                     "description": "File content to write (required for 'write' action)"
+                },
+                "oldString": {
+                    "type": "string",
+                    "description": "Exact text to find and replace (required for 'edit' action, must be unique in the file)"
+                },
+                "newString": {
+                    "type": "string",
+                    "description": "Replacement text (required for 'edit' action)"
                 }
             },
             "required": ["action", "path"]
@@ -197,6 +261,25 @@ impl Tool for WebDavTool {
                     })?;
                 self.do_write(webdav_dir, path, content).await
             }
+            "edit" => {
+                let old_string = args
+                    .get("oldString")
+                    .and_then(|s| s.as_str())
+                    .ok_or_else(|| {
+                        RockBotError::ToolCallParse(
+                            "webdav edit requires 'oldString' field".into(),
+                        )
+                    })?;
+                let new_string = args
+                    .get("newString")
+                    .and_then(|s| s.as_str())
+                    .ok_or_else(|| {
+                        RockBotError::ToolCallParse(
+                            "webdav edit requires 'newString' field".into(),
+                        )
+                    })?;
+                self.do_edit(webdav_dir, path, old_string, new_string).await
+            }
             "list" => self.do_list(webdav_dir, path).await,
             "mkdir" => self.do_mkdir(webdav_dir, path).await,
             "delete" => self.do_delete(webdav_dir, path).await,
@@ -235,9 +318,10 @@ mod tests {
         );
 
         let actions = params["properties"]["action"]["enum"].as_array().unwrap();
-        assert_eq!(actions.len(), 6);
+        assert_eq!(actions.len(), 7);
         assert!(actions.contains(&serde_json::json!("read")));
         assert!(actions.contains(&serde_json::json!("write")));
+        assert!(actions.contains(&serde_json::json!("edit")));
         assert!(actions.contains(&serde_json::json!("list")));
         assert!(actions.contains(&serde_json::json!("mkdir")));
         assert!(actions.contains(&serde_json::json!("delete")));
@@ -333,6 +417,28 @@ mod tests {
         let tool = WebDavTool::new(client);
         let result = tool.execute("not json").await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_execute_edit_missing_old_string() {
+        let client = webdav::WebDavClient::new("https://example.com", "user", "pass").unwrap();
+        let tool = WebDavTool::new(client);
+        let result = tool
+            .execute(r#"{"action": "edit", "room_id": "general", "path": "notes.txt", "newString": "new"}"#)
+            .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("oldString"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_edit_missing_new_string() {
+        let client = webdav::WebDavClient::new("https://example.com", "user", "pass").unwrap();
+        let tool = WebDavTool::new(client);
+        let result = tool
+            .execute(r#"{"action": "edit", "room_id": "general", "path": "notes.txt", "oldString": "old"}"#)
+            .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("newString"));
     }
 
     #[test]

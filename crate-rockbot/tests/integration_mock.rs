@@ -1441,6 +1441,99 @@ async fn test_webdav_write_first_time_in_room() {
         .unwrap();
 }
 
+// ─── Mock HTTP Tests: WebDavTool edit ────────────────────────────────────────
+
+#[tokio::test]
+async fn test_webdav_edit_success() {
+    let mock_server = MockServer::start().await;
+    let file_content = "# Title\n\nHello, world!\n\n## Section\n\nMore text.";
+
+    // Step 1: read_file for edit — GET
+    Mock::given(method("GET"))
+        .and(path("/general/notes.md"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(file_content))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // Step 2: write_file_with_fallback after edit — PUT with AutoMkcol
+    Mock::given(method("PUT"))
+        .and(path("/general/notes.md"))
+        .and(header("X-NC-WebDAV-AutoMkcol", "1"))
+        .respond_with(ResponseTemplate::new(201))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = make_test_client(&mock_server.uri());
+    let tool = rockbot::tools::WebDavTool::new(client);
+
+    let result = tool
+        .execute(
+            r#"{"action": "edit", "room_id": "general", "path": "notes.md",
+               "oldString": "Hello, world!",
+               "newString": "Hello, universe!"}"#,
+        )
+        .await
+        .unwrap();
+    assert!(result.contains("Edited"));
+    assert!(result.contains("notes.md"));
+    assert!(result.contains("replaced 1 occurrence"));
+}
+
+#[tokio::test]
+async fn test_webdav_edit_oldstring_not_found() {
+    let mock_server = MockServer::start().await;
+    let file_content = "# Title\n\nHello, world!";
+
+    Mock::given(method("GET"))
+        .and(path("/general/notes.md"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(file_content))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = make_test_client(&mock_server.uri());
+    let tool = rockbot::tools::WebDavTool::new(client);
+
+    let result = tool
+        .execute(
+            r#"{"action": "edit", "room_id": "general", "path": "notes.md",
+               "oldString": "This text is not in the file",
+               "newString": "replacement"}"#,
+        )
+        .await;
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("oldString not found"));
+}
+
+#[tokio::test]
+async fn test_webdav_edit_multiple_matches() {
+    let mock_server = MockServer::start().await;
+    let file_content = "The cat sat on the mat. The cat is happy.";
+
+    Mock::given(method("GET"))
+        .and(path("/general/notes.md"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(file_content))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = make_test_client(&mock_server.uri());
+    let tool = rockbot::tools::WebDavTool::new(client);
+
+    let result = tool
+        .execute(
+            r#"{"action": "edit", "room_id": "general", "path": "notes.md",
+               "oldString": "The cat",
+               "newString": "A dog"}"#,
+        )
+        .await;
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("found 2 times"));
+}
+
 // ─── Mock HTTP Tests: FalAiProvider.generate_image() ──────────────────────────
 
 fn make_fal_config(mock_uri: &str) -> ProviderConfig {
