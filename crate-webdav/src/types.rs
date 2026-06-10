@@ -93,3 +93,38 @@ where
         _ => Ok(None),
     }
 }
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CaldavEvent {
+    pub uid: String,
+    pub href: String,
+    pub etag: String,
+    pub summary: String,
+    pub description: Option<String>,
+    pub location: Option<String>,
+    pub dtstart: String,
+    pub dtend: String,
+    pub rrule: Option<String>,
+    pub reminders: Vec<Reminder>,
+    pub created: String,
+    pub last_modified: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Reminder {
+    pub action: String,
+    pub trigger: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CaldavTodo {
+    pub uid: String,
+    pub href: String,
+    pub summary: String,
+    pub description: Option<String>,
+    pub priority: Option<u8>,
+    pub status: String,
+    pub due: Option<String>,
+    pub completed: Option<String>,
+    pub created: String,
+}

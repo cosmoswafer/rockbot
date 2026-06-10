@@ -50,3 +50,5 @@ url = "https://cloud.example.com/remote.php/dav/files/EDITME"
 username = "EDITME"
 password = "EDITME"
 root = "rockbot"
+# Optional: calendar name for CalDAV calendar/todo tool
+# calendar_name = "personal"

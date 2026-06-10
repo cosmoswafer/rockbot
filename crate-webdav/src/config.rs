@@ -9,6 +9,8 @@ pub struct WebDavConfig {
     pub username: String,
     pub password: String,
     pub root: String,
+    #[serde(default)]
+    pub calendar_name: Option<String>,
 }
 
 impl WebDavConfig {
@@ -31,6 +33,24 @@ impl WebDavConfig {
         let url = self.url.trim_end_matches('/');
         let root = self.root.trim_matches('/');
         format!("{url}/{root}")
+    }
+
+    fn server_origin(&self) -> String {
+        let url = self.url.trim_end_matches('/');
+        // Strip the WebDAV path suffix (/remote.php/dav/files/...) to get the server base
+        if let Some(pos) = url.find("/remote.php/dav/") {
+            url[..pos].to_string()
+        } else {
+            url.to_string()
+        }
+    }
+
+    pub fn caldav_base_url(&self, calendar_name: &str) -> String {
+        let origin = self.server_origin();
+        format!(
+            "{}/remote.php/dav/calendars/{}/{}/",
+            origin, self.username, calendar_name
+        )
     }
 
     pub fn into_client(self) -> Result<WebDavClient> {

@@ -1,3 +1,4 @@
+pub mod calendar;
 pub mod datetime;
 pub mod image_gen;
 pub mod vision;
@@ -5,6 +6,7 @@ pub mod web_fetch;
 pub mod web_search;
 pub mod webdav;
 
+pub use calendar::CalendarTool;
 pub use datetime::DateTimeTool;
 pub use image_gen::ImageGenTool;
 pub use vision::VisionTool;

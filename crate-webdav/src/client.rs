@@ -3,9 +3,13 @@ use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 use tracing::{error, info};
 use url::Url;
 
+use crate::calendar::{
+    CalDavMultiStatus, CALENDAR_QUERY_EVENT_XML, CALENDAR_QUERY_TODO_XML, parse_vevents,
+    parse_vtodos,
+};
 use crate::error::{Result, WebDavError};
 use crate::path::WebDavPath;
-use crate::types::{MultiStatus, WebDavEntry};
+use crate::types::{CaldavEvent, CaldavTodo, MultiStatus, WebDavEntry};
 
 const MULTI_STATUS_XML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns" xmlns:nc="http://nextcloud.org/ns">
@@ -257,15 +261,210 @@ impl WebDavClient {
         self.write_file(path, content).await
     }
 
-    /// Ensure the root room directory exists for a given room_id.
-    ///
-    /// Creates `/{room_id}/` at the configured root if it doesn't already exist.
-    /// Safe to call multiple times — uses `ensure_directory_all` which silently
-    /// ignores already-existing path segments.
     pub async fn ensure_room_directory(&self, room_id: &str) -> Result<()> {
         let path = WebDavPath::new("").room_dir(room_id);
         self.ensure_directory_all(&path).await
     }
+
+    // ── CalDAV Calendar Operations ──────────────────────────────────────────────
+
+    pub async fn list_events_by_date_range(
+        &self,
+        caldav_base_url: &str,
+        start: &str,
+        end: &str,
+    ) -> Result<Vec<CaldavEvent>> {
+        let base = caldav_base_url.trim_end_matches('/');
+        let url = format!("{}/", base);
+        let body = CALENDAR_QUERY_EVENT_XML
+            .replace("START_PLACEHOLDER", start)
+            .replace("END_PLACEHOLDER", end);
+
+        let response = self
+            .client
+            .request(reqwest::Method::from_bytes(b"REPORT").unwrap(), &url)
+            .headers(self.headers())
+            .header("Content-Type", "application/xml")
+            .header("Depth", "1")
+            .body(body)
+            .send()
+            .await?;
+
+        let _status = response.status().as_u16();
+        let xml = self
+            .handle_status(response, |s| s == 207)
+            .await?
+            .unwrap_or_default();
+
+        if xml.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let ms: CalDavMultiStatus =
+            quick_xml::de::from_str(&xml).map_err(|e| WebDavError::XmlParse(e.to_string()))?;
+
+        let mut events = Vec::new();
+        for resp in &ms.responses {
+            for ps in &resp.propstats {
+                if let Some(ref ics) = ps.prop.calendar_data {
+                    let etag = ps.prop.getetag.as_deref().unwrap_or("");
+                    let parsed = parse_vevents(ics, &resp.href, etag);
+                    events.extend(parsed);
+                }
+            }
+        }
+        Ok(events)
+    }
+
+    pub async fn get_event(&self, caldav_base_url: &str, uid: &str) -> Result<CaldavEvent> {
+        let base = caldav_base_url.trim_end_matches('/');
+        let url = format!("{}/{}.ics", base, uid);
+        let response = self.client.get(&url).headers(self.headers()).send().await?;
+
+        let status = response.status().as_u16();
+        if status == 404 {
+            return Err(WebDavError::NotFound(format!("Event not found: {uid}")));
+        }
+        let ics = self
+            .handle_status(response, |s| s == 200)
+            .await?
+            .unwrap_or_default();
+
+        let events = parse_vevents(&ics, &format!("{}.ics", uid), "");
+        events
+            .into_iter()
+            .next()
+            .ok_or_else(|| WebDavError::XmlParse(format!("No VEVENT found in response for {uid}")))
+    }
+
+    pub async fn add_event(
+        &self,
+        caldav_base_url: &str,
+        uid: &str,
+        ics_body: &str,
+    ) -> Result<()> {
+        let base = caldav_base_url.trim_end_matches('/');
+        let url = format!("{}/{}.ics", base, uid);
+
+        let response = self
+            .client
+            .put(&url)
+            .headers(self.headers())
+            .header("Content-Type", "text/calendar; charset=utf-8")
+            .body(ics_body.to_string())
+            .send()
+            .await?;
+
+        self.handle_status_discard(response, |s| s == 201 || s == 204)
+            .await
+    }
+
+    pub async fn update_event(
+        &self,
+        caldav_base_url: &str,
+        uid: &str,
+        ics_body: &str,
+        etag: &str,
+    ) -> Result<()> {
+        let base = caldav_base_url.trim_end_matches('/');
+        let url = format!("{}/{}.ics", base, uid);
+        let mut headers = self.headers();
+        headers.insert(
+            "If-Match",
+            reqwest::header::HeaderValue::from_str(etag).unwrap(),
+        );
+
+        let response = self
+            .client
+            .put(&url)
+            .headers(headers)
+            .header("Content-Type", "text/calendar; charset=utf-8")
+            .body(ics_body.to_string())
+            .send()
+            .await?;
+
+        self.handle_status_discard(response, |s| s == 200 || s == 204)
+            .await
+    }
+
+    pub async fn delete_event(&self, caldav_base_url: &str, uid: &str) -> Result<()> {
+        let base = caldav_base_url.trim_end_matches('/');
+        let url = format!("{}/{}.ics", base, uid);
+        let response = self
+            .client
+            .delete(&url)
+            .headers(self.headers())
+            .send()
+            .await?;
+
+        self.handle_status_discard(response, |s| s == 204 || s == 404)
+            .await
+    }
+
+    pub async fn fetch_event_by_uid(
+        &self,
+        caldav_base_url: &str,
+        uid: &str,
+    ) -> Result<Option<CaldavEvent>> {
+        let base = caldav_base_url.trim_end_matches('/');
+        let url = format!("{}/{}.ics", base, uid);
+        let response = self.client.get(&url).headers(self.headers()).send().await?;
+
+        let status = response.status().as_u16();
+        if status == 404 {
+            return Ok(None);
+        }
+        let ics = self
+            .handle_status(response, |s| s == 200)
+            .await?
+            .unwrap_or_default();
+
+        let events = parse_vevents(&ics, &format!("{}.ics", uid), "");
+        Ok(events.into_iter().next())
+    }
+
+    pub async fn list_todos(
+        &self,
+        caldav_base_url: &str,
+    ) -> Result<Vec<CaldavTodo>> {
+        let base = caldav_base_url.trim_end_matches('/');
+        let url = format!("{}/", base);
+
+        let response = self
+            .client
+            .request(reqwest::Method::from_bytes(b"REPORT").unwrap(), &url)
+            .headers(self.headers())
+            .header("Content-Type", "application/xml")
+            .header("Depth", "1")
+            .body(CALENDAR_QUERY_TODO_XML)
+            .send()
+            .await?;
+
+        let _status = response.status().as_u16();
+        let xml = self
+            .handle_status(response, |s| s == 207)
+            .await?
+            .unwrap_or_default();
+
+        if xml.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let ms: CalDavMultiStatus =
+            quick_xml::de::from_str(&xml).map_err(|e| WebDavError::XmlParse(e.to_string()))?;
+
+        let mut todos = Vec::new();
+        for resp in &ms.responses {
+            for ps in &resp.propstats {
+                if let Some(ref ics) = ps.prop.calendar_data {
+                    todos.extend(parse_vtodos(ics, &resp.href));
+                }
+            }
+        }
+        Ok(todos)
+    }
+
+    // ── Internal Helpers ────────────────────────────────────────────────────────
 
     async fn handle_status_discard<F: Fn(u16) -> bool>(
         &self,

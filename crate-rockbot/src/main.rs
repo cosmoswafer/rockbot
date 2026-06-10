@@ -11,7 +11,7 @@ use rockbot::harness::AgentHarness;
 use rockbot::provider::{AiProvider, DeepSeekProvider, FalAiProvider, OpenRouterProvider};
 use rockbot::tool::ToolRegistry;
 use rockbot::tools::{
-    DateTimeTool, ImageGenTool, VisionTool, WebDavTool, WebFetchTool, WebSearchTool,
+    CalendarTool, DateTimeTool, ImageGenTool, VisionTool, WebDavTool, WebFetchTool, WebSearchTool,
 };
 
 fn setup_logging() {
@@ -100,6 +100,8 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
+    let webdav_config_for_calendar = config.webdav.clone();
+
     let exa_key = config
         .tools
         .get("exa")
@@ -120,6 +122,16 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     tool_registry.register(Box::new(VisionTool::new()));
     if let Some(ref webdav_client) = webdav {
         tool_registry.register(Box::new(WebDavTool::new(webdav_client.clone())));
+
+        if let Some(ref wd_cfg) = webdav_config_for_calendar {
+            if let Some(calendar_tool) = CalendarTool::from_config(webdav_client.clone(), wd_cfg) {
+                tool_registry.register(Box::new(calendar_tool));
+                info!(
+                    "Registered calendar tool for '{}'",
+                    wd_cfg.calendar_name.as_deref().unwrap_or("?")
+                );
+            }
+        }
 
         let fal_config = harness.config().find_provider("fal");
         if let Some(fal_cfg) = fal_config {
