@@ -1,3 +1,49 @@
+[[chat_providers]]
+name = "openrouter"
+api_key = ""
+base_url = "https://openrouter.ai/api/v1"
+basecf_url = ""
+chat_path = "/chat/completions"
+
+[chat_providers.models]
+gpt = "openai/gpt-oss-120b:online"
+qwen = "qwen/qwen3-235b-a22b-thinking-2507:online"
+perplexity = "perplexity/sonar-deep-research"
+deepseek = "deepseek/deepseek-v3.2:online"
+
+[[chat_providers]]
+name = "deepseek"
+api_key = ""
+base_url = "https://api.deepseek.com/v1"
+
+[chat_providers.models]
+flash = "deepseek-v4-flash"
+pro = "deepseek-v4-pro"
+
+[[image_providers]]
+name = "openrouter"
+api_key = ""
+base_url = "https://openrouter.ai/api/v1"
+basecf_url = ""
+draw_path = "/images/generations"
+
+[image_providers.models]
+seedream = "fal-ai/bytedance/seedream/v4.5/text-to-image"
+gptimage = "openai/gpt-image-2"
+
+[[image_providers]]
+name = "fal"
+api_key = ""
+base_url = "https://queue.fal.run"
+
+[image_providers.models]
+seedream = "fal-ai/bytedance/seedream/v4.5/text-to-image"
+gptimage = "openai/gpt-image-2"
+
+[image_model]
+default_provider = "fal"
+default_model = "seedream"
+
 [rocketchat.model]
 default_provider = "openrouter"
 default_model = "gpt"
@@ -15,7 +61,3 @@ url = "localhost"
 username = ""
 password = ""
 debug = false
-
-[image_model]
-default_provider = "fal"
-default_model = "seedream"

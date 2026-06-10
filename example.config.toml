@@ -1,79 +1,38 @@
-[tools.exa]
-api_key = "EDITME"
+# User config — overrides default.config.toml
+# Only include settings you want to override (secrets, URLs, etc.)
 
 [[chat_providers]]
 name = "openrouter"
 api_key = "sk-or-v1-EDITME"
-base_url = "https://openrouter.ai/api/v1"
-basecf_url = "https://your-cf-worker.example.com/api/v1"
-chat_path = "/chat/completions"
-
-[chat_providers.models]
-gpt = "openai/gpt-oss-120b:online"
-qwen = "qwen/qwen3-235b-a22b-thinking-2507:online"
-perplexity = "perplexity/sonar-deep-research"
-deepseek = "deepseek/deepseek-v3.2:online"
 
 [[chat_providers]]
 name = "deepseek"
 api_key = "EDITME"
-base_url = "https://api.deepseek.com/v1"
-
-[chat_providers.models]
-flash = "deepseek-v4-flash"
-pro = "deepseek-v4-pro"
 
 [[image_providers]]
 name = "openrouter"
 api_key = "sk-or-v1-EDITME"
-base_url = "https://openrouter.ai/api/v1"
-basecf_url = "https://your-cf-worker.example.com/api/v1"
-draw_path = "/images/generations"
-
-[image_providers.models]
-seedream = "fal-ai/bytedance/seedream/v4.5/text-to-image"
-gptimage = "openai/gpt-image-2"
 
 [[image_providers]]
 name = "fal"
 api_key = "EDITME"
-base_url = "https://queue.fal.run"
-
-[image_providers.models]
-seedream = "fal-ai/bytedance/seedream/v4.5/text-to-image"
-gptimage = "openai/gpt-image-2"
-
-[image_model]
-default_provider = "fal"
-default_model = "seedream"
-
-[rocketchat.model]
-default_provider = "deepseek"
-default_model = "flash"
-max_history_size = 12
-max_text_length = 50000
-max_iterations = 8
-max_summary_chars = 8000
-max_soul_chars = 2000
-summary_days = 7
-# Seconds before an idle room is evicted from memory cache (default: 300)
-memory_ttl_secs = 300
-# Seconds between persistence/snapshot cycles (default: 60)
-persist_interval_secs = 60
 
 [rocketchat.server]
 url = "your-server.example.com"
 username = "EDITME"
 password = "EDITME"
-debug = false
+
+[rocketchat.model]
+# Uncomment to override defaults:
+# default_provider = "deepseek"
+# default_model = "flash"
 
 [webdav]
 url = "https://cloud.example.com/remote.php/dav/files/EDITME"
 username = "EDITME"
 password = "EDITME"
 root = "rockbot"
-# Optional: calendar name for CalDAV calendar/todo tool
 # calendar_name = "personal"
 
-# Optional: Layer 3 soul content limit
-# max_soul_chars = 2000
+[tools.exa]
+api_key = "EDITME"
