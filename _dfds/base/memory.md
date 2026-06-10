@@ -2,16 +2,17 @@
 
 ## 1. Purpose
 
-Per-room in-memory conversation store with character-count threshold monitoring.
-When the local history exceeds the configured maximum, the oldest messages are
-summarized via the AI provider into a compressed `.md` file and archived to the
-room's WebDAV directory. On startup, recent archives are loaded back to seed
-context.
+Per-room conversation memory store with character-count threshold monitoring.
+When the local in-memory history exceeds the configured maximum, the oldest
+messages are summarized via the AI provider and the full memory (summary +
+metadata + messages) is serialized to a structured JSON file and archived to
+the room's WebDAV directory. On startup, recent `.json` archives are loaded
+from WebDAV to seed context.
 
 - Upstream: [Configuration Management](config.md) provides `MemoryConfig`
 - Upstream: [Agent Harness](../agent-harness.md) loads archives on startup and
   triggers per-room history operations after each message
-- Downstream: [WebDAV Storage](webdav.md) persists `.md` archive files
+- Downstream: [WebDAV Storage](webdav.md) persists `.json` archive files
 - Downstream: [AI Provider](ai-provider.md) is called to generate summaries
 
 ## 2. Diagram
@@ -41,12 +42,12 @@ flowchart TD
     STORE -->|"oldest messages"| SUMMARIZE
     SUMMARIZE -->|"summary prompt"| AI
     AI -->|"summary text"| SUMMARIZE
-    SUMMARIZE -->|"summary.md content"| ARCHIVE
-    ARCHIVE -->|"summary.md + room path"| WEBDAV
+    SUMMARIZE -->|"memory.json content"| ARCHIVE
+    ARCHIVE -->|"memory.json + room path"| WEBDAV
     ARCHIVE -->|"archive confirmation"| PRUNE
     STORE -->|"pruned message ids"| PRUNE
     INIT -->|"room id"| LOAD
-    LOAD -->|"get *.md request"| WEBDAV
+    LOAD -->|"get *.json request"| WEBDAV
     WEBDAV -->|"archive files"| LOAD
     LOAD -->|"archived messages"| STORE
 ```
@@ -106,19 +107,30 @@ flowchart TD
 | `char_count`   | `usize`               | Running character count             |
 | `archive_seq`  | `u64`                 | Next archive sequence number        |
 
-#### `ArchiveEntry`
-
-| Field        | Type     | Notes                                       |
-| ------------ | -------- | ------------------------------------------- |
-| `seq`        | `u64`    | Sequence number (zero-padded for ordering)  |
-| `summary`    | `String` | Markdown-formatted conversation summary     |
-| `date_range` | `String` | `"2026-06-01 to 2026-06-08"`               |
-| `msg_count`  | `usize`  | Number of messages summarized               |
-
 #### Archive File Naming
 
 ```
-{root}/{room_id}/memory/{seq:06}_summary.md
+{root}/{room_id}/memory/{seq:06}_memory.json
 ```
 
-Example: `rockbot/general/memory/000001_summary.md`
+Example: `rockbot/general/memory/000001_memory.json`
+
+#### `MemoryArchive`
+
+| Field        | Type               | Notes                                       |
+| ------------ | ------------------ | ------------------------------------------- |
+| `seq`        | `u64`              | Sequence number (zero-padded for ordering)  |
+| `summary`    | `String`           | AI-generated conversation summary           |
+| `date_range` | `String`           | `"2026-06-01 to 2026-06-08"`               |
+| `msg_count`  | `usize`            | Number of messages summarized               |
+| `messages`   | `Vec<MessageRef>`  | Summarized message references               |
+| `created_at` | `String`           | ISO 8601 archive creation timestamp         |
+
+#### `MessageRef`
+
+| Field       | Type     | Notes                                |
+| ----------- | -------- | ------------------------------------ |
+| `id`        | `String` | RocketChat message UUID              |
+| `author`    | `String` | Display name of the message author   |
+| `content`   | `String` | Message text content (truncated)     |
+| `timestamp` | `String` | ISO 8601 message timestamp           |
