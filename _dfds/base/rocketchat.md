@@ -52,6 +52,8 @@ flowchart TD
     PARSE -->|"raw event"| FILTER
     FILTER -->|"incoming message"| DISPATCH
     DISPATCH -->|"filtered message"| HARNESS
+    HARNESS -->|"typing indicator"| SEND
+    SEND -->|"typing payload"| RC_DDP
     HARNESS -->|"bot reply"| SEND
     SEND -->|"reply payload"| RC_DDP
 ```
