@@ -29,8 +29,7 @@ api_key = "EDITME"
 base_url = "https://queue.fal.run"
 
 [providers.models]
-flux-schnell = "fal-ai/flux/schnell"
-banana = "fal-ai/nano-banana-2"
+seedream = "fal-ai/bytedance/seedream/v4.5/text-to-image"
 
 [rocketchat.model]
 default_provider = "deepseek"
