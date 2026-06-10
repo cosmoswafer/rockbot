@@ -15,16 +15,16 @@ impl WebDavTool {
         Self { client }
     }
 
-    fn room_path(&self, room_id: &str, subpath: &str) -> String {
-        WebDavPath::new("").room_path(room_id, subpath)
+    fn room_path(&self, dir_key: &str, subpath: &str) -> String {
+        WebDavPath::new("").room_path(dir_key, subpath)
     }
 
-    fn room_dir(&self, room_id: &str) -> String {
-        WebDavPath::new("").room_dir(room_id)
+    fn room_dir(&self, dir_key: &str) -> String {
+        WebDavPath::new("").room_dir(dir_key)
     }
 
-    async fn do_read(&self, room_id: &str, path: &str) -> Result<String> {
-        let full = self.room_path(room_id, path);
+    async fn do_read(&self, dir_key: &str, path: &str) -> Result<String> {
+        let full = self.room_path(dir_key, path);
         debug!("webdav read: {}", full);
         self.client
             .read_file_to_string(&full)
@@ -32,8 +32,8 @@ impl WebDavTool {
             .map_err(|e| RockBotError::Provider(format!("WebDAV read failed: {e}")))
     }
 
-    async fn do_write(&self, room_id: &str, path: &str, content: &str) -> Result<String> {
-        let full = self.room_path(room_id, path);
+    async fn do_write(&self, dir_key: &str, path: &str, content: &str) -> Result<String> {
+        let full = self.room_path(dir_key, path);
         debug!("webdav write: {} ({})", full, content.len());
         self.client
             .write_file_with_fallback(&full, content.as_bytes().to_vec())
@@ -42,11 +42,11 @@ impl WebDavTool {
         Ok(format!("Written {} bytes to {}", content.len(), full))
     }
 
-    async fn do_list(&self, room_id: &str, path: &str) -> Result<String> {
+    async fn do_list(&self, dir_key: &str, path: &str) -> Result<String> {
         let dir = if path.is_empty() {
-            self.room_dir(room_id)
+            self.room_dir(dir_key)
         } else {
-            self.room_path(room_id, path)
+            self.room_path(dir_key, path)
         };
         debug!("webdav list: {}", dir);
         let entries = self
@@ -72,8 +72,8 @@ impl WebDavTool {
         Ok(out)
     }
 
-    async fn do_mkdir(&self, room_id: &str, path: &str) -> Result<String> {
-        let dir = self.room_path(room_id, path);
+    async fn do_mkdir(&self, dir_key: &str, path: &str) -> Result<String> {
+        let dir = self.room_path(dir_key, path);
         debug!("webdav mkdir: {}", dir);
         self.client
             .ensure_directory_all(&dir)
@@ -82,8 +82,8 @@ impl WebDavTool {
         Ok(format!("Directory created: {}", dir))
     }
 
-    async fn do_delete(&self, room_id: &str, path: &str) -> Result<String> {
-        let full = self.room_path(room_id, path);
+    async fn do_delete(&self, dir_key: &str, path: &str) -> Result<String> {
+        let full = self.room_path(dir_key, path);
         debug!("webdav delete: {}", full);
         self.client
             .delete(&full)
@@ -92,8 +92,8 @@ impl WebDavTool {
         Ok(format!("Deleted: {}", full))
     }
 
-    async fn do_exists(&self, room_id: &str, path: &str) -> Result<String> {
-        let full = self.room_path(room_id, path);
+    async fn do_exists(&self, dir_key: &str, path: &str) -> Result<String> {
+        let full = self.room_path(dir_key, path);
         debug!("webdav exists: {}", full);
         let exists = self
             .client
@@ -157,7 +157,7 @@ impl Tool for WebDavTool {
                     "description": "File content to write (required for 'write' action)"
                 }
             },
-            "required": ["action", "room_id", "path"]
+            "required": ["action", "path"]
         })
     }
 
@@ -174,7 +174,12 @@ impl Tool for WebDavTool {
         let room_id = args
             .get("room_id")
             .and_then(|r| r.as_str())
-            .ok_or_else(|| RockBotError::ToolCallParse("webdav requires 'room_id' field".into()))?;
+            .unwrap_or("unknown");
+
+        let webdav_dir = args
+            .get("webdav_dir")
+            .and_then(|d| d.as_str())
+            .unwrap_or(room_id);
 
         let path = args
             .get("path")
@@ -182,7 +187,7 @@ impl Tool for WebDavTool {
             .ok_or_else(|| RockBotError::ToolCallParse("webdav requires 'path' field".into()))?;
 
         match action {
-            "read" => self.do_read(room_id, path).await,
+            "read" => self.do_read(webdav_dir, path).await,
             "write" => {
                 let content = args
                     .get("content")
@@ -190,12 +195,12 @@ impl Tool for WebDavTool {
                     .ok_or_else(|| {
                         RockBotError::ToolCallParse("webdav write requires 'content' field".into())
                     })?;
-                self.do_write(room_id, path, content).await
+                self.do_write(webdav_dir, path, content).await
             }
-            "list" => self.do_list(room_id, path).await,
-            "mkdir" => self.do_mkdir(room_id, path).await,
-            "delete" => self.do_delete(room_id, path).await,
-            "exists" => self.do_exists(room_id, path).await,
+            "list" => self.do_list(webdav_dir, path).await,
+            "mkdir" => self.do_mkdir(webdav_dir, path).await,
+            "delete" => self.do_delete(webdav_dir, path).await,
+            "exists" => self.do_exists(webdav_dir, path).await,
             other => Err(RockBotError::ToolCallParse(format!(
                 "Unknown webdav action: {other}. Valid: read, write, list, mkdir, delete, exists"
             ))),
@@ -221,12 +226,6 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .contains(&serde_json::json!("action"))
-        );
-        assert!(
-            params["required"]
-                .as_array()
-                .unwrap()
-                .contains(&serde_json::json!("room_id"))
         );
         assert!(
             params["required"]
@@ -301,7 +300,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_execute_missing_room_id() {
+    async fn test_execute_missing_room_id_uses_default() {
         let client = webdav::WebDavClient::new("https://example.com", "user", "pass").unwrap();
         let tool = WebDavTool::new(client);
         let result = tool.execute(r#"{"action": "list", "path": "/"}"#).await;

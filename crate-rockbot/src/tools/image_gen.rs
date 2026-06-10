@@ -125,6 +125,11 @@ impl Tool for ImageGenTool {
             .and_then(|r| r.as_str())
             .unwrap_or("unknown");
 
+        let webdav_dir = args
+            .get("webdav_dir")
+            .and_then(|d| d.as_str())
+            .unwrap_or(room_id);
+
         debug!(
             "Generating image with fal.ai model={}: {}",
             self.fal.model_id(),
@@ -136,7 +141,7 @@ impl Tool for ImageGenTool {
 
         let image_bytes = self.download_image(&image_url).await?;
 
-        let webdav_path = self.upload_to_webdav(room_id, image_bytes).await?;
+        let webdav_path = self.upload_to_webdav(webdav_dir, image_bytes).await?;
 
         Ok(format!(
             "Image generated and stored at {}. Original fal.ai URL: {}",

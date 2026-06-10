@@ -158,7 +158,8 @@ impl AgentHarness {
                             let arguments = if tool_call.function.name == "webdav"
                                 || tool_call.function.name == "image_gen"
                             {
-                                inject_room_id(&tool_call.function.arguments, room_id)
+                                let wd = compute_webdav_dir(room_name, is_dm);
+                                inject_room_context(&tool_call.function.arguments, room_id, &wd)
                             } else {
                                 tool_call.function.arguments.clone()
                             };
@@ -244,7 +245,15 @@ impl AgentHarness {
                 let count = msgs.len();
                 let summary = self.summarize_for_archive(&msgs).await;
                 let content = format_messages_as_markdown(&summary, &msgs);
-                let path = WebDavPath::new("").archive_path(&rid, seq);
+
+                let wd = {
+                    let room = self.memory.get(&rid);
+                    let (rn, dm) = room
+                        .map(|r| (r.room_name.as_str(), r.is_dm))
+                        .unwrap_or((&rid, false));
+                    compute_webdav_dir(rn, dm)
+                };
+                let path = WebDavPath::new("").archive_path(&wd, seq);
 
                 match webdav_client
                     .write_file_with_fallback(&path, content.as_bytes().to_vec())
@@ -334,11 +343,20 @@ fn format_messages_as_markdown(summary: &str, messages: &[ChatMessage]) -> Strin
     md.trim().to_string()
 }
 
-fn inject_room_id(arguments: &str, room_id: &str) -> String {
+fn inject_room_context(arguments: &str, room_id: &str, webdav_dir: &str) -> String {
     let mut args: serde_json::Value =
         serde_json::from_str(arguments).unwrap_or(serde_json::json!({}));
     args["room_id"] = serde_json::Value::String(room_id.to_string());
+    args["webdav_dir"] = serde_json::Value::String(webdav_dir.to_string());
     serde_json::to_string(&args).unwrap_or_else(|_| arguments.to_string())
+}
+
+fn compute_webdav_dir(room_name: &str, is_dm: bool) -> String {
+    if is_dm {
+        format!("dms/{}", room_name)
+    } else {
+        format!("rooms/{}", room_name)
+    }
 }
 
 #[cfg(test)]
@@ -615,19 +633,31 @@ chat = "mock-model"
     }
 
     #[test]
-    fn test_inject_room_id() {
+    fn test_inject_room_context() {
         let args = r#"{"action":"read","path":"notes.txt"}"#;
-        let result = inject_room_id(args, "general");
+        let result = inject_room_context(args, "general", "rooms/general");
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["room_id"], "general");
+        assert_eq!(parsed["webdav_dir"], "rooms/general");
         assert_eq!(parsed["action"], "read");
     }
 
     #[test]
-    fn test_inject_room_id_for_image_gen() {
+    fn test_inject_room_context_for_image_gen() {
         let args = r#"{"prompt":"test","room_id":"x"}"#;
-        let result = inject_room_id(args, "general");
+        let result = inject_room_context(args, "general", "rooms/general");
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["room_id"], "general");
+        assert_eq!(parsed["webdav_dir"], "rooms/general");
+    }
+
+    #[test]
+    fn test_compute_webdav_dir_channel() {
+        assert_eq!(compute_webdav_dir("atomkb", false), "rooms/atomkb");
+    }
+
+    #[test]
+    fn test_compute_webdav_dir_dm() {
+        assert_eq!(compute_webdav_dir("saru", true), "dms/saru");
     }
 }

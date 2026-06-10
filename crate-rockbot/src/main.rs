@@ -194,7 +194,7 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                         };
 
                         let room_name = if msg.room_name.is_empty() {
-                            format!("dm-{}", msg.sender_name)
+                            msg.sender_name.clone()
                         } else {
                             msg.room_name.clone()
                         };

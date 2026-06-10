@@ -263,6 +263,12 @@ definition and how it is populated.
 | `is_dm`       | `bool`            | `true` when `room_name` is empty or `"DIRECT_MESSAGES"` |
 | `timestamp`   | `Option<i64>`     | `args[0]["ts"]["$date"]` — Unix ms epoch             |
 
+The agent harness resolves `room_name` for WebDAV directory naming:
+- **Channel** (e.g. `#atomkb`): DDP supplies `roomName: "atomkb"` → WebDAV dir `rooms/atomkb/`
+- **Direct message** (e.g. from `saru`): DDP supplies empty or `"DIRECT_MESSAGES"` → falls back to `sender_name` → WebDAV dir `dms/saru/`
+
+The `rooms/` and `dms/` prefixes prevent collisions between a channel and a DM user with the same slug.
+
 #### `BotReply`
 
 | Field       | Type              | Constructor                          |
