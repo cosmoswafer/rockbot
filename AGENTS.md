@@ -94,7 +94,6 @@ For each DFD (ordered by the DFD-to-code mapping table below):
 | `base/config.md` | `config.rs` | `example.config.toml` |
 | `base/memory.md` | `memory.rs` | `harness.rs`, webdav crate (`client.rs`, `path.rs`) |
 | `base/rocketchat.md` | rocketchat crate (`client.rs`, `ddp.rs`, `types.rs`) | — |
-| `base/room-cache.md` | rocketchat crate (`client.rs`, `ddp.rs`, `types.rs`) | — |
 | `tools/webdav.md` | `tools/webdav.rs` | webdav crate (`client.rs`, `path.rs`) |
 | `tools/calendar.md` | `tools/calendar.rs` | webdav crate (`client.rs`, `path.rs`) |
 | `tools/exa-search.md` | `tools/web_search.rs` | `tools/web_fetch.rs` |
