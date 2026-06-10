@@ -3,9 +3,9 @@
 ## 1. Purpose
 
 Thin abstraction over HTTP-based WebDAV (NextCloud) providing typed file
-read/write/list/mkdir/delete, calendar (CalDAV) event/todo access, and JSON
+read/write/list/mkdir/delete, calendar (CalDAV) event access, and JSON
 memory persistence. All bot state — configuration backups, JSON memory archives,
-image assets, calendar events, and todo items — is stored remotely; the bot
+image assets, and calendar events — is stored remotely; the bot
 never persists state to local disk. Each room gets its own directory subtree,
 created proactively on first use.
 
@@ -21,8 +21,7 @@ agent loop on every memory I/O while keeping durability via the sync path.
 uses the `REPORT` method with `calendar-query` XML bodies to list events within
 a date range, `PUT` with iCalendar (RFC 5545) `VEVENT` payloads for create/update,
 and `DELETE` to remove events. Event reminders use the `VALARM` iCalendar
-component. **Todo list access is read-only** — `REPORT calendar-query` filtering
-`VTODO` components, no create/update/delete on tasks.
+component.
 
 **Memory as JSON:** Conversation memory is serialized to structured JSON files
 at `{root}/{room_id}/memory/{seq:06}_memory.json` instead of markdown `.md`
@@ -53,7 +52,7 @@ The client targets NextCloud's WebDAV API at:
 - Upstream: [Memory Management](memory.md) stores and retrieves `.json` archives
 - Upstream: [Agent Harness](../agent-harness.md) (vision tool) reads images from WebDAV
 - Upstream: [Agent Harness](../agent-harness.md) (webdav tool) exposes storage to the AI agent
-- Upstream: [Agent Harness](../agent-harness.md) (calendar tool) exposes calendar event/todo access to the AI agent
+- Upstream: [Agent Harness](../agent-harness.md) (calendar tool) exposes calendar event access to the AI agent
 
 ## 2. Diagram
 
@@ -77,7 +76,6 @@ flowchart TD
     CAL_ADD(AddEvent)
     CAL_UPD(UpdateEvent)
     CAL_GET(GetEvent)
-    TODO_LIST(ListTodos)
     MEM_WRITE(WriteMemoryJson)
     MEM_READ(ReadMemoryJson)
     MEM_LIST(ListMemoryArchives)
@@ -88,7 +86,6 @@ flowchart TD
     CALLER -->|"event details + calendar"| CAL_ADD
     CALLER -->|"event uid + updates + calendar"| CAL_UPD
     CALLER -->|"event uid + calendar"| CAL_GET
-    CALLER -->|"calendar name"| TODO_LIST
     CALLER -->|"room_id + memory json"| MEM_WRITE
     CALLER -->|"room_id + archive seq"| MEM_READ
     CALLER -->|"room_id"| MEM_LIST
@@ -98,7 +95,6 @@ flowchart TD
     CFG -->|"caldav url + credentials"| CAL_ADD
     CFG -->|"caldav url + credentials"| CAL_UPD
     CFG -->|"caldav url + credentials"| CAL_GET
-    CFG -->|"caldav url + credentials"| TODO_LIST
     CFG -->|"root + credentials"| MEM_WRITE
     CFG -->|"root + credentials"| MEM_READ
     CFG -->|"root + credentials"| MEM_LIST
@@ -112,7 +108,6 @@ flowchart TD
     CAL_ADD -->|"PUT vevent ics"| HTTP
     CAL_UPD -->|"PUT vevent ics + If-Match etag"| HTTP
     CAL_GET -->|"GET event ics"| HTTP
-    TODO_LIST -->|"REPORT calendar-query vtodo"| HTTP
     MEM_WRITE -->|"store json in cache"| CACHE
     MEM_READ -->|"check cache"| CACHE
     CACHE -->|"cache hit: return json"| MEM_READ
@@ -131,7 +126,6 @@ flowchart TD
     HTTP -->|"201 created"| CAL_ADD
     HTTP -->|"204 updated"| CAL_UPD
     HTTP -->|"event ics"| CAL_GET
-    HTTP -->|"multi-status vtodo"| TODO_LIST
     HTTP -.->|"json body"| CACHE
     CACHE -->|"response body / status"| MEM_WRITE
     CACHE -.->|"fetched memory json"| MEM_READ
@@ -262,31 +256,7 @@ flowchart TD
     EVT_LIST -->|"parses time-range filtered vevents"| VEVENTStructure
 ```
 
-### 2e. Todo List Deep Dive
-
-Read-only access to NextCloud calendar `VTODO` items via CalDAV `REPORT
-calendar-query` (RFC 4791 section 7.8), filtering by component type `VTODO`.
-No create, update, or delete operations are exposed — the bot only reads
-existing task items.
-
-```mermaid
-flowchart TD
-    CALLER[Calling Subsystem]
-    CAL_CFG[(WebDavConfig + calendar-name)]
-    HTTP(HttpClient)
-    NC[(NextCloud CalDAV)]
-    FILTER(Build VTODO Query)
-
-    CALLER -->|"calendar name"| FILTER
-    CAL_CFG -->|"base url + auth"| FILTER
-    FILTER -->|"REPORT calendar-query xml
-    comp-filter=VTODO"| HTTP
-    HTTP -->|"dav request"| NC
-    NC -->|"207 multi-status vtodo items"| FILTER
-    FILTER -->|"parsed todo list"| CALLER
-```
-
-### 2f. JSON Memory Storage
+### 2e. JSON Memory Storage
 
 Conversation memory is stored as structured JSON files on WebDAV instead of
 in-memory-only buffers. Each room's memory lives in
@@ -338,7 +308,7 @@ flowchart TD
     MEM_CH_ATOM ---> JSONFiles
 ```
 
-### 2g. Memory Cache Deep Dive
+### 2f. Memory Cache Deep Dive
 
 Write-back cache for JSON memory archives. Writes return immediately after
 storing in local cache; a background timer or graceful-shutdown hook flushes
@@ -445,23 +415,6 @@ Stored as `{uid}.ics` within the calendar collection.
 | ----------- | -------- | --------------------------------------------- |
 | `action`    | `String` | `DISPLAY` or `EMAIL`                          |
 | `trigger`   | `String` | Duration before event (`-PT15M`) or absolute   |
-
-#### `CaldavTodo`
-
-Read-only CalDAV `VTODO` item. Only list/read access; no create/update/delete.
-Retrieved via `REPORT calendar-query` with `<comp-filter name="VTODO"/>`.
-
-| Field         | Type          | Notes                                   |
-| ------------- | ------------- | --------------------------------------- |
-| `uid`         | `String`      | Globally unique todo identifier         |
-| `href`        | `String`      | Full CalDAV href to `{uid}.ics`         |
-| `summary`     | `String`      | Todo title/name                         |
-| `description` | `Option<String>`| Todo details/notes                    |
-| `priority`    | `Option<u8>`  | 1 (highest) – 9 (lowest), 0 = undefined |
-| `status`      | `String`      | `NEEDS-ACTION`, `COMPLETED`, `CANCELLED`|
-| `due`         | `Option<String>`| Due date (ISO 8601)                   |
-| `completed`   | `Option<String>`| Completion date (ISO 8601)            |
-| `created`     | `String`      | Creation timestamp                      |
 
 #### `MemoryJson`
 
@@ -601,33 +554,6 @@ DESCRIPTION:Meeting in 15 minutes
 END:VALARM
 END:VEVENT
 END:VCALENDAR
-```
-
-### CalDAV Todo List Operations (read-only)
-
-| DFD Operation           | HTTP Method | Endpoint                                      | Notes                                           |
-| ----------------------- | ----------- | --------------------------------------------- | ----------------------------------------------- |
-| ListTodos               | `REPORT`    | `{base}/calendars/{user}/{cal}/`              | XML body filtering `VTODO` components only      |
-
-#### Todo `calendar-query` REPORT body
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<C:calendar-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
-  <D:prop>
-    <D:getetag/>
-    <C:calendar-data/>
-  </D:prop>
-  <C:filter>
-    <C:comp-filter name="VCALENDAR">
-      <C:comp-filter name="VTODO">
-        <C:comp-filter name="STATUS">
-          <C:text-match negate-condition="yes">CANCELLED</C:text-match>
-        </C:comp-filter>
-      </C:comp-filter>
-    </C:comp-filter>
-  </C:filter>
-</C:calendar-query>
 ```
 
 ### JSON Memory Operations
