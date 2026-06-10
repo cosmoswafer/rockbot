@@ -302,12 +302,40 @@ fn test_send_message_payload() {
     assert_eq!(msg["params"][0]["rid"], "room1");
     assert_eq!(msg["params"][0]["msg"], "hello world");
     assert!(msg["params"][0].get("alias").is_none());
+    // _id is timestamp-seq format
+    let id_str = msg["params"][0]["_id"].as_str().unwrap();
+    assert!(id_str.contains('-'), "_id should be timestamp-seq format");
 }
 
 #[test]
 fn test_send_message_payload_with_alias() {
-    let msg = rocketchat::ddp::send_message_payload("room1", "hello world");
-    assert!(msg["params"][0]["_id"].as_str().unwrap().parse::<u64>().is_ok());
+    let msg = rocketchat::ddp::send_message_payload_with_alias("room1", "hello world", Some("CustomBot"));
+    assert_eq!(msg["msg"], "method");
+    assert_eq!(msg["method"], "sendMessage");
+    assert_eq!(msg["params"][0]["rid"], "room1");
+    assert_eq!(msg["params"][0]["msg"], "hello world");
+    assert_eq!(msg["params"][0]["alias"], "CustomBot");
+    // _id is timestamp-seq format
+    let id_str = msg["params"][0]["_id"].as_str().unwrap();
+    assert!(id_str.contains('-'), "_id should be timestamp-seq format");
+}
+
+#[test]
+fn test_create_direct_message_payload() {
+    let msg = rocketchat::ddp::create_direct_message_payload("targetuser");
+    assert_eq!(msg["msg"], "method");
+    assert_eq!(msg["method"], "createDirectMessage");
+    assert!(msg["id"].as_str().unwrap().parse::<u64>().is_ok());
+    assert_eq!(msg["params"][0], "targetuser");
+}
+
+#[test]
+fn test_set_real_name_payload() {
+    let msg = rocketchat::ddp::set_real_name_payload("MyNewName");
+    assert_eq!(msg["msg"], "method");
+    assert_eq!(msg["method"], "setRealName");
+    assert!(msg["id"].as_str().unwrap().parse::<u64>().is_ok());
+    assert_eq!(msg["params"][0], "MyNewName");
 }
 
 #[test]
@@ -409,6 +437,7 @@ fn test_incoming_message_dm_detection() {
         is_dm: true,
         timestamp: None,
         sender_id: "uid".into(),
+        alias: None,
     };
 
     let rooms: HashMap<String, bool> = HashMap::new();
@@ -426,6 +455,7 @@ fn test_incoming_message_dm_detection() {
         is_dm: false,
         timestamp: None,
         sender_id: "uid".into(),
+        alias: None,
     };
     assert!(!MessageFilter::is_dm_or_mention(&msg2, bot_name, &rooms));
 
@@ -439,6 +469,7 @@ fn test_incoming_message_dm_detection() {
         is_dm: false,
         timestamp: None,
         sender_id: "uid".into(),
+        alias: None,
     };
     assert!(MessageFilter::is_dm_or_mention(&msg3, bot_name, &rooms));
 }
@@ -458,6 +489,7 @@ fn test_registered_room_dispatch() {
         is_dm: false,
         timestamp: None,
         sender_id: "uid".into(),
+        alias: None,
     };
 
     assert!(MessageFilter::is_dm_or_mention(&msg, "@rockbot", &rooms));

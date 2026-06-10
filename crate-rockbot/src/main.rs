@@ -316,6 +316,7 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                             Ok(Some(reply)) => {
                                 heartbeat.abort();
                                 let _ = sender.typing(false, &username).await;
+                                tokio::time::sleep(Duration::from_millis(300)).await;
                                 if let Err(e) = sender.reply(&reply).await {
                                     error!("Failed to send reply: {}", e);
                                 }

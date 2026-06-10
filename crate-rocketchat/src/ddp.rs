@@ -1,4 +1,5 @@
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -7,6 +8,15 @@ static MSG_ID: AtomicU64 = AtomicU64::new(1);
 
 fn next_id() -> String {
     MSG_ID.fetch_add(1, Ordering::Relaxed).to_string()
+}
+
+fn unique_msg_id() -> String {
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let seq = MSG_ID.fetch_add(1, Ordering::Relaxed);
+    format!("{}-{}", ts, seq)
 }
 
 pub fn sha256_digest(password: &str) -> String {
@@ -53,16 +63,41 @@ pub fn pong_message() -> Value {
 }
 
 pub fn send_message_payload(room_id: &str, text: &str) -> Value {
-    let params = json!({
-        "_id": next_id(),
+    send_message_payload_with_alias(room_id, text, None)
+}
+
+pub fn send_message_payload_with_alias(room_id: &str, text: &str, alias: Option<&str>) -> Value {
+    let mut params = json!({
+        "_id": unique_msg_id(),
         "rid": room_id,
         "msg": text,
     });
+    if let Some(a) = alias {
+        params["alias"] = serde_json::Value::String(a.to_string());
+    }
     json!({
         "msg": "method",
         "method": "sendMessage",
         "id": next_id(),
         "params": [params]
+    })
+}
+
+pub fn create_direct_message_payload(username: &str) -> Value {
+    json!({
+        "msg": "method",
+        "method": "createDirectMessage",
+        "id": next_id(),
+        "params": [username]
+    })
+}
+
+pub fn set_real_name_payload(name: &str) -> Value {
+    json!({
+        "msg": "method",
+        "method": "setRealName",
+        "id": next_id(),
+        "params": [name]
     })
 }
 
@@ -169,8 +204,11 @@ mod tests {
         assert_ne!(login_id, typing_id, "login and typing must have different ids");
         assert_ne!(typing_id, send_id, "typing and send must have different ids");
         assert_ne!(login_id, send_id, "login and send must have different ids");
-        let msg_id: u64 = send["params"][0]["_id"].as_str().unwrap().parse().unwrap();
-        assert_ne!(send_id, msg_id, "send method id and message _id must be different");
+        // _id is timestamp-seq format, method id is numeric
+        let msg_id_str = send["params"][0]["_id"].as_str().unwrap();
+        assert!(msg_id_str.contains('-'), "message _id should be timestamp-seq format");
+        let method_id: u64 = send["id"].as_str().unwrap().parse().unwrap();
+        assert_ne!(method_id.to_string().as_str(), msg_id_str);
     }
 
     #[test]
@@ -216,7 +254,9 @@ mod tests {
         assert_eq!(msg["msg"], "method");
         assert_eq!(msg["method"], "sendMessage");
         assert!(msg["id"].as_str().unwrap().parse::<u64>().is_ok());
-        assert!(msg["params"][0]["_id"].as_str().unwrap().parse::<u64>().is_ok());
+        // _id is now timestamp-seq format, e.g. "1781112318307-1"
+        let id_str = msg["params"][0]["_id"].as_str().unwrap();
+        assert!(id_str.contains('-'), "_id should contain timestamp-seq separator");
         assert_eq!(msg["params"][0]["rid"], "room123");
         assert_eq!(msg["params"][0]["msg"], "hello!");
     }

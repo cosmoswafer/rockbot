@@ -35,6 +35,12 @@ impl MessageSender {
         writer.send(&payload).await
     }
 
+    pub async fn reply_with_alias(&self, text: &str, alias: &str) -> Result<()> {
+        let payload = ddp::send_message_payload_with_alias(&self.room_id, text, Some(alias));
+        let mut writer = self.writer.lock().await;
+        writer.send(&payload).await
+    }
+
     pub async fn reply_code(&self, text: &str) -> Result<()> {
         let formatted = format!("```\n{}\n```", text);
         self.reply(&formatted).await
@@ -42,6 +48,12 @@ impl MessageSender {
 
     pub async fn typing(&self, is_typing: bool, username: &str) -> Result<()> {
         let payload = ddp::typing_payload(&self.room_id, username, is_typing);
+        let mut writer = self.writer.lock().await;
+        writer.send(&payload).await
+    }
+
+    pub async fn set_real_name(&self, name: &str) -> Result<()> {
+        let payload = ddp::set_real_name_payload(name);
         let mut writer = self.writer.lock().await;
         writer.send(&payload).await
     }

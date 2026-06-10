@@ -12,6 +12,7 @@ pub struct IncomingMessage {
     pub is_dm: bool,
     pub timestamp: Option<i64>,
     pub sender_id: String,
+    pub alias: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,6 +50,8 @@ impl<'a> MessageFilter<'a> {
         let args = fields.get("args")?.as_array()?;
         let first_arg = args.first()?;
 
+
+
         let msg_id = raw.get("id").and_then(|v| v.as_str()).map(String::from);
         let room_id = first_arg.get("rid")?.as_str()?.to_string();
         let text = first_arg.get("msg").and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -77,8 +80,10 @@ impl<'a> MessageFilter<'a> {
             String::new()
         };
 
+        let alias = first_arg.get("alias").and_then(|v| v.as_str()).map(String::from);
+
         Some(IncomingMessage {
-            msg_id, room_id, room_name, room_fname, sender_name, text, is_dm, timestamp, sender_id,
+            msg_id, room_id, room_name, room_fname, sender_name, text, is_dm, timestamp, sender_id, alias,
         })
     }
 
