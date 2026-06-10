@@ -7,200 +7,98 @@ by a NextCloud WebDAV server for persistent state.
 ## Quick Start
 
 ```bash
-git clone https://github.com/anomalyco/rockbot.git
-cd rockbot
 cp example.config.toml config.toml
 # edit config.toml with your RocketChat, provider, and WebDAV credentials
 cargo build --release
-./target/release/rockbot               # full bot binary
-./target/release/rocketchat            # debug binary (connect + log events)
+./target/release/rockbot
 ```
-
-### Prerequisites
-
-- Rust 1.85+ (edition 2024)
-- A RocketChat server with WebSocket support enabled
-- A NextCloud instance with WebDAV access (optional — bot runs without it)
-- An API key for OpenRouter, DeepSeek, or Replicate
-- An Exa API key (optional, set via `EXA_API_KEY` env var)
 
 ## Architecture
 
+```mermaid
+flowchart TB
+    subgraph Workspace["rockbot workspace"]
+        direction TB
+        subgraph rb["crate-rockbot"]
+            App["main.rs<br/>binary entry"]
+            AH["harness.rs<br/>agent loop"]
+            Mem["memory.rs<br/>history + archive"]
+            AP["provider/<br/>AiProvider"]
+            TS["tool.rs + tools/<br/>Tool registry"]
+            Cfg["config.rs<br/>TOML config"]
+        end
+        RC["crate-rocketchat<br/>DDP WebSocket client"]
+        WD["crate-webdav<br/>WebDAV client"]
+
+        RC --> rb
+        WD --> rb
+    end
+
+    RCS["RocketChat Server"] <--> RC
+    NC["NextCloud WebDAV"] <--> WD
+    LLM["LLM APIs<br/>DeepSeek / OpenRouter / Fal"] <-->|HTTP| AP
 ```
-rockbot/
-├── Cargo.toml                  # workspace root
-├── example.config.toml         # config template (copy to config.toml)
-├── crate-rocketchat/           # standalone RocketChat DDP WebSocket client
-│   ├── src/client.rs           # connection, auth, message send
-│   ├── src/ddp.rs              # DDP message construction
-│   ├── src/types.rs            # message parsing and filtering
-│   └── src/main.rs             # debug binary (connect + log events)
-├── crate-rockbot/              # bot library + application binary
-│   ├── src/main.rs             # main bot binary
-│   ├── src/harness.rs          # agent loop, context building, tool dispatch, archiving
-│   ├── src/memory.rs           # per-room conversation history, WebDAV archival
-│   ├── src/config.rs           # TOML config loading
-│   ├── src/tool.rs             # Tool trait, ToolRegistry, ToolResult
-│   ├── src/tools/              # tool implementations
-│   │   ├── web_search.rs       # Exa search API
-│   │   ├── web_fetch.rs        # URL fetcher with HTML→Markdown
-│   │   └── vision.rs           # image download and analysis
-│   ├── src/provider/           # AiProvider trait + implementations
-│   │   ├── deepseek.rs         # DeepSeek API client (full OpenAI-compat)
-│   │   ├── openrouter.rs       # OpenRouter API client (full OpenAI-compat)
-│   │   ├── replicate.rs        # Replicate image generation
-│   │   └── mod.rs              # trait definition
-│   └── src/types.rs            # ChatMessage, ChatRequest, CompletionResult, ToolDef
-├── crate-webdav/               # WebDAV client for NextCloud storage
-│   └── src/client.rs           # GET, PUT, PROPFIND, MKCOL, DELETE
-└── _dfds/                      # data flow diagrams
-```
+
+Three crates: `rocketchat` (DDP WebSocket client), `rockbot` (bot logic), `webdav` (NextCloud storage).
 
 ### Key design decisions
 
-| Decision | Rationale |
-| -------- | --------- |
-| **No local disk** | All persistent state lives on NextCloud WebDAV — conversation archives, config backups, images |
-| **Standalone `rocketchat` crate** | Reusable library with zero application logic — auth, WS stream, message I/O |
-| **`AiProvider` trait** | Single interface for OpenRouter and DeepSeek; add new providers by implementing one trait |
-| **TOML array-of-tables config** | `[[providers]]` syntax supports multiple AI backends with per-provider model aliases |
-| **Per-room memory** | Each channel and DM has isolated in-memory history and its own WebDAV archive directory |
-| **`Tool` trait with `ToolRegistry`** | Tools are dynamically registered; the agent loop queries the provider, executes tool calls, and feeds results back |
-| **Full OpenAI-compatible API** | Both DeepSeek and OpenRouter providers pass tools, temperature, max_tokens, and thinking config |
+- **No local disk** — all persistent state on NextCloud WebDAV
+- **`AiProvider` trait** — single OpenAI-compatible interface for DeepSeek, OpenRouter, Fal
+- **`Tool` trait with `ToolRegistry`** — tools registered dynamically; agent loop dispatches and feeds results back
+- **TOML array-of-tables config** — `[[providers]]` supports multiple backends with model aliases
+- **Per-room memory** — isolated history per channel/DM with WebDAV archival
+
+## Prerequisites
+
+- Rust 1.85+ (edition 2024)
+- RocketChat server with WebSocket
+- NextCloud WebDAV (optional — bot runs without it)
+- API key for DeepSeek, OpenRouter, or Fal
+- Exa API key (optional, for web search/fetch)
 
 ## Configuration
 
-Copy `example.config.toml` to `config.toml` and fill in your credentials.
+Copy `example.config.toml` to `config.toml`. Config path is set via `CONFIG_FILE`
+env var (defaults to `config.toml`, not a CLI argument).
 
-| Section | Purpose |
-| ------- | ------- |
-| `[rocketchat]` | Server URL, credentials, default AI provider/model, history limits |
-| `[[providers]]` | AI backend definitions (OpenRouter, DeepSeek, Replicate) with API keys and model aliases |
-| `[webdav]` | NextCloud WebDAV endpoint, credentials, storage root path (optional) |
+See [`example.config.toml`](example.config.toml) for the annotated template.
 
-See `example.config.toml` for the full annotated template.
-
-## Build & Run
+## Build & test
 
 ```bash
-cargo build --release
-./target/release/rockbot                     # uses ./config.toml
-./target/release/rockbot /path/to/config.toml # custom config path
-./target/release/rocketchat                  # debug binary (connect + log events)
+cargo build --release                # workspace build (3 crates)
+cargo test                           # unit + mock integration tests
+cargo test -- --ignored              # real integration tests (needs credentials)
 ```
 
-### Running tests
+Test inventory and run instructions: [`_docs/test_suite/`](_docs/test_suite/).
 
-```bash
-cargo test                          # all unit + integration tests (no server needed)
-cargo test -- --ignored             # real integration tests (needs credentials/servers)
-cargo test -p rockbot               # single crate
-cargo test -p rocketchat
-cargo test -p webdav
-```
+## Reference docs
 
-### Environment variables
+| Component | DFD | Detailed notes |
+| --------- | --- | -------------- |
+| Agent loop | [`_dfds/agent-loop.md`](_dfds/agent-loop.md) | [`_docs/agent-harness.md`](_docs/agent-harness.md) |
+| Agent harness | [`_dfds/agent-harness.md`](_dfds/agent-harness.md) | — |
+| RocketChat client | [`_dfds/base/rocketchat.md`](_dfds/base/rocketchat.md) | [`_docs/rocketchat-client.md`](_docs/rocketchat-client.md) |
+| WebDAV | [`_dfds/base/webdav.md`](_dfds/base/webdav.md) | — |
+| AI Provider | [`_dfds/base/ai-provider.md`](_dfds/base/ai-provider.md) | — |
+| Config | [`_dfds/base/config.md`](_dfds/base/config.md) | — |
+| Memory | [`_dfds/base/memory.md`](_dfds/base/memory.md) | — |
+| Knowledge | [`_dfds/base/knowledge.md`](_dfds/base/knowledge.md) | — |
+| Context diagram | [`_dfds/context-diagram.md`](_dfds/context-diagram.md) | — |
+| Web search / fetch | [`_dfds/tools/exa-search.md`](_dfds/tools/exa-search.md) | — |
+| Test suite | — | [`_docs/test_suite/running.md`](_docs/test_suite/running.md) |
+
+## Environment variables
 
 | Variable | Purpose |
 | -------- | ------- |
-| `EXA_API_KEY` | API key for the web_search and web_fetch tools (Exa search API) |
-| `WEBDAV_URL` | WebDAV server URL (used by ignored integration tests) |
-| `WEBDAV_USERNAME` | WebDAV username (used by ignored integration tests) |
-| `WEBDAV_PASSWORD` | WebDAV password (used by ignored integration tests) |
-
-## Agentic Flow
-
-The bot runs a tool-calling loop: receive message → build context → query AI →
-if tool calls: execute tools → feed results back → repeat (up to 8 iterations) →
-return final reply.
-
-### Available tools
-
-| Tool | Description |
-| ---- | ----------- |
-| `web_search` | Search the web via Exa API and return ranked results |
-| `web_fetch` | Fetch a URL, convert HTML to Markdown, optionally cross-verify content |
-| `vision` | Download an image from a URL and report metadata |
-
-### Image generation (via Replicate)
-
-The `ReplicateProvider` supports creating predictions and polling for results.
-Image generation tools (`infograph`, `anime`) are planned for a future release.
-
-## Memory Management
-
-Each room accumulates conversation history in local memory. When the character
-count exceeds the configured threshold, the oldest messages are archived to the
-room's WebDAV directory as a numbered Markdown file:
-
-```
-{webdav.root}/{room_id}/memory/000001_summary.md
-```
-
-If WebDAV is unreachable, archiving falls back to simple truncation.
-
-## Crate: `rocketchat`
-
-Standalone, reusable RocketChat client library. Handles authentication, WebSocket
-connection, ping/pong keepalive, and message parsing/filtering.
-
-```rust
-use rocketchat::{RocketChatClient, MessageSender, IncomingMessage, MessageFilter};
-
-let config = RocketChatConfig::from_file("config.toml")?;
-let mut client = RocketChatClient::new(config);
-client.connect_and_run(|msg, sender| async move {
-    if msg.is_dm {
-        sender.reply("Hello!").await.ok();
-    }
-}).await?;
-```
-
-## Crate: `webdav`
-
-Async WebDAV client for NextCloud storage. Supports directory listing, file
-upload/download, folder creation, and deletion.
-
-```rust
-use webdav::{WebDavConfig, WebDavClient};
-
-let config = WebDavConfig::from_file("config.toml")?;
-let client = config.create_client()?;
-client.write_file("/rockbot/test.txt", b"Hello!").await?;
-let content = client.read_file_to_string("/rockbot/test.txt").await?;
-```
-
-## Crate: `rockbot`
-
-Library crate providing the bot's core types, AI provider abstraction, tool
-system, memory management, and agent harness. Two AI providers are implemented
-(`DeepSeekProvider`, `OpenRouterProvider`) — both support the full OpenAI-compatible
-chat API with tools, temperature, max_tokens, and thinking config.
-
-```rust
-use rockbot::provider::{AiProvider, DeepSeekProvider};
-use rockbot::harness::AgentHarness;
-use rockbot::tool::ToolRegistry;
-
-let config = AppConfig::from_file("config.toml")?;
-let provider = DeepSeekProvider::new(&config.find_provider("deepseek").unwrap(), "deepseek-chat")?;
-let mut harness = AgentHarness::new(config, Box::new(provider), None);
-let reply = harness.process_message("room1", "general", false, "user", "Hello").await?;
-```
-
-## Data Flow Diagrams
-
-| Diagram | Level | Description |
-| ------- | ----- | ----------- |
-| [Context](_dfds/context-diagram.md) | 0 | System boundary and external entities |
-| [Agent Loop](_dfds/agent-harness.md) | 1 | Agent event loop, LLM interaction, tool execution, per-room routing |
-| [Agent Loop](_dfds/agent-loop.md) | 1 | Top-level wiring: startup sequence, error handling, data structures |
-| [Config](_dfds/base/config.md) | 1 | TOML loading, validation, data structures |
-| [RocketChat](_dfds/base/rocketchat.md) | 1 | Auth, WebSocket, message filtering |
-| [AI Provider](_dfds/base/ai-provider.md) | 1 | Trait abstraction, ChatRequest/CompletionResult data structures |
-| [Memory](_dfds/base/memory.md) | 1 | History, summarization, archival |
-| [Knowledge](_dfds/base/knowledge.md) | 1 | Fact extraction from memory, indexed `.md` storage, context injection |
-| [WebDAV](_dfds/base/webdav.md) | 1 | NextCloud storage operations |
+| `CONFIG_FILE` | Config path (default: `config.toml`) |
+| `EXA_API_KEY` | Exa API key (fallback after `[tools.exa]` config) |
+| `WEBDAV_URL` | WebDAV server (real integration tests) |
+| `WEBDAV_USERNAME` | WebDAV username (real integration tests) |
+| `WEBDAV_PASSWORD` | WebDAV password (real integration tests) |
 
 ## License
 
