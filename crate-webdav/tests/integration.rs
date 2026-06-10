@@ -82,6 +82,6 @@ fn test_webdav_path_config_backup_path() {
     let path = WebDavPath::new("rockbot");
     assert_eq!(
         path.config_backup_path("2026-06-01_config.toml"),
-        "/rockbot/config/2026-06-01_config.toml/"
+        "/rockbot/config/2026-06-01_config.toml"
     );
 }

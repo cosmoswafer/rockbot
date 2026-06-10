@@ -7,6 +7,7 @@ pub mod provider;
 pub mod tool;
 pub mod tools;
 pub mod types;
+pub mod utils;
 
 pub use config::{AppConfig, ProviderConfig};
 pub use error::{Result, RockBotError};

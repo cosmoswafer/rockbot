@@ -36,7 +36,7 @@ impl WebDavPath {
 
     pub fn config_backup_path(&self, filename: &str) -> String {
         format!(
-            "/{}/config/{}/",
+            "/{}/config/{}",
             self.root,
             filename.trim_start_matches('/')
         )
@@ -108,7 +108,7 @@ mod tests {
         let p = WebDavPath::new("rockbot");
         assert_eq!(
             p.config_backup_path("config_backup.toml"),
-            "/rockbot/config/config_backup.toml/"
+            "/rockbot/config/config_backup.toml"
         );
     }
 

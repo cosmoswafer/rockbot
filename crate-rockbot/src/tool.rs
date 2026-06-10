@@ -92,21 +92,26 @@ impl ToolRegistry {
         self.tools.len()
     }
 
-    pub async fn execute_by_name(&self, name: &str, arguments: &str) -> Result<ToolResult> {
+    pub async fn execute_by_name(
+        &self,
+        call_id: &str,
+        name: &str,
+        arguments: &str,
+    ) -> Result<ToolResult> {
         match self.get(name) {
             Some(tool) => {
                 let result = tool.execute(arguments).await;
                 match result {
-                    Ok(content) => Ok(ToolResult::success("", name, content)),
+                    Ok(content) => Ok(ToolResult::success(call_id, name, content)),
                     Err(e) => Ok(ToolResult::error(
-                        "",
+                        call_id,
                         name,
                         format!("Tool execution error: {}", e),
                     )),
                 }
             }
             None => Ok(ToolResult::error(
-                "",
+                call_id,
                 name,
                 format!("Unknown tool: {}", name),
             )),
@@ -202,7 +207,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_unknown_tool() {
         let registry = ToolRegistry::new();
-        let result = registry.execute_by_name("unknown", "{}").await.unwrap();
+        let result = registry.execute_by_name("", "unknown", "{}").await.unwrap();
         assert!(result.is_error);
         assert!(result.content.contains("Unknown tool"));
     }
@@ -217,7 +222,7 @@ mod tests {
             result: "Hello from tool!".into(),
         }));
 
-        let result = registry.execute_by_name("hello", "{}").await.unwrap();
+        let result = registry.execute_by_name("", "hello", "{}").await.unwrap();
         assert!(!result.is_error);
         assert_eq!(result.content, "Hello from tool!");
     }

@@ -39,19 +39,29 @@ impl EditSoulTool {
         let path = soul_path(dir_key);
         let existing = self.webdav.read_file_to_string(&path).await.unwrap_or_default();
 
-        let marker = format!("\n## {} ", section_header);
-        let marker_no_space = format!("\n## {}", section_header);
+        fn find_section(text: &str, header: &str) -> Option<(usize, usize)> {
+            if let Some(pos) = text.find(&format!("\n## {} ", header)) {
+                Some((pos + 1, format!("\n## {} ", header).len()))
+            } else if let Some(pos) = text.find(&format!("\n## {}", header)) {
+                Some((pos + 1, format!("\n## {}", header).len()))
+            } else if text.starts_with(&format!("## {} ", header)) {
+                Some((0, format!("## {} ", header).len()))
+            } else if text.starts_with(&format!("## {}", header)) {
+                Some((0, format!("## {}", header).len()))
+            } else {
+                None
+            }
+        }
 
-        let (before, rest) = if let Some(pos) = existing.find(&marker) {
-            (&existing[..pos + 1], &existing[pos + marker.len()..])
-        } else if let Some(pos) = existing.find(&marker_no_space) {
-            (&existing[..pos + 1], &existing[pos + marker_no_space.len()..])
-        } else {
-            return Err(RockBotError::ToolCallParse(format!(
+        let (before_pos, marker_len) = find_section(&existing, section_header).ok_or_else(|| {
+            RockBotError::ToolCallParse(format!(
                 "Section '## {}' not found in soul memory.",
                 section_header
-            )));
-        };
+            ))
+        })?;
+
+        let before = &existing[..before_pos];
+        let rest = &existing[before_pos + marker_len..];
 
         let next_header = rest.find("\n## ").unwrap_or(rest.len());
         let new_content = format!(
@@ -77,21 +87,27 @@ impl EditSoulTool {
         let path = soul_path(dir_key);
         let existing = self.webdav.read_file_to_string(&path).await.unwrap_or_default();
 
-        let marker = format!("\n## {} ", section_header);
-        let marker_no_space = format!("\n## {}", section_header);
+        fn find_section(text: &str, header: &str) -> Option<(usize, usize)> {
+            if let Some(pos) = text.find(&format!("\n## {} ", header)) {
+                Some((pos + 1, format!("\n## {} ", header).len()))
+            } else if let Some(pos) = text.find(&format!("\n## {}", header)) {
+                Some((pos + 1, format!("\n## {}", header).len()))
+            } else if text.starts_with(&format!("## {} ", header)) {
+                Some((0, format!("## {} ", header).len()))
+            } else if text.starts_with(&format!("## {}", header)) {
+                Some((0, format!("## {}", header).len()))
+            } else {
+                None
+            }
+        }
 
-        let (start_pos, marker_len) = if let Some(pos) = existing.find(&marker) {
-            (pos + 1, marker.len())
-        } else if let Some(pos) = existing.find(&marker_no_space) {
-            (pos + 1, marker_no_space.len())
-        } else {
-            return Err(RockBotError::ToolCallParse(format!(
+        let (section_start, marker_len) = find_section(&existing, section_header).ok_or_else(|| {
+            RockBotError::ToolCallParse(format!(
                 "Section '## {}' not found in soul memory.",
                 section_header
-            )));
-        };
+            ))
+        })?;
 
-        let section_start = start_pos;
         let rest = &existing[section_start + marker_len..];
         let next_header = rest.find("\n## ").unwrap_or(rest.len());
         let end_pos = section_start + marker_len + next_header;
