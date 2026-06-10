@@ -7,9 +7,8 @@ chat_path = "/chat/completions"
 
 [chat_providers.models]
 gpt = "openai/gpt-oss-120b:online"
-qwen = "qwen/qwen3-235b-a22b-thinking-2507:online"
-perplexity = "perplexity/sonar-deep-research"
-deepseek = "deepseek/deepseek-v3.2:online"
+qwen = "qwen/qwen3.7-plus"
+minimax = "minimax/minimax-m3"
 
 [[chat_providers]]
 name = "deepseek"
@@ -28,8 +27,8 @@ basecf_url = ""
 draw_path = "/images/generations"
 
 [image_providers.models]
-seedream = "fal-ai/bytedance/seedream/v4.5/text-to-image"
-gptimage = "openai/gpt-image-2"
+seedream = "bytedance-seed/seedream-4.5"
+grok = "x-ai/grok-imagine-image-quality"
 
 [[image_providers]]
 name = "fal"
