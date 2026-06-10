@@ -80,7 +80,7 @@ impl AppConfig {
         Ok(config)
     }
 
-    pub fn from_str(content: &str) -> crate::error::Result<Self> {
+    pub fn from_toml(content: &str) -> crate::error::Result<Self> {
         let config: Self = toml::from_str(content)?;
         Ok(config)
     }

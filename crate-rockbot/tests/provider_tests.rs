@@ -44,7 +44,7 @@ base_url = "https://api.deepseek.com/v1"
 chat = "deepseek-chat"
 reasoner = "deepseek-reasoner"
 "#;
-    let config = AppConfig::from_str(toml_content).unwrap();
+    let config = AppConfig::from_toml(toml_content).unwrap();
 
     assert_eq!(config.rocketchat.model.default_provider, "openrouter");
     assert_eq!(config.rocketchat.model.default_model, "deepseek");
@@ -93,7 +93,7 @@ base_url = "https://mock.ai/v1"
 [providers.models]
 chat = "mock-model"
 "#;
-    let config = AppConfig::from_str(toml).unwrap();
+    let config = AppConfig::from_toml(toml).unwrap();
     assert_eq!(config.rocketchat.model.max_iterations, 8);
 }
 
@@ -118,7 +118,7 @@ base_url = "https://mock.ai/v1"
 [providers.models]
 chat = "mock-model"
 "#;
-    let config = AppConfig::from_str(toml).unwrap();
+    let config = AppConfig::from_toml(toml).unwrap();
     assert_eq!(config.rocketchat.model.max_iterations, 16);
 }
 
@@ -153,7 +153,7 @@ base_url = "https://api.deepseek.com/v1"
 [providers.models]
 chat = "deepseek-chat"
 "#;
-    let config = AppConfig::from_str(toml).unwrap();
+    let config = AppConfig::from_toml(toml).unwrap();
 
     assert!(config.find_provider("deepseek").is_some());
     assert!(config.find_provider("openrouter").is_some());
@@ -193,7 +193,7 @@ base_url = "https://api.deepseek.com/v1"
 chat = "deepseek-chat"
 reasoner = "deepseek-reasoner"
 "#;
-    let config = AppConfig::from_str(toml).unwrap();
+    let config = AppConfig::from_toml(toml).unwrap();
 
     assert_eq!(
         config.resolve_model("deepseek", "chat").unwrap(),
@@ -236,7 +236,7 @@ deepseek = "deepseek/deepseek-v3.2:online"
 [tools.exa]
 api_key = "exa-key-123"
 "#;
-    let config = AppConfig::from_str(toml).unwrap();
+    let config = AppConfig::from_toml(toml).unwrap();
     assert_eq!(config.tools.len(), 1);
     let exa = config.tools.get("exa").unwrap();
     assert_eq!(exa.api_key, "exa-key-123");
@@ -271,7 +271,7 @@ api_key = "exa-key-123"
 [tools.vision]
 api_key = "vis-key-456"
 "#;
-    let config = AppConfig::from_str(toml).unwrap();
+    let config = AppConfig::from_toml(toml).unwrap();
 
     let exa = config.find_tool("exa");
     assert!(exa.is_some());
@@ -632,7 +632,8 @@ fn test_error_from_io() {
 #[test]
 fn test_error_result_type() {
     let result: Result<i32> = Ok(42);
-    assert_eq!(result.unwrap(), 42);
+    assert!(result.is_ok());
+    assert_eq!(result.ok(), Some(42));
 
     let result: Result<i32> = Err(RockBotError::EmptyResponse);
     assert!(result.is_err());

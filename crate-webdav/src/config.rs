@@ -22,7 +22,7 @@ impl WebDavConfig {
         Ok(config)
     }
 
-    pub fn from_str(content: &str) -> Result<Self> {
+    pub fn from_toml(content: &str) -> Result<Self> {
         let config: Self = toml::from_str(content)?;
         Ok(config)
     }

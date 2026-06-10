@@ -8,7 +8,7 @@ username = "botuser"
 password = "app-secret"
 root = "rockbot"
 "#;
-    let cfg = WebDavConfig::from_str(toml).expect("should parse");
+    let cfg = WebDavConfig::from_toml(toml).expect("should parse");
     assert_eq!(
         cfg.url,
         "https://cloud.example.com/remote.php/dav/files/botuser"
@@ -26,7 +26,7 @@ username = "botuser"
 password = "app-secret"
 root = "rockbot"
 "#;
-    let cfg = WebDavConfig::from_str(toml).expect("should parse");
+    let cfg = WebDavConfig::from_toml(toml).expect("should parse");
     let client = cfg.create_client();
     assert!(client.is_ok());
 }
@@ -39,7 +39,7 @@ username = "botuser"
 password = "app-secret"
 root = "/rockbot/"
 "#;
-    let cfg = WebDavConfig::from_str(toml).expect("should parse");
+    let cfg = WebDavConfig::from_toml(toml).expect("should parse");
     let client = cfg.create_client();
     assert!(client.is_ok());
 }
@@ -52,7 +52,7 @@ username = "botuser"
 password = "app-secret"
 root = "rockbot"
 "#;
-    let cfg = WebDavConfig::from_str(toml).expect("should parse");
+    let cfg = WebDavConfig::from_toml(toml).expect("should parse");
     let client = cfg.into_client();
     assert!(client.is_ok());
 }
@@ -65,7 +65,7 @@ username = "botuser"
 password = "secret"
 root = "rockbot"
 "#;
-    let cfg = WebDavConfig::from_str(toml).expect("should parse");
+    let cfg = WebDavConfig::from_toml(toml).expect("should parse");
     assert!(cfg.create_client().is_ok());
 }
 
@@ -75,6 +75,6 @@ fn test_missing_field_fails() {
 url = "https://cloud.example.com/remote.php/dav/files/botuser"
 username = "botuser"
 "#;
-    let result = WebDavConfig::from_str(toml);
+    let result = WebDavConfig::from_toml(toml);
     assert!(result.is_err());
 }

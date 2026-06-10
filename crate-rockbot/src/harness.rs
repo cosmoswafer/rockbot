@@ -350,7 +350,7 @@ mod tests {
     }
 
     fn make_test_config() -> AppConfig {
-        AppConfig::from_str(
+        AppConfig::from_toml(
             r#"
 [rocketchat.server]
 url = "test.example.com"
@@ -456,7 +456,7 @@ base_url = "https://mock.ai/v1"
 [providers.models]
 chat = "mock-model"
 "#;
-        let config = AppConfig::from_str(config_toml).unwrap();
+        let config = AppConfig::from_toml(config_toml).unwrap();
 
         let tool_call = ToolCall::new("call_1", "web_search", r#"{"query":"test"}"#);
         let tool_result = CompletionResult {

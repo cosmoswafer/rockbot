@@ -481,6 +481,7 @@ mod tests {
         let xml = r#"<prop><getcontentlength>2048</getcontentlength><resourcetype></resourcetype></prop>"#;
         let p: PropWithRT = quick_xml::de::from_str(xml).unwrap();
         assert_eq!(p.getcontentlength, Some(2048));
+        assert!(p.resourcetype.collection.is_none());
     }
 
     #[test]
@@ -502,6 +503,7 @@ mod tests {
         let xml = r#"<prop><getcontentlength>2048</getcontentlength><resourcetype><collection></collection></resourcetype></prop>"#;
         let p: PropWithRT = quick_xml::de::from_str(xml).unwrap();
         assert_eq!(p.getcontentlength, Some(2048));
+        assert!(p.resourcetype.collection.is_some());
     }
 
     #[test]
