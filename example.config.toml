@@ -56,6 +56,10 @@ max_iterations = 8
 max_summary_chars = 8000
 max_soul_chars = 2000
 summary_days = 7
+# Seconds before an idle room is evicted from memory cache (default: 300)
+memory_ttl_secs = 300
+# Seconds between persistence/snapshot cycles (default: 60)
+persist_interval_secs = 60
 
 [rocketchat.server]
 url = "your-server.example.com"
