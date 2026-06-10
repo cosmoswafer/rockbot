@@ -199,7 +199,7 @@ let reply = harness.process_message("room1", "general", false, "user", "Hello").
 | [RocketChat](_dfds/base/rocketchat.md) | 1 | Auth, WebSocket, message filtering |
 | [AI Provider](_dfds/base/ai-provider.md) | 1 | Trait abstraction, ChatRequest/CompletionResult data structures |
 | [Memory](_dfds/base/memory.md) | 1 | History, summarization, archival |
-| [Knowledge](_dfds/tools/knowledge.md) | 1 | Fact extraction from memory, indexed `.md` storage, context injection |
+| [Knowledge](_dfds/base/knowledge.md) | 1 | Fact extraction from memory, indexed `.md` storage, context injection |
 | [WebDAV](_dfds/base/webdav.md) | 1 | NextCloud storage operations |
 
 ## License

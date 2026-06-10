@@ -94,7 +94,7 @@ Data Flow Diagrams in `_dfds/` define the system's architecture. When a DFD is m
 | `base/webdav.md` | webdav crate (`client.rs`, `path.rs`) | `harness.rs` |
 | `tools/exa-search.md` | `tools/web_search.rs` | `tools/web_fetch.rs` |
 | `tools/web-fetch.md` | `tools/web_fetch.rs` | `tools/web_search.rs` |
-| `tools/knowledge.md` | `memory.rs` | `harness.rs` |
+| `base/knowledge.md` | `memory.rs` | `harness.rs` |
 | `context-diagram.md` | (Level 0 — system boundary, no code changes) | — |
 
 ## Testing

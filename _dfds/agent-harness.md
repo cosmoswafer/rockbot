@@ -15,8 +15,8 @@ standard harness mechanisms are present:
 | Mechanism   | Coverage | Details |
 |-------------|----------|---------|
 | **Tools**   | Full     | `web_search`, `web_fetch`, `vision`, `webdav`, image generation — each tool has its own DFD |
-| **Knowledge** | Full  | On-demand context via [Memory Management](base/memory.md): archive loading, conversation history, system prompt assembly |
-| **Context** | Full     | Per-room history, loop iteration limits, truncation/summarization, room state routing |
+| **Context** | Full     | Per-room conversation history buffer, summarization, archive loading — see [Memory Management](base/memory.md); plus iteration limits, room state routing, system prompt assembly |
+| **Knowledge** | Full  | Domain facts extracted from conversations, stored as indexed `.md` files on WebDAV — see [Knowledge Management](base/knowledge.md) |
 
 Intentionally absent — not needed for rockbot's scope:
 
@@ -32,6 +32,8 @@ Intentionally absent — not needed for rockbot's scope:
   `CompletionResult` with tool calls or final text
 - Downstream: [Memory Management](base/memory.md) provides `ConversationHistory` per
   room and receives new messages for archival
+- Downstream: [Knowledge Management](base/knowledge.md) extracts and persists
+  domain facts, loads entries into agent context on room init
 - Downstream: [WebDAV Storage](base/webdav.md) persists generated image assets
 
 ## 2. Diagram
