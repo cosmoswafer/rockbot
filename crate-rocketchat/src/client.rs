@@ -22,28 +22,22 @@ type WsStream =
 pub struct MessageSender {
     writer: Arc<Mutex<WriteHalf>>,
     room_id: String,
-    alias: Option<String>,
 }
 
 impl MessageSender {
     fn new(writer: Arc<Mutex<WriteHalf>>, room_id: String) -> Self {
-        Self { writer, room_id, alias: None }
+        Self { writer, room_id }
     }
 
-    pub fn with_alias(mut self, alias: impl Into<String>) -> Self {
-        self.alias = Some(alias.into());
-        self
-    }
-
-    pub async fn reply(&self, text: &str) -> Result<()> {
-        let payload = ddp::send_message_payload(&self.room_id, text, self.alias.as_deref());
+    pub async fn reply(&self, text: &str, alias: Option<&str>) -> Result<()> {
+        let payload = ddp::send_message_payload(&self.room_id, text, alias);
         let mut writer = self.writer.lock().await;
         writer.send(&payload).await
     }
 
-    pub async fn reply_code(&self, text: &str) -> Result<()> {
+    pub async fn reply_code(&self, text: &str, alias: Option<&str>) -> Result<()> {
         let formatted = format!("```\n{}\n```", text);
-        self.reply(&formatted).await
+        self.reply(&formatted, alias).await
     }
 
     pub async fn typing(&self, is_typing: bool, username: &str) -> Result<()> {
@@ -75,7 +69,6 @@ pub struct RocketChatClient {
     user_id: Option<String>,
     username: String,
     bot_name: String,
-    alias: Option<String>,
     registered_rooms: HashMap<String, bool>,
 }
 
@@ -83,13 +76,11 @@ impl RocketChatClient {
     pub fn new(config: RocketChatConfig) -> Self {
         let bot_name = format!("@{}", config.server.username);
         let username = config.server.username.clone();
-        let alias = config.server.alias.clone();
         Self {
             config,
             user_id: None,
             username,
             bot_name,
-            alias,
             registered_rooms: HashMap::new(),
         }
     }
@@ -198,10 +189,7 @@ impl RocketChatClient {
                             && registered_rooms.contains_key(&msg.room_name));
 
                     if should_dispatch {
-                        let mut sender = MessageSender::new(writer.clone(), msg.room_id.clone());
-                        if let Some(ref alias) = self.alias {
-                            sender = sender.with_alias(alias);
-                        }
+                        let sender = MessageSender::new(writer.clone(), msg.room_id.clone());
                         let handler = handler.clone();
                         tokio::spawn(async move {
                             handler(msg, sender).await;

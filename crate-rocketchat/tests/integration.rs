@@ -479,7 +479,6 @@ fn test_client_new() {
             url: "chat.example.com".into(),
             username: "bot".into(),
             password: "pw".into(),
-            alias: None,
             debug: false,
             use_tls: true,
         },

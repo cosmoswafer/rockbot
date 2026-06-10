@@ -63,7 +63,7 @@ async fn test_connect_and_receive_events() {
 
                 // Auto-reply to test roundtrip
                 let reply = format!("Echo: {}", msg.text);
-                if let Err(e) = sender.reply(&reply).await {
+                if let Err(e) = sender.reply(&reply, None).await {
                     eprintln!("Failed to send reply: {}", e);
                 }
             }

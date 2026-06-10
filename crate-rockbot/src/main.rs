@@ -231,7 +231,6 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                 url: h.config().rocketchat.server.url.clone(),
                 username: h.config().rocketchat.server.username.clone(),
                 password: h.config().rocketchat.server.password.clone(),
-                alias: h.config().rocketchat.server.alias.clone(),
                 debug: h.config().rocketchat.server.debug,
                 use_tls: true,
             },
@@ -321,7 +320,8 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                             Ok(Some(reply)) => {
                                 heartbeat.abort();
                                 let _ = sender.typing(false, &username).await;
-                                if let Err(e) = sender.reply(&reply).await {
+                                let alias = h.memory().self_display_name(&msg.room_id);
+                                if let Err(e) = sender.reply(&reply, alias.as_deref()).await {
                                     error!("Failed to send reply: {}", e);
                                 }
                                 if let Err(e) = h.archive_room_if_needed(&msg.room_id).await {
@@ -339,8 +339,9 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                                 heartbeat.abort();
                                 let _ = sender.typing(false, &username).await;
                                 error!("Failed to process message: {}", e);
+                                let alias = h.memory().self_display_name(&msg.room_id);
                                 let _ = sender
-                                    .reply(&format!("Error processing message: {}", e))
+                                    .reply(&format!("Error processing message: {}", e), alias.as_deref())
                                     .await;
                                 if let Err(e) = h.archive_room_if_needed(&msg.room_id).await {
                                     warn!("Memory archiving failed: {}", e);

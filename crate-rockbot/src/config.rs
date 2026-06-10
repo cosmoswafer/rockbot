@@ -31,8 +31,6 @@ pub struct ServerConfig {
     pub username: String,
     pub password: String,
     #[serde(default)]
-    pub alias: Option<String>,
-    #[serde(default)]
     pub debug: bool,
 }
 

@@ -312,6 +312,29 @@ impl MemoryManager {
         self.souls.get(room_id)
     }
 
+    pub fn self_display_name(&self, room_id: &str) -> Option<String> {
+        let soul = self.souls.get(room_id)?;
+        let content = soul.content.trim();
+        if content.is_empty() {
+            return None;
+        }
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let name = trimmed
+                .trim_start_matches('#')
+                .trim_start_matches(' ')
+                .trim_end_matches(|c: char| c == ' ' || c == '：');
+            if !name.is_empty() && name.len() <= 32 {
+                return Some(name.to_string());
+            }
+            return None;
+        }
+        None
+    }
+
     pub fn set_knowledge(&mut self, room_id: &str, entries: String) {
         self.knowledge.insert(room_id.to_string(), entries);
     }

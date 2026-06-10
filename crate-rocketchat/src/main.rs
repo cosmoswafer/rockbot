@@ -52,17 +52,17 @@ fn main() {
                     // Handle built-in commands
                     if msg.text.trim() == "!ping" {
                         let reply = format!("pong @{}", msg.sender_name);
-                        if let Err(e) = sender.reply(&reply).await {
+                        if let Err(e) = sender.reply(&reply, None).await {
                             eprintln!("Failed to send reply: {}", e);
                         }
                     } else if msg.text.trim().starts_with("!echo ") {
                         let echoed = msg.text.trim().strip_prefix("!echo ").unwrap_or("");
-                        if let Err(e) = sender.reply(echoed).await {
+                        if let Err(e) = sender.reply(echoed, None).await {
                             eprintln!("Failed to send reply: {}", e);
                         }
                     } else if msg.text.trim() == "!help" {
                         let help = "Commands: !ping, !echo <text>, !help";
-                        if let Err(e) = sender.reply(help).await {
+                        if let Err(e) = sender.reply(help, None).await {
                             eprintln!("Failed to send reply: {}", e);
                         }
                     }
