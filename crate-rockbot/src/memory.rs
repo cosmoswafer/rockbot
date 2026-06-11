@@ -656,7 +656,6 @@ fn extract_name_from_text(text: &str) -> Option<String> {
     for prefix in &["my name is ", "name is ", "i'm ", "i am ", "我叫", "我是"] {
         if let Some(pos) = lower.find(prefix) {
             let rest = &line[pos + prefix.len()..].trim();
-            // Take until punctuation or emoji
             let end = rest.find(|c: char| {
                 c == '.' || c == ',' || c == '!' || c == '?' || c == '。' || c == '，' || c == '：'
             }).unwrap_or(rest.len());
@@ -667,7 +666,17 @@ fn extract_name_from_text(text: &str) -> Option<String> {
         }
     }
 
-    // 3. First line, trim ** and quotes
+    // 3. Split on description separators: "Name ✨ — Description" → "Name ✨"
+    for sep in &[" — ", "—", " – ", "–", " - "] {
+        if let Some(pos) = line.find(sep) {
+            let left = line[..pos].trim().trim_end_matches(|c: char| c == '：' || c == ' ');
+            if !left.is_empty() && left.len() <= 32 {
+                return Some(left.to_string());
+            }
+        }
+    }
+
+    // 4. First line, trim ** and quotes
     let cleaned = line
         .replace("**", "")
         .replace("「", "")
@@ -981,6 +990,44 @@ mod tests {
     #[test]
     fn test_extract_name_too_long() {
         let long = "My name is a very very long name over 32 characters";
+        assert_eq!(extract_name_from_text(long), None);
+    }
+
+    #[test]
+    fn test_extract_name_separator_em_dash() {
+        assert_eq!(
+            extract_name_from_text("零夢 ✨ — A Japanese little girl. My mother language is English."),
+            Some("零夢 ✨".into())
+        );
+    }
+
+    #[test]
+    fn test_extract_name_separator_en_dash() {
+        assert_eq!(
+            extract_name_from_text("雪山泡芙 – Cosplay enthusiast"),
+            Some("雪山泡芙".into())
+        );
+    }
+
+    #[test]
+    fn test_extract_name_separator_spaced_hyphen() {
+        assert_eq!(
+            extract_name_from_text("零夢 - a helpful bot"),
+            Some("零夢".into())
+        );
+    }
+
+    #[test]
+    fn test_extract_name_no_separator_fallback() {
+        assert_eq!(
+            extract_name_from_text("零夢 ✨"),
+            Some("零夢 ✨".into())
+        );
+    }
+
+    #[test]
+    fn test_extract_name_separator_too_long() {
+        let long = "A very very long name over 32 chars — description";
         assert_eq!(extract_name_from_text(long), None);
     }
 }
