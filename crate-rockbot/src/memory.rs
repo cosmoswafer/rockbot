@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::LazyLock;
 
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 use webdav::WebDavPath;
@@ -129,6 +131,7 @@ pub struct MemoryManager {
     pub max_summary_chars: usize,
     pub summary_days: u32,
     pub max_soul_chars: usize,
+    max_context_bytes: usize,
     daily_summaries: HashMap<String, Vec<DailySummary>>,
     souls: HashMap<String, SoulMemory>,
     knowledge: HashMap<String, String>,
@@ -144,6 +147,7 @@ impl MemoryManager {
         summary_days: u32,
         max_soul_chars: usize,
         persist_interval_secs: u64,
+        max_context_bytes: usize,
     ) -> Self {
         Self {
             rooms: HashMap::new(),
@@ -152,6 +156,7 @@ impl MemoryManager {
             max_summary_chars,
             summary_days,
             max_soul_chars,
+            max_context_bytes,
             daily_summaries: HashMap::new(),
             souls: HashMap::new(),
             knowledge: HashMap::new(),
@@ -215,9 +220,13 @@ impl MemoryManager {
         let limit = max_history.unwrap_or(self.max_history_messages);
         let mut messages = Vec::new();
         messages.push(ChatMessage::system(system_prompt));
+        let mut has_soul = false;
+        let mut has_knowledge = false;
+        let mut summary_count = 0usize;
 
         if let Some(soul) = self.souls.get(room_id) {
             if !soul.content.is_empty() {
+                has_soul = true;
                 let truncated = if soul.content.chars().count() > self.max_soul_chars {
                     let mut chars: Vec<char> = soul.content.chars().collect();
                     chars.truncate(self.max_soul_chars);
@@ -236,12 +245,14 @@ impl MemoryManager {
 
         if let Some(knowledge_text) = self.knowledge.get(room_id) {
             if !knowledge_text.is_empty() {
+                has_knowledge = true;
                 messages.push(ChatMessage::system(knowledge_text));
             }
         }
 
         let summaries = self.daily_summaries.get(room_id).map(|v| v.as_slice()).unwrap_or(&[]);
         if !summaries.is_empty() {
+            summary_count = summaries.len();
             let mut summary_text = String::from("[Recent conversation summaries]\n");
             let mut total = 0usize;
             for s in summaries.iter().rev() {
@@ -262,7 +273,19 @@ impl MemoryManager {
             } else {
                 0
             };
-            messages.extend_from_slice(&history[start..]);
+            let slice = &history[start..];
+            // Find the index of the last user message — preserve its images.
+            let last_user_idx = slice
+                .iter()
+                .rposition(|m| m.role == crate::types::Role::User);
+            for (i, msg) in slice.iter().enumerate() {
+                let msg = if Some(i) == last_user_idx {
+                    msg.clone()
+                } else {
+                    strip_images_from_message(msg.clone())
+                };
+                messages.push(msg);
+            }
         }
 
         if let Some(extra) = extra_context {
@@ -270,6 +293,48 @@ impl MemoryManager {
         }
 
         strip_orphaned_tool_calls(&mut messages);
+
+        let history_count = messages.iter().filter(|m| m.role != crate::types::Role::System).count();
+        debug!(
+            "build_context room={}: total={} system_msgs={} history_msgs={} soul={} knowledge={} summaries={}",
+            room_id, messages.len(),
+            messages.iter().filter(|m| m.role == crate::types::Role::System).count(),
+            history_count,
+            has_soul, has_knowledge, summary_count,
+        );
+
+        // Enforce max_context_bytes: drop oldest images until under limit.
+        if self.max_context_bytes > 0 {
+            let mut total = messages
+                .iter()
+                .map(|m| serde_json::to_vec(m).map(|v| v.len()).unwrap_or(0))
+                .sum::<usize>();
+            if total > self.max_context_bytes {
+                debug!(
+                    "build_context room={}: context exceeds max_context_bytes ({} > {}), stripping images",
+                    room_id, total, self.max_context_bytes
+                );
+                // Walk from oldest to newest, stripping images until under limit.
+                // The last user message is preserved (the current request).
+                let last_user_idx = messages.iter().rposition(|m| m.role == crate::types::Role::User);
+                for i in 0..messages.len() {
+                    if total <= self.max_context_bytes {
+                        break;
+                    }
+                    if Some(i) == last_user_idx {
+                        continue; // preserve latest user message with images
+                    }
+                    let before = serde_json::to_vec(&messages[i]).map(|v| v.len()).unwrap_or(0);
+                    messages[i] = strip_images_from_message(messages[i].clone());
+                    let after = serde_json::to_vec(&messages[i]).map(|v| v.len()).unwrap_or(0);
+                    total = total.saturating_sub(before.saturating_sub(after));
+                }
+                debug!(
+                    "build_context room={}: after stripping images: {} bytes",
+                    room_id, total
+                );
+            }
+        }
 
         messages
     }
@@ -318,20 +383,26 @@ impl MemoryManager {
         if content.is_empty() {
             return None;
         }
+
+        // Standard regex: captures the line immediately after "## Identity"
+        // Matches the format prescribed in the system prompt.
+        if let Some(name) = extract_identity_name(content) {
+            debug!("self_display_name: regex match: {:?}", name);
+            return Some(name);
+        }
+
+        // Legacy fallback: first non-header line (pre-regex soul formats)
         for line in content.lines() {
             let trimmed = line.trim();
-            if trimmed.is_empty() {
+            if trimmed.is_empty() || trimmed.starts_with('#') {
                 continue;
             }
-            let name = trimmed
-                .trim_start_matches('#')
-                .trim_start_matches(' ')
-                .trim_end_matches(|c: char| c == ' ' || c == '：');
-            if !name.is_empty() && name.len() <= 32 {
-                return Some(name.to_string());
+            if trimmed.len() <= 32 {
+                return Some(trimmed.to_string());
             }
-            return None;
+            break;
         }
+
         None
     }
 
@@ -386,8 +457,12 @@ impl MemoryManager {
 
     pub fn restore_snapshot(&mut self, snapshot: &PersistSnapshot) {
         if let Some(room) = self.rooms.get_mut(&snapshot.room_id) {
-            room.history.messages = snapshot.messages.clone();
-            room.history.char_count = snapshot.char_count;
+            let mut messages = snapshot.messages.clone();
+            strip_orphaned_tool_calls(&mut messages);
+            // Recompute char_count from cleaned messages
+            let char_count: usize = messages.iter().filter_map(|m| m.text_content()).map(|t| t.chars().count()).sum();
+            room.history.messages = messages;
+            room.history.char_count = char_count;
             room.history.archive_seq = snapshot.archive_seq;
         }
 
@@ -463,6 +538,27 @@ pub fn date_to_days(date: &str) -> Option<i64> {
     Some((era as i64) * 146097 + doe as i64 - 719468)
 }
 
+fn strip_images_from_message(msg: ChatMessage) -> ChatMessage {
+    let crate::types::MessageContent::Multipart(ref parts) = msg.content else {
+        return msg;
+    };
+    let has_image = parts.iter().any(|p| matches!(p, crate::types::ContentPart::ImageUrl { .. }));
+    if !has_image {
+        return msg;
+    }
+    let text = parts
+        .iter()
+        .filter_map(|p| match p {
+            crate::types::ContentPart::Text { text } => Some(text.as_str()),
+            crate::types::ContentPart::ImageUrl { .. } => Some("[image]"),
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut stripped = msg;
+    stripped.content = crate::types::MessageContent::Text(text);
+    stripped
+}
+
 fn strip_orphaned_tool_calls(messages: &mut Vec<ChatMessage>) {
     // Phase 1: remove orphaned tool messages that lack a preceding
     // assistant with tool_calls. This happens when history truncation
@@ -492,28 +588,59 @@ fn strip_orphaned_tool_calls(messages: &mut Vec<ChatMessage>) {
         i += 1;
     }
 
-    // Phase 2: remove trailing assistant tool_calls that have no tool
-    // replies (e.g. the AI's last message was a tool call that never
-    // completed before the loop was interrupted).
+    // Phase 2: remove assistant tool_calls that have no tool replies
+    // (e.g. the AI's last message was a tool call that never completed
+    // before the loop was interrupted, or a tool execution failed and
+    // later messages were appended after it).
     let mut i = 0;
     while i < messages.len() {
         if messages[i].role == crate::types::Role::Assistant && messages[i].tool_calls.is_some() {
-            let mut has_tool_reply = false;
+            // Collect expected tool_call_ids
+            let expected_ids: Vec<String> = messages[i]
+                .tool_calls
+                .as_ref()
+                .map(|tcs| tcs.iter().map(|tc| tc.id.clone()).collect())
+                .unwrap_or_default();
+            let mut matched = HashSet::new();
             for item in messages.iter().skip(i + 1) {
                 if item.role == crate::types::Role::Tool {
-                    has_tool_reply = true;
-                    break;
-                }
-                if item.role != crate::types::Role::Tool {
+                    if let Some(ref id) = item.tool_call_id {
+                        if expected_ids.contains(id) {
+                            matched.insert(id.clone());
+                        }
+                    }
+                } else {
                     break;
                 }
             }
-            if !has_tool_reply && i + 1 >= messages.len() {
-                messages.truncate(i);
-                break;
+            if matched.len() != expected_ids.len() {
+                // Remove this assistant
+                messages.remove(i);
+                // Remove orphaned tool results that followed it
+                while i < messages.len() && messages[i].role == crate::types::Role::Tool {
+                    messages.remove(i);
+                }
+                continue;
             }
         }
         i += 1;
+    }
+}
+
+/// Extract display name from soul content using a standard regex.
+///
+/// Regex: `## Identity\n(.+)` — captures the first line immediately after
+/// the `## Identity` header. The LLM is instructed to use exactly this format.
+fn extract_identity_name(content: &str) -> Option<String> {
+    static RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"## Identity\n(.+)").expect("hardcoded regex")
+    });
+    let caps = RE.captures(content)?;
+    let name = caps.get(1)?.as_str().trim().to_string();
+    if !name.is_empty() && name.len() <= 32 {
+        Some(name)
+    } else {
+        None
     }
 }
 
@@ -604,7 +731,7 @@ mod tests {
 
     #[test]
     fn test_memory_manager_get_or_create() {
-        let mut mgr = MemoryManager::new(1000, 12, 8000, 7, 2000, 60);
+        let mut mgr = MemoryManager::new(1000, 12, 8000, 7, 2000, 60, 30_000_000);
         let room = mgr.get_or_create("room1", "general", "", false);
         assert_eq!(room.room_id, "room1");
         assert_eq!(room.room_name, "general");
@@ -618,7 +745,7 @@ mod tests {
 
     #[test]
     fn test_memory_manager_build_context() {
-        let mut mgr = MemoryManager::new(1000, 3, 8000, 7, 2000, 60);
+        let mut mgr = MemoryManager::new(1000, 3, 8000, 7, 2000, 60, 30_000_000);
         let room = mgr.get_or_create("room1", "general", "", false);
         for i in 0..5 {
             room.history
@@ -635,7 +762,7 @@ mod tests {
 
     #[test]
     fn test_memory_manager_build_context_nonexistent_room() {
-        let mgr = MemoryManager::new(1000, 12, 8000, 7, 2000, 60);
+        let mgr = MemoryManager::new(1000, 12, 8000, 7, 2000, 60, 30_000_000);
         let ctx = mgr.build_context("nonexistent", "prompt", None, None);
         assert_eq!(ctx.len(), 1);
     }
@@ -670,7 +797,7 @@ mod tests {
 
     #[test]
     fn test_build_context_with_dm_name() {
-        let mut mgr = MemoryManager::new(1000, 12, 8000, 7, 2000, 60);
+        let mut mgr = MemoryManager::new(1000, 12, 8000, 7, 2000, 60, 30_000_000);
         let room = mgr.get_or_create("dm-xyz", "alice", "", true);
         assert_eq!(room.room_name, "alice");
         assert!(room.is_dm);
@@ -766,5 +893,70 @@ mod tests {
         assert_eq!(msgs[2].role, Role::Assistant);
         assert_eq!(msgs[3].role, Role::Tool);
         assert_eq!(msgs[4].role, Role::Assistant);
+    }
+
+    #[test]
+    fn test_extract_identity_name_standard() {
+        let content = "# Soul Memory\n\n## Identity\n零夢\n\n## Preferences\nfoo";
+        assert_eq!(extract_identity_name(content), Some("零夢".into()));
+    }
+
+    #[test]
+    fn test_extract_identity_name_with_emoji() {
+        let content = "# Soul Memory\n\n## Identity\n零夢 ✨\n\n## Preferences";
+        assert_eq!(extract_identity_name(content), Some("零夢 ✨".into()));
+    }
+
+    #[test]
+    fn test_extract_identity_name_cjk() {
+        let content = "# Soul Memory\n\n## Identity\n雪山泡芙 ✨\n\n## Preferences\nfoo";
+        assert_eq!(extract_identity_name(content), Some("雪山泡芙 ✨".into()));
+    }
+
+    #[test]
+    fn test_extract_identity_name_no_match() {
+        let content = "# Soul Memory\n\n## Preferences\nlikes cats\n\n## Facts\nborn 2024";
+        assert_eq!(extract_identity_name(content), None);
+    }
+
+    #[test]
+    fn test_extract_identity_name_too_long() {
+        let content = "# Soul Memory\n\n## Identity\nA very very long name over 32 characters\n\n## Preferences";
+        assert_eq!(extract_identity_name(content), None);
+    }
+
+    #[test]
+    fn test_extract_identity_name_not_a_header() {
+        let content = "Just some random text\nwithout Identity header";
+        assert_eq!(extract_identity_name(content), None);
+    }
+
+    #[test]
+    fn test_extract_identity_name_empty_content() {
+        assert_eq!(extract_identity_name(""), None);
+    }
+
+    #[test]
+    fn test_self_display_name_regex_match() {
+        let mut mm = MemoryManager::new(1000, 12, 8000, 7, 2000, 60, 30_000_000);
+        let soul = SoulMemory {
+            room_id: "r-test".into(),
+            content: "# Soul Memory\n\n## Identity\n香菜 🌿\n\n## Preferences\nfoo".into(),
+            updated_at: String::new(),
+        };
+        mm.set_soul("r-test", soul);
+        assert_eq!(mm.self_display_name("r-test"), Some("香菜 🌿".into()));
+    }
+
+    #[test]
+    fn test_self_display_name_legacy_fallback() {
+        let mut mm = MemoryManager::new(1000, 12, 8000, 7, 2000, 60, 30_000_000);
+        let soul = SoulMemory {
+            room_id: "r-test".into(),
+            content: "零夢\n\n## Preferences\nfoo".into(),
+            updated_at: String::new(),
+        };
+        mm.set_soul("r-test", soul);
+        assert_eq!(mm.self_display_name("r-test"), Some("零夢".into()));
     }
 }

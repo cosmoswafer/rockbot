@@ -17,7 +17,7 @@ fn test_config_from_example_toml() {
 url = "your-server.example.com"
 username = "bot"
 password = "secret"
-debug = false
+
 
 [rocketchat.model]
 default_provider = "openrouter"
@@ -129,7 +129,7 @@ fn test_config_find_provider() {
 url = "test.example.com"
 username = "bot"
 password = "secret"
-debug = false
+
 
 [rocketchat.model]
 default_provider = "openrouter"
@@ -167,7 +167,7 @@ fn test_config_resolve_model() {
 url = "test.example.com"
 username = "bot"
 password = "secret"
-debug = false
+
 
 [rocketchat.model]
 default_provider = "openrouter"
@@ -217,7 +217,7 @@ fn test_tool_config_deserialize() {
 url = "test.example.com"
 username = "bot"
 password = "secret"
-debug = false
+
 
 [rocketchat.model]
 default_provider = "openrouter"
@@ -249,7 +249,7 @@ fn test_find_tool() {
 url = "test.example.com"
 username = "bot"
 password = "secret"
-debug = false
+
 
 [rocketchat.model]
 default_provider = "openrouter"

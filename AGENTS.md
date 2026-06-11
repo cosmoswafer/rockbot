@@ -58,20 +58,21 @@ No CI, no `rustfmt.toml`, no `clippy.toml`, no `rust-toolchain` file.
 
 Data Flow Diagrams in `_dfds/` define the system's architecture. The full development flow follows these phases in order:
 
-### Phase 1 — DFD design (no code)
+### Phase 1 — DFD design
 
-Design or update DFDs first. Do not touch any Rust source code until the DFDs are finalized.
+Design DFDs and write throwaway verification tests (`#[ignore]` or scripts
+in `./tmp/`) against real dependencies to validate data shapes and edge cases.
+No production code until DFDs are finalized.
 
 ### Phase 2 — Iterative DFD review & implementation
 
-For each DFD (ordered by the DFD-to-code mapping table below):
-
-1. **Read the DFD** to understand the data flow, process steps, and decision nodes.
-2. **Review the existing implementation** against the DFD — identify gaps, mismatches, or missing logic.
-3. **Implement findings** — map DFD processes to source files, add/modify code in iteration order (types/config → core logic → wiring).
-4. **Deep review** — re-read the DFD and re-check the implementation. Repeat steps 2–4 until the code fully aligns with the DFD.
-5. **Add/update tests** in the corresponding test file (inline `#[cfg(test)]` modules for unit tests, `tests/*.rs` for integration). Mock external dependencies (HTTP, WebDAV, RocketChat) — see existing `wiremock` patterns in `integration_mock.rs`.
-6. **Run full test suite** — `cargo test` (all non-ignored tests). Ensure tests cover all DFD paths and the latest changes. Fix any failures until all tests pass.
+For each DFD (ordered by the mapping table below):
+1. **Read DFD** — understand flows, processes, decision nodes.
+2. **Review implementation** — identify gaps against the DFD.
+3. **Implement** — types/config → core logic → wiring.
+4. **Deep review** — re-read DFD, re-check code. Repeat 2–4 until aligned.
+5. **Add tests** — mock external deps (see `integration_mock.rs` patterns).
+6. **Run suite** — `cargo test`, fix all failures.
 
 ### Phase 3 — Ship
 
@@ -90,6 +91,7 @@ For each DFD (ordered by the DFD-to-code mapping table below):
 | `base/config.md` | `config.rs` | `example.config.toml` |
 | `base/memory.md` | `memory.rs` | `harness.rs`, webdav crate (`client.rs`, `path.rs`) |
 | `base/rocketchat.md` | rocketchat crate (`client.rs`, `ddp.rs`, `types.rs`) | — |
+| `base/rocketchat-rest.md` | rocketchat crate (`rest.rs`), `harness.rs` | `client.rs` (token capture), webdav crate |
 | `tools/webdav.md` | `tools/webdav.rs` | webdav crate (`client.rs`, `path.rs`) |
 | `tools/calendar.md` | `tools/calendar.rs` | webdav crate (`client.rs`, `path.rs`) |
 | `tools/exa-search.md` | `tools/web_search.rs` | `tools/web_fetch.rs` |

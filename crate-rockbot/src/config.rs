@@ -12,7 +12,7 @@ pub struct AppConfig {
     #[serde(default)]
     pub image_providers: Vec<ProviderConfig>,
     #[serde(default)]
-    pub image_model: Option<ImageModelConfig>,
+    pub image_model: ImageModelConfig,
     #[serde(default)]
     pub tools: HashMap<String, ToolServiceConfig>,
     #[serde(default)]
@@ -54,12 +54,60 @@ pub struct ModelConfig {
     pub persist_interval_secs: u64,
     #[serde(default = "default_memory_ttl_secs")]
     pub memory_ttl_secs: u64,
+    #[serde(default = "default_max_context_bytes")]
+    pub max_context_bytes: usize,
+    #[serde(default = "default_max_attachment_bytes")]
+    pub max_attachment_bytes: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ImageModelConfig {
+    #[serde(default = "default_image_provider")]
     pub default_provider: String,
-    pub default_model: String,
+    #[serde(default = "default_image_text_model")]
+    pub default_text_model: String,
+    #[serde(default = "default_image_edit_model")]
+    pub default_edit_model: String,
+    #[serde(default = "default_image_quality")]
+    pub default_quality: String,
+    #[serde(default = "default_image_output_format")]
+    pub default_output_format: String,
+    #[serde(default = "default_image_num_images")]
+    pub default_num_images: u32,
+}
+
+fn default_image_provider() -> String {
+    "fal".into()
+}
+fn default_image_text_model() -> String {
+    "seedream".into()
+}
+fn default_image_edit_model() -> String {
+    "fal-ai/nano-banana-pro/edit".into()
+}
+fn default_image_quality() -> String {
+    "medium".into()
+}
+
+fn default_image_output_format() -> String {
+    "png".into()
+}
+
+fn default_image_num_images() -> u32 {
+    1
+}
+
+impl Default for ImageModelConfig {
+    fn default() -> Self {
+        Self {
+            default_provider: default_image_provider(),
+            default_text_model: default_image_text_model(),
+            default_edit_model: default_image_edit_model(),
+            default_quality: default_image_quality(),
+            default_output_format: default_image_output_format(),
+            default_num_images: default_image_num_images(),
+        }
+    }
 }
 
 fn default_max_iterations() -> u32 {
@@ -92,6 +140,14 @@ fn default_persist_interval_secs() -> u64 {
 
 fn default_memory_ttl_secs() -> u64 {
     300
+}
+
+fn default_max_context_bytes() -> usize {
+    30_000_000
+}
+
+fn default_max_attachment_bytes() -> u64 {
+    25_000_000
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -144,6 +200,12 @@ impl AppConfig {
         let provider_name = &self.rocketchat.model.default_provider;
         self.find_chat_provider(provider_name)
             .ok_or_else(|| crate::error::RockBotError::ProviderNotFound(provider_name.clone()))?;
+
+        let image_provider = &self.image_model.default_provider;
+        if !self.image_providers.is_empty() {
+            self.find_image_provider(image_provider)
+                .ok_or_else(|| crate::error::RockBotError::ProviderNotFound(image_provider.clone()))?;
+        }
         Ok(())
     }
 

@@ -136,7 +136,8 @@ impl WebSearchTool {
                 .or_else(|| {
                     result.get("text").and_then(|t| t.as_str()).map(|t| {
                         if t.len() > 500 {
-                            format!("{}...", &t[..500])
+                            let end = t.char_indices().map(|(i, _)| i).nth(500).unwrap_or(t.len());
+                            format!("{}...", &t[..end])
                         } else {
                             t.to_string()
                         }
@@ -356,7 +357,8 @@ mod tests {
     fn test_parse_text_fallback_when_no_highlights() {
         let text = "This is a long text that should be truncated at 500 characters...";
         let summary = if text.len() > 500 {
-            format!("{}...", &text[..500])
+            let end = text.char_indices().map(|(i, _)| i).nth(500).unwrap_or(text.len());
+            format!("{}...", &text[..end])
         } else {
             text.to_string()
         };

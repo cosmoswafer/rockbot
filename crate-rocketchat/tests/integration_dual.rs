@@ -28,7 +28,7 @@ type WsWrite = futures_util::stream::SplitSink<WebSocketStream<MaybeTlsStream<Tc
 type WsRead = futures_util::stream::SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>;
 
 fn config_path() -> String {
-    for candidate in &["config.toml", "../../config.toml", "/home/claw/rockbot/config.toml"] {
+    for candidate in &["config.toml", "../../config.toml", "/home/claw/rockbot/config.toml", "/home/gamer/Workspaces/rockbot/config.toml"] {
         if std::path::Path::new(candidate).exists() {
             return candidate.to_string();
         }
@@ -192,10 +192,9 @@ async fn test_message_roundtrip_dual() {
     panic!("message not received");
 }
 
-/// Two sessions. A sends a typing indicator; B subscribes to `stream-notify-room`
-/// and verifies it receives the typing changed event.
-/// NOTE: typing delivery via `stream-notify-room` may require specific server
-/// configuration. If typing events aren't delivered, the test logs a warning.
+/// Two sessions. A sends typing indicators using `ddp::typing_payload()`
+/// (the public API); B subscribes to `stream-notify-room/{rid}/user-activity`
+/// and verifies both ON and OFF events are received.
 #[tokio::test]
 #[ignore = "requires a running RocketChat server and valid config.toml"]
 async fn test_typing_indicator_roundtrip() {
@@ -208,14 +207,16 @@ async fn test_typing_indicator_roundtrip() {
 
     let rid = create_dm(&mut wa, &mut ra, &una).await.expect("dm A");
 
-    subscribe_notify(&mut wb, &mut rb, "TYPING", &format!("{}/typing", rid)).await.expect("typing sub");
+    subscribe_notify(&mut wb, &mut rb, "TYPING", &format!("{}/user-activity", rid))
+        .await
+        .expect("typing sub");
 
+    // --- typing ON ---
     let tp = ddp::typing_payload(&rid, &username, true);
-    send_json(&mut wa, &tp).await.expect("typing send");
+    send_json(&mut wa, &tp).await.expect("typing ON send");
 
-    // Give the server a few seconds to deliver the typing event
-    let mut found = false;
-    for _ in 0..12 {
+    let mut found_typing = false;
+    for _ in 0..15 {
         let frame = tokio::time::timeout(Duration::from_secs(5), rb.next()).await;
         let v: Value = match frame {
             Ok(Some(Ok(Message::Text(t)))) => match serde_json::from_str(&t) { Ok(v) => v, Err(_) => continue },
@@ -224,17 +225,50 @@ async fn test_typing_indicator_roundtrip() {
         if ddp::is_ping(&v) { send_json(&mut wb, &ddp::pong_message()).await.ok(); continue; }
         if ddp::is_changed(&v) {
             let en = v.get("fields").and_then(|f| f.get("eventName")).and_then(|e| e.as_str());
-            if en == Some(&format!("{}/typing", rid)) {
-                eprintln!("typing roundtrip OK");
-                found = true;
-                break;
+            if en != Some(&format!("{}/user-activity", rid)) { continue; }
+            let args = v.get("fields").and_then(|f| f.get("args")).and_then(|a| a.as_array());
+            if let Some(args_arr) = args {
+                if args_arr.len() >= 2
+                    && args_arr[1].as_array().map_or(false, |a| a.iter().any(|v| v.as_str() == Some("user-typing")))
+                {
+                    eprintln!("typing ON roundtrip OK");
+                    found_typing = true;
+                    break;
+                }
             }
         }
     }
-    if !found {
-        eprintln!("NOTE: typing event not received — stream-notify-room may require server config.");
-        eprintln!("  The typing payload was sent and the subscription was confirmed.");
+    assert!(found_typing, "B should receive user-activity typing ON event");
+
+    // Small gap so server sees a distinct state transition
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    // --- typing OFF ---
+    let tp_off = ddp::typing_payload(&rid, &username, false);
+    send_json(&mut wa, &tp_off).await.expect("typing OFF send");
+
+    let mut found_stopped = false;
+    for _ in 0..15 {
+        let frame = tokio::time::timeout(Duration::from_secs(5), rb.next()).await;
+        let v: Value = match frame {
+            Ok(Some(Ok(Message::Text(t)))) => match serde_json::from_str(&t) { Ok(v) => v, Err(_) => continue },
+            _ => continue,
+        };
+        if ddp::is_ping(&v) { send_json(&mut wb, &ddp::pong_message()).await.ok(); continue; }
+        if ddp::is_changed(&v) {
+            let en = v.get("fields").and_then(|f| f.get("eventName")).and_then(|e| e.as_str());
+            if en != Some(&format!("{}/user-activity", rid)) { continue; }
+            let args = v.get("fields").and_then(|f| f.get("args")).and_then(|a| a.as_array());
+            if let Some(args_arr) = args {
+                if args_arr.len() >= 2 && args_arr[1].as_array().map_or(false, |a| a.is_empty()) {
+                    eprintln!("typing OFF roundtrip OK");
+                    found_stopped = true;
+                    break;
+                }
+            }
+        }
     }
+    assert!(found_stopped, "B should receive user-activity typing OFF event (empty activities)");
 }
 
 /// Two sessions. A sends a message WITH an alias.

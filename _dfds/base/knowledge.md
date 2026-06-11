@@ -154,7 +154,7 @@ flowchart TD
     PUT_IDX[PUT index.json to WebDAV]
     DAV[(NextCloud WebDAV)]
 
-    CALL -->|"category, topic, content, when_useful"| PARSE
+    CALL -->|"category, topic, content, when_useful, priority"| PARSE
     PARSE -->|"validated args"| CATEGORY
     CATEGORY -->|"skill | secret | note"| SLUG
     SLUG -->|"{category}_{slug}.md"| FORMAT
@@ -199,8 +199,8 @@ flowchart TD
     GET_IDX -->|"parse entries"| SCORE
     CTX_MSGS -->|"text of last N messages"| EXTRACT_KW
     EXTRACT_KW -->|"tokenized keywords"| SCORE
-    SCORE -->|"tags + when_useful overlap"| RELEVANT
-    SCORE -->|"no overlap"| SKIP
+    SCORE -->|"keywords + priority bonus"| RELEVANT
+    SCORE -->|"no overlap + not P0"| SKIP
     RELEVANT -->|"filename list"| LOAD
     LOAD -->|"GET each .md"| DAV
     DAV -->|"markdown content"| CONCAT
@@ -237,16 +237,40 @@ Machine-readable JSON file at `{root}/{webdav_dir}/knowledge/index.json`.
 
 ### `IndexEntry`
 
-| Field         | Type             | Notes                                          |
-| ------------- | ---------------- | ---------------------------------------------- |
-| `id`          | `String`         | Matches `KnowledgeEntry.id` (slug)             |
-| `filename`    | `String`         | `{category}_{slug}.md`                         |
-| `category`    | `KnowledgeCategory` | `skill`, `secret`, or `note`                |
-| `title`       | `String`         | Human-readable title                           |
-| `when_useful` | `String`         | Situation description for retrieval matching   |
-| `tags`        | `Vec<String>`    | Searchable keywords                            |
-| `created_at`  | `String`         | ISO 8601                                       |
-| `updated_at`  | `String`         | ISO 8601                                       |
+| Field         | Type               | Notes                                          |
+| ------------- | ------------------ | ---------------------------------------------- |
+| `id`          | `String`           | Matches `KnowledgeEntry.id` (slug)             |
+| `filename`    | `String`           | `{category}_{slug}.md`                         |
+| `category`    | `KnowledgeCategory` | `skill`, `secret`, or `note`                 |
+| `title`       | `String`           | Human-readable title                           |
+| `when_useful` | `String`           | Situation description for retrieval matching   |
+| `tags`        | `Vec<String>`      | Searchable keywords                            |
+| `priority`    | `KnowledgePriority` | P0 (highest), P1, P2, P3; boosts recall rate |
+| `created_at`  | `String`           | ISO 8601                                       |
+| `updated_at`  | `String`           | ISO 8601                                       |
+
+### `KnowledgePriority`
+
+```rust
+enum KnowledgePriority {
+    P0, // highest priority — always loaded, maximum recall boost
+    P1, // high priority — strong recall boost
+    P2, // medium priority — moderate recall boost
+    P3, // low priority (default for new entries) — baseline recall
+}
+```
+
+**Priority effect on recall**: During `match_relevant`, priority adds a flat
+score bonus on top of keyword matching. P0 entries are always selected
+regardless of keyword overlap. Higher priority means the entry is recalled
+more frequently and surfaced earlier in the injected knowledge list.
+
+| Priority | Score bonus | Always selected? |
+|----------|------------|-------------------|
+| P0       | +8         | Yes               |
+| P1       | +5         | No                |
+| P2       | +2         | No                |
+| P3       | +0         | No                |
 
 ### `KnowledgeCategory`
 
@@ -266,6 +290,7 @@ Each `.md` file uses a simple structure with optional frontmatter:
 # {title}
 
 **Category:** {category}
+**Priority:** {P0 | P1 | P2 | P3}
 **When Useful:** {when_useful}
 **Tags:** {tag1}, {tag2}
 **Created:** {created_at}
@@ -300,13 +325,14 @@ rockbot/r-project-x/knowledge/note_build_commands.md
 
 Registered in `ToolRegistry`. Parameters:
 
-| Parameter     | Type     | Description                                      |
-| ------------- | -------- | ------------------------------------------------ |
-| `category`    | `string` | `"skill"`, `"secret"`, or `"note"`               |
-| `topic`       | `string` | Short title for the entry                        |
-| `content`     | `string` | Markdown body                                    |
-| `when_useful` | `string` | Situation description (retrieval trigger)        |
-| `tags`        | `string` | Comma-separated keywords                         |
+| Parameter     | Type     | Required | Description                                      |
+| ------------- | -------- | -------- | ------------------------------------------------ |
+| `category`    | `string` | Yes      | `"skill"`, `"secret"`, or `"note"`               |
+| `topic`       | `string` | Yes      | Short title for the entry                        |
+| `content`     | `string` | Yes      | Markdown body                                    |
+| `when_useful` | `string` | Yes      | Situation description (retrieval trigger)        |
+| `tags`        | `string` | No       | Comma-separated keywords                         |
+| `priority`    | `string` | No       | `"P0"`, `"P1"`, `"P2"`, or `"P3"` (default: P3) |
 
 ### Tool: `forget_knowledge`
 

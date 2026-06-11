@@ -101,7 +101,7 @@ flowchart TD
     PARSE2{Section exists?}
     APPEND_OP[Append ## Section + body]
     SKIP[Skip header in existing]
-    REPLACE_OP[Locate section bounds<br/>(next ## or EOF)]
+    REPLACE_OP["Locate section bounds (next ## or EOF)"]
     SWAP[Replace section body]
     RESULT[Write result]
 

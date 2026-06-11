@@ -109,6 +109,67 @@ The filter process internally:
 
 All other cases are silently dropped.
 
+### 2g. Image Attachment Reception
+
+When a user sends a message with an image/file upload, the DDP `"changed"` event
+carries the full file metadata and attachment data in `args[0]`. The parser must
+extract these fields and populate `IncomingMessage` so the agent can "see" images.
+
+```mermaid
+flowchart TD
+    WS[RocketChat DDP over WebSocket]
+    RCV(ReceiveFrame)
+    PARSE(ParseJson)
+    ROUTE(RouteByMsgField)
+    EXTRACT_MSG(ExtractMessageText)
+    EXTRACT_FILE(ExtractFileMetadata)
+    EXTRACT_ATTACH(ExtractAttachments)
+    BUILD_MESSAGE(BuildIncomingMessage)
+    DISPATCH(DispatchToAgent)
+
+    WS -->|"changed event"| RCV
+    RCV -->|"frame string"| PARSE
+    PARSE -->|"json object"| ROUTE
+    ROUTE -->|"args[0] message object"| EXTRACT_MSG
+    ROUTE -->|"args[0] message object"| EXTRACT_FILE
+    ROUTE -->|"args[0] message object"| EXTRACT_ATTACH
+    EXTRACT_MSG -->|"text, sender, room"| BUILD_MESSAGE
+    EXTRACT_FILE -->|"file metadata"| BUILD_MESSAGE
+    EXTRACT_ATTACH -->|"attachment list"| BUILD_MESSAGE
+    BUILD_MESSAGE -->|"IncomingMessage with images"| DISPATCH
+```
+
+**File metadata** (`args[0]["file"]` and `args[0]["files"]`):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `_id` | `String` | File ID on the RocketChat server |
+| `name` | `String` | Original filename |
+| `type` | `String` | MIME type (e.g. `image/png`) |
+| `size` | `u64` | File size in bytes |
+| `format` | `String` | File extension (e.g. `png`) |
+| `typeGroup` | `String` | `"image"`, `"video"`, `"audio"`, `"document"`, `"thumb"` |
+
+**Attachment metadata** (`args[0]["attachments"]` array):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `title` | `String` | Attachment display title (filename) |
+| `title_link` | `String` | Relative path to **original file**: `/file-upload/{file_id}/{name}` |
+| `title_link_download` | `bool` | `true` for file uploads |
+| `image_url` | `String` | Relative path to **thumbnail**: `/file-upload/{thumb_id}/{name}` |
+| `image_type` | `String` | MIME type of the image |
+| `image_size` | `u64` | Original file size in bytes |
+| `image_dimensions` | `{width, height}` | Pixel dimensions |
+| `image_preview` | `String` | Base64-encoded small inline preview |
+| `type` | `String` | `"file"` for uploads |
+| `fileId` | `String` | Back-reference to the original `file._id` |
+
+**Download URL construction**: `{server_base_url}{title_link}` for the original,
+`{server_base_url}{image_url}` for the thumbnail. `title_link` and `image_url`
+are URL-encoded relative paths — they must be joined with the server base URL
+scheme/host before use.
+
 ### 2d. Ping/Pong Keepalive Deep Dive
 
 The RocketChat server periodically sends `{"msg": "ping"}` to keep the
@@ -286,42 +347,45 @@ with no error.
 
 The `tokenExpires` field is **not consumed** by the current implementation.
 
-### 2g. Alias Impersonation Deep Dive
+### 2g. Alias Impersonation
 
 Messages can be sent with an optional `alias` field that overrides the displayed
-sender name. The bot's user account must have the `message-impersonate`
-permission. When the permission is missing, RocketChat silently ignores the
-`alias` field and shows the message under the bot's own username. The alias is
-injected into `params[0]` alongside `rid` and `msg`.
+sender name. Two paths support this:
+
+1. **DDP `sendMessage`** — the `alias` field is injected into `params[0]`
+   alongside `rid` and `msg`. Requires `message-impersonate` permission. The
+   rocketchat crate exposes `send_message_payload_with_alias()` for tests,
+   but the production flow does not use DDP alias.
 
 ```mermaid
 flowchart TD
-    HARNESS[Agent Loop]
-    SENDER(MessageSender<br/>reply_with_alias)
+    DDP(MessageSender<br/>reply_with_alias)
     BUILD(BuildPayload)
     INJECT{Has alias?}
     NO_ALIAS["params: {_id, rid, msg}"]
     WITH_ALIAS["params: {_id, rid, msg, alias}"]
     SEND(SendDdpMethod)
     RC[RocketChat DDP]
-    RESULT[/result or error/]
 
-    HARNESS -->|"text + optional alias"| SENDER
-    SENDER -->|"room_id + text + alias"| BUILD
+    DDP -->|"room_id + text + alias"| BUILD
     BUILD --> INJECT
     INJECT -->|"no"| NO_ALIAS
     INJECT -->|"yes"| WITH_ALIAS
     NO_ALIAS --> SEND
     WITH_ALIAS --> SEND
     SEND -->|"method: sendMessage"| RC
-    RC -->|"msg: result"| RESULT
 ```
 
-The alias is a plain string. When set, the RocketChat server replaces the bot's
-display name with the alias value in the message UI and event broadcasts. The
-`IncomingMessage` events received by other clients include an
-`args[0].alias` field reflecting the impersonated name. Self-messages (where
-`sender_id == bot_user_id`) are still filtered out regardless of alias.
+2. **REST `chat.sendMessage`** — the production path. The alias is sourced from
+   soul memory (Layer 3) via `self_display_name()`, then sent via
+   `POST /api/v1/chat.sendMessage {message: {rid, msg, alias}}`. Falls back to
+   DDP `sendMessage` without alias on REST failure. Diagram and full spec in
+   [RocketChat REST API](rocketchat-rest.md).
+
+The alias is a plain string (supports Chinese/emoji like `"零夢✨"`). When set,
+the RocketChat server replaces the bot's display name with the alias value in
+the message UI and event broadcasts. Self-messages (where `sender_id ==
+bot_user_id`) are still filtered out regardless of alias.
 
 ## 3. Data Structures
 
@@ -329,7 +393,7 @@ The Rust crate defines formal typed structs with `serde` (Serialize/Deserialize)
 in `crate-rocketchat/src/types.rs`. Tables below map each field to its struct
 definition and how it is populated.
 
-#### `IncomingMessage` (fields defined in `types.rs:5-15`)
+#### `IncomingMessage` (fields defined in `types.rs`)
 
 | Field         | Type              | Source / Notes                                      |
 | ------------- | ----------------- | --------------------------------------------------- |
@@ -342,6 +406,10 @@ definition and how it is populated.
 | `is_dm`       | `bool`            | `true` if `room_name` is empty or `"DIRECT_MESSAGES"` |
 | `timestamp`   | `Option<i64>`     | `args[0]["ts"]` — message timestamp (`$date`)       |
 | `sender_id`   | `String`          | `args[0]["u"]["_id"]` — sender's RocketChat user ID |
+| `alias`       | `Option<String>`  | `args[0]["alias"]` — sender alias                   |
+| `file`        | `Option<FileInfo>` | `args[0]["file"]` — primary file metadata (present when message has an attachment) |
+| `files`       | `Vec<FileInfo>`   | `args[0]["files"]` — all file variants (original + thumbnails) |
+| `attachments` | `Vec<AttachmentInfo>` | `args[0]["attachments"]` — attachment objects with download URLs |
 
 Room name precedence:
 - **Matching/registration**: use `room_name` (slug) — always ASCII, deterministic
@@ -367,18 +435,50 @@ is available, the display name is used; otherwise the URL slug is the fallback.
 | ----------- | ----------------- | ------------------------------------ |
 | `room_id`   | `String`          | `MessageSender::room_id()`           |
 | `text`      | `String`          | `MessageSender::reply(text)`         |
-| `alias`     | `Option<String>`  | `MessageSender::reply_with_alias(text, alias)` |
+| `alias`     | `Option<String>`  | `BotReply::new()` defaults to `None` |
 | `thread_id` | `Option<String>`  | Reserved for threaded replies (`tmid`) |
 
 `MessageSender` also provides `reply_code(text)` (code-block format),
-`reply_with_alias(text, alias)` (impersonated reply), and
-`typing(state, username)` (typing indicator). The alias requires
-`message-impersonate` permission; if missing, RocketChat silently falls back
-to the bot's own username.
+`reply_with_alias(text, alias)` (DDP aliased reply — used in tests, not
+production), and `typing(state, username)` (typing indicator).
+
+**Production alias flow**: the alias is not part of `BotReply`. Instead,
+`main.rs` extracts the bot's self-display name from soul memory via
+`MemoryManager::self_display_name(room_id)`, then sends via REST
+`chat.sendMessage` with alias. On REST failure, falls back to DDP
+`sendMessage` without alias. See [RocketChat REST API](rocketchat-rest.md).
 
 No `DdpEvent` struct exists. Raw DDP frames are handled as `serde_json::Value`
 with the `"msg"` field extracted via helper functions: `msg_field()`, `is_ping()`,
 `is_changed()`, etc. (`ddp.rs:68-101`).
+
+#### `FileInfo`
+
+| Field      | Type     | Source                                   |
+| ---------- | -------- | ---------------------------------------- |
+| `_id`      | `String` | `args[0]["file"]["_id"]`                 |
+| `name`     | `String` | `args[0]["file"]["name"]`                |
+| `type`     | `String` | MIME type (e.g. `image/png`)             |
+| `size`     | `u64`    | File size in bytes                       |
+| `format`   | `String` | File extension (e.g. `png`)              |
+| `type_group` | `String` | `"image"`, `"video"`, `"thumb"`, etc.  |
+
+#### `AttachmentInfo`
+
+| Field             | Type                | Source                                       |
+| ----------------- | ------------------- | -------------------------------------------- |
+| `title`           | `String`            | Display title (filename)                     |
+| `title_link`      | `String`            | Relative path to **original file** download  |
+| `title_link_download` | `bool`          | True for file uploads                        |
+| `image_url`       | `String`            | Relative path to **thumbnail** image         |
+| `image_type`      | `String`            | MIME type                                    |
+| `image_size`      | `u64`               | Original file size in bytes                  |
+| `image_dimensions`| `Option<ImageDim>`  | `{width, height}` pixel dimensions           |
+| `image_preview`   | `String`            | Base64-encoded inline preview                |
+| `type`            | `String`            | `"file"` for uploads                         |
+| `file_id`         | `String`            | Back-reference to original `file._id`        |
+
+To construct the full download URL: join `{server_config.host()}{attachment.title_link}`. The `image_url` field points to a thumbnail variant — use `title_link` for the original, full-quality image.
 
 #### `MessageFilter`
 

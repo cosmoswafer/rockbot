@@ -22,11 +22,13 @@ type WsStream =
 pub struct MessageSender {
     writer: Arc<Mutex<WriteHalf>>,
     room_id: String,
+    user_id: String,
+    auth_token: String,
 }
 
 impl MessageSender {
-    fn new(writer: Arc<Mutex<WriteHalf>>, room_id: String) -> Self {
-        Self { writer, room_id }
+    fn new(writer: Arc<Mutex<WriteHalf>>, room_id: String, user_id: String, auth_token: String) -> Self {
+        Self { writer, room_id, user_id, auth_token }
     }
 
     pub async fn reply(&self, text: &str) -> Result<()> {
@@ -36,7 +38,7 @@ impl MessageSender {
     }
 
     pub async fn reply_with_alias(&self, text: &str, alias: &str) -> Result<()> {
-        let payload = ddp::send_message_payload_with_alias(&self.room_id, text, alias);
+        let payload = ddp::send_message_payload_with_alias(&self.room_id, text, Some(alias));
         let mut writer = self.writer.lock().await;
         writer.send(&payload).await
     }
@@ -52,8 +54,26 @@ impl MessageSender {
         writer.send(&payload).await
     }
 
+    pub async fn set_real_name(&self, name: &str) -> Result<()> {
+        let payload = ddp::set_real_name_payload(name);
+        let mut writer = self.writer.lock().await;
+        writer.send(&payload).await
+    }
+
     pub fn room_id(&self) -> &str {
         &self.room_id
+    }
+
+    pub fn user_id_for_rest(&self) -> &str {
+        &self.user_id
+    }
+
+    pub fn auth_token_for_rest(&self) -> &str {
+        &self.auth_token
+    }
+
+    pub fn rest_client(&self, config: &crate::config::RocketChatConfig) -> crate::rest::RestApiClient {
+        crate::rest::RestApiClient::new(config, self.user_id.clone(), self.auth_token.clone())
     }
 }
 
@@ -73,6 +93,7 @@ impl WriteHalf {
 pub struct RocketChatClient {
     config: RocketChatConfig,
     user_id: Option<String>,
+    auth_token: Option<String>,
     username: String,
     bot_name: String,
     registered_rooms: HashMap<String, bool>,
@@ -85,6 +106,7 @@ impl RocketChatClient {
         Self {
             config,
             user_id: None,
+            auth_token: None,
             username,
             bot_name,
             registered_rooms: HashMap::new(),
@@ -102,6 +124,10 @@ impl RocketChatClient {
 
     pub fn user_id(&self) -> Option<&str> {
         self.user_id.as_deref()
+    }
+
+    pub fn auth_token(&self) -> Option<&str> {
+        self.auth_token.as_deref()
     }
 
     pub fn bot_name(&self) -> &str {
@@ -138,10 +164,11 @@ impl RocketChatClient {
         writer.lock().await.send(&login_msg).await?;
 
         let result = Self::expect_msg(&mut read, "result").await?;
-        let (user_id, _token) = ddp::extract_login_result(&result)
+        let (user_id, token) = ddp::extract_login_result(&result)
             .ok_or_else(|| RocketChatError::AuthFailed("Missing id/token in result".into()))?;
         info!("Login successful, user_id={}", user_id);
         self.user_id = Some(user_id.clone());
+        self.auth_token = Some(token);
 
         let sub_msg = ddp::subscribe_message(SUBSCRIPTION_ID);
         writer.lock().await.send(&sub_msg).await?;
@@ -185,6 +212,7 @@ impl RocketChatClient {
             if ddp::is_ping(&value) {
                 let pong = ddp::pong_message();
                 writer.lock().await.send(&pong).await?;
+                debug!("Sent pong to server");
             } else if ddp::is_changed(&value) {
                 let filter = MessageFilter::new(user_id.as_str());
                 if let Some(msg) = filter.filter(&value) {
@@ -195,7 +223,11 @@ impl RocketChatClient {
                             && registered_rooms.contains_key(&msg.room_name));
 
                     if should_dispatch {
-                        let sender = MessageSender::new(writer.clone(), msg.room_id.clone());
+                        debug!(
+                            "Dispatching message from {} in {} (dm={}, text='{}')",
+                            msg.sender_name, msg.room_name, msg.is_dm, msg.text
+                        );
+                        let sender = MessageSender::new(writer.clone(), msg.room_id.clone(), user_id.to_string(), self.auth_token.as_deref().unwrap_or("").to_string());
                         let handler = handler.clone();
                         tokio::spawn(async move {
                             handler(msg, sender).await;

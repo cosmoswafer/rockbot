@@ -68,9 +68,9 @@ flowchart TD
 | `rocketchat` | `RocketChatSection`          | Server connection + chat model settings        |
 | `chat_providers` | `Vec<ProviderConfig>`    | Chat AI provider definitions (array-of-tables) |
 | `image_providers`| `Vec<ProviderConfig>`    | Image generation provider definitions          |
-| `image_model`    | `Option<ImageModelConfig>`| Default image provider + model alias           |
+| `image_model`    | `ImageModelConfig` (always present via default)| Default image provider + model alias           |
 | `webdav`     | `Option<WebDavConfig>`       | NextCloud WebDAV endpoint and credentials      |
-| `tools`      | `HashMap<String, ToolSvcCfg>`| Tool-specific API keys (generic map)           |
+| `tools`      | `HashMap<String, ToolServiceConfig>`| Tool-specific API keys (generic map)     |
 
 #### `RocketChatSection`
 
@@ -102,6 +102,7 @@ flowchart TD
 | `summary_days`         | `u32`   | Layer 2 retention window in days (default 7)                  |
 | `memory_ttl_secs`      | `u64`   | Room idle timeout — snapshot to WebDAV then evict (default 300)|
 | `persist_interval_secs`| `u64`   | Snapshot persist timer interval (default 60)                  |
+| `max_context_bytes`    | `usize` | Max total byte size of context sent to LLM (default 30MB). Exceeding this drops oldest image data first, preserving the latest user message images. |
 
 #### `ProviderConfig`
 

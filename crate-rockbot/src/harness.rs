@@ -1,7 +1,10 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
+use base64::Engine;
 use tracing::{debug, error, info, warn};
 use webdav::{WebDavClient, WebDavPath};
+use rocketchat::RestApiClient;
 
 use crate::AppConfig;
 use crate::error::Result;
@@ -18,18 +21,34 @@ You respond to DMs and @mentions concisely and helpfully. \
 When you need the current date or time, use the datetime tool. \
 When you need information from the web, use the web_search tool. \
 When you need to fetch a URL, use web_fetch. \
-When you need to analyze an image, use the vision tool. \
+When you need to fetch an image from a WebDAV path or public URL, use the vision tool. \
 When you need to read, write, list, or manage files on remote storage, use the webdav tool. \
 When you need to manage calendar events or todo tasks, use the calendar tool. \
 When you need to generate an image, use the image_gen tool. \
+When a user sends an image and asks to edit, modify, transform, or use it \
+as a basis for image generation, use the image_gen tool — user-attached images \
+appear as markdown ![image_name](image_name) in the conversation. Reference the \
+image by its image_name in your prompt (e.g. \"edit image1.png to add a hat\"). \
+The harness will automatically resolve image_name references to the actual images. \
+If the user asks to edit a previously generated image (no new attachment), \
+you MUST include the fal.ai CDN URL from the previous result in the \
+image_urls parameter yourself. \
 The image_gen tool returns both a WebDAV path and an original fal.ai CDN URL — \
-always share the fal.ai CDN URL with the user so they can view or share the image directly. \
+always share the fal.ai CDN URL with the user in markdown image format \
+as `![{description}]({fal_url})` so they can view the image inline. \
 When a user says !soul or asks to save or update preferences, identity, or facts, use the edit_soul tool. \
 When a user asks you to remember something, shares notes, or says !remember, !note, !save or shares important \
 information worth persisting, use the save_knowledge tool. \
 When a user says !forget or asks to remove something you learned, \
 use the forget_knowledge tool. \
 When you need to recall previously saved knowledge, use the recall_knowledge tool. \
+When setting your soul via edit_soul, always use this exact format: \
+\"# Soul Memory\\n\\n## Identity\\nYourName ✨\". \
+Your display name is extracted by the regex \\\"## Identity\\n(.+)\\\" — \
+the first line immediately after \"## Identity\" becomes your name. \
+The name MUST be on its own line immediately after \"## Identity\", \
+with no descriptions, dashes, or extra text. Keep it under 32 characters. \
+You may add ## Preferences and ## Facts sections below Identity. \
 Answer in the same language as the user. \
 Keep responses clear and to the point.\
 ";
@@ -40,7 +59,10 @@ pub struct AgentHarness {
     memory: MemoryManager,
     tools: ToolRegistry,
     webdav: Option<WebDavClient>,
+    rest_client: Option<RestApiClient>,
     max_iterations: u32,
+    max_attachment_bytes: u64,
+    image_pool: HashMap<String, Vec<CachedImage>>,
 }
 
 impl AgentHarness {
@@ -56,14 +78,19 @@ impl AgentHarness {
         let summary_days = config.rocketchat.model.summary_days;
         let max_soul_chars = config.rocketchat.model.max_soul_chars;
         let persist_interval = config.rocketchat.model.persist_interval_secs;
+        let max_context_bytes = config.rocketchat.model.max_context_bytes;
+        let max_attachment_bytes = config.rocketchat.model.max_attachment_bytes;
         let config = Arc::new(config);
         Self {
             config,
             provider,
-            memory: MemoryManager::new(max_chars, max_history, max_summary_chars, summary_days, max_soul_chars, persist_interval),
+            memory: MemoryManager::new(max_chars, max_history, max_summary_chars, summary_days, max_soul_chars, persist_interval, max_context_bytes),
             tools: ToolRegistry::new(),
             webdav,
+            rest_client: None,
             max_iterations,
+            max_attachment_bytes,
+            image_pool: HashMap::new(),
         }
     }
 
@@ -96,6 +123,22 @@ impl AgentHarness {
         &self.tools
     }
 
+    pub fn set_rest_client(&mut self, client: RestApiClient) {
+        self.rest_client = Some(client);
+    }
+
+    pub fn has_rest_client(&self) -> bool {
+        self.rest_client.is_some()
+    }
+
+    pub async fn resolve_room_fname(&mut self, room_id: &str) -> Option<String> {
+        if let Some(ref mut client) = self.rest_client {
+            client.resolve_room_fname(room_id).await
+        } else {
+            None
+        }
+    }
+
     pub async fn process_message(
         &mut self,
         room_id: &str,
@@ -104,7 +147,9 @@ impl AgentHarness {
         is_dm: bool,
         sender_name: &str,
         text: &str,
+        attachments: &[rocketchat::AttachmentInfo],
     ) -> Result<Option<String>> {
+        let msg_start = std::time::Instant::now();
         let clean_text = if !is_dm && !text.is_empty() {
             text.trim_start().to_string()
         } else {
@@ -121,7 +166,32 @@ impl AgentHarness {
             self.restore_history(room_id, room_name, room_fname, is_dm).await;
         }
 
-        let user_msg = ChatMessage::user(format!("{}: {}", sender_name, clean_text));
+        let user_text = format!("{}: {}", sender_name, clean_text);
+
+        // Download all image attachments and encode as data URIs,
+        // paired with their filenames for markdown-based referencing.
+        let attachment_refs = self.download_attachment_refs(attachments).await;
+
+        let user_msg = if !attachment_refs.is_empty() {
+            let data_uris: Vec<String> = attachment_refs.iter().map(|r| r.data_uri.clone()).collect();
+            let image_labels: String = attachment_refs
+                .iter()
+                .map(|r| format!("![{}]({})", r.title, r.title))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let prompt = if clean_text.is_empty() {
+                format!("Describe this image in detail.\nAttached: {}", image_labels)
+            } else {
+                format!(
+                    "{}: {}\nAttached: {}",
+                    sender_name, clean_text, image_labels
+                )
+            };
+            ChatMessage::user_with_images(prompt, data_uris)
+        } else {
+            ChatMessage::user(user_text)
+        };
+
         if let Some(room) = self.memory.get_mut(room_id) {
             room.history.append(user_msg);
         }
@@ -135,11 +205,21 @@ impl AgentHarness {
         let model = self.resolve_model();
 
         let wd = compute_webdav_dir(room_name, room_fname, is_dm);
-        let _ = self.refresh_knowledge_context(room_id, &wd).await;
+        if let Err(e) = self.refresh_knowledge_context(room_id, &wd).await {
+            warn!("Failed to refresh knowledge context: {}", e);
+        }
 
         let mut messages = self
             .memory
             .build_context(room_id, &system_prompt, None, None);
+        self.inject_vision_images(room_id, &mut messages);
+        debug!(
+            "Built context for room {}: {} messages (model={}, have_tools={})",
+            room_id,
+            messages.len(),
+            model,
+            have_tools,
+        );
 
         let mut iterations: u32 = 0;
 
@@ -153,6 +233,10 @@ impl AgentHarness {
                 let fallback = "I'm sorry, I got stuck in a loop. Could you rephrase your request?";
                 let assistant_msg = ChatMessage::assistant(fallback);
                 self.append_to_history(room_id, assistant_msg);
+                debug!(
+                    "process_message max_iterations reached: total_elapsed_ms={}",
+                    msg_start.elapsed().as_millis(),
+                );
                 return Ok(Some(fallback.to_string()));
             }
 
@@ -172,8 +256,17 @@ impl AgentHarness {
                 tool_choice: None,
             };
 
+            let llm_start = std::time::Instant::now();
             match self.provider.complete(request).await {
                 Ok(result) => {
+                    debug!(
+                        "LLM call completed in {}ms (iteration {}/{}, tool_calls={}, has_text={})",
+                        llm_start.elapsed().as_millis(),
+                        iterations,
+                        self.max_iterations,
+                        result.tool_calls.len(),
+                        result.text.is_some(),
+                    );
                     if !result.tool_calls.is_empty() {
                         let assistant_msg = ChatMessage::assistant_with_tool_calls(
                             "",
@@ -191,6 +284,7 @@ impl AgentHarness {
                                 tool_call.function.name, tool_call.id
                             );
 
+                            let tool_start = std::time::Instant::now();
                             if tool_call.function.name == "edit_soul" {
                                 altered_soul = true;
                             }
@@ -200,8 +294,15 @@ impl AgentHarness {
                                 altered_knowledge = true;
                             }
 
-                            let arguments = if tool_call.function.name == "webdav"
-                                || tool_call.function.name == "image_gen"
+                            let arguments = if tool_call.function.name == "image_gen" {
+                                let wd = compute_webdav_dir(room_name, room_fname, is_dm);
+                                inject_image_urls_from_refs(
+                                    &tool_call.function.arguments,
+                                    room_id,
+                                    &wd,
+                                    &attachment_refs,
+                                )
+                            } else if tool_call.function.name == "webdav"
                                 || tool_call.function.name == "edit_soul"
                                 || tool_call.function.name == "save_knowledge"
                                 || tool_call.function.name == "forget_knowledge"
@@ -217,7 +318,26 @@ impl AgentHarness {
                             let tool_result = self
                                 .tools
                                 .execute_by_name(&tool_call.id, &tool_call.function.name, &arguments)
-                                .await?;
+                                .await
+                                .unwrap_or_else(|e| {
+                                    crate::tool::ToolResult {
+                                        call_id: tool_call.id.clone(),
+                                        name: tool_call.function.name.clone(),
+                                        is_error: true,
+                                        content: format!("Tool error: {}", e),
+                                    }
+                                });
+
+                            debug!(
+                                "Tool {} completed in {}ms (is_error={})",
+                                tool_call.function.name,
+                                tool_start.elapsed().as_millis(),
+                                tool_result.is_error,
+                            );
+
+                            if tool_call.function.name == "vision" && !tool_result.is_error {
+                                self.cache_vision_images(room_id, &tool_result.content);
+                            }
 
                             let tool_msg = ChatMessage::tool(&tool_call.id, &tool_result.content);
                             self.append_to_history(room_id, tool_msg);
@@ -239,6 +359,7 @@ impl AgentHarness {
                         messages = self
                             .memory
                             .build_context(room_id, &system_prompt, None, None);
+                        self.inject_vision_images(room_id, &mut messages);
                         continue;
                     }
 
@@ -256,12 +377,21 @@ impl AgentHarness {
                         } else {
                             clean
                         };
+                        debug!(
+                            "process_message done: total_elapsed_ms={} iterations={}",
+                            msg_start.elapsed().as_millis(),
+                            iterations,
+                        );
                         return Ok(Some(reply));
                     }
 
                     let fallback = "I received a response but it was empty. Please try again.";
                     let assistant_msg = ChatMessage::assistant(fallback);
                     self.append_to_history(room_id, assistant_msg);
+                    debug!(
+                        "process_message empty response fallback: total_elapsed_ms={}",
+                        msg_start.elapsed().as_millis(),
+                    );
                     return Ok(Some(fallback.to_string()));
                 }
                 Err(e) => {
@@ -269,6 +399,10 @@ impl AgentHarness {
                     let fallback = format!("I encountered an error: {}. Please try again.", e);
                     let assistant_msg = ChatMessage::assistant(&fallback);
                     self.append_to_history(room_id, assistant_msg);
+                    debug!(
+                        "process_message provider error: total_elapsed_ms={}",
+                        msg_start.elapsed().as_millis(),
+                    );
                     return Ok(Some(fallback));
                 }
             }
@@ -300,6 +434,151 @@ impl AgentHarness {
                 );
                 self.config.rocketchat.model.default_model.clone()
             })
+    }
+
+    async fn download_attachment_refs(
+        &self,
+        attachments: &[rocketchat::AttachmentInfo],
+    ) -> Vec<AttachmentRef> {
+        let mut refs = Vec::with_capacity(attachments.len());
+        for att in attachments {
+            let title_link = match att.title_link.as_deref() {
+                Some(link) if !link.is_empty() => link,
+                _ => continue,
+            };
+            let title = att
+                .title
+                .as_deref()
+                .filter(|t| !t.is_empty())
+                .unwrap_or("image")
+                .to_string();
+            let url = format!(
+                "https://{}{}",
+                self.config.rocketchat.server.url.trim_end_matches('/'),
+                title_link
+            );
+            match self.download_and_encode_single(&url).await {
+                Ok(data_uri) => refs.push(AttachmentRef { title, data_uri }),
+                Err(e) => warn!("Failed to download attachment {}: {}", url, e),
+            }
+        }
+        refs
+    }
+
+    async fn download_and_encode_single(&self, url: &str) -> Result<String> {
+        let mut req = self.provider_http_client().get(url);
+        if let Some(ref rest) = self.rest_client {
+            req = req.headers(rest.headers());
+        }
+        let response = req
+            .timeout(std::time::Duration::from_secs(30))
+            .send()
+            .await
+            .map_err(|e| crate::error::RockBotError::Provider(format!("Attachment download failed: {e}")))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            return Err(crate::error::RockBotError::Provider(format!(
+                "Attachment download HTTP {}",
+                status
+            )));
+        }
+
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+
+        let mime = content_type.as_deref().unwrap_or("image/png");
+
+        if let Some(len) = response.content_length() {
+            if len > self.max_attachment_bytes {
+                return Err(crate::error::RockBotError::Provider(format!(
+                    "Attachment too large: {} bytes exceeds {} byte limit",
+                    len, self.max_attachment_bytes
+                )));
+            }
+        }
+
+        let bytes = response.bytes().await.map_err(|e| {
+            crate::error::RockBotError::Provider(format!("Attachment read failed: {e}"))
+        })?;
+
+        Ok(format!(
+            "data:{};base64,{}",
+            mime,
+            base64::engine::general_purpose::STANDARD.encode(&bytes)
+        ))
+    }
+
+    fn cache_vision_images(&mut self, room_id: &str, result: &str) {
+        // Parse markdown image tags from vision tool result:
+        // ![name](data:mime/type;base64,...)
+        let mut remaining = result;
+        while let Some(start) = remaining.find("![") {
+            let after_bang = &remaining[start + 2..];
+            if let Some(alt_end) = after_bang.find("](") {
+                let name = &after_bang[..alt_end];
+                let after_alt = &after_bang[alt_end + 2..];
+                if let Some(paren_end) = after_alt.find(')') {
+                    let url = &after_alt[..paren_end];
+                    if url.starts_with("data:") {
+                        debug!(
+                            "Vision tool: caching image '{}' for room {}",
+                            name, room_id
+                        );
+                        self.image_pool
+                            .entry(room_id.to_string())
+                            .or_default()
+                            .push(CachedImage {
+                                data_uri: url.to_string(),
+                                name: name.to_string(),
+                            });
+                    }
+                    remaining = &after_alt[paren_end + 1..];
+                    continue;
+                }
+            }
+            break;
+        }
+    }
+
+    fn inject_vision_images(&mut self, room_id: &str, messages: &mut Vec<ChatMessage>) {
+        if let Some(images) = self.image_pool.remove(room_id) {
+            let count = images.len();
+            if count == 0 {
+                return;
+            }
+            let labels: Vec<String> = images
+                .iter()
+                .enumerate()
+                .map(|(i, ci)| {
+                    let idx = i + 1;
+                    let ext = ci.name.rfind('.').map(|p| &ci.name[p..]).unwrap_or(".png");
+                    format!("photo{}{}", idx, ext)
+                })
+                .collect();
+            let data_uris: Vec<String> = images.into_iter().map(|ci| ci.data_uri).collect();
+            let prompt = format!(
+                "The requested image{} visible below:\nAttached: {}",
+                if count > 1 { "s are" } else { " is" },
+                labels
+                    .iter()
+                    .map(|l| format!("![{}]({})", l, l))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            );
+            debug!(
+                "Injecting {} vision image(s) for room {} into LLM context",
+                count, room_id
+            );
+            messages.push(ChatMessage::user_with_images(prompt, data_uris));
+        }
+    }
+
+    fn provider_http_client(&self) -> reqwest::Client {
+        reqwest::Client::new()
     }
 
     pub async fn archive_room_if_needed(&mut self, room_id: &str) -> Result<()> {
@@ -369,7 +648,9 @@ impl AgentHarness {
         );
 
         let folder = format!("{}memory/summaries/", WebDavPath::new("").room_dir(webdav_dir));
-        let _ = webdav.ensure_directory_all(&folder).await;
+        if let Err(e) = webdav.ensure_directory_all(&folder).await {
+            warn!("Failed to ensure summaries directory {}: {}", folder, e);
+        }
 
         let content = match webdav.read_file_to_string(&path).await {
             Ok(existing) => format!("{}{}", existing, header),
@@ -400,7 +681,10 @@ impl AgentHarness {
         let folder = format!("{}memory/summaries/", WebDavPath::new("").room_dir(webdav_dir));
         let entries = match webdav.list_directory(&folder).await {
             Ok(e) => e,
-            Err(_) => return Ok(()),
+            Err(_) => {
+                debug!("No summaries directory yet at {}", folder);
+                return Ok(());
+            }
         };
 
         let today = {
@@ -474,7 +758,7 @@ impl AgentHarness {
                     .iter()
                     .take(5)
                     .filter_map(|m| m.text_content())
-                    .map(|t| if t.len() > 80 { format!("{}...", &t[..80]) } else { t.to_string() })
+                    .map(|t| if t.len() > 80 { let end = t.char_indices().map(|(i, _)| i).nth(80).unwrap_or(t.len()); format!("{}...", &t[..end]) } else { t.to_string() })
                     .collect();
                 if preview_parts.is_empty() {
                     format!("{} messages archived", messages.len())
@@ -590,7 +874,10 @@ impl AgentHarness {
         let folder = format!("{}memory/summaries/", WebDavPath::new("").room_dir(webdav_dir));
         let entries = match webdav.list_directory(&folder).await {
             Ok(e) => e,
-            Err(_) => return Ok(Vec::new()),
+            Err(_) => {
+                debug!("No summaries directory yet at {} (loading daily summaries)", folder);
+                return Ok(Vec::new());
+            }
         };
 
         let mut summaries = Vec::new();
@@ -631,11 +918,14 @@ impl AgentHarness {
         let path = format!("{}memory/soul.md", WebDavPath::new("").room_dir(webdav_dir));
         let content = match webdav.read_file_to_string(&path).await {
             Ok(c) => c,
-            Err(_) => return Ok(SoulMemory {
-                room_id: webdav_dir.to_string(),
-                content: String::new(),
-                updated_at: String::new(),
-            }),
+            Err(e) => {
+                warn!("Failed to load soul.md from {}: {} — returning empty soul", path, e);
+                return Ok(SoulMemory {
+                    room_id: webdav_dir.to_string(),
+                    content: String::new(),
+                    updated_at: String::new(),
+                });
+            }
         };
 
         let updated_at = now_iso_string();
@@ -809,11 +1099,57 @@ impl AgentHarness {
     }
 }
 
+struct AttachmentRef {
+    pub title: String,
+    pub data_uri: String,
+}
+
+struct CachedImage {
+    data_uri: String,
+    name: String,
+}
+
 fn inject_room_context(arguments: &str, room_id: &str, webdav_dir: &str) -> String {
     let mut args: serde_json::Value =
         serde_json::from_str(arguments).unwrap_or(serde_json::json!({}));
     args["room_id"] = serde_json::Value::String(room_id.to_string());
     args["webdav_dir"] = serde_json::Value::String(webdav_dir.to_string());
+    serde_json::to_string(&args).unwrap_or_else(|_| arguments.to_string())
+}
+
+fn inject_image_urls_from_refs(
+    arguments: &str,
+    room_id: &str,
+    webdav_dir: &str,
+    refs: &[AttachmentRef],
+) -> String {
+    let mut args: serde_json::Value =
+        serde_json::from_str(arguments).unwrap_or(serde_json::json!({}));
+    args["room_id"] = serde_json::Value::String(room_id.to_string());
+    args["webdav_dir"] = serde_json::Value::String(webdav_dir.to_string());
+    // If the agent provided image_urls (e.g. fal CDN URLs from a previous
+    // generation), keep them. Always also inject harness-tagged data URIs
+    // whose alt-text appears in the prompt.
+    let mut injected: Vec<serde_json::Value> = Vec::new();
+    let prompt_lower = arguments.to_lowercase();
+    for r in refs {
+        if prompt_lower.contains(&r.title.to_lowercase()) {
+            injected.push(serde_json::Value::String(r.data_uri.clone()));
+        }
+    }
+    // Merge with any agent-provided URLs (e.g. fal CDN from previous generation)
+    if let Some(agent_urls) = args.get("image_urls").and_then(|v| v.as_array()) {
+        for url in agent_urls {
+            if let Some(s) = url.as_str() {
+                if !injected.iter().any(|v| v.as_str() == Some(s)) {
+                    injected.push(serde_json::Value::String(s.to_string()));
+                }
+            }
+        }
+    }
+    if !injected.is_empty() {
+        args["image_urls"] = serde_json::Value::Array(injected);
+    }
     serde_json::to_string(&args).unwrap_or_else(|_| arguments.to_string())
 }
 
@@ -868,7 +1204,7 @@ mod tests {
     use super::*;
     use crate::error::RockBotError;
     use crate::provider::AiProvider;
-    use crate::types::{CompletionResult, FinishReason, ToolCall};
+    use crate::types::{CompletionResult, ContentPart, FinishReason, MessageContent, ToolCall};
     use async_trait::async_trait;
 
     struct MockProvider {
@@ -914,7 +1250,6 @@ mod tests {
 url = "test.example.com"
 username = "bot"
 password = "secret"
-debug = false
 
 [rocketchat.model]
 default_provider = "mock"
@@ -950,7 +1285,7 @@ chat = "mock-model"
 
         let mut harness = AgentHarness::new(config, provider, None);
         let result = harness
-            .process_message("room1", "general", "", false, "user", "Hi")
+            .process_message("room1", "general", "", false, "user", "Hi", &[])
             .await;
 
         assert!(result.is_ok());
@@ -972,7 +1307,7 @@ chat = "mock-model"
 
         let mut harness = AgentHarness::new(config, provider, None);
         let result = harness
-            .process_message("dm-alice", "", "", true, "alice", "Hello bot")
+            .process_message("dm-alice", "", "", true, "alice", "Hello bot", &[])
             .await;
 
         assert!(result.is_ok());
@@ -986,7 +1321,7 @@ chat = "mock-model"
 
         let mut harness = AgentHarness::new(config, provider, None);
         let result = harness
-            .process_message("room1", "general", "", false, "user", "Hi")
+            .process_message("room1", "general", "", false, "user", "Hi", &[])
             .await;
 
         assert!(result.is_ok());
@@ -1034,7 +1369,7 @@ chat = "mock-model"
         let mut harness = AgentHarness::new(config, provider, None);
 
         let result = harness
-            .process_message("room1", "general", "", false, "user", "search something")
+            .process_message("room1", "general", "", false, "user", "search something", &[])
             .await;
 
         assert!(result.is_ok());
@@ -1085,7 +1420,7 @@ chat = "mock-model"
 
     #[test]
     fn test_check_and_archive_returns_seq() {
-        let mut mgr = MemoryManager::new(50, 12, 8000, 7, 2000, 60);
+        let mut mgr = MemoryManager::new(50, 12, 8000, 7, 2000, 60, 30_000_000);
         let room = mgr.get_or_create("room1", "general", "", false);
         for i in 0..10 {
             room.history.append(ChatMessage::user(format!(
@@ -1132,6 +1467,50 @@ chat = "mock-model"
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["room_id"], "general");
         assert_eq!(parsed["webdav_dir"], "r-general");
+    }
+
+    #[test]
+    fn test_inject_image_urls_from_refs_matches_title() {
+        let args = r#"{"prompt":"edit this apple.png for me"}"#;
+        let refs = vec![
+            AttachmentRef { title: "apple.png".into(), data_uri: "data:image/png;base64,abc".into() },
+            AttachmentRef { title: "banana.jpg".into(), data_uri: "data:image/jpg;base64,xyz".into() },
+        ];
+        let result = inject_image_urls_from_refs(args, "general", "r-general", &refs);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["room_id"], "general");
+        assert_eq!(parsed["webdav_dir"], "r-general");
+        let urls = parsed["image_urls"].as_array().unwrap();
+        // Only apple.png is referenced in the prompt
+        assert_eq!(urls.len(), 1);
+        assert_eq!(urls[0], "data:image/png;base64,abc");
+    }
+
+    #[test]
+    fn test_inject_image_urls_from_refs_no_match() {
+        let args = r#"{"prompt":"edit this image"}"#;
+        let refs = vec![
+            AttachmentRef { title: "photo.png".into(), data_uri: "data:image/png;base64,abc".into() },
+        ];
+        let result = inject_image_urls_from_refs(args, "general", "r-general", &refs);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        // No title match in prompt -> nothing injected
+        assert!(parsed.get("image_urls").is_none());
+    }
+
+    #[test]
+    fn test_inject_image_urls_from_refs_merges_agent_urls() {
+        let args = r#"{"prompt":"edit photo.png","image_urls":["https://fal.media/prev.png"]}"#;
+        let refs = vec![
+            AttachmentRef { title: "photo.png".into(), data_uri: "data:image/png;base64,abc".into() },
+        ];
+        let result = inject_image_urls_from_refs(args, "general", "r-general", &refs);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        let urls = parsed["image_urls"].as_array().unwrap();
+        // Both harness URI and agent-provided fal CDN URL should be present
+        assert_eq!(urls.len(), 2);
+        assert!(urls.iter().any(|v| v == "data:image/png;base64,abc"));
+        assert!(urls.iter().any(|v| v == "https://fal.media/prev.png"));
     }
 
     #[test]
@@ -1186,5 +1565,170 @@ chat = "mock-model"
             compute_webdav_dir("general", "", false),
             "r-general"
         );
+    }
+
+    #[test]
+    fn test_cache_vision_images_single() {
+        let config = make_test_config();
+        let provider = Box::new(MockProvider::new(vec![]));
+        let mut harness = AgentHarness::new(config, provider, None);
+
+        let result = "![photo.png](data:image/png;base64,iVBORw0KGgo)";
+        harness.cache_vision_images("room1", result);
+
+        let pool = harness.image_pool.get("room1").unwrap();
+        assert_eq!(pool.len(), 1);
+        assert_eq!(pool[0].name, "photo.png");
+        assert_eq!(pool[0].data_uri, "data:image/png;base64,iVBORw0KGgo");
+    }
+
+    #[test]
+    fn test_cache_vision_images_multiple() {
+        let config = make_test_config();
+        let provider = Box::new(MockProvider::new(vec![]));
+        let mut harness = AgentHarness::new(config, provider, None);
+
+        let result = "![photo1.png](data:image/png;base64,AAA) ![photo2.jpg](data:image/jpeg;base64,BBB)";
+        harness.cache_vision_images("room1", result);
+
+        let pool = harness.image_pool.get("room1").unwrap();
+        assert_eq!(pool.len(), 2);
+        assert_eq!(pool[0].name, "photo1.png");
+        assert_eq!(pool[0].data_uri, "data:image/png;base64,AAA");
+        assert_eq!(pool[1].name, "photo2.jpg");
+        assert_eq!(pool[1].data_uri, "data:image/jpeg;base64,BBB");
+    }
+
+    #[test]
+    fn test_cache_vision_images_skips_non_data_uri() {
+        let config = make_test_config();
+        let provider = Box::new(MockProvider::new(vec![]));
+        let mut harness = AgentHarness::new(config, provider, None);
+
+        // Only data: URIs are cached; https URLs are ignored
+        let result = "![img](https://example.com/img.png)";
+        harness.cache_vision_images("room1", result);
+
+        let pool = harness.image_pool.get("room1");
+        assert!(pool.is_none());
+    }
+
+    #[test]
+    fn test_cache_vision_images_malformed_markdown() {
+        let config = make_test_config();
+        let provider = Box::new(MockProvider::new(vec![]));
+        let mut harness = AgentHarness::new(config, provider, None);
+
+        harness.cache_vision_images("room1", "not a markdown tag at all");
+        harness.cache_vision_images("room1", "![no closing paren(data:image/png;base64,AAA");
+        harness.cache_vision_images("room1", "![valid](data:image/png;base64,CCC)");
+        harness.cache_vision_images("room1", "![nobase64](https://example.com/img.png)");
+
+        let pool = harness.image_pool.get("room1").unwrap();
+        assert_eq!(pool.len(), 1, "only the valid data-URI markdown should be cached");
+        assert_eq!(pool[0].name, "valid");
+        assert_eq!(pool[0].data_uri, "data:image/png;base64,CCC");
+    }
+
+    #[test]
+    fn test_inject_vision_images_injects_message() {
+        let config = make_test_config();
+        let provider = Box::new(MockProvider::new(vec![]));
+        let mut harness = AgentHarness::new(config, provider, None);
+
+        // Pre-populate the pool
+        harness.image_pool.insert(
+            "room1".into(),
+            vec![CachedImage {
+                data_uri: "data:image/png;base64,TEST".into(),
+                name: "photo.png".into(),
+            }],
+        );
+
+        let mut messages: Vec<ChatMessage> = vec![ChatMessage::system("sys")];
+        harness.inject_vision_images("room1", &mut messages);
+
+        // Check injected message
+        assert_eq!(messages.len(), 2);
+        let injected = &messages[1];
+        assert_eq!(injected.role, Role::User);
+        match &injected.content {
+            MessageContent::Multipart(parts) => {
+                assert!(parts.len() >= 2);
+                assert!(
+                    matches!(&parts[0], ContentPart::Text { text } if text.contains("photo1.png"))
+                );
+                assert!(
+                    matches!(&parts[1], ContentPart::ImageUrl { image_url } if image_url.url == "data:image/png;base64,TEST")
+                );
+            }
+            _ => panic!("Expected multipart content"),
+        }
+    }
+
+    #[test]
+    fn test_inject_vision_images_drains_pool() {
+        let config = make_test_config();
+        let provider = Box::new(MockProvider::new(vec![]));
+        let mut harness = AgentHarness::new(config, provider, None);
+
+        harness.image_pool.insert(
+            "room1".into(),
+            vec![CachedImage {
+                data_uri: "data:image/png;base64,ABC".into(),
+                name: "img.png".into(),
+            }],
+        );
+
+        let mut messages = vec![];
+        harness.inject_vision_images("room1", &mut messages);
+
+        // Pool should be drained
+        assert!(harness.image_pool.get("room1").is_none());
+    }
+
+    #[test]
+    fn test_inject_vision_images_empty_pool_noop() {
+        let config = make_test_config();
+        let provider = Box::new(MockProvider::new(vec![]));
+        let mut harness = AgentHarness::new(config, provider, None);
+
+        let mut messages: Vec<ChatMessage> = vec![ChatMessage::user("hello")];
+        harness.inject_vision_images("room1", &mut messages);
+
+        // No injection when pool is empty
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].text_content().unwrap(), "hello");
+    }
+
+    #[test]
+    fn test_inject_vision_images_numbered_labels() {
+        let config = make_test_config();
+        let provider = Box::new(MockProvider::new(vec![]));
+        let mut harness = AgentHarness::new(config, provider, None);
+
+        harness.image_pool.insert(
+            "room1".into(),
+            vec![
+                CachedImage { data_uri: "data:image/png;base64,AAA".into(), name: "a.png".into() },
+                CachedImage { data_uri: "data:image/png;base64,BBB".into(), name: "b.jpg".into() },
+            ],
+        );
+
+        let mut messages = vec![ChatMessage::user("before")];
+        harness.inject_vision_images("room1", &mut messages);
+
+        let injected = &messages[1];
+        match &injected.content {
+            MessageContent::Multipart(parts) => {
+                if let ContentPart::Text { text } = &parts[0] {
+                    assert!(text.contains("photo1.png"), "should label first image photo1.png: {}", text);
+                    assert!(text.contains("photo2.jpg"), "should label second image photo2.jpg: {}", text);
+                } else {
+                    panic!("Expected text part first");
+                }
+            }
+            _ => panic!("Expected multipart"),
+        }
     }
 }

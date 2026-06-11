@@ -38,20 +38,20 @@ flowchart TD
     FORMAT(FormatResult)
     FAL_API[fal.ai API]
 
-    AGENT -->|"prompt + quality + image_size + output_format + num_images + model_id + room_id"| PARSE
-    PARSE -->|"validated params"| RESOLVE
+    AGENT -->|"prompt + image_size (LLM), room_id + webdav_dir + image_urls (harness injects)"| PARSE
+    PARSE -->|"merged with config defaults (quality, output_format, num_images) + injected image_urls"| RESOLVE
     RESOLVE -->|"prompt + resolved {width, height} + quality + output_format + num_images"| FAL
     FAL -->|"submit request"| SUBMIT
     SUBMIT -->|"POST /{model_id}"| FAL_API
-    FAL_API -->|"request_id"| SUBMIT
-    SUBMIT -->|"request_id"| POLL
-    POLL -->|"GET status every 2s"| FAL_API
+    FAL_API -->|"{request_id, status_url, response_url}"| SUBMIT
+    SUBMIT -->|"status_url, response_url"| POLL
+    POLL -->|"GET status_url every 2s"| FAL_API
     FAL_API -->|"COMPLETED"| POLL
-    POLL -->|"request_id"| FETCH
-    FETCH -->|"GET result"| FAL_API
+    POLL -->|"response_url"| FETCH
+    FETCH -->|"GET response_url"| FAL_API
     FAL_API -->|"images[0].url"| FETCH
     FETCH -->|"image URL"| DOWNLOAD
-    DOWNLOAD -->|"image bytes"| UPLOAD
+    DOWNLOAD -->|"image bytes (10 min timeout)"| UPLOAD
     UPLOAD -->|"PUT {output_format}"| DAV
     DAV -->|"webdav path"| UPLOAD
     UPLOAD -->|"webdav path"| FORMAT
@@ -65,39 +65,116 @@ flowchart TD
 flowchart TD
     SUBMIT(SubmitToQueue)
     POLL(PollStatus)
+    FETCH(FetchResult)
     DOWNLOAD(DownloadImage)
     UPLOAD(UploadToWebDAV)
     ERR_SUBMIT[Error: Submit Failed]
     ERR_POLL[Error: Poll Failed / Timeout]
+    ERR_FETCH[Error: Fetch Result Failed]
     ERR_DOWNLOAD[Error: Download Failed]
     ERR_UPLOAD[Error: WebDAV Upload Failed]
     FALLBACK[Return Error to Agent]
 
-    SUBMIT -.->|"HTTP error / missing request_id"| ERR_SUBMIT
-    POLL -.->|"FAILED status / timeout"| ERR_POLL
+    SUBMIT -.->|"HTTP error / missing request_id / status_url / response_url"| ERR_SUBMIT
+    POLL -.->|"HTTP error / FAILED status / timeout"| ERR_POLL
+    FETCH -.->|"HTTP error / missing image URL"| ERR_FETCH
     DOWNLOAD -.->|"HTTP error / read error"| ERR_DOWNLOAD
     UPLOAD -.->|"WebDAV PUT error"| ERR_UPLOAD
     ERR_SUBMIT --> FALLBACK
     ERR_POLL --> FALLBACK
+    ERR_FETCH --> FALLBACK
     ERR_DOWNLOAD --> FALLBACK
     ERR_UPLOAD --> FALLBACK
     FALLBACK -->|"error message"| AGENT[Agent Loop]
 ```
 
+### 2c. Model Selection (Text-to-Image vs Edit)
+
+The tool holds two `FalAiProvider` instances (`fal` for t2i, `fal_img2img` for edit).
+The decision is driven by whether `image_urls` are present — either auto-injected by the
+harness from user attachments, or explicitly provided by the LLM (e.g. a fal.ai CDN URL
+from a previous generation).
+
+```mermaid
+flowchart TD
+    PARSE(ParseArgs)
+    CHECK{Has image_urls?}
+    T2I[fal provider<br/>default_text_model]
+    UPLOAD[Upload DataURIs<br/>to fal storage]
+    EDIT[fal_img2img provider<br/>default_edit_model]
+    SUBMIT(SubmitToQueue)
+    FAL_API[fal.ai API]
+
+    PARSE --> CHECK
+    CHECK -->|"yes<br/>(user attachments or LLM-provided URLs)"| UPLOAD
+    CHECK -->|"no"| T2I
+    UPLOAD -->|"hosted URLs"| EDIT
+    T2I -->|"POST /{t2i_model}"| SUBMIT
+    EDIT -->|"POST /{edit_model}"| SUBMIT
+    SUBMIT --> FAL_API
+```
+
+**Decision rule**: if `image_urls` is non-empty → use `fal_img2img` (edit model), otherwise
+use `fal` (text-to-image model). The edit model is a separate fal.ai endpoint
+(e.g. `openai/gpt-image-2/edit`) that requires `image_urls` in the request body.
+
+### 2d. Harness Attachment Injection
+
+User-attached images are downloaded and labelled by the harness before the
+agent loop. Images appear in the conversation as markdown tags `![title](title)`.
+The LLM references images by their title in image_gen prompts. The harness
+scans prompts for title matches and injects only the referenced data URIs.
+
+```mermaid
+flowchart TD
+    RC_ATT[User Attachment]
+    DLOAD(DownloadAttachment)
+    ENCODE(EncodeDataURI)
+    LABEL[AssignTitle<br/>from filename]
+    BUILD_MSG["BuildUserMessage<br/>with image tags"]
+    LLM_CTX[(LLM Context)]
+    GEN_PROMPT{LLM prompt<br/>mentions title?}
+    INJECT(InjectMatched<br/>DataURIs)
+    TOOL_ARGS[(image_gen args<br/>with image_urls)]
+
+    RC_ATT --> DLOAD
+    DLOAD --> ENCODE
+    ENCODE --> LABEL
+    LABEL --> BUILD_MSG
+    BUILD_MSG --> LLM_CTX
+    LLM_CTX --> GEN_PROMPT
+    GEN_PROMPT -->|"yes"| INJECT
+    GEN_PROMPT -->|"no (new generation)"| TOOL_ARGS
+    INJECT --> TOOL_ARGS
+```
+
+**Merge rule**: if the LLM also provides `image_urls` directly (e.g. fal.ai CDN
+URLs from a previous result), those are merged with the harness-tagged URIs.
+The LLM should only provide URLs for previously generated images, NOT for
+user-attached images — those are handled automatically.
+
+**Data URI upload**: all inline data URIs are uploaded to fal.ai storage first
+via the [two-step initiate+PUT protocol](https://github.com/fal-ai/fal-js), converting them
+to hosted URLs before the queue API call. This avoids HTTP 413 errors from oversized request
+bodies.
+
 ## 3. Data Structures
 
 #### `ImageGenParams`
 
-| Field           | Type                                           | Description                                      |
-| --------------- | ---------------------------------------------- | ------------------------------------------------ |
-| `prompt`        | `string`                                       | **Required.** Text description of the image      |
-| `room_id`       | `string`                                       | Room UUID for image storage (injected by harness if omitted) |
-| `webdav_dir`    | `string`                                       | Type-prefixed room path (injected by harness; falls back to room_id) |
-| `model_id`      | `string`                                       | fal.ai model ID (default: `fal-ai/flux/schnell`) |
-| `quality`       | `"low" \| "medium" \| "high" \| "auto"`        | Image quality / reasoning budget (default: `"high"`). For gpt-image-2, `"medium"` is recommended for cost-balanced quality |
-| `image_size`    | preset name or `{width: int, height: int}`     | Aspect ratio preset or custom dimensions. Both edges must be multiples of 16, max edge 3840px, aspect ratio ≤ 3:1, total pixels 655,360–8,294,400. Default: `"landscape_4_3"` |
-| `output_format` | `"jpeg" \| "png" \| "webp"`                    | Output image format (default: `"png"`)           |
-| `num_images`    | `integer`                                      | Number of images to generate per request (default: 1) |
+LLM provides only `prompt` and `image_size`; all other fields come from `[image_model]` config.
+
+| Field           | Source            | Type                                           | Description                                      |
+| --------------- | ----------------- | ---------------------------------------------- | ------------------------------------------------ |
+| `prompt`        | LLM               | `string`                                       | **Required.** Text description of the image      |
+| `image_size`    | LLM               | preset name or `{width: int, height: int}`     | Aspect ratio preset or custom dimensions. Both edges must be multiples of 16, max edge 3840px, aspect ratio ≤ 3:1, total pixels 655,360–8,294,400. Default: `"landscape_4_3"` |
+| `room_id`       | Harness           | `string`                                       | Room UUID for image storage (injected by harness if omitted) |
+| `webdav_dir`    | Harness           | `string`                                       | Type-prefixed room path (injected by harness; falls back to room_id) |
+| `image_urls`    | Harness (auto)    | `[]string`                                     | Injected automatically from user attachments or LLM-provided fal.ai URLs |
+| `model_id`      | Config            | `string`                                       | Hardcoded from `default_text_model` / `default_edit_model` |
+| `quality`       | Config            | `string`                                       | Hardcoded from `default_quality` (e.g. `"medium"`) |
+| `output_format` | Config            | `string`                                       | Hardcoded from `default_output_format` (e.g. `"png"`) |
+| `num_images`    | Config            | `integer`                                      | Hardcoded from `default_num_images` (e.g. `1`) |
 
 **Resolution presets** (maps aspect ratio → highest available dimensions):
 
@@ -123,10 +200,10 @@ Custom `{width, height}` is also supported, passed directly to the API.
 
 #### `ImageGenResult`
 
-The tool returns a formatted string containing both paths:
+The tool returns a JSON object:
 
-```
-Image generated and stored at {webdav_path}. Original fal.ai URL: {fal_url}
+```json
+{"ok": true, "fal_url": "https://v3b.fal.media/...", "webdav_path": "..."}
 ```
 
 | Value        | Source                     | Purpose                                   |
@@ -148,10 +225,17 @@ Image generated and stored at {webdav_path}. Original fal.ai URL: {fal_url}
 
 The `FalAiProvider` (provider/fal.rs) implements a three-step queue workflow:
 
-| Step   | Method | Endpoint                        | Response              |
-| ------ | ------ | ------------------------------- | --------------------- |
-| Submit | POST   | `{base_url}/{model_id}`        | `{"request_id": "..."}` |
-| Poll   | GET    | `{base_url}/{model_id}/requests/{request_id}/status` | `{"status": "COMPLETED"}` |
-| Fetch  | GET    | `{base_url}/{model_id}/requests/{request_id}`       | `{"images": [{"url": "..."}]}` |
+| Step   | Method | Endpoint                        | Response                              |
+| ------ | ------ | ------------------------------- | ------------------------------------- |
+| Submit | POST   | `{base_url}/{model_id}`         | `{"request_id":"...","status_url":"...","response_url":"..."}` |
+| Poll   | GET    | Use `status_url` from submit response (NOT reconstructed) | `{"status": "COMPLETED"}`            |
+| Fetch  | GET    | Use `response_url` from submit response (NOT reconstructed) | `{"images": [{"url": "..."}]}`       |
 
-Polling runs every 2 seconds for up to 90 attempts (3 minutes total), then times out.
+**URL construction note**: The submit response includes `status_url` and `response_url`
+fields that must be used as-is. Do NOT reconstruct URLs from `base_url + model_id +
+request_id`. For example, submitting to `openai/gpt-image-2/edit` returns URLs with
+`openai/gpt-image-2` (without the `/edit` action suffix). Reconstructing with the
+full model_id including `/edit` produces a 405 empty response, causing a JSON parse
+error.
+
+Polling runs every 2 seconds for up to 300 attempts (10 minutes total), then times out.

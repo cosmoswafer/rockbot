@@ -13,6 +13,8 @@ manages per-room memory, and persists everything to WebDAV.
   returns `BotReply` (see agent-harness.md for loop internals and tool execution)
 - Downstream: [RocketChat Connection](base/rocketchat.md) handles auth, WebSocket
   streaming, and message filtering
+- Downstream: [RocketChat REST API](base/rocketchat-rest.md) handles room name
+  resolution and alias message sending (production path for bot replies)
 - Downstream: [AI Provider](base/ai-provider.md) handles chat completion requests
 - Downstream: [Memory Management](base/memory.md) manages per-room conversation history,
   archive (threshold-based daily compress), snapshot persist, and TTL-based room eviction

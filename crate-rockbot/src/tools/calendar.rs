@@ -203,11 +203,13 @@ impl Tool for CalendarTool {
          get_event (fetch a single event by UID), \
          add_event (create a new event), update_event (modify an existing event by UID), \
          delete_event (remove an event by UID). \
-         add_event requires summary, dtstart (ISO 8601), dtend (ISO 8601). \
+         add_event requires summary, dtstart (ISO 8601, UTC), dtend (ISO 8601, UTC). \
          update_event uses merge semantics: specify only the fields you want to change; \
          omitted fields keep their existing values. \
          Optional for both: description, location, rrule (recurrence rule, RFC 5545), \
-         reminder_minutes (e.g. 15)."
+         reminder_minutes (e.g. 15). \
+         All date/time values must be in UTC — use the Z suffix (e.g. 20260615T140000Z) \
+         or omit seconds (e.g. 20260601T000000Z). Floating times (without Z) are not supported."
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -221,11 +223,11 @@ impl Tool for CalendarTool {
                 },
                 "start": {
                     "type": "string",
-                    "description": "Start date/time in ISO 8601 (e.g. 20260601T000000Z). Used by list_events."
+                    "description": "Start of date range in ISO 8601 UTC (e.g. 20260601T000000Z). Used by list_events."
                 },
                 "end": {
                     "type": "string",
-                    "description": "End date/time in ISO 8601. Used by list_events."
+                    "description": "End of date range in ISO 8601 UTC. Used by list_events."
                 },
                 "uid": {
                     "type": "string",
@@ -237,11 +239,11 @@ impl Tool for CalendarTool {
                 },
                 "dtstart": {
                     "type": "string",
-                    "description": "Event start in ISO 8601 (e.g. 20260615T140000Z). Required for add_event."
+                    "description": "Event start in ISO 8601 UTC (e.g. 20260615T140000Z). Required for add_event."
                 },
                 "dtend": {
                     "type": "string",
-                    "description": "Event end in ISO 8601. Required for add_event."
+                    "description": "Event end in ISO 8601 UTC. Required for add_event."
                 },
                 "description": {
                     "type": "string",

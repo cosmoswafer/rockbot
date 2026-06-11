@@ -1552,6 +1552,7 @@ fn make_fal_config(mock_uri: &str) -> ProviderConfig {
 #[tokio::test]
 async fn test_fal_submit_request() {
     let mock_server = MockServer::start().await;
+    let base = mock_server.uri();
 
     Mock::given(method("POST"))
         .and(path("/fal-ai/flux/schnell"))
@@ -1560,8 +1561,8 @@ async fn test_fal_submit_request() {
         .and(body_string_contains("\"prompt\":\"a sunset\""))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "request_id": "req-abc-123",
-            "status_url": "/fal-ai/flux/schnell/requests/req-abc-123/status",
-            "response_url": "/fal-ai/flux/schnell/requests/req-abc-123"
+            "status_url": format!("{}/fal-ai/flux/schnell/requests/req-abc-123/status", base),
+            "response_url": format!("{}/fal-ai/flux/schnell/requests/req-abc-123", base),
         })))
         .expect(1)
         .mount(&mock_server)
@@ -1585,7 +1586,7 @@ async fn test_fal_submit_request() {
         .mount(&mock_server)
         .await;
 
-    let config = make_fal_config(&mock_server.uri());
+    let config = make_fal_config(&base);
     let provider = FalAiProvider::new(&config, "fal-ai/flux/schnell").unwrap();
     let url = provider.generate_image(&ImageGenParams::new("a sunset")).await.unwrap();
     assert_eq!(url, "https://fal.media/result.png");
@@ -1629,11 +1630,14 @@ async fn test_fal_submit_missing_request_id() {
 #[tokio::test]
 async fn test_fal_poll_status_failed() {
     let mock_server = MockServer::start().await;
+    let base = mock_server.uri();
 
     Mock::given(method("POST"))
         .and(path("/fal-ai/flux/schnell"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "request_id": "req-fail-1"
+            "request_id": "req-fail-1",
+            "status_url": format!("{}/fal-ai/flux/schnell/requests/req-fail-1/status", base),
+            "response_url": format!("{}/fal-ai/flux/schnell/requests/req-fail-1", base),
         })))
         .mount(&mock_server)
         .await;
@@ -1647,11 +1651,82 @@ async fn test_fal_poll_status_failed() {
         .mount(&mock_server)
         .await;
 
-    let config = make_fal_config(&mock_server.uri());
+    let config = make_fal_config(&base);
     let provider = FalAiProvider::new(&config, "fal-ai/flux/schnell").unwrap();
     let result = provider.generate_image(&ImageGenParams::new("test")).await;
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("NSFW"));
+}
+
+#[tokio::test]
+async fn test_fal_poll_status_http_error() {
+    let mock_server = MockServer::start().await;
+    let base = mock_server.uri();
+
+    Mock::given(method("POST"))
+        .and(path("/fal-ai/flux/schnell"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "request_id": "req-err-1",
+            "status_url": format!("{}/fal-ai/flux/schnell/requests/req-err-1/status", base),
+            "response_url": format!("{}/fal-ai/flux/schnell/requests/req-err-1", base),
+        })))
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/fal-ai/flux/schnell/requests/req-err-1/status"))
+        .respond_with(ResponseTemplate::new(503).set_body_json(serde_json::json!({
+            "detail": "Service temporarily unavailable"
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let config = make_fal_config(&base);
+    let provider = FalAiProvider::new(&config, "fal-ai/flux/schnell").unwrap();
+    let result = provider.generate_image(&ImageGenParams::new("test")).await;
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("503"));
+}
+
+#[tokio::test]
+async fn test_fal_submit_missing_status_url() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/fal-ai/flux/schnell"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "request_id": "req-no-status",
+            "response_url": "/fal-ai/flux/schnell/requests/req-no-status"
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let config = make_fal_config(&mock_server.uri());
+    let provider = FalAiProvider::new(&config, "fal-ai/flux/schnell").unwrap();
+    let result = provider.generate_image(&ImageGenParams::new("test")).await;
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("status_url"));
+}
+
+#[tokio::test]
+async fn test_fal_submit_missing_response_url() {
+    let mock_server = MockServer::start().await;
+    let base = mock_server.uri();
+
+    Mock::given(method("POST"))
+        .and(path("/fal-ai/flux/schnell"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "request_id": "req-no-resp",
+            "status_url": format!("{}/fal-ai/flux/schnell/requests/req-no-resp/status", base),
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let config = make_fal_config(&base);
+    let provider = FalAiProvider::new(&config, "fal-ai/flux/schnell").unwrap();
+    let result = provider.generate_image(&ImageGenParams::new("test")).await;
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("response_url"));
 }
 
 // ─── WebDavTool: webdav_dir schema test ─────────────────────────────────────

@@ -11,8 +11,6 @@ pub struct ServerConfig {
     pub url: String,
     pub username: String,
     pub password: String,
-    #[serde(default)]
-    pub debug: bool,
     #[serde(default = "default_true")]
     pub use_tls: bool,
 }

@@ -86,6 +86,77 @@ impl ChatMessage {
         }
     }
 
+    pub fn user_with_image(text: impl Into<String>, image_data_uri: impl Into<String>) -> Self {
+        Self {
+            role: Role::User,
+            content: MessageContent::Multipart(vec![
+                ContentPart::Text {
+                    text: text.into(),
+                },
+                ContentPart::ImageUrl {
+                    image_url: ImageUrlPayload {
+                        url: image_data_uri.into(),
+                        detail: Some("high".into()),
+                    },
+                },
+            ]),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+            reasoning_content: None,
+        }
+    }
+
+    pub fn user_with_image_url(
+        text: impl Into<String>,
+        image_url: impl Into<String>,
+    ) -> Self {
+        Self {
+            role: Role::User,
+            content: MessageContent::Multipart(vec![
+                ContentPart::Text {
+                    text: text.into(),
+                },
+                ContentPart::ImageUrl {
+                    image_url: ImageUrlPayload {
+                        url: image_url.into(),
+                        detail: Some("high".into()),
+                    },
+                },
+            ]),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+            reasoning_content: None,
+        }
+    }
+
+    pub fn user_with_images(
+        text: impl Into<String>,
+        image_data_uris: Vec<String>,
+    ) -> Self {
+        let mut parts: Vec<ContentPart> = Vec::with_capacity(image_data_uris.len() + 1);
+        parts.push(ContentPart::Text {
+            text: text.into(),
+        });
+        for uri in image_data_uris {
+            parts.push(ContentPart::ImageUrl {
+                image_url: ImageUrlPayload {
+                    url: uri,
+                    detail: Some("high".into()),
+                },
+            });
+        }
+        Self {
+            role: Role::User,
+            content: MessageContent::Multipart(parts),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+            reasoning_content: None,
+        }
+    }
+
     pub fn assistant(content: impl Into<String>) -> Self {
         Self {
             role: Role::Assistant,

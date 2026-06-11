@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use tracing::debug;
 
 use crate::config::ProviderConfig;
 use crate::error::{Result, RockBotError};
@@ -188,6 +189,12 @@ fn extract_error_message(body: &str) -> String {
 impl AiProvider for DeepSeekProvider {
     async fn complete(&self, request: ChatRequest) -> Result<CompletionResult> {
         let body = self.build_request_body(&request);
+        let msg_count = request.messages.len();
+        let tool_count = request.tools.as_ref().map(|t| t.len()).unwrap_or(0);
+        debug!(
+            "DeepSeek request: model={} messages={} tools={} stream={}",
+            request.model, msg_count, tool_count, request.stream
+        );
         let max_retries: u32 = 3;
 
         for attempt in 0..=max_retries {
@@ -203,6 +210,36 @@ impl AiProvider for DeepSeekProvider {
             let status = response.status();
             if status.is_success() {
                 let response_body: serde_json::Value = response.json().await?;
+                let tool_count = response_body
+                    .get("choices")
+                    .and_then(|c| c.as_array())
+                    .and_then(|arr| arr.first())
+                    .and_then(|c| c.get("message"))
+                    .and_then(|m| m.get("tool_calls"))
+                    .and_then(|t| t.as_array())
+                    .map(|t| t.len())
+                    .unwrap_or(0);
+                let text_len = response_body
+                    .get("choices")
+                    .and_then(|c| c.as_array())
+                    .and_then(|arr| arr.first())
+                    .and_then(|c| c.get("message"))
+                    .and_then(|m| m.get("content"))
+                    .and_then(|c| c.as_str())
+                    .map(|s| s.len())
+                    .unwrap_or(0);
+                debug!(
+                    "DeepSeek response: finish={:?} text_len={} tool_calls={}",
+                    response_body
+                        .get("choices")
+                        .and_then(|c| c.as_array())
+                        .and_then(|arr| arr.first())
+                        .and_then(|c| c.get("finish_reason"))
+                        .and_then(|f| f.as_str())
+                        .unwrap_or("unknown"),
+                    text_len,
+                    tool_count,
+                );
                 return Self::parse_response_body(&response_body);
             }
 

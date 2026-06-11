@@ -302,15 +302,40 @@ fn test_send_message_payload() {
     assert_eq!(msg["params"][0]["rid"], "room1");
     assert_eq!(msg["params"][0]["msg"], "hello world");
     assert!(msg["params"][0].get("alias").is_none());
+    // _id is timestamp-seq format
+    let id_str = msg["params"][0]["_id"].as_str().unwrap();
+    assert!(id_str.contains('-'), "_id should be timestamp-seq format");
 }
 
 #[test]
 fn test_send_message_payload_with_alias() {
-    let msg = rocketchat::ddp::send_message_payload_with_alias("room1", "hello world", "TotallyRealHuman");
-    assert!(msg["params"][0]["_id"].as_str().unwrap().parse::<u64>().is_ok());
+    let msg = rocketchat::ddp::send_message_payload_with_alias("room1", "hello world", Some("CustomBot"));
+    assert_eq!(msg["msg"], "method");
+    assert_eq!(msg["method"], "sendMessage");
     assert_eq!(msg["params"][0]["rid"], "room1");
     assert_eq!(msg["params"][0]["msg"], "hello world");
-    assert_eq!(msg["params"][0]["alias"], "TotallyRealHuman");
+    assert_eq!(msg["params"][0]["alias"], "CustomBot");
+    // _id is timestamp-seq format
+    let id_str = msg["params"][0]["_id"].as_str().unwrap();
+    assert!(id_str.contains('-'), "_id should be timestamp-seq format");
+}
+
+#[test]
+fn test_create_direct_message_payload() {
+    let msg = rocketchat::ddp::create_direct_message_payload("targetuser");
+    assert_eq!(msg["msg"], "method");
+    assert_eq!(msg["method"], "createDirectMessage");
+    assert!(msg["id"].as_str().unwrap().parse::<u64>().is_ok());
+    assert_eq!(msg["params"][0], "targetuser");
+}
+
+#[test]
+fn test_set_real_name_payload() {
+    let msg = rocketchat::ddp::set_real_name_payload("MyNewName");
+    assert_eq!(msg["msg"], "method");
+    assert_eq!(msg["method"], "setRealName");
+    assert!(msg["id"].as_str().unwrap().parse::<u64>().is_ok());
+    assert_eq!(msg["params"][0], "MyNewName");
 }
 
 #[test]
@@ -326,15 +351,22 @@ fn test_subscribe_payload() {
 #[test]
 fn test_typing_payload_true() {
     let msg = rocketchat::ddp::typing_payload("room123", "botuser", true);
-    assert_eq!(msg["params"][0], "room123/typing");
+    assert_eq!(msg["params"][0], "room123/user-activity");
     assert_eq!(msg["params"][1], "botuser");
-    assert_eq!(msg["params"][2], true);
+    let activities = msg["params"][2].as_array().unwrap();
+    assert_eq!(activities.len(), 1);
+    assert_eq!(activities[0], "user-typing");
+    assert!(msg["params"][3].is_object());
 }
 
 #[test]
 fn test_typing_payload_false() {
     let msg = rocketchat::ddp::typing_payload("room123", "botuser", false);
-    assert_eq!(msg["params"][2], false);
+    assert_eq!(msg["params"][0], "room123/user-activity");
+    assert_eq!(msg["params"][1], "botuser");
+    let activities = msg["params"][2].as_array().unwrap();
+    assert!(activities.is_empty());
+    assert!(msg["params"][3].is_object());
 }
 
 #[test]
@@ -423,6 +455,9 @@ fn test_incoming_message_dm_detection() {
         timestamp: None,
         sender_id: "uid".into(),
         alias: None,
+        file: None,
+        files: vec![],
+        attachments: vec![],
     };
 
     let rooms: HashMap<String, bool> = HashMap::new();
@@ -441,6 +476,9 @@ fn test_incoming_message_dm_detection() {
         timestamp: None,
         sender_id: "uid".into(),
         alias: None,
+        file: None,
+        files: vec![],
+        attachments: vec![],
     };
     assert!(!MessageFilter::is_dm_or_mention(&msg2, bot_name, &rooms));
 
@@ -455,6 +493,9 @@ fn test_incoming_message_dm_detection() {
         timestamp: None,
         sender_id: "uid".into(),
         alias: None,
+        file: None,
+        files: vec![],
+        attachments: vec![],
     };
     assert!(MessageFilter::is_dm_or_mention(&msg3, bot_name, &rooms));
 }
@@ -475,6 +516,9 @@ fn test_registered_room_dispatch() {
         timestamp: None,
         sender_id: "uid".into(),
         alias: None,
+        file: None,
+        files: vec![],
+        attachments: vec![],
     };
 
     assert!(MessageFilter::is_dm_or_mention(&msg, "@rockbot", &rooms));
@@ -496,7 +540,6 @@ fn test_client_new() {
             url: "chat.example.com".into(),
             username: "bot".into(),
             password: "pw".into(),
-            debug: false,
             use_tls: true,
         },
     };
