@@ -199,6 +199,7 @@ Search the knowledge index for entries matching a query. If no query is given, r
 | `save_knowledge.rs` | 62 | `save_knowledge` | `content` | Markdown body of the knowledge entry |
 | `save_knowledge.rs` | 66-67 | `save_knowledge` | `when_useful` | Describe the situation that makes this knowledge relevant, used for automatic retrieval (e.g. 'when calling the database API') |
 | `save_knowledge.rs` | 71 | `save_knowledge` | `tags` | Comma-separated keywords for search (e.g. 'api, database, python') |
+| `save_knowledge.rs` | 73-76 | `save_knowledge` | `priority` | Knowledge priority: P0 (highest, always recalled), P1 (high), P2 (medium), P3 (low, default). Higher priority means more frequently recalled. |
 | `forget_knowledge.rs` | 38 | `forget_knowledge` | `topic` | Title or topic of the knowledge entry to delete |
 | `recall_knowledge.rs` | 38-39 | `recall_knowledge` | `query` | Topic or keyword to search for in knowledge entries. Leave empty to retrieve all entries. |
 
