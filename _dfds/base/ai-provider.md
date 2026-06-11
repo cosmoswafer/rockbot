@@ -4,7 +4,8 @@
 
 Configurable `AiProvider` trait abstracting over OpenAI-compatible chat
 completion APIs. Concrete implementations for OpenRouter and DeepSeek handle
-provider-specific headers, model naming, and vision payload formatting _(planned — types exist but no production code constructs image content parts)_. Supports
+provider-specific headers, model naming, and vision payload formatting
+(both base64 data URIs and remote URLs via `ContentPart::ImageUrl`). Supports
 The `stream` field is sent in request bodies but SSE response parsing is not implemented — all responses are consumed as full JSON.
 
 - Upstream: [Configuration Management](config.md) provides `AiConfig`

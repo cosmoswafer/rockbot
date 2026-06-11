@@ -51,7 +51,7 @@ flowchart TD
     FETCH -->|"GET response_url"| FAL_API
     FAL_API -->|"images[0].url"| FETCH
     FETCH -->|"image URL"| DOWNLOAD
-    DOWNLOAD -->|"image bytes"| UPLOAD
+    DOWNLOAD -->|"image bytes (10 min timeout)"| UPLOAD
     UPLOAD -->|"PUT {output_format}"| DAV
     DAV -->|"webdav path"| UPLOAD
     UPLOAD -->|"webdav path"| FORMAT
@@ -100,7 +100,7 @@ flowchart TD
     PARSE(ParseArgs)
     CHECK{Has image_urls?}
     T2I[fal provider<br/>default_text_model]
-    UPLOAD[Upload DataURIs &gt;5MB<br/>to fal storage]
+    UPLOAD[Upload DataURIs<br/>to fal storage]
     EDIT[fal_img2img provider<br/>default_edit_model]
     SUBMIT(SubmitToQueue)
     FAL_API[fal.ai API]
@@ -153,7 +153,7 @@ URLs from a previous result), those are merged with the harness-tagged URIs.
 The LLM should only provide URLs for previously generated images, NOT for
 user-attached images — those are handled automatically.
 
-**Data URI upload**: inline data URIs larger than 5 MB are uploaded to fal.ai storage first
+**Data URI upload**: all inline data URIs are uploaded to fal.ai storage first
 via the [two-step initiate+PUT protocol](https://github.com/fal-ai/fal-js), converting them
 to hosted URLs before the queue API call. This avoids HTTP 413 errors from oversized request
 bodies.

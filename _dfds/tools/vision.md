@@ -22,12 +22,20 @@ data URI for multimodal analysis by the AI provider.
 > The vision tool does **not** perform OCR or image analysis — it is an image
 > fetch-and-encode utility. Image analysis is done by the AI provider when the
 > base64 data URI appears in chat context.
+>
+> **ContentPart injection**: The tool result text (`![name](data:...)`) is
+> plain markdown — the LLM cannot see image pixels from it. The harness
+> intercepts vision tool results, caches the decoded base64 data URIs in a
+> per-room image pool, and injects them as `ContentPart::ImageUrl` parts
+> in a synthetic user message before the next LLM call. This is the
+> mechanism by which vision-tool-fetched images actually reach the
+> multimodal model.
 
 - Upstream: [Agent Harness](../agent-harness.md) invokes the tool during the
-  agent loop via `ToolRegistry::execute_by_name()`. The result is appended as a
-  standard `ChatMessage::tool` — no special injection.
+  agent loop via `ToolRegistry::execute_by_name()`. The harness intercepts
+  the result for injection into LLM context.
 - Downstream: [AI Provider](../base/ai-provider.md) receives the tool result
-  text and may use the base64 data URI for multimodal analysis.
+  text and the injected `ContentPart::ImageUrl` for multimodal analysis.
 
 ## 2. Diagram
 
@@ -79,7 +87,7 @@ flowchart TD
     DL -.->|"!200 status"| ERR_STATUS
     DL -.->|"30s timeout"| ERR_TIMEOUT
     DL -.->|"connection refused / dns failure"| ERR_NET
-    ENCODE -.->|"image > 20MB"| ERR_SIZE
+    ENCODE -.->|"image > max_attachment_bytes"| ERR_SIZE
     ERR_STATUS -->|"error string"| AGENT
     ERR_TIMEOUT -->|"error string"| AGENT
     ERR_NET -->|"error string"| AGENT
@@ -89,6 +97,8 @@ flowchart TD
 Errors during auto-attachment download/encode are logged and the attachment is
 skipped; the message still enters chat history with text-only content. Errors
 from the vision tool are returned as tool result errors.
+The size limit is configurable via `rocketchat.model.max_attachment_bytes`
+(default 25 MB).
 
 ### 2c. Image Download & Encoding
 
@@ -101,7 +111,7 @@ flowchart TD
     URL[Image URL]
     DOWNLOAD(HTTP GET)
     CHECK_STATUS{Status 200?}
-    CHECK_SIZE{Size < 20MB?}
+    CHECK_SIZE{Size < max_attachment_bytes?}
     DETECT_MIME(Detect MIME from URL ext + Content-Type)
     ENCODE(Base64 encode bytes)
     BUILD_MD(Build markdown tag)
@@ -120,8 +130,43 @@ flowchart TD
 
 The markdown image tag format is `![{filename_or_name}](data:{mime_type};base64,{encoded_bytes})`.
 The image name is extracted from the URL path (last segment, stripped of query
-parameters). This is a standard tool result — the harness appends it as
-`ChatMessage::tool(call_id, content)` and the agent loop continues normally.
+parameters). The result is appended to history as a standard
+`ChatMessage::tool(call_id, content)`, then the harness intercepts it for
+injection into the next LLM call (see §2d).
+
+### 2d. Harness Vision Injection
+
+After the vision tool returns, the harness intercepts the result text, parses
+the base64 data URIs from the markdown tags, caches them in a per-room image
+pool, and injects them as `ContentPart::ImageUrl` parts in a synthetic user
+message appended to the messages array before the next LLM call. The pool is
+consumed (drained) on injection — images are ephemeral and only used for a
+single LLM cycle.
+
+```mermaid
+flowchart TD
+    HIST[(ConversationHistory)]
+    CACHE(CacheVisionImages)
+    POOL[(ImagePool<br/>per-room)]
+    BUILD(BuildContext)
+    INJECT(InjectVisionImages)
+    AI[AiProvider]
+
+    HIST -->|"vision tool result text<br/>![n](data:...)"| CACHE
+    CACHE -->|"CachedImage { data_uri, name }"| POOL
+    BUILD -->|"context messages"| INJECT
+    POOL -->|"drain images"| INJECT
+    INJECT -->|"synthetic user msg<br/>with ImageUrl parts"| BUILD
+    BUILD -->|"chat request"| AI
+```
+
+**Labelling**: injected images are numbered `photo1.png`, `photo2.png`, etc.,
+preserving the original file extension.
+
+**Image pool structure** (`harness.rs`):
+```
+HashMap<room_id, Vec<CachedImage { data_uri, name }>>
+```
 
 ## 3. Data Structures
 

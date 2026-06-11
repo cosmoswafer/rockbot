@@ -71,20 +71,21 @@ data URI? → upload to fal storage → hosted URL → fal queue API
 
 ---
 
-## Remaining gap
+## Layer 4: Vision Tool Image Injection
 
-`inject_image_urls_from_refs` at `harness.rs:1008` has a **25 MB guard** that
-silently skips data URIs larger than 25 MB — they never reach image_gen at
-all. Since image_gen now uploads all data URIs to fal storage, this guard
-should be removed so large images are not silently lost.
+**DFD**: `_dfds/tools/vision.md` §2d (Harness Vision Injection), `_dfds/agent-harness.md` §2g
+**Code**: `crate-rockbot/src/harness.rs:468–522`
 
-```rust
-// harness.rs:1008
-const MAX_DATA_URI_BYTES: usize = 25_000_000;
-// ...
-if r.data_uri.len() <= MAX_DATA_URI_BYTES {
-    injected.push(...);
-} else {
-    warn!("Skipping oversized data URI");
-}
 ```
+vision tool result → cache_vision_images → image pool → inject_vision_images → LLM
+```
+
+1. Vision tool returns plain markdown `![photo.png](data:image/png;base64,...)`
+2. `cache_vision_images()` parses the markdown, extracts data URIs into a
+   per-room `HashMap<String, Vec<CachedImage>>`
+3. Before the next LLM call, `inject_vision_images()` drains the pool and
+   appends a synthetic user message with `ContentPart::ImageUrl` parts (labelled
+   `photo1.png`, `photo2.png`, etc.)
+4. The pool is consumed on each injection — images are ephemeral, used for a
+   single LLM cycle
+5. Size limit uses `max_attachment_bytes` from config (default 25 MB)

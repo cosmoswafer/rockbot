@@ -223,6 +223,37 @@ flowchart TD
     INACT -->|"bot reply"| REPLY
 ```
 
+### 2g. Vision Image Injection
+
+After the vision tool returns, the harness intercepts the tool result, parses
+base64 data URIs from markdown image tags, caches them in a per-room image pool,
+and injects them as `ContentPart::ImageUrl` parts in a synthetic user message
+before the next LLM call. The pool is drained on each injection — images are
+ephemeral, used for a single LLM cycle.
+
+```mermaid
+flowchart TD
+    VISION_RESULT[Vision Tool Result<br/>![n](data:...)]
+    CACHE(CacheVisionImages<br/>parse data URIs)
+    POOL[(ImagePool<br/>HashMap<room_id, Vec<CachedImage>>)]
+    BUILD(BuildContext)
+    INJECT(InjectVisionImages<br/>drain pool, label photoN.ext)
+    AI[AiProvider]
+
+    VISION_RESULT -->|"tool content text"| CACHE
+    CACHE -->|"CachedImage { data_uri, name }"| POOL
+    BUILD -->|"context messages"| INJECT
+    POOL -->|"drain images"| INJECT
+    INJECT -->|"user msg + ImageUrl parts"| BUILD
+    BUILD -->|"chat request with images"| AI
+```
+
+This bridges the gap between the vision tool (which returns plain text) and
+the AI provider's multimodal requirement (which needs structured
+`ContentPart::ImageUrl` parts). Injection happens at two points in the agent loop:
+(1) before the first LLM call for a message, and (2) after each tool-execution
+iteration before the next LLM call.
+
 ## 3. Data Structures
 
 - **AgentContext** — does not exist as a struct. The harness constructs these values on the fly: `system_prompt` is built by `build_system_prompt()`, `history` by `build_context()`, `tools` by `ToolRegistry::definitions()`, `room_id` is a method parameter, `webdav_dir` is computed by `compute_webdav_dir()`.
