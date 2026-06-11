@@ -407,7 +407,9 @@ impl KnowledgeManager {
             .map(|w| w.to_lowercase())
             .collect();
         for tag in &entry.tags {
-            keys.push(tag.to_lowercase());
+            if tag.len() > 2 {
+                keys.push(tag.to_lowercase());
+            }
         }
         keys.sort();
         keys.dedup();
@@ -512,6 +514,8 @@ impl KnowledgeManager {
             entry.priority = new_prio;
             if is_degradation {
                 entry.last_degraded_at = Some(now.clone());
+            } else {
+                entry.last_degraded_at = None;
             }
             changed = true;
         }

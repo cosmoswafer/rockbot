@@ -28,7 +28,7 @@ review trigger.
 flowchart TD
     START[Daily Summary Review Trigger]
     ROOM["Per-Room<br/>(webdav_dir)"]
-    LOAD_SUMS["Load Latest 7-Day<br/>Daily Summaries"]
+    LOAD_SUMS["Harness Provides<br/>Latest 7-Day Summaries<br/>(from in-memory cache)"]
     DAV[(NextCloud WebDAV)]
     LOAD_IDX["Load knowledge/index.json"]
     EMPTY{Any knowledge<br/>entries?}
@@ -39,18 +39,15 @@ flowchart TD
     COUNT["Count Days Mentioned<br/>= week_count (0-7)"]
     NEW_PRIO{"Compute New Priority<br/>(see 2b state diagram)"}
     CHANGED{Priority Changed?}
-    DEGRADE{Is Degradation?<br/>(new < current)}
-    RATE_CHECK{"last_degraded_at<br/>≥ 24h ago?"}
+    DEGRADE{Is Degradation?<br/>(new > current, higher ord = worse)}
+    RATE_CHECK{"last_degraded_at<br/>same calendar day?"}
     RATE_SKIP[Skip — Rate Limited<br/>At most 1 degrade/day]
     MARK_DIRTY[Update Entry Priority<br/>+ set last_degraded_at]
     WRITE_IDX["Write Updated index.json"]
     SKIP[Skip]
 
     START --> ROOM
-    ROOM -->|"room webdav_dir"| LOAD_SUMS
-    LOAD_SUMS -->|"GET summaries/{YYYY-MM-DD}.md"| DAV
-    DAV -->|"summary texts (up to 7)"| LOAD_SUMS
-    LOAD_SUMS -->|"latest 7 days of summaries"| LOAD_IDX
+    ROOM -->|"room webdav_dir + summaries"| LOAD_IDX
     LOAD_IDX -->|"GET knowledge/index.json"| DAV
     DAV -->|"IndexEntry list"| EMPTY
     EMPTY -->|"no entries"| DONE
@@ -58,7 +55,7 @@ flowchart TD
     TICK -->|"next entry"| NEXT
     TICK -->|"no more"| WRITE_IDX
     NEXT -->|"entry title, tags, when_useful"| SCAN
-    LOAD_SUMS -->|"7 days of summary texts"| SCAN
+    LOAD_SUMS -.->|"summary texts passed by caller"| SCAN
     SCAN -->|"per-day match bool"| COUNT
     COUNT -->|"week_count + current priority"| NEW_PRIO
     NEW_PRIO --> CHANGED
@@ -137,9 +134,9 @@ stateDiagram-v2
 - **P3** = not mentioned for two consecutive cycles (from P2) — stale, but can recover if mentioned again
 - Promotion is immediate: any mention ≥1 day jumps to P1; 7/7 jumps to P0
 - Degradation is incremental: P0/P1 → P2 → P3, one step per review cycle with 0 mentions
-- **Rate limit**: degradation is capped at **once per 24 hours** — if
-  `last_degraded_at` is less than 24 hours ago, the degradation is skipped and
-  the current priority is kept. Promotions are never rate-limited and reset
+- **Rate limit**: degradation is capped at **once per calendar day** — if
+  `last_degraded_at` is from today's date, the degradation is skipped and
+  the current priority is kept. Promotions are never rate-limited and clear
   `last_degraded_at`.
 
 ### 2c. Mention Matching Logic
@@ -186,12 +183,12 @@ flowchart TD
     TIMER["Maintenance Timer<br/>(every persist_interval_secs)"]
     REVIEW["Daily Summary Review<br/>= Recalculate Priorities"]
     RECALC["Priority Recalculation<br/>(section 2a)"]
-    MARK["Mark Snapshot Dirty<br/>(index.json changed)"]
+    MARK["Harness Marks<br/>Snapshot Dirty"]
 
     ARCHIVE -->|"after upsert_daily_summary"| REVIEW
     TIMER -->|"phase: knowledge review"| REVIEW
     REVIEW -->|"per room"| RECALC
-    RECALC -->|"index.json written"| MARK
+    RECALC -->|"index.json written,<br/>returns changed bool"| MARK
 ```
 
 The priority recalculation runs at two points:

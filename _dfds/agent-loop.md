@@ -185,7 +185,7 @@ Typing indicator state is intentionally not retried or persisted — it is a tra
 
 ## 3. Data Structures
 
-#### `AgentHarness` (harness.rs:37-44)
+#### `AgentHarness` (harness.rs:55-65)
 
 | Field            | Type                  | Notes                                      |
 | ---------------- | --------------------- | ------------------------------------------ |
@@ -194,20 +194,25 @@ Typing indicator state is intentionally not retried or persisted — it is a tra
 | `memory`         | `MemoryManager`       | Per-room conversation history              |
 | `tools`          | `ToolRegistry`        | Registered tool definitions                |
 | `webdav`         | `Option<WebDavClient>`| Optional WebDAV handle for persistent storage |
+| `rest_client`    | `Option<RestApiClient>`| Optional REST API client for alias sends  |
 | `max_iterations` | `u32`                 | Max agent loop iterations per message      |
+| `max_attachment_bytes` | `u64`           | Max size for attachment download           |
 
 #### `RoomState`
 
 | Field           | Type                | Notes                                      |
 | --------------- | ------------------- | ------------------------------------------ |
-| `room_id`       | `String`            | RocketChat room UUID (in-memory lookup key, not a path segment) |
+| `room_id`       | `String`            | RocketChat room UUID (in-memory lookup key) |
+| `room_name`     | `String`            | URL slug (ASCII)                           |
+| `room_fname`    | `String`            | Friendly display name (Unicode)            |
 | `is_dm`         | `bool`              | True if direct message room                |
 | `history`       | `ConversationHistory`| In-memory message buffer for this room     |
-| `webdav_dir`    | `String`            | Computed on-the-fly from `room_name`/`room_fname`/`is_dm` via `compute_webdav_dir()`; not a stored field |
 | `last_activity` | `u64`               | Unix timestamp of last interaction; checked against `memory_ttl_secs` for eviction |
+
+`webdav_dir` is not a stored field — it is computed on-the-fly from `room_name`/`room_fname`/`is_dm` via `compute_webdav_dir()`.
 
 The main loop uses `tokio::signal::unix::signal(SignalKind::terminate())` raced with
 `tokio::signal::ctrl_c()` for shutdown (both SIGTERM and SIGINT), and a local
 `retry_count: u32` variable for reconnect backoff. Graceful shutdown calls
-`AgentHarness::flush_all_snapshots()` (harness.rs:726) to sync dirty per-room
+`AgentHarness::flush_all_snapshots()` (harness.rs:1126) to sync dirty per-room
 state to WebDAV before exiting.

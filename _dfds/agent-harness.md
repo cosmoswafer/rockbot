@@ -108,8 +108,8 @@ flowchart TD
     ASSESS -->|"final reply text"| REPLY_OUT
     EXEC -->|"tool result"| APPEND
     APPEND -->|"updated messages"| CTX
-    CTX -->|"iteration count"| LIMIT
-    LIMIT -.->|"overflow context"| TRUNC
+    CTX -->|"context byte size"| LIMIT
+    LIMIT -.->|"exceeds max_context_bytes"| TRUNC
     TRUNC -->|"summarized messages"| CTX
     EXEC -.->|"tool execution error"| APPEND
     AI -.->|"api error"| REPLY_OUT
@@ -330,12 +330,18 @@ knowledge-priority.md section 2b).
 
 #### `ToolDef`
 
+| Field           | Type            | Notes                                   |
+| --------------- | --------------- | --------------------------------------- |
+| `tool_type`     | `String`        | Always `"function"`                     |
+| `function`      | `FunctionDef`   | Nested function definition object       |
+
+#### `FunctionDef`
+
 | Field        | Type            | Notes                                   |
 | ------------ | --------------- | --------------------------------------- |
 | `name`       | `String`        | Function name                           |
 | `description`| `Option<String>`| Human-readable description for the LLM  |
 | `parameters` | `Option<Value>` | JSON Schema for arguments               |
-| `tool_type`  | `String`        | Always `"function"`                     |
 | `strict`     | `Option<bool>`  | Whether to enforce strict schema        |
 
 #### Registered Tools

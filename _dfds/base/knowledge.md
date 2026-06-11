@@ -223,6 +223,8 @@ A single `.md` file stored at `{root}/{webdav_dir}/knowledge/{category}_{slug}.m
 | `category`   | `KnowledgeCategory` | `skill`, `secret`, or `note`           |
 | `title`      | `String`         | Human-readable title                      |
 | `content`    | `String`         | Full markdown body                        |
+| `when_useful`| `String`         | Situation description for retrieval       |
+| `tags`       | `Vec<String>`    | Searchable keywords                       |
 | `created_at` | `String`         | ISO 8601 timestamp                        |
 | `updated_at` | `String`         | ISO 8601 timestamp                        |
 
@@ -248,6 +250,7 @@ Machine-readable JSON file at `{root}/{webdav_dir}/knowledge/index.json`.
 | `when_useful` | `String`           | Situation description for retrieval matching   |
 | `tags`        | `Vec<String>`      | Searchable keywords                            |
 | `priority`    | `KnowledgePriority` | P0 (highest), P1, P2 (default for new entries), P3 (stale); managed by [Knowledge Priority Algorithm](knowledge-priority.md) |
+| `last_degraded_at` | `String` (ISO 8601) | Timestamp of last degradation; enforces ≤1 degrade/day |
 | `created_at`  | `String`           | ISO 8601                                       |
 | `updated_at`  | `String`           | ISO 8601                                       |
 
@@ -366,7 +369,7 @@ Returns the matching `.md` content (or all entries if no query).
 ### Context Injection
 
 During `BuildContext` assembly (`MemoryManager::build_context`):
-1. If `knowledge_enabled` and WebDAV is configured, load `index.json`
+1. If WebDAV is configured, load `index.json`
 2. Score each `IndexEntry` against recent conversation messages
 3. For entries scoring above threshold, `GET` the `.md` file
 4. Prepend each loaded entry as a system message:
