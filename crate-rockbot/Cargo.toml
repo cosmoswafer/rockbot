@@ -20,6 +20,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 webdav = { path = "../crate-webdav" }
 rocketchat = { path = "../crate-rocketchat" }
 base64 = "0.22"
+regex = "1"
 
 [dev-dependencies]
 tokio-test = "0.4"

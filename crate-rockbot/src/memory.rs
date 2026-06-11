@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::LazyLock;
 
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 use webdav::WebDavPath;
@@ -382,24 +384,21 @@ impl MemoryManager {
             return None;
         }
 
-        // First try: find ## Identity section content
-        let identity_content = extract_section(content, "Identity");
-        if let Some(sec) = &identity_content {
-            debug!("self_display_name: Identity section found: {:?}", sec);
-            if let Some(name) = extract_name_from_text(sec) {
-                return Some(name);
-            }
+        // Standard regex: captures the line immediately after "## Identity"
+        // Matches the format prescribed in the system prompt.
+        if let Some(name) = extract_identity_name(content) {
+            debug!("self_display_name: regex match: {:?}", name);
+            return Some(name);
         }
 
-        // Second try: first non-header line as plain name (legacy format)
+        // Legacy fallback: first non-header line (pre-regex soul formats)
         for line in content.lines() {
             let trimmed = line.trim();
             if trimmed.is_empty() || trimmed.starts_with('#') {
                 continue;
             }
-            let name = trimmed.trim_end_matches(|c: char| c == ' ' || c == '：');
-            if !name.is_empty() && name.len() <= 32 {
-                return Some(name.to_string());
+            if trimmed.len() <= 32 {
+                return Some(trimmed.to_string());
             }
             break;
         }
@@ -628,73 +627,16 @@ fn strip_orphaned_tool_calls(messages: &mut Vec<ChatMessage>) {
     }
 }
 
-/// Extract the content of a markdown section by header name.
-fn extract_section(content: &str, section: &str) -> Option<String> {
-    let header = format!("## {}", section);
-    let pos = content.find(&header)?;
-    let start = pos + header.len();
-    let rest = &content[start..];
-
-    // Take everything until the next ## header or end
-    let end = rest.find("\n## ").unwrap_or(rest.len());
-    let section_content = rest[..end].trim().to_string();
-
-    if section_content.is_empty() { None } else { Some(section_content) }
-}
-
-/// Extract a display name from text content using common patterns.
-fn extract_name_from_text(text: &str) -> Option<String> {
-    // 1. Bold markdown: **Name**
-    if let Some(name) = extract_bold(text) {
-        return Some(name);
-    }
-
-    // 2. "My name is X" / "我叫X" / "I'm X" / "name is X"
-    let line = text.lines().next().unwrap_or(text).trim();
-    let lower = line.to_lowercase();
-
-    for prefix in &["my name is ", "name is ", "i'm ", "i am ", "我叫", "我是"] {
-        if let Some(pos) = lower.find(prefix) {
-            let rest = &line[pos + prefix.len()..].trim();
-            let end = rest.find(|c: char| {
-                c == '.' || c == ',' || c == '!' || c == '?' || c == '。' || c == '，' || c == '：'
-            }).unwrap_or(rest.len());
-            let name = rest[..end].trim().to_string();
-            if !name.is_empty() && name.len() <= 32 {
-                return Some(name);
-            }
-        }
-    }
-
-    // 3. Split on description separators: "Name ✨ — Description" → "Name ✨"
-    for sep in &[" — ", "—", " – ", "–", " - "] {
-        if let Some(pos) = line.find(sep) {
-            let left = line[..pos].trim().trim_end_matches(|c: char| c == '：' || c == ' ');
-            if !left.is_empty() && left.len() <= 32 {
-                return Some(left.to_string());
-            }
-        }
-    }
-
-    // 4. First line, trim ** and quotes
-    let cleaned = line
-        .replace("**", "")
-        .replace("「", "")
-        .replace("」", "")
-        .trim()
-        .to_string();
-    if !cleaned.is_empty() && cleaned.len() <= 32 {
-        return Some(cleaned);
-    }
-
-    None
-}
-
-fn extract_bold(text: &str) -> Option<String> {
-    let start = text.find("**")?;
-    let end = text[start + 2..].find("**")?;
-    let name = &text[start + 2..start + 2 + end];
-    let name = name.trim().to_string();
+/// Extract display name from soul content using a standard regex.
+///
+/// Regex: `## Identity\n(.+)` — captures the first line immediately after
+/// the `## Identity` header. The LLM is instructed to use exactly this format.
+fn extract_identity_name(content: &str) -> Option<String> {
+    static RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"## Identity\n(.+)").expect("hardcoded regex")
+    });
+    let caps = RE.captures(content)?;
+    let name = caps.get(1)?.as_str().trim().to_string();
     if !name.is_empty() && name.len() <= 32 {
         Some(name)
     } else {
@@ -954,80 +896,67 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_section_identity() {
+    fn test_extract_identity_name_standard() {
         let content = "# Soul Memory\n\n## Identity\n零夢\n\n## Preferences\nfoo";
-        let sec = extract_section(content, "Identity");
-        assert_eq!(sec, Some("零夢".to_string()));
+        assert_eq!(extract_identity_name(content), Some("零夢".into()));
     }
 
     #[test]
-    fn test_extract_section_identity_inline() {
-        let content = "# Soul Memory\n\n## Identity My name is 零夢 :sparkles:.\n\n## Preferences";
-        let sec = extract_section(content, "Identity");
-        assert_eq!(sec, Some("My name is 零夢 :sparkles:.".to_string()));
+    fn test_extract_identity_name_with_emoji() {
+        let content = "# Soul Memory\n\n## Identity\n零夢 ✨\n\n## Preferences";
+        assert_eq!(extract_identity_name(content), Some("零夢 ✨".into()));
     }
 
     #[test]
-    fn test_extract_name_bold() {
-        assert_eq!(extract_name_from_text("**RocketBot**"), Some("RocketBot".into()));
+    fn test_extract_identity_name_cjk() {
+        let content = "# Soul Memory\n\n## Identity\n雪山泡芙 ✨\n\n## Preferences\nfoo";
+        assert_eq!(extract_identity_name(content), Some("雪山泡芙 ✨".into()));
     }
 
     #[test]
-    fn test_extract_name_my_name_is() {
-        assert_eq!(extract_name_from_text("My name is 零夢 :sparkles:."), Some("零夢 :sparkles:".into()));
+    fn test_extract_identity_name_no_match() {
+        let content = "# Soul Memory\n\n## Preferences\nlikes cats\n\n## Facts\nborn 2024";
+        assert_eq!(extract_identity_name(content), None);
     }
 
     #[test]
-    fn test_extract_name_chinese_wo_jiao() {
-        assert_eq!(extract_name_from_text("我叫雪山泡芙 ✨"), Some("雪山泡芙 ✨".into()));
+    fn test_extract_identity_name_too_long() {
+        let content = "# Soul Memory\n\n## Identity\nA very very long name over 32 characters\n\n## Preferences";
+        assert_eq!(extract_identity_name(content), None);
     }
 
     #[test]
-    fn test_extract_name_plain_line() {
-        assert_eq!(extract_name_from_text("零夢"), Some("零夢".into()));
+    fn test_extract_identity_name_not_a_header() {
+        let content = "Just some random text\nwithout Identity header";
+        assert_eq!(extract_identity_name(content), None);
     }
 
     #[test]
-    fn test_extract_name_too_long() {
-        let long = "My name is a very very long name over 32 characters";
-        assert_eq!(extract_name_from_text(long), None);
+    fn test_extract_identity_name_empty_content() {
+        assert_eq!(extract_identity_name(""), None);
     }
 
     #[test]
-    fn test_extract_name_separator_em_dash() {
-        assert_eq!(
-            extract_name_from_text("零夢 ✨ — A Japanese little girl. My mother language is English."),
-            Some("零夢 ✨".into())
-        );
+    fn test_self_display_name_regex_match() {
+        let mut mm = MemoryManager::new(1000, 12, 8000, 7, 2000, 60, 30_000_000);
+        let soul = SoulMemory {
+            room_id: "r-test".into(),
+            content: "# Soul Memory\n\n## Identity\n香菜 🌿\n\n## Preferences\nfoo".into(),
+            updated_at: String::new(),
+        };
+        mm.set_soul("r-test", soul);
+        assert_eq!(mm.self_display_name("r-test"), Some("香菜 🌿".into()));
     }
 
     #[test]
-    fn test_extract_name_separator_en_dash() {
-        assert_eq!(
-            extract_name_from_text("雪山泡芙 – Cosplay enthusiast"),
-            Some("雪山泡芙".into())
-        );
-    }
-
-    #[test]
-    fn test_extract_name_separator_spaced_hyphen() {
-        assert_eq!(
-            extract_name_from_text("零夢 - a helpful bot"),
-            Some("零夢".into())
-        );
-    }
-
-    #[test]
-    fn test_extract_name_no_separator_fallback() {
-        assert_eq!(
-            extract_name_from_text("零夢 ✨"),
-            Some("零夢 ✨".into())
-        );
-    }
-
-    #[test]
-    fn test_extract_name_separator_too_long() {
-        let long = "A very very long name over 32 chars — description";
-        assert_eq!(extract_name_from_text(long), None);
+    fn test_self_display_name_legacy_fallback() {
+        let mut mm = MemoryManager::new(1000, 12, 8000, 7, 2000, 60, 30_000_000);
+        let soul = SoulMemory {
+            room_id: "r-test".into(),
+            content: "零夢\n\n## Preferences\nfoo".into(),
+            updated_at: String::new(),
+        };
+        mm.set_soul("r-test", soul);
+        assert_eq!(mm.self_display_name("r-test"), Some("零夢".into()));
     }
 }
