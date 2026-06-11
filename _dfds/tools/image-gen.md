@@ -38,7 +38,7 @@ flowchart TD
     FORMAT(FormatResult)
     FAL_API[fal.ai API]
 
-    AGENT -->|"prompt + image_size + room_id (LLM provides only these)"| PARSE
+    AGENT -->|"prompt + image_size (LLM), room_id + webdav_dir + image_urls (harness injects)"| PARSE
     PARSE -->|"merged with config defaults (quality, output_format, num_images) + injected image_urls"| RESOLVE
     RESOLVE -->|"prompt + resolved {width, height} + quality + output_format + num_images"| FAL
     FAL -->|"submit request"| SUBMIT
