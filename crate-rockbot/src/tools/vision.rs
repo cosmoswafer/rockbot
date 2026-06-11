@@ -5,10 +5,11 @@ use serde_json::Value;
 use crate::error::{Result, RockBotError};
 use crate::tool::Tool;
 
-const MAX_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
+const DEFAULT_MAX_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
 
 pub struct VisionTool {
     http_client: reqwest::Client,
+    max_image_bytes: u64,
 }
 
 impl Default for VisionTool {
@@ -21,6 +22,14 @@ impl VisionTool {
     pub fn new() -> Self {
         Self {
             http_client: reqwest::Client::new(),
+            max_image_bytes: DEFAULT_MAX_IMAGE_BYTES,
+        }
+    }
+
+    pub fn with_max_bytes(max_bytes: u64) -> Self {
+        Self {
+            http_client: reqwest::Client::new(),
+            max_image_bytes: max_bytes,
         }
     }
 
@@ -49,10 +58,10 @@ impl VisionTool {
         let image_bytes = response.bytes().await?;
         let size = image_bytes.len() as u64;
 
-        if size > MAX_IMAGE_BYTES {
+        if size > self.max_image_bytes {
             return Err(RockBotError::Provider(format!(
                 "Image too large: {} bytes (max {})",
-                size, MAX_IMAGE_BYTES
+                size, self.max_image_bytes
             )));
         }
 
@@ -107,6 +116,7 @@ impl Tool for VisionTool {
     fn description(&self) -> &str {
         "Fetch an image from a WebDAV file path or public URL and return it as a base64 markdown image tag. \n\
          Use this to retrieve images the user is asking about from WebDAV storage or external URLs. \n\
+         Optionally provide a prompt hint for how the image should be analyzed. \n\
          User attachments are already visible to you — only use this tool for images at explicit URLs."
     }
 
@@ -117,6 +127,10 @@ impl Tool for VisionTool {
                 "url": {
                     "type": "string",
                     "description": "URL of the image to fetch (public web or WebDAV file)"
+                },
+                "prompt": {
+                    "type": "string",
+                    "description": "Optional prompt for the LLM to use when analyzing this image"
                 }
             },
             "required": ["url"]

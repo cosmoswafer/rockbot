@@ -173,13 +173,24 @@ pub struct ProviderConfig {
 impl AppConfig {
     pub fn from_file(path: &str) -> crate::error::Result<Self> {
         let default_raw = std::fs::read_to_string(DEFAULT_CONFIG_PATH)
-            .unwrap_or_default();
+            .map_err(|e| crate::error::RockBotError::Config(format!(
+                "Failed to read default config ({}): {}. The install may be corrupt.",
+                DEFAULT_CONFIG_PATH, e
+            )))?;
         let default_value: toml::Value = toml::from_str(&default_raw)
             .map_err(|e| crate::error::RockBotError::Config(format!("default parse: {}", e)))?;
 
-        let user_raw = std::fs::read_to_string(path)?;
-        let user_value: toml::Value = toml::from_str(&user_raw)
-            .map_err(|e| crate::error::RockBotError::Config(format!("user parse: {}", e)))?;
+        let user_value: toml::Value = match std::fs::read_to_string(path) {
+            Ok(raw) => toml::from_str(&raw)
+                .map_err(|e| crate::error::RockBotError::Config(format!("user parse: {}", e)))?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                tracing::warn!("Config file '{}' not found, using defaults only", path);
+                toml::Value::Table(toml::value::Table::new())
+            }
+            Err(e) => return Err(crate::error::RockBotError::Config(format!(
+                "Failed to read config '{}': {}", path, e
+            ))),
+        };
 
         let merged = merge_toml(default_value, user_value);
         let merged_str = toml::to_string(&merged)

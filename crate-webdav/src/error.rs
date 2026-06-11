@@ -17,6 +17,9 @@ pub enum WebDavError {
     #[error("File not found: {0}")]
     NotFound(String),
 
+    #[error("Bad request: {0}")]
+    BadRequest(String),
+
     #[error("Directory already exists: {0}")]
     AlreadyExists(String),
 

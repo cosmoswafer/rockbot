@@ -80,6 +80,20 @@ impl WebFetchTool {
             .unwrap_or("unknown")
             .to_string();
 
+        // Check for binary/non-text content types
+        let is_text = content_type.starts_with("text/")
+            || content_type.is_empty()
+            || content_type == "unknown"
+            || content_type.starts_with("application/json")
+            || content_type.starts_with("application/xml")
+            || content_type.starts_with("application/javascript");
+        if !is_text {
+            return Err(RockBotError::Provider(format!(
+                "Cannot parse binary/non-text content: {}. Use a different URL or format.",
+                content_type
+            )));
+        }
+
         let body = response.text().await?;
 
         let is_html = content_type.contains("text/html");
@@ -89,6 +103,8 @@ impl WebFetchTool {
         } else {
             None
         };
+
+        let verification_performed = related_sources.is_some();
 
         match format {
             OutputFormat::Json => {
@@ -103,12 +119,12 @@ impl WebFetchTool {
                     "status": status,
                     "content_type": content_type,
                     "content": content,
-                    "verified": verify,
+                    "verified": verification_performed,
                 });
 
                 if let Some(sources) = related_sources {
                     json["related_sources"] = sources;
-                } else if verify {
+                } else if verification_performed {
                     json["related_sources"] = serde_json::json!([]);
                 }
 

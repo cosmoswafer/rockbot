@@ -21,6 +21,8 @@ pub struct RoomInfo {
 #[derive(Debug, Clone, Deserialize)]
 struct RoomsGetResponse {
     update: Vec<RoomInfo>,
+    #[serde(default)]
+    success: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -102,6 +104,11 @@ impl RestApiClient {
             RocketChatError::Protocol(format!("Failed to parse rooms.get response: {e}"))
         })?;
 
+        if !data.success {
+            warn!("rooms.get returned success=false, treating as empty");
+            return Ok(vec![]);
+        }
+
         for room in &data.update {
             if !room.fname.is_empty() {
                 self.room_name_cache
@@ -114,7 +121,13 @@ impl RestApiClient {
     }
 
     pub async fn get_room_info(&mut self, room_id: &str) -> Result<Option<RoomInfo>> {
-        let url = self.api_url(&format!("rooms.info?roomId={room_id}"));
+        let query = if room_id.len() > 30 && !room_id.contains(' ') {
+            format!("rooms.info?roomId={room_id}")
+        } else {
+            // Short IDs or space-containing strings use roomName (ASCII slug)
+            format!("rooms.info?roomName={room_id}")
+        };
+        let url = self.api_url(&query);
         debug!("REST GET {}", url);
 
         let resp = self

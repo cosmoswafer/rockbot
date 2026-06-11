@@ -96,6 +96,7 @@ pub struct RocketChatClient {
     auth_token: Option<String>,
     username: String,
     bot_name: String,
+    display_name: Option<String>,
     registered_rooms: HashMap<String, bool>,
 }
 
@@ -109,8 +110,13 @@ impl RocketChatClient {
             auth_token: None,
             username,
             bot_name,
+            display_name: None,
             registered_rooms: HashMap::new(),
         }
+    }
+
+    pub fn set_display_name(&mut self, name: Option<String>) {
+        self.display_name = name;
     }
 
     pub fn from_config_file(path: &str) -> Result<Self> {
@@ -216,10 +222,15 @@ impl RocketChatClient {
             } else if ddp::is_changed(&value) {
                 let filter = MessageFilter::new(user_id.as_str());
                 if let Some(msg) = filter.filter(&value) {
+                    let display_match = self.display_name.as_ref().map_or(false, |dn| {
+                        let stripped = crate::types::strip_emoji(dn);
+                        !stripped.is_empty() && msg.text.to_lowercase().contains(&stripped.to_lowercase())
+                    });
                     let should_dispatch = msg.is_dm
                         || (!msg.room_name.is_empty()
                             && (msg.text.starts_with(&bot_name)
-                                || msg.text.contains(&bot_name)))
+                                || msg.text.contains(&bot_name)
+                                || display_match))
                         || (!registered_rooms.is_empty()
                             && !msg.room_name.is_empty()
                             && registered_rooms.contains_key(&msg.room_name));

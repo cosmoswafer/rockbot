@@ -29,7 +29,7 @@ impl WebSearchTool {
         }
     }
 
-    async fn search_exa(&self, query: &str, search_type: &str, num_results: u32) -> Result<String> {
+    async fn search_exa(&self, query: &str, search_type: &str, num_results: u32, contents_mode: &str) -> Result<String> {
         let api_key = self.api_key.as_deref().ok_or_else(|| {
             RockBotError::Provider(
                 "web_search requires an Exa API key. Configure it in [tools.exa] section of config.toml."
@@ -37,16 +37,26 @@ impl WebSearchTool {
             )
         })?;
 
-        let body = serde_json::json!({
-            "query": query,
-            "numResults": num_results,
-            "type": search_type,
-            "contents": {
+        let contents = match contents_mode {
+            "text" => serde_json::json!({
+                "text": {"maxCharacters": 15000}
+            }),
+            "deep" => serde_json::json!({
+                "text": {"maxCharacters": 15000}
+            }),
+            _ => serde_json::json!({
                 "highlights": {
                     "enabled": true,
                     "query": query
                 }
-            }
+            }),
+        };
+
+        let body = serde_json::json!({
+            "query": query,
+            "numResults": num_results,
+            "type": search_type,
+            "contents": contents
         });
 
         let max_retries: u32 = 3;
@@ -171,7 +181,7 @@ impl Tool for WebSearchTool {
 
     fn description(&self) -> &str {
         "Search the web using Exa. Returns ranked results with titles, URLs, highlights, and dates. \
-         Supports optional type (auto/fast/deep) and num_results parameters."
+         Supports optional type (auto/fast/deep), num_results, and contents_mode (highlights/text/deep) parameters."
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -186,6 +196,11 @@ impl Tool for WebSearchTool {
                     "type": "string",
                     "enum": ["auto", "fast", "deep"],
                     "description": "Search type: auto (balanced with autoprompt), fast (quick results), deep (comprehensive). Default: auto"
+                },
+                "contents_mode": {
+                    "type": "string",
+                    "enum": ["highlights", "text", "deep"],
+                    "description": "Content mode: highlights returns snippets (default), text returns full page content, deep enables comprehensive search"
                 },
                 "num_results": {
                     "type": "integer",
@@ -214,7 +229,9 @@ impl Tool for WebSearchTool {
             .and_then(|n| n.as_u64())
             .unwrap_or(5) as u32;
 
-        self.search_exa(query, search_type, num_results).await
+        let contents_mode = args.get("contents_mode").and_then(|c| c.as_str()).unwrap_or("highlights");
+
+        self.search_exa(query, search_type, num_results, contents_mode).await
     }
 }
 

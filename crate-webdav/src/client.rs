@@ -547,6 +547,7 @@ impl WebDavClient {
 
         let body = response.text().await.unwrap_or_default();
         match status {
+            400 => Err(WebDavError::BadRequest(format!("Invalid request data: {}", body))),
             401 => Err(WebDavError::AuthFailed("Invalid credentials".into())),
             404 => Err(WebDavError::NotFound(body)),
             _ => Err(WebDavError::UnexpectedStatus { status, body }),
@@ -556,6 +557,7 @@ impl WebDavClient {
     async fn handle_fetch_response(&self, response: reqwest::Response) -> Result<Vec<u8>> {
         match response.status().as_u16() {
             200 | 207 => Ok(response.bytes().await?.to_vec()),
+            400 => Err(WebDavError::BadRequest("Invalid request data".into())),
             401 => Err(WebDavError::AuthFailed("Invalid credentials".into())),
             404 => Err(WebDavError::NotFound("Path not found".to_string())),
             status => {
@@ -578,6 +580,7 @@ impl WebDavClient {
 
         let body = response.text().await.unwrap_or_default();
         match status {
+            400 => Err(WebDavError::BadRequest(format!("Invalid request data: {}", body))),
             401 => Err(WebDavError::AuthFailed("Invalid credentials".into())),
             404 => Err(WebDavError::NotFound(body)),
             _ => Err(WebDavError::UnexpectedStatus { status, body }),

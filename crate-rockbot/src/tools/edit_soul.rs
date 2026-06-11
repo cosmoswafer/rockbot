@@ -18,6 +18,22 @@ impl EditSoulTool {
     async fn do_append(&self, dir_key: &str, section_header: &str, content: &str) -> Result<String> {
         let path = soul_path(dir_key);
         let existing = self.webdav.read_file_to_string(&path).await.unwrap_or_default();
+
+        // Check for duplicate section header to prevent double sections
+        fn section_exists(text: &str, header: &str) -> bool {
+            text.contains(&format!("\n## {} ", header))
+                || text.contains(&format!("\n## {}", header))
+                || text.starts_with(&format!("## {} ", header))
+                || text.starts_with(&format!("## {}", header))
+        }
+
+        if !existing.is_empty() && section_exists(&existing, section_header) {
+            return Err(RockBotError::ToolCallParse(format!(
+                "Section '## {}' already exists in soul memory. Use 'replace' action to update it.",
+                section_header
+            )));
+        }
+
         let new_content = if existing.is_empty() {
             format!("# Soul Memory\n\n## {}\n{}\n", section_header, content)
         } else {

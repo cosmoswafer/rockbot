@@ -230,22 +230,22 @@ impl KnowledgeManager {
 
         let mut index = Self::load_index(webdav, webdav_dir).await?;
 
-        let matched_entry = index.entries.iter().find(|e| {
+        let mut deleted_files = 0usize;
+        let matching_entries: Vec<_> = index.entries.iter().filter(|e| {
             e.title.eq_ignore_ascii_case(topic)
                 || e.id.eq_ignore_ascii_case(&topic_slug)
                 || e.id.ends_with(&format!("_{}", topic_slug))
-        });
+        }).collect();
 
-        let mut deleted = false;
-        if let Some(entry) = matched_entry {
+        for entry in &matching_entries {
             let md_path = format!(
                 "{}{}",
                 Self::knowledge_dir(webdav_dir),
                 entry.filename
             );
             match webdav.delete(&md_path).await {
-                Ok(()) => deleted = true,
-                Err(e) => warn!("Failed to delete knowledge file: {e}"),
+                Ok(()) => deleted_files += 1,
+                Err(e) => warn!("Failed to delete knowledge file {}: {}", entry.filename, e),
             }
         }
 
@@ -257,7 +257,7 @@ impl KnowledgeManager {
             !(topic_match || slug_match)
         });
 
-        if len_before == index.entries.len() && !deleted {
+        if len_before == index.entries.len() && deleted_files == 0 {
             return Err(crate::error::RockBotError::ToolCallParse(format!(
                 "Knowledge entry '{topic}' not found."
             )));
@@ -329,7 +329,7 @@ impl KnowledgeManager {
             .collect();
 
         scored.sort_by_key(|(s, _)| std::cmp::Reverse(*s));
-        scored.into_iter().take(5).map(|(_, e)| e).collect()
+        scored.into_iter().map(|(_, e)| e).collect()
     }
 
     pub async fn recall_entry(
@@ -343,9 +343,8 @@ impl KnowledgeManager {
         }
 
         let query_lower = query.to_lowercase();
-        let entry = if query_lower.is_empty() {
-            let content_parts = Vec::new();
-            let mut content_parts = content_parts;
+        if query_lower.is_empty() {
+            let mut content_parts = Vec::new();
             for e in &index.entries {
                 if let Ok(body) =
                     Self::read_entry_md(webdav, webdav_dir, &e.filename).await
@@ -356,23 +355,29 @@ impl KnowledgeManager {
                     ));
                 }
             }
+            if content_parts.is_empty() {
+                return Ok(Some("No knowledge entries found for this room.".into()));
+            }
             return Ok(Some(content_parts.join("\n---\n")));
         } else {
-            index.entries.iter().find(|e| {
-                e.title.to_lowercase().contains(&query_lower)
-                    || e.when_useful.to_lowercase().contains(&query_lower)
-                    || e.tags.iter().any(|t| t.to_lowercase().contains(&query_lower))
-            })
-        };
-
-        if let Some(e) = entry {
-            let body = Self::read_entry_md(webdav, webdav_dir, &e.filename).await?;
-            Ok(Some(format!(
-                "[Knowledge: {}/{}]\n{}\nUse when: {}",
-                e.category, e.title, body, e.when_useful
-            )))
-        } else {
-            Ok(Some(format!("No knowledge entry found matching '{query}'.")))
+            // Use keyword scoring to find all matching entries
+            let recent = &[query];
+            let matching = Self::match_relevant(&index, recent);
+            if matching.is_empty() {
+                return Ok(Some(format!("No knowledge entry found matching '{query}'.")));
+            }
+            let mut content_parts = Vec::new();
+            for e in &matching {
+                if let Ok(body) =
+                    Self::read_entry_md(webdav, webdav_dir, &e.filename).await
+                {
+                    content_parts.push(format!(
+                        "[Knowledge: {}/{}]\n{}\nUse when: {}",
+                        e.category, e.title, body, e.when_useful
+                    ));
+                }
+            }
+            return Ok(Some(content_parts.join("\n---\n")));
         }
     }
 

@@ -179,7 +179,7 @@ impl AgentHarness {
                 .collect::<Vec<_>>()
                 .join(" ");
             let prompt = if clean_text.is_empty() {
-                format!("Describe this image in detail.\nAttached: {}", image_labels)
+                format!("{}: Describe this image in detail.\nAttached: {}", sender_name, image_labels)
             } else {
                 format!(
                     "{}: {}\nAttached: {}",
@@ -212,6 +212,9 @@ impl AgentHarness {
             .memory
             .build_context(room_id, &system_prompt, None, None);
         self.inject_vision_images(room_id, &mut messages);
+        // Inline context overflow: summarize if approaching byte limit
+        let max_ctx = self.config.rocketchat.model.max_context_bytes as u64;
+        messages = self.truncate_and_summarize(room_id, messages, max_ctx).await;
         debug!(
             "Built context for room {}: {} messages (model={}, have_tools={})",
             room_id,
@@ -353,12 +356,18 @@ impl AgentHarness {
                         }
                         if altered_knowledge {
                             self.memory.mark_snapshot_dirty(room_id);
+                            let wd = compute_webdav_dir(room_name, room_fname, is_dm);
+                            if let Err(e) = self.refresh_knowledge_context(room_id, &wd).await {
+                                warn!("Failed to refresh knowledge context after alter: {}", e);
+                            }
                         }
 
                         messages = self
                             .memory
                             .build_context(room_id, &system_prompt, None, None);
                         self.inject_vision_images(room_id, &mut messages);
+                        let max_ctx = self.config.rocketchat.model.max_context_bytes as u64;
+                        messages = self.truncate_and_summarize(room_id, messages, max_ctx).await;
                         continue;
                     }
 
@@ -451,11 +460,11 @@ impl AgentHarness {
                 .filter(|t| !t.is_empty())
                 .unwrap_or("image")
                 .to_string();
-            let url = format!(
-                "https://{}{}",
-                self.config.rocketchat.server.url.trim_end_matches('/'),
-                title_link
-            );
+            let host = self.config.rocketchat.server.url
+                .trim_start_matches("https://")
+                .trim_start_matches("http://")
+                .trim_end_matches('/');
+            let url = format!("https://{}{}", host, title_link);
             match self.download_and_encode_single(&url).await {
                 Ok(data_uri) => refs.push(AttachmentRef { title, data_uri }),
                 Err(e) => warn!("Failed to download attachment {}: {}", url, e),
@@ -578,6 +587,100 @@ impl AgentHarness {
 
     fn provider_http_client(&self) -> reqwest::Client {
         reqwest::Client::new()
+    }
+
+    async fn truncate_and_summarize(
+        &self,
+        room_id: &str,
+        messages: Vec<ChatMessage>,
+        max_bytes: u64,
+    ) -> Vec<ChatMessage> {
+        let current_bytes: u64 = messages
+            .iter()
+            .map(|m| {
+                serde_json::to_string(m).map(|s| s.len() as u64).unwrap_or(0)
+            })
+            .sum();
+        if current_bytes <= max_bytes {
+            return messages;
+        }
+
+        let system_idx = messages.iter().position(|m| m.role == Role::System);
+        let start = system_idx.map(|i| i + 1).unwrap_or(0);
+        // Keep at least the last 4 messages plus system prompt
+        if messages.len() <= start + 4 {
+            return messages;
+        }
+
+        let to_summarize: Vec<_> = messages[start..]
+            .iter()
+            .take(messages.len() - start - 2)
+            .filter_map(|m| m.text_content())
+            .map(|t| t.chars().take(300).collect::<String>())
+            .take(20)
+            .collect();
+
+        if to_summarize.is_empty() {
+            return messages;
+        }
+
+        let summary_prompt = format!(
+            "Summarize this conversation excerpt in 1-3 concise sentences. Focus on key topics, \
+             decisions, and factual information shared:\n\n{}",
+            to_summarize.join("\n")
+        );
+
+        let request = ChatRequest {
+            model: self.resolve_model(),
+            messages: vec![ChatMessage::user(&summary_prompt)],
+            tools: None,
+            stream: false,
+            temperature: Some(0.3),
+            max_tokens: Some(256),
+            thinking: None,
+            reasoning_effort: None,
+            tool_choice: None,
+        };
+
+        let summary_text = match self.provider.complete(request).await {
+            Ok(result) => {
+                result.text.unwrap_or_else(|| format!("{} messages truncated", to_summarize.len()))
+            }
+            Err(e) => {
+                warn!("Inline context summarization failed: {}, falling back to truncation", e);
+                format!("{} earlier messages (truncated due to context limit)", to_summarize.len())
+            }
+        };
+
+        let prefix = if let Some(idx) = system_idx {
+            messages[..=idx].to_vec()
+        } else {
+            vec![]
+        };
+
+        let suffix_start = (messages.len() - start).saturating_sub(2);
+        let suffix = if suffix_start > 0 && start + suffix_start < messages.len() {
+            messages[start + suffix_start..].to_vec()
+        } else {
+            messages[start + messages.len().saturating_sub(2).min(messages.len())..].to_vec()
+        };
+
+        let mut result = prefix;
+        result.push(ChatMessage::system(&format!(
+            "[Earlier conversation summarized: {}]",
+            summary_text
+        )));
+        result.extend(suffix);
+
+        debug!(
+            "Inline context summarized for room {}: {} messages -> {} ({} -> {} bytes)",
+            room_id,
+            messages.len(),
+            result.len(),
+            current_bytes,
+            result.iter().map(|m| serde_json::to_string(m).map(|s| s.len() as u64).unwrap_or(0)).sum::<u64>(),
+        );
+        result
     }
 
     pub async fn archive_room_if_needed(&mut self, room_id: &str) -> Result<()> {

@@ -124,7 +124,9 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
         debug!("WebFetchTool registered without Exa verification (no Exa API key)");
     }
     tool_registry.register(Box::new(DateTimeTool::new()));
-    tool_registry.register(Box::new(VisionTool::new()));
+    tool_registry.register(Box::new(VisionTool::with_max_bytes(
+        harness.config().rocketchat.model.max_attachment_bytes,
+    )));
     if let Some(ref webdav_client) = webdav {
         tool_registry.register(Box::new(WebDavTool::new(webdav_client.clone())));
         tool_registry.register(Box::new(EditSoulTool::new(webdav_client.clone())));
@@ -295,7 +297,13 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     tokio::pin!(shutdown);
 
     loop {
-        let client = rocketchat::RocketChatClient::new(rocketchat_config.clone());
+        let mut client = rocketchat::RocketChatClient::new(rocketchat_config.clone());
+        // Set display name for stage-4 filter (response to own display name in channels)
+        {
+            let h = harness.lock().await;
+            let display_name = h.memory().any_display_name();
+            client.set_display_name(display_name);
+        }
 
         let connect_fut = client
             .connect_and_run({
