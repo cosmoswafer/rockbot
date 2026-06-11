@@ -504,14 +504,22 @@ impl AgentHarness {
             if count == 0 {
                 return;
             }
-            let names: Vec<String> = images.iter().map(|ci| ci.name.clone()).collect();
+            let labels: Vec<String> = images
+                .iter()
+                .enumerate()
+                .map(|(i, ci)| {
+                    let idx = i + 1;
+                    let ext = ci.name.rfind('.').map(|p| &ci.name[p..]).unwrap_or(".png");
+                    format!("photo{}{}", idx, ext)
+                })
+                .collect();
             let data_uris: Vec<String> = images.into_iter().map(|ci| ci.data_uri).collect();
             let prompt = format!(
                 "The requested image{} visible below:\nAttached: {}",
                 if count > 1 { "s are" } else { " is" },
-                names
+                labels
                     .iter()
-                    .map(|n| format!("![{}]({})", n, n))
+                    .map(|l| format!("![{}]({})", l, l))
                     .collect::<Vec<_>>()
                     .join(" ")
             );
