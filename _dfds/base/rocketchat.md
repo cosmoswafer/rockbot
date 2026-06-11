@@ -246,7 +246,11 @@ on duplicate IDs.
 The `sendMessage` method requires a client-generated `_id` string field inside
 the `params` message object — RocketChat validates this on the server side and
 rejects messages without it. Both the DDP method `id` and the message `_id` use
-`next_id()` for unique values:
+`next_id()` for unique values.
+
+An optional `alias` field in `params[0]` overrides the displayed sender name for
+this message — the server substitutes the alias in place of the bot's real username.
+Requires the `message-impersonate` permission on the RocketChat user role.
 
 ```json
 {
@@ -256,10 +260,15 @@ rejects messages without it. Both the DDP method `id` and the message `_id` use
     "params": [{
         "_id": "<next_id()>",
         "rid": "room-uuid",
-        "msg": "reply text"
+        "msg": "reply text",
+        "alias": "TotallyRealHuman"
     }]
 }
 ```
+
+The `alias` field is optional. When omitted or when the user lacks
+`message-impersonate`, the message is sent under the bot's own username
+with no error.
 
 **Server response** on success:
 
@@ -276,6 +285,43 @@ rejects messages without it. Both the DDP method `id` and the message `_id` use
 ```
 
 The `tokenExpires` field is **not consumed** by the current implementation.
+
+### 2g. Alias Impersonation Deep Dive
+
+Messages can be sent with an optional `alias` field that overrides the displayed
+sender name. The bot's user account must have the `message-impersonate`
+permission. When the permission is missing, RocketChat silently ignores the
+`alias` field and shows the message under the bot's own username. The alias is
+injected into `params[0]` alongside `rid` and `msg`.
+
+```mermaid
+flowchart TD
+    HARNESS[Agent Loop]
+    SENDER(MessageSender<br/>reply_with_alias)
+    BUILD(BuildPayload)
+    INJECT{Has alias?}
+    NO_ALIAS["params: {_id, rid, msg}"]
+    WITH_ALIAS["params: {_id, rid, msg, alias}"]
+    SEND(SendDdpMethod)
+    RC[RocketChat DDP]
+    RESULT[/result or error/]
+
+    HARNESS -->|"text + optional alias"| SENDER
+    SENDER -->|"room_id + text + alias"| BUILD
+    BUILD --> INJECT
+    INJECT -->|"no"| NO_ALIAS
+    INJECT -->|"yes"| WITH_ALIAS
+    NO_ALIAS --> SEND
+    WITH_ALIAS --> SEND
+    SEND -->|"method: sendMessage"| RC
+    RC -->|"msg: result"| RESULT
+```
+
+The alias is a plain string. When set, the RocketChat server replaces the bot's
+display name with the alias value in the message UI and event broadcasts. The
+`IncomingMessage` events received by other clients include an
+`args[0].alias` field reflecting the impersonated name. Self-messages (where
+`sender_id == bot_user_id`) are still filtered out regardless of alias.
 
 ## 3. Data Structures
 
@@ -321,10 +367,14 @@ is available, the display name is used; otherwise the URL slug is the fallback.
 | ----------- | ----------------- | ------------------------------------ |
 | `room_id`   | `String`          | `MessageSender::room_id()`           |
 | `text`      | `String`          | `MessageSender::reply(text)`         |
+| `alias`     | `Option<String>`  | `MessageSender::reply_with_alias(text, alias)` |
 | `thread_id` | `Option<String>`  | Reserved for threaded replies (`tmid`) |
 
-`MessageSender` also provides `reply_code(text)` (code-block format) and
-`typing(state, username)` (typing indicator).
+`MessageSender` also provides `reply_code(text)` (code-block format),
+`reply_with_alias(text, alias)` (impersonated reply), and
+`typing(state, username)` (typing indicator). The alias requires
+`message-impersonate` permission; if missing, RocketChat silently falls back
+to the bot's own username.
 
 No `DdpEvent` struct exists. Raw DDP frames are handled as `serde_json::Value`
 with the `"msg"` field extracted via helper functions: `msg_field()`, `is_ping()`,
