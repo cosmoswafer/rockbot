@@ -14,7 +14,7 @@ standard harness mechanisms are present:
 
 | Mechanism   | Coverage | Details |
 |-------------|----------|---------|
-| **Tools**   | Full     | `web_search`, `web_fetch`, `vision`, `webdav`, `image_gen` (fal.ai), `calendar` (CalDAV), `datetime` — each tool has its own DFD |
+| **Tools**   | Full     | Abstract tool calling via `ToolRegistry` — individual tools each have their own DFD |
 | **Context** | Full     | Per-room conversation history buffer, summarization, archive loading — see [Memory Management](base/memory.md); plus iteration limits, room state routing, system prompt assembly |
 | **Knowledge** | Full     | `save_knowledge`, `forget_knowledge`, `recall_knowledge` — see [Knowledge Management](base/knowledge.md) |
 
@@ -34,10 +34,8 @@ Intentionally absent — not needed for rockbot's scope:
   room and receives new messages for archival
 - Downstream: [Knowledge Management](base/knowledge.md) extracts and persists
   domain facts, loads entries into agent context on room init
-- Downstream: [WebDAV Tool](tools/webdav.md) persists generated image assets
-  and provides file storage via `WebDavTool`
-- Downstream: [Calendar Tool](tools/calendar.md) provides CalDAV event access
-  via `CalendarTool` (conditionally registered)
+- Downstream: Individual tools (see `tools/` directory) are registered in
+  `ToolRegistry` and invoked by the agent loop via `execute_by_name()`
 
 ## 2. Diagram
 
@@ -120,81 +118,29 @@ flowchart TD
 ### 2d. Tool Execution Deep Dive
 
 Room context (`room_id` UUID + `webdav_dir` path key) is injected into
-`webdav`, `image_gen`, `edit_soul`, `save_knowledge`, `forget_knowledge`, and
-`recall_knowledge` tool calls. Stateless tools (`web_search`,
-`web_fetch`, `vision`, `datetime`, `calendar`) receive no room context.
+stateful tools that need it (tools backed by WebDAV or room-scoped storage).
+Stateless tools (web search, fetch, datetime, etc.) receive raw arguments
+without room context. The `ToolRegistry` maps tool names to implementations;
+calls are dispatched generically via `execute_by_name()`.
 
 ```mermaid
 flowchart TD
     CALL[ToolCall]
-    INJECT{InjectRoomContext?}
+    INJECT{Stateful?}
     ROOM_CTX[(RoomState<br/>room_id + webdav_dir)]
     REG[(ToolRegistry)]
     EXEC(ExecuteToolByName)
-    EXA[Exa API]
-    WEB_URL[Remote URL]
-    WEBDAV_IMG[(WebDAV Image)]
-    IMG_API[fal.ai]
-    WEBDAV_STORE[(WebDAV images)]
     RESULT[ToolResult]
 
     CALL -->|"tool name + args"| INJECT
     ROOM_CTX -->|"room_id + webdav_dir"| INJECT
-    INJECT -->|"webdav / image_gen / edit_soul / save_knowledge / forget_knowledge / recall_knowledge / calendar: enriched args"| EXEC
-    INJECT -->|"other tools: raw args"| EXEC
-    REG -->|"tool definitions"| EXEC
-    EXEC -->|"search query"| EXA
-    EXA -->|"search results"| EXEC
-    EXEC -->|"http get"| WEB_URL
-    WEB_URL -->|"html"| EXEC
-    EXEC -->|"download image"| WEBDAV_IMG
-    WEBDAV_IMG -->|"image bytes"| EXEC
-    EXEC -->|"generation prompt"| IMG_API
-    IMG_API -->|"image bytes"| EXEC
-    EXEC -->|"image asset"| WEBDAV_STORE
-    WEBDAV_STORE -->|"image url"| EXEC
+    INJECT -->|"stateful: enriched args"| EXEC
+    INJECT -->|"stateless: raw args"| EXEC
+    REG -->|"tool implementations"| EXEC
     EXEC -->|"formatted result"| RESULT
 ```
 
-### 2e. Image Generation Pipeline
-
-The `image_gen` tool uses the fal.ai queue API (async submit + poll for result):
-a prompt is submitted to `https://queue.fal.run/{model_id}`, the status is polled
-via `https://queue.fal.run/{model_id}/requests/{request_id}/status` until
-COMPLETED, then the result is fetched from
-`https://queue.fal.run/{model_id}/requests/{request_id}`. The generated image URL
-is downloaded and uploaded to WebDAV. The tool result includes **both** the
-WebDAV path and the original fal.ai CDN URL — the LLM should include the
-fal.ai URL in its response to the user so they can view/share the image
-directly.
-
-> **fal.ai API docs:** https://fal.ai/docs — see Model APIs section for
-> queue/submit/poll/result endpoints.
-
-```mermaid
-flowchart TD
-    PROMPT[Prompt]
-    SUBMIT(SubmitToFalQueue)
-    QUEUE[(fal.ai Queue)]
-    POLL(PollStatusUntilComplete)
-    GET(RetrieveImageURL)
-    DOWNLOAD(DownloadImageBytes)
-    PUT(PutToWebDAV)
-    DAV[(WebDAV images)]
-    RESULT[ToolResult<br/>webdav_path + fal.ai URL]
-
-    PROMPT -->|"prompt + model_id"| SUBMIT
-    SUBMIT -->|"request_id"| QUEUE
-    QUEUE -->|"status_url"| POLL
-    POLL -->|"COMPLETED"| GET
-    GET -->|"image url"| DOWNLOAD
-    DOWNLOAD -->|"image bytes"| PUT
-    DAV -->|"storage target"| PUT
-    FAL_URL["fal.ai CDN URL"] -.-> RESULT
-    PUT -->|"webdav path"| RESULT
-```
-
-### 2g. Auto-Attachment Vision Pipeline
+### 2e. Auto-Attachment Vision Pipeline
 
 When an incoming message contains image attachments (`IncomingMessage.attachments`
 is non-empty), the harness downloads each attachment, encodes it as a base64 data
@@ -246,9 +192,8 @@ placeholders (see [Vision](tools/vision.md) section 2e).
 Each room maintains independent state — conversation history, agent context, and
 WebDAV archive path. The agent routes incoming messages to the correct room's
 pipeline. Room context (`room_id` UUID + `webdav_dir` path key) is computed from
-`room_name`, `room_fname`, and `is_dm` and injected into all WebDAV-backed tool
-calls (`webdav`, `image_gen`, `edit_soul`, `save_knowledge`, `forget_knowledge`,
-`recall_knowledge`).
+`room_name`, `room_fname`, and `is_dm` and injected into stateful tool calls
+(tools backed by WebDAV or room-scoped storage).
 
 ```mermaid
 flowchart TD
@@ -262,7 +207,6 @@ flowchart TD
     INACT(InteractWithAi)
     REPLY[BotReply]
     DAV[(WebDAV room memory)]
-    DAV_IMG[(WebDAV room images)]
 
     RC -->|"room id"| ROOM_MAP
     ROOM_MAP -->|"room state or not found"| RESOLVE
@@ -277,7 +221,6 @@ flowchart TD
     COMPUTE -->|"webdav_dir"| INJECT
     INJECT -->|"enriched tool args"| INACT
     INACT -->|"bot reply"| REPLY
-    INACT -->|"generated image"| DAV_IMG
 ```
 
 ## 3. Data Structures
@@ -311,18 +254,8 @@ flowchart TD
 
 #### Registered Tools
 
-| Tool Name     | Description                                      | Arguments                          |
-| ------------- | ------------------------------------------------ | ---------------------------------- |
-| `web_search`  | Search the web using Exa                         | `query: string`                    |
-| `web_fetch`   | Fetch a URL, optionally as markdown              | `url: string, markdown: bool`      |
-| `vision`      | Download an image, encode as base64, and send to the AI provider for multimodal vision analysis; auto-invoked by the harness when an incoming message has image attachments _(requires an AI provider with vision support)_ | `url: string, prompt: string`      |
-| `webdav`      | Read, write, edit, list, mkdir, delete, and check existence in the room's WebDAV directory | `action: string, path: string, content?: string, oldString?: string, newString?: string` |
-| `image_gen`   | Generate or edit an image using fal.ai; returns JSON `{"ok": true, "fal_url": "...", "webdav_path": "..."}` — prefer the fal.ai URL in responses _(model/quality/output_format/num_images from config)_ | `prompt: string, image_size: string (optional), image_urls: string[] (auto-injected)` |
-| `calendar`    | Manage calendar events via CalDAV _(requires WebDAV + calendar_name)_ | `action: string, uid?: string, summary?: string, ...` |
-| `datetime`    | Get current date/time in various formats           | `timezone: string, format: string` |
-| `edit_soul`   | Edit the bot's permanent core memory per room (Layer 3) | `action: string, section_header: string, content: string` |
-| `save_knowledge` | Persist a knowledge entry (.md + index.json) on WebDAV | `category: string, topic: string, content: string, when_useful: string, tags: string` |
-| `forget_knowledge` | Remove a knowledge entry and its index record | `topic: string` |
-| `recall_knowledge` | Search the knowledge index and return matching entries | `query: string` |
-| `infograph`   | _(planned)_ Generate an infographic image         | `prompt: string`                   |
-| `anime`       | _(planned)_ Generate a Japanese anime-style image | `prompt: string`                   |
+Tools are registered at startup via `ToolRegistry::register()`. Each tool
+implements the `Tool` trait (`name`, `description`, `parameters`, `execute`).
+The registry exposes `definitions()` for the LLM and dispatches calls via
+`execute_by_name()`. See individual tool DFDs under `tools/` for each tool's
+implementation.

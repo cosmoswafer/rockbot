@@ -1016,28 +1016,29 @@ fn inject_room_context_with_images(
     args["room_id"] = serde_json::Value::String(room_id.to_string());
     args["webdav_dir"] = serde_json::Value::String(webdav_dir.to_string());
     if !image_urls.is_empty() {
-        // Only inject if the agent didn't already provide image_urls.
-        // Agent-provided URLs take precedence (e.g. web URLs the agent found).
-        if !args.get("image_urls").is_some() {
-            const MAX_DATA_URI_BYTES: usize = 25_000_000;
-            let filtered: Vec<serde_json::Value> = image_urls
-                .iter()
-                .filter(|u| {
-                    if u.len() > MAX_DATA_URI_BYTES {
-                        warn!(
-                            "Skipping oversized data URI ({} bytes) for image_gen — exceeds fal.ai 30MB limit",
-                            u.len()
-                        );
-                        false
-                    } else {
-                        true
-                    }
-                })
-                .map(|u| serde_json::Value::String(u.clone()))
-                .collect();
-            if !filtered.is_empty() {
-                args["image_urls"] = serde_json::Value::Array(filtered);
-            }
+        // Always inject harness-downloaded data URIs (user attachments).
+        // The agent should NOT provide image_urls for attached images —
+        // those are handled automatically by the harness.
+        // We strip any agent-provided image_urls and replace them with
+        // the harness data URIs, which are the actual image data.
+        const MAX_DATA_URI_BYTES: usize = 25_000_000;
+        let harness_urls: Vec<serde_json::Value> = image_urls
+            .iter()
+            .filter(|u| {
+                if u.len() > MAX_DATA_URI_BYTES {
+                    warn!(
+                        "Skipping oversized data URI ({} bytes) for image_gen — exceeds fal.ai 30MB limit",
+                        u.len()
+                    );
+                    false
+                } else {
+                    true
+                }
+            })
+            .map(|u| serde_json::Value::String(u.clone()))
+            .collect();
+        if !harness_urls.is_empty() {
+            args["image_urls"] = serde_json::Value::Array(harness_urls);
         }
     }
     serde_json::to_string(&args).unwrap_or_else(|_| arguments.to_string())
@@ -1393,10 +1394,10 @@ chat = "mock-model"
         let images = vec!["data:image/png;base64,attachment".to_string()];
         let result = inject_room_context_with_images(args, "general", "r-general", &images);
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
-        // Agent-provided URLs should take precedence
+        // Harness data URIs always take precedence — agent-provided URLs are ignored
         let urls = parsed["image_urls"].as_array().unwrap();
         assert_eq!(urls.len(), 1);
-        assert_eq!(urls[0], "https://explicit.url/img.png");
+        assert_eq!(urls[0], "data:image/png;base64,attachment");
     }
 
     #[test]
