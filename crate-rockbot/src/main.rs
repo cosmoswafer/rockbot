@@ -118,8 +118,10 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     tool_registry.register(Box::new(WebSearchTool::new(exa_key.clone())));
     if has_exa {
         tool_registry.register(Box::new(WebFetchTool::with_exa_key(exa_key)));
+        debug!("WebFetchTool registered with Exa verification support");
     } else {
         tool_registry.register(Box::new(WebFetchTool::new()));
+        debug!("WebFetchTool registered without Exa verification (no Exa API key)");
     }
     tool_registry.register(Box::new(DateTimeTool::new()));
     tool_registry.register(Box::new(VisionTool::new()));
@@ -129,12 +131,14 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
         tool_registry.register(Box::new(SaveKnowledgeTool::new(webdav_client.clone())));
         tool_registry.register(Box::new(ForgetKnowledgeTool::new(webdav_client.clone())));
         tool_registry.register(Box::new(RecallKnowledgeTool::new(webdav_client.clone())));
-        info!("Registered knowledge tools (save, forget, recall)");
+        info!("Registered WebDAV tools (webdav, edit_soul, knowledge)");
 
         if let Some(ref wd_cfg) = webdav_config_for_calendar {
             let calendar_tool = CalendarTool::from_config(webdav_client.clone(), wd_cfg);
             tool_registry.register(Box::new(calendar_tool));
             info!("Registered calendar tool (per-room, auto-created)");
+        } else {
+            debug!("Calendar tool not registered — WebDAV config missing calendar settings");
         }
 
         let (image_provider_name, t2i_model_name, edit_model_name, default_quality, default_output_format, default_num_images) = {
@@ -151,6 +155,7 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
 
         let image_cfg = harness.config().find_image_provider(image_provider_name);
         if let Some(img_cfg) = image_cfg {
+            debug!("Found image provider '{}', resolving models t2i={} edit={}", image_provider_name, t2i_model_name, edit_model_name);
             let resolved_t2i = harness
                 .config()
                 .resolve_image_model(image_provider_name, t2i_model_name)
@@ -164,6 +169,8 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
             // Providers like OpenRouter use the same model for both t2i and edit.
             // Providers like Fal use different models for each.
             let same_provider = resolved_t2i == resolved_edit;
+
+            debug!("Resolved image models: t2i='{}' edit='{}'", resolved_t2i, resolved_edit);
 
             match FalAiProvider::new(img_cfg, &resolved_t2i) {
                 Ok(fal_t2i) => {
@@ -191,6 +198,8 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                             default_num_images,
                             webdav_client.clone(),
                         )));
+                    } else {
+                        warn!("image_gen tool not registered — failed to create edit provider for '{}'", resolved_edit);
                     }
                 }
                 Err(e) => {
@@ -200,7 +209,11 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                     );
                 }
             }
+        } else {
+            debug!("Image provider '{}' not found in config — image_gen tool not registered", image_provider_name);
         }
+    } else {
+        debug!("WebDAV not configured — WebDAV-dependent tools (webdav, edit_soul, knowledge, calendar, image_gen) not registered");
     }
 
     if !tool_registry.is_empty() {
@@ -293,7 +306,9 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                     let bot_name = bot_name.clone();
                     async move {
                         let username = bot_name.trim_start_matches('@').to_string();
-                        let _ = sender.typing(true, &username).await;
+                        if let Err(e) = sender.typing(true, &username).await {
+                            warn!("Failed to send typing indicator: {}", e);
+                        }
 
                         let hb_sender = sender.clone();
                         let hb_username = username.clone();
@@ -373,7 +388,9 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                         {
                             Ok(Some(reply)) => {
                                 heartbeat.abort();
-                                let _ = sender.typing(false, &username).await;
+                                if let Err(e) = sender.typing(false, &username).await {
+                                    warn!("Failed to stop typing indicator: {}", e);
+                                }
                                 tokio::time::sleep(Duration::from_millis(300)).await;
 
                                 // Try REST API with alias first, fall back to DDP
@@ -413,18 +430,24 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                             }
                             Ok(None) => {
                                 heartbeat.abort();
-                                let _ = sender.typing(false, &username).await;
+                                if let Err(e) = sender.typing(false, &username).await {
+                                    warn!("Failed to stop typing indicator: {}", e);
+                                }
                                 if let Err(e) = h.archive_room_if_needed(&msg.room_id).await {
                                     warn!("Memory archiving failed: {}", e);
                                 }
                             }
                             Err(e) => {
                                 heartbeat.abort();
-                                let _ = sender.typing(false, &username).await;
+                                if let Err(te) = sender.typing(false, &username).await {
+                                    warn!("Failed to stop typing indicator: {}", te);
+                                }
                                 error!("Failed to process message: {}", e);
-                                let _ = sender
+                                if let Err(re) = sender
                                     .reply(&format!("Error processing message: {}", e))
-                                    .await;
+                                    .await {
+                                    warn!("Failed to send error reply: {}", re);
+                                }
                                 if let Err(e) = h.archive_room_if_needed(&msg.room_id).await {
                                     warn!("Memory archiving failed: {}", e);
                                 }

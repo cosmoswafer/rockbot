@@ -99,12 +99,15 @@ impl KnowledgeManager {
                 })?;
                 Ok(index)
             }
-            Err(_) => Ok(KnowledgeIndex {
-                version: "rockbot-knowledge/1".into(),
-                room_id: webdav_dir.to_string(),
-                entries: Vec::new(),
-                updated: String::new(),
-            }),
+            Err(_) => {
+                debug!("No knowledge index found for room {}, starting fresh", webdav_dir);
+                Ok(KnowledgeIndex {
+                    version: "rockbot-knowledge/1".into(),
+                    room_id: webdav_dir.to_string(),
+                    entries: Vec::new(),
+                    updated: String::new(),
+                })
+            }
         }
     }
 
@@ -123,7 +126,9 @@ impl KnowledgeManager {
         let md_path = format!("{}{}", Self::knowledge_dir(webdav_dir), filename);
 
         let folder = Self::knowledge_dir(webdav_dir);
-        let _ = webdav.ensure_directory_all(&folder).await;
+        if let Err(e) = webdav.ensure_directory_all(&folder).await {
+            warn!("Failed to ensure knowledge directory {}: {}", folder, e);
+        }
 
         let md_body = format!(
             "# {}\n\n**Category:** {}\n**When Useful:** {}\n**Tags:** {}\n**Created:** {}\n**Updated:** {}\n\n{}",

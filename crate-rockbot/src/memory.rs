@@ -218,9 +218,13 @@ impl MemoryManager {
         let limit = max_history.unwrap_or(self.max_history_messages);
         let mut messages = Vec::new();
         messages.push(ChatMessage::system(system_prompt));
+        let mut has_soul = false;
+        let mut has_knowledge = false;
+        let mut summary_count = 0usize;
 
         if let Some(soul) = self.souls.get(room_id) {
             if !soul.content.is_empty() {
+                has_soul = true;
                 let truncated = if soul.content.chars().count() > self.max_soul_chars {
                     let mut chars: Vec<char> = soul.content.chars().collect();
                     chars.truncate(self.max_soul_chars);
@@ -239,12 +243,14 @@ impl MemoryManager {
 
         if let Some(knowledge_text) = self.knowledge.get(room_id) {
             if !knowledge_text.is_empty() {
+                has_knowledge = true;
                 messages.push(ChatMessage::system(knowledge_text));
             }
         }
 
         let summaries = self.daily_summaries.get(room_id).map(|v| v.as_slice()).unwrap_or(&[]);
         if !summaries.is_empty() {
+            summary_count = summaries.len();
             let mut summary_text = String::from("[Recent conversation summaries]\n");
             let mut total = 0usize;
             for s in summaries.iter().rev() {
@@ -286,6 +292,15 @@ impl MemoryManager {
 
         strip_orphaned_tool_calls(&mut messages);
 
+        let history_count = messages.iter().filter(|m| m.role != crate::types::Role::System).count();
+        debug!(
+            "build_context room={}: total={} system_msgs={} history_msgs={} soul={} knowledge={} summaries={}",
+            room_id, messages.len(),
+            messages.iter().filter(|m| m.role == crate::types::Role::System).count(),
+            history_count,
+            has_soul, has_knowledge, summary_count,
+        );
+
         // Enforce max_context_bytes: drop oldest images until under limit.
         if self.max_context_bytes > 0 {
             let mut total = messages
@@ -293,6 +308,10 @@ impl MemoryManager {
                 .map(|m| serde_json::to_vec(m).map(|v| v.len()).unwrap_or(0))
                 .sum::<usize>();
             if total > self.max_context_bytes {
+                debug!(
+                    "build_context room={}: context exceeds max_context_bytes ({} > {}), stripping images",
+                    room_id, total, self.max_context_bytes
+                );
                 // Walk from oldest to newest, stripping images until under limit.
                 // The last user message is preserved (the current request).
                 let last_user_idx = messages.iter().rposition(|m| m.role == crate::types::Role::User);
@@ -308,6 +327,10 @@ impl MemoryManager {
                     let after = serde_json::to_vec(&messages[i]).map(|v| v.len()).unwrap_or(0);
                     total = total.saturating_sub(before.saturating_sub(after));
                 }
+                debug!(
+                    "build_context room={}: after stripping images: {} bytes",
+                    room_id, total
+                );
             }
         }
 

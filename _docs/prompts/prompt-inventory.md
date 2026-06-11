@@ -30,7 +30,8 @@ If the user asks to edit a previously generated image (no new attachment), \
 you MUST include the fal.ai CDN URL from the previous result in the \
 image_urls parameter yourself. \
 The image_gen tool returns both a WebDAV path and an original fal.ai CDN URL — \
-always share the fal.ai CDN URL with the user so they can view or share the image directly. \
+always share the fal.ai CDN URL with the user in markdown image format \
+as `![{description}]({fal_url})` so they can view the image inline. \
 When a user says !soul or asks to save or update preferences, identity, or facts, use the edit_soul tool. \
 When a user asks you to remember something, shares notes, or says !remember, !note, !save or shares important \
 information worth persisting, use the save_knowledge tool. \
@@ -108,7 +109,7 @@ Manage calendar events on NextCloud CalDAV. Events are stored per-room — each 
 ### 3g. `image_gen`
 **File:** `crate-rockbot/src/tools/image_gen.rs:148-157`
 ```
-Generate or edit an image. For text-to-image, provide a prompt. To edit or transform an image the user sent, just describe what to do in the prompt — the user's image attachments will be automatically provided as image_urls input. The only optional parameter is image_size. Quality, output format, and number of images are pre-configured. Returns a JSON object: {"ok": true, "fal_url": "...", "webdav_path": "..."}. Always share the fal_url with the user so they can view the image directly. After a successful image_gen call, respond to the user — do not call image_gen again.
+Generate or edit an image. For text-to-image, provide a prompt and optional image_size. To edit or transform an image, the user's attachments are automatically provided as image_urls — just describe what to do in the prompt. Returns a JSON object: {"ok": true, "fal_url": "...", "webdav_path": "..."}. Always share the fal_url with the user in markdown image format as `![{description}]({fal_url})` so they can view the image inline. After a successful image_gen call, respond to the user — do not call image_gen again.
 ```
 
 ### 3h. `edit_soul`

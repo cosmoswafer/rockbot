@@ -146,13 +146,13 @@ impl Tool for ImageGenTool {
     }
 
     fn description(&self) -> &str {
-        "Generate or edit an image. For text-to-image, provide a prompt. \
-         To edit or transform an image the user sent, just describe what to do \
-         in the prompt — the user's image attachments will be automatically \
-         provided as image_urls input. The only optional parameter is image_size. \
-         Quality, output format, and number of images are pre-configured. \
+        "Generate or edit an image. For text-to-image, provide a prompt \
+         and optional image_size. To edit or transform an image, the user's \
+         attachments are automatically provided as image_urls — just describe \
+         what to do in the prompt. \
          Returns a JSON object: {\"ok\": true, \"fal_url\": \"...\", \"webdav_path\": \"...\"}. \
-         Always share the fal_url with the user so they can view the image directly. \
+         Always share the fal_url with the user in markdown image format \
+         as `![{description}]({fal_url})` so they can view the image inline. \
          After a successful image_gen call, respond to the user — do not call image_gen again."
     }
 
@@ -241,23 +241,28 @@ impl Tool for ImageGenTool {
 
         let ext = ext_from_output_format(params.output_format.as_deref());
 
-        let provider = if params.image_urls.is_some() {
+        let is_img2img = params.image_urls.is_some();
+        let provider = if is_img2img {
             self.fal_img2img.as_ref().unwrap_or(&self.fal)
         } else {
             &self.fal
         };
 
         debug!(
-            "Generating image with fal.ai model={}: {}",
+            "Generating image: model={} img2img={} prompt={} room={}",
             provider.model_id(),
-            prompt
+            is_img2img,
+            prompt,
+            room_id,
         );
 
         let image_url = provider.generate_image(&params).await?;
         debug!("Image generated, URL: {}", image_url);
         let image_bytes = self.download_image(&image_url).await?;
+        debug!("Downloaded generated image: {} bytes", image_bytes.len());
 
         let webdav_path = self.upload_to_webdav(webdav_dir, ext, image_bytes).await?;
+        debug!("Uploaded image to WebDAV: {}", webdav_path);
 
         Ok(serde_json::json!({
             "ok": true,

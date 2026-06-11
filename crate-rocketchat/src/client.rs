@@ -212,6 +212,7 @@ impl RocketChatClient {
             if ddp::is_ping(&value) {
                 let pong = ddp::pong_message();
                 writer.lock().await.send(&pong).await?;
+                debug!("Sent pong to server");
             } else if ddp::is_changed(&value) {
                 let filter = MessageFilter::new(user_id.as_str());
                 if let Some(msg) = filter.filter(&value) {
@@ -222,6 +223,10 @@ impl RocketChatClient {
                             && registered_rooms.contains_key(&msg.room_name));
 
                     if should_dispatch {
+                        debug!(
+                            "Dispatching message from {} in {} (dm={}, text='{}')",
+                            msg.sender_name, msg.room_name, msg.is_dm, msg.text
+                        );
                         let sender = MessageSender::new(writer.clone(), msg.room_id.clone(), user_id.to_string(), self.auth_token.as_deref().unwrap_or("").to_string());
                         let handler = handler.clone();
                         tokio::spawn(async move {

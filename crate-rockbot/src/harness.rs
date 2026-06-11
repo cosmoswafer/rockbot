@@ -31,7 +31,8 @@ If the user asks to edit a previously generated image (no new attachment), \
 you MUST include the fal.ai CDN URL from the previous result in the \
 image_urls parameter yourself. \
 The image_gen tool returns both a WebDAV path and an original fal.ai CDN URL — \
-always share the fal.ai CDN URL with the user so they can view or share the image directly. \
+always share the fal.ai CDN URL with the user in markdown image format \
+as `![{description}]({fal_url})` so they can view the image inline. \
 When a user says !soul or asks to save or update preferences, identity, or facts, use the edit_soul tool. \
 When a user asks you to remember something, shares notes, or says !remember, !note, !save or shares important \
 information worth persisting, use the save_knowledge tool. \
@@ -189,11 +190,20 @@ impl AgentHarness {
         let model = self.resolve_model();
 
         let wd = compute_webdav_dir(room_name, room_fname, is_dm);
-        let _ = self.refresh_knowledge_context(room_id, &wd).await;
+        if let Err(e) = self.refresh_knowledge_context(room_id, &wd).await {
+            warn!("Failed to refresh knowledge context: {}", e);
+        }
 
         let mut messages = self
             .memory
             .build_context(room_id, &system_prompt, None, None);
+        debug!(
+            "Built context for room {}: {} messages (model={}, have_tools={})",
+            room_id,
+            messages.len(),
+            model,
+            have_tools,
+        );
 
         let mut iterations: u32 = 0;
 
@@ -536,7 +546,9 @@ impl AgentHarness {
         );
 
         let folder = format!("{}memory/summaries/", WebDavPath::new("").room_dir(webdav_dir));
-        let _ = webdav.ensure_directory_all(&folder).await;
+        if let Err(e) = webdav.ensure_directory_all(&folder).await {
+            warn!("Failed to ensure summaries directory {}: {}", folder, e);
+        }
 
         let content = match webdav.read_file_to_string(&path).await {
             Ok(existing) => format!("{}{}", existing, header),
@@ -567,7 +579,10 @@ impl AgentHarness {
         let folder = format!("{}memory/summaries/", WebDavPath::new("").room_dir(webdav_dir));
         let entries = match webdav.list_directory(&folder).await {
             Ok(e) => e,
-            Err(_) => return Ok(()),
+            Err(_) => {
+                debug!("No summaries directory yet at {}", folder);
+                return Ok(());
+            }
         };
 
         let today = {
@@ -757,7 +772,10 @@ impl AgentHarness {
         let folder = format!("{}memory/summaries/", WebDavPath::new("").room_dir(webdav_dir));
         let entries = match webdav.list_directory(&folder).await {
             Ok(e) => e,
-            Err(_) => return Ok(Vec::new()),
+            Err(_) => {
+                debug!("No summaries directory yet at {} (loading daily summaries)", folder);
+                return Ok(Vec::new());
+            }
         };
 
         let mut summaries = Vec::new();
@@ -798,11 +816,14 @@ impl AgentHarness {
         let path = format!("{}memory/soul.md", WebDavPath::new("").room_dir(webdav_dir));
         let content = match webdav.read_file_to_string(&path).await {
             Ok(c) => c,
-            Err(_) => return Ok(SoulMemory {
-                room_id: webdav_dir.to_string(),
-                content: String::new(),
-                updated_at: String::new(),
-            }),
+            Err(e) => {
+                warn!("Failed to load soul.md from {}: {} — returning empty soul", path, e);
+                return Ok(SoulMemory {
+                    room_id: webdav_dir.to_string(),
+                    content: String::new(),
+                    updated_at: String::new(),
+                });
+            }
         };
 
         let updated_at = now_iso_string();

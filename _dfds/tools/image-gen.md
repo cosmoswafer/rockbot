@@ -43,12 +43,12 @@ flowchart TD
     RESOLVE -->|"prompt + resolved {width, height} + quality + output_format + num_images"| FAL
     FAL -->|"submit request"| SUBMIT
     SUBMIT -->|"POST /{model_id}"| FAL_API
-    FAL_API -->|"request_id"| SUBMIT
-    SUBMIT -->|"request_id"| POLL
-    POLL -->|"GET status every 2s"| FAL_API
+    FAL_API -->|"{request_id, status_url, response_url}"| SUBMIT
+    SUBMIT -->|"status_url, response_url"| POLL
+    POLL -->|"GET status_url every 2s"| FAL_API
     FAL_API -->|"COMPLETED"| POLL
-    POLL -->|"request_id"| FETCH
-    FETCH -->|"GET result"| FAL_API
+    POLL -->|"response_url"| FETCH
+    FETCH -->|"GET response_url"| FAL_API
     FAL_API -->|"images[0].url"| FETCH
     FETCH -->|"image URL"| DOWNLOAD
     DOWNLOAD -->|"image bytes"| UPLOAD
@@ -186,10 +186,17 @@ The tool returns a JSON object:
 
 The `FalAiProvider` (provider/fal.rs) implements a three-step queue workflow:
 
-| Step   | Method | Endpoint                        | Response              |
-| ------ | ------ | ------------------------------- | --------------------- |
-| Submit | POST   | `{base_url}/{model_id}`        | `{"request_id": "..."}` |
-| Poll   | GET    | `{base_url}/{model_id}/requests/{request_id}/status` | `{"status": "COMPLETED"}` |
-| Fetch  | GET    | `{base_url}/{model_id}/requests/{request_id}`       | `{"images": [{"url": "..."}]}` |
+| Step   | Method | Endpoint                        | Response                              |
+| ------ | ------ | ------------------------------- | ------------------------------------- |
+| Submit | POST   | `{base_url}/{model_id}`         | `{"request_id":"...","status_url":"...","response_url":"..."}` |
+| Poll   | GET    | Use `status_url` from submit response (NOT reconstructed) | `{"status": "COMPLETED"}`            |
+| Fetch  | GET    | Use `response_url` from submit response (NOT reconstructed) | `{"images": [{"url": "..."}]}`       |
 
-Polling runs every 2 seconds for up to 90 attempts (3 minutes total), then times out.
+**URL construction note**: The submit response includes `status_url` and `response_url`
+fields that must be used as-is. Do NOT reconstruct URLs from `base_url + model_id +
+request_id`. For example, submitting to `openai/gpt-image-2/edit` returns URLs with
+`openai/gpt-image-2` (without the `/edit` action suffix). Reconstructing with the
+full model_id including `/edit` produces a 405 empty response, causing a JSON parse
+error.
+
+Polling runs every 2 seconds for up to 300 attempts (10 minutes total), then times out.
