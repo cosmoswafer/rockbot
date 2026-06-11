@@ -84,6 +84,41 @@ flowchart TD
     FALLBACK -->|"error message"| AGENT[Agent Loop]
 ```
 
+### 2c. Model Selection (Text-to-Image vs Edit)
+
+The tool holds two `FalAiProvider` instances (`fal` for t2i, `fal_img2img` for edit).
+The decision is driven by whether `image_urls` are present — either auto-injected by the
+harness from user attachments, or explicitly provided by the LLM (e.g. a fal.ai CDN URL
+from a previous generation).
+
+```mermaid
+flowchart TD
+    PARSE(ParseArgs)
+    CHECK{Has image_urls?}
+    T2I[fal provider<br/>default_text_model]
+    UPLOAD[Upload DataURIs &gt;5MB<br/>to fal storage]
+    EDIT[fal_img2img provider<br/>default_edit_model]
+    SUBMIT(SubmitToQueue)
+    FAL_API[fal.ai API]
+
+    PARSE --> CHECK
+    CHECK -->|"yes<br/>(user attachments or LLM-provided URLs)"| UPLOAD
+    CHECK -->|"no"| T2I
+    UPLOAD -->|"hosted URLs"| EDIT
+    T2I -->|"POST /{t2i_model}"| SUBMIT
+    EDIT -->|"POST /{edit_model}"| SUBMIT
+    SUBMIT --> FAL_API
+```
+
+**Decision rule**: if `image_urls` is non-empty → use `fal_img2img` (edit model), otherwise
+use `fal` (text-to-image model). The edit model is a separate fal.ai endpoint
+(e.g. `openai/gpt-image-2/edit`) that requires `image_urls` in the request body.
+
+**Data URI upload**: inline data URIs larger than 5 MB are uploaded to fal.ai storage first
+via the [two-step initiate+PUT protocol](https://github.com/fal-ai/fal-js), converting them
+to hosted URLs before the queue API call. This avoids HTTP 413 errors from oversized request
+bodies.
+
 ## 3. Data Structures
 
 #### `ImageGenParams`
