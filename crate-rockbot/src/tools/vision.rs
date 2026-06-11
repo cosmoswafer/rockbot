@@ -116,7 +116,7 @@ impl Tool for VisionTool {
     }
 
     fn description(&self) -> &str {
-        "Download and analyze an image using AI vision. Provide an image URL and a prompt describing what to look for. When the user sends an image attachment, the bot automatically uses this tool — you should describe what you see in the image."
+        "Download and analyze an image from a URL using AI vision. Provide an image URL (public web or WebDAV file) and a prompt describing what to look for. User attachments are already visible to you — only use this tool to fetch images from external URLs."
     }
 
     fn parameters(&self) -> serde_json::Value {

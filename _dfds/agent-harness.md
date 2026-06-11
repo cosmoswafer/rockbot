@@ -199,9 +199,9 @@ flowchart TD
 When an incoming message contains image attachments (`IncomingMessage.attachments`
 is non-empty), the harness downloads each attachment, encodes it as a base64 data
 URI, and embeds it directly in the user's `ChatMessage` as `ContentPart::ImageUrl`
-parts. This allows the agent to "see" images without the user needing to invoke
-the vision tool. The vision tool is only used when the LLM needs to analyze an
-image at an arbitrary URL.
+parts. The agent harness natively "sees" these images — no tool call is involved.
+The vision tool is only invoked by the LLM for images at public URLs or WebDAV
+file URLs.
 
 ```mermaid
 flowchart TD

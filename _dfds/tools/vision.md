@@ -2,24 +2,29 @@
 
 ## 1. Purpose
 
-Describes how images enter, flow through, and are preserved in the agent's chat
-context. Images reach the AI provider as `ContentPart::ImageUrl` data URIs via
-three paths:
+The agent harness natively "sees" images: when a user uploads an attachment to
+RocketChat, the harness downloads it, encodes it as a base64 data URI, and embeds
+it directly in the user's `ChatMessage` as `ContentPart::ImageUrl` parts. The AI
+provider receives the image data inline — no tool call needed.
 
-- **Auto-attachment** (harness-managed): user uploads image to RocketChat →
-  harness downloads + encodes → embedded directly in the user's `ChatMessage` as
-  `ContentPart::ImageUrl` parts — no tool call involved; the AI provider receives
-  the images in the chat request messages
-- **Vision tool** (LLM-invoked): LLM calls `vision(url, prompt)` → tool downloads
-  + encodes from URL → harness extracts `data_uri` from result and injects an
-  image `ChatMessage` back into history so the LLM "sees" the image on the next
-  iteration
-- **Chat history**: `build_context()` preserves `ContentPart::ImageUrl` parts on
-  the most recent user message; earlier images are replaced with `[image]` text
-  placeholders to save tokens
+The **vision tool** exists for the two cases where the image is NOT already
+attached to the incoming message:
 
-- Upstream: [Agent Harness](../agent-harness.md) auto-attaches images from
-  incoming messages and manages chat context
+- **Public URL**: fetch and analyze any image on the public web (HTTP/HTTPS URL)
+- **WebDAV file**: fetch an image stored in the room's WebDAV directory by
+  constructing the file's full URL
+
+When the vision tool downloads and encodes an image, its JSON result carries a
+`data_uri` field. The harness extracts this and injects an image `ChatMessage`
+back into chat history so the LLM "sees" the remote image on the next loop
+iteration.
+
+- **Chat history preservation**: `build_context()` keeps `ContentPart::ImageUrl`
+  parts only on the most recent user message; earlier ones are collapsed to
+  `[image]` text placeholders to save tokens.
+
+- Upstream: [Agent Harness](../agent-harness.md) embeds attachment images directly
+  and injects vision tool results into chat context
 - Downstream: [AI Provider](../base/ai-provider.md) receives `ChatRequest`
   messages with `ContentPart::ImageUrl` parts and returns multimodal completions
 
@@ -27,9 +32,9 @@ three paths:
 
 ### 2a. Happy Flow (Main Success Path)
 
-Images enter the AI provider through two converging paths: auto-attachment
-(harness encodes and embeds directly) and vision tool (LLM requests URL download,
-harness injects result).
+The agent harness natively sees user attachments (left path). The vision tool is
+only invoked by the LLM for remote images — public URLs or WebDAV files (right
+path).
 
 ```mermaid
 flowchart TD
@@ -40,7 +45,7 @@ flowchart TD
     AI[AiProvider]
     VISION(VisionTool)
     HTTP_DL(DownloadImage)
-    WEB[(Remote Web Server)]
+    WEB[(Public / WebDAV Server)]
     MIME(DetectMimeType)
     ENCODE(Base64Encode)
 
@@ -64,7 +69,7 @@ flowchart TD
 ```mermaid
 flowchart TD
     HTTP_DL(DownloadImage)
-    WEB[(Remote Web Server)]
+    WEB[(Remote Server)]
     ENCODE(Base64Encode)
     ERR_STATUS[Error: HTTP Non-200]
     ERR_TIMEOUT[Error: Request Timeout]
@@ -89,8 +94,8 @@ the vision tool are appended as tool result errors.
 ### 2c. Image Encoding Deep Dive
 
 Level 2 decomposition: downloads the image bytes, verifies the MIME type and size
-limit (max 20MB), encodes as base64, and constructs a data URI. Common to both
-auto-attachment and vision tool paths.
+limit (max 20MB), encodes as base64, and constructs a data URI. Identical logic
+shared by auto-attachment (in harness) and vision tool (in `vision.rs`).
 
 ```mermaid
 flowchart TD
@@ -124,7 +129,7 @@ format (OpenAI-compatible `image_url` type).
 When the vision tool completes, its JSON result contains a `data_uri` field. The
 harness extracts this and creates a `ChatMessage::user_with_image(prompt, data_uri)`,
 appending it to chat history. The agent loop then continues (via `continue`) so the
-LLM "sees" the image on the next iteration.
+LLM "sees" the remote image on the next iteration.
 
 ```mermaid
 flowchart TD
@@ -146,8 +151,7 @@ flowchart TD
 ```
 
 If the vision result lacks a `data_uri` field, the result is treated as a standard
-tool response (no image injection). Other tools that return image data URIs (e.g.
-`image_gen` could also follow this pattern — currently only `vision` injects).
+tool response (no image injection).
 
 ### 2e. Chat History Image Preservation
 
@@ -191,7 +195,7 @@ remaining text parts.
 
 | Field    | Type     | Notes                                                  |
 | -------- | -------- | ------------------------------------------------------ |
-| `url`    | `string` | URL of the image to download (required)                |
+| `url`    | `string` | URL of the image to download (public or WebDAV)        |
 | `prompt` | `string` | What to look for, ask, or analyze in the image         |
 
 #### `VisionResult` (internal tool output)
