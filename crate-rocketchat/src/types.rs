@@ -165,7 +165,7 @@ impl<'a> MessageFilter<'a> {
     pub fn is_dm_or_mention(
         msg: &IncomingMessage, bot_name: &str, registered_rooms: &HashMap<String, bool>,
     ) -> bool {
-        msg.is_dm || (!msg.room_name.is_empty() && msg.text.starts_with(bot_name))
+        msg.is_dm || (!msg.room_name.is_empty() && (msg.text.starts_with(bot_name) || msg.text.contains(bot_name)))
             || (!registered_rooms.is_empty() && registered_rooms.contains_key(&msg.room_name))
     }
 

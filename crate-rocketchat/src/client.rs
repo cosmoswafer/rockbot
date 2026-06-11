@@ -96,6 +96,7 @@ pub struct RocketChatClient {
     auth_token: Option<String>,
     username: String,
     bot_name: String,
+    display_name: Option<String>,
     registered_rooms: HashMap<String, bool>,
 }
 
@@ -109,6 +110,7 @@ impl RocketChatClient {
             auth_token: None,
             username,
             bot_name,
+            display_name: None,
             registered_rooms: HashMap::new(),
         }
     }
@@ -132,6 +134,10 @@ impl RocketChatClient {
 
     pub fn bot_name(&self) -> &str {
         &self.bot_name
+    }
+
+    pub fn set_display_name(&mut self, name: String) {
+        self.display_name = Some(name);
     }
 
     pub async fn connect_and_run<F, Fut>(mut self, handler: F) -> Result<()>
@@ -177,6 +183,7 @@ impl RocketChatClient {
         info!("Subscription confirmed");
 
         let bot_name = self.bot_name.clone();
+        let display_name = self.display_name.clone();
         let _username = self.username.clone();
         let registered_rooms = self.registered_rooms.clone();
 
@@ -217,7 +224,12 @@ impl RocketChatClient {
                 let filter = MessageFilter::new(user_id.as_str());
                 if let Some(msg) = filter.filter(&value) {
                     let should_dispatch = msg.is_dm
-                        || (!msg.room_name.is_empty() && msg.text.starts_with(&bot_name))
+                        || (!msg.room_name.is_empty()
+                            && (msg.text.starts_with(&bot_name)
+                                || msg.text.contains(&bot_name)
+                                || display_name
+                                    .as_ref()
+                                    .is_some_and(|dn| msg.text.contains(dn.as_str()))))
                         || (!registered_rooms.is_empty()
                             && !msg.room_name.is_empty()
                             && registered_rooms.contains_key(&msg.room_name));

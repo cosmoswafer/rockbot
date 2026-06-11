@@ -118,8 +118,10 @@ Room name precedence rules:
 ### 2e. Alias Source — Soul Memory to REST Send
 
 The alias is extracted from per-room soul memory (Layer 3) at send time. The
-`self_display_name()` function parses the `soul.md` content for a `Name:` or
-`名字：` field and returns it as the alias. The agent loop in `main.rs`
+`self_display_name()` function parses the `soul.md` content using a standard
+regex (`## Identity\n(.+)`) to capture the line immediately after the
+`## Identity` heading. If no regex match is found, it falls back to the first
+non-header line (legacy soul formats). The agent loop in `main.rs`
 orchestrates this flow inline.
 
 ```mermaid
