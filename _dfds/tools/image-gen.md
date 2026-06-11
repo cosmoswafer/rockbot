@@ -118,6 +118,41 @@ flowchart TD
 use `fal` (text-to-image model). The edit model is a separate fal.ai endpoint
 (e.g. `openai/gpt-image-2/edit`) that requires `image_urls` in the request body.
 
+### 2d. Harness Attachment Injection
+
+User-attached images are downloaded and labelled by the harness before the
+agent loop. Images appear in the conversation as markdown tags `![title](title)`.
+The LLM references images by their title in image_gen prompts. The harness
+scans prompts for title matches and injects only the referenced data URIs.
+
+```mermaid
+flowchart TD
+    RC_ATT[User Attachment]
+    DLOAD(DownloadAttachment)
+    ENCODE(EncodeDataURI)
+    LABEL[AssignTitle<br/>from filename]
+    BUILD_MSG(BuildUserMessage<br/>with ![title](title))
+    LLM_CTX[(LLM Context)]
+    GEN_PROMPT{LLM prompt<br/>mentions title?}
+    INJECT(InjectMatched<br/>DataURIs)
+    TOOL_ARGS[(image_gen args<br/>with image_urls)]
+
+    RC_ATT --> DLOAD
+    DLOAD --> ENCODE
+    ENCODE --> LABEL
+    LABEL --> BUILD_MSG
+    BUILD_MSG --> LLM_CTX
+    LLM_CTX --> GEN_PROMPT
+    GEN_PROMPT -->|"yes"| INJECT
+    GEN_PROMPT -->|"no (new generation)"| TOOL_ARGS
+    INJECT --> TOOL_ARGS
+```
+
+**Merge rule**: if the LLM also provides `image_urls` directly (e.g. fal.ai CDN
+URLs from a previous result), those are merged with the harness-tagged URIs.
+The LLM should only provide URLs for previously generated images, NOT for
+user-attached images — those are handled automatically.
+
 **Data URI upload**: inline data URIs larger than 5 MB are uploaded to fal.ai storage first
 via the [two-step initiate+PUT protocol](https://github.com/fal-ai/fal-js), converting them
 to hosted URLs before the queue API call. This avoids HTTP 413 errors from oversized request

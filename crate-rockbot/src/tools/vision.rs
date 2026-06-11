@@ -7,14 +7,6 @@ use crate::tool::Tool;
 
 const MAX_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
 
-#[derive(serde::Serialize, serde::Deserialize)]
-struct VisionOutput {
-    data_uri: String,
-    mime_type: String,
-    size_bytes: u64,
-    prompt: String,
-}
-
 pub struct VisionTool {
     http_client: reqwest::Client,
 }
@@ -32,7 +24,7 @@ impl VisionTool {
         }
     }
 
-    async fn analyze_image(&self, image_url: &str, prompt: &str) -> Result<String> {
+    async fn fetch_image(&self, image_url: &str) -> Result<String> {
         let response = self
             .http_client
             .get(image_url)
@@ -65,23 +57,20 @@ impl VisionTool {
         }
 
         let mime_type = detect_mime_type(image_url, content_type.as_deref());
-        let data_uri = format!(
-            "data:{};base64,{}",
-            mime_type,
-            base64::engine::general_purpose::STANDARD.encode(&image_bytes)
-        );
+        let name = extract_image_name(image_url);
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&image_bytes);
 
-        let output = VisionOutput {
-            data_uri,
-            mime_type,
-            size_bytes: size,
-            prompt: prompt.to_string(),
-        };
-
-        serde_json::to_string(&output).map_err(|e| {
-            RockBotError::Provider(format!("Failed to serialize vision output: {}", e))
-        })
+        Ok(format!("![{}](data:{};base64,{})", name, mime_type, b64))
     }
+}
+
+fn extract_image_name(url: &str) -> String {
+    let path = url.split('?').next().unwrap_or(url);
+    path.rsplit('/')
+        .next()
+        .filter(|s| !s.is_empty())
+        .unwrap_or("image")
+        .to_string()
 }
 
 fn detect_mime_type(url: &str, content_type: Option<&str>) -> String {
@@ -116,7 +105,9 @@ impl Tool for VisionTool {
     }
 
     fn description(&self) -> &str {
-        "Download and analyze an image from a URL using AI vision. Provide an image URL (public web or WebDAV file) and a prompt describing what to look for. User attachments are already visible to you — only use this tool to fetch images from external URLs."
+        "Fetch an image from a WebDAV file path or public URL and return it as a base64 markdown image tag. \n\
+         Use this to retrieve images the user is asking about from WebDAV storage or external URLs. \n\
+         User attachments are already visible to you — only use this tool for images at explicit URLs."
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -125,11 +116,7 @@ impl Tool for VisionTool {
             "properties": {
                 "url": {
                     "type": "string",
-                    "description": "URL of the image to analyze"
-                },
-                "prompt": {
-                    "type": "string",
-                    "description": "What to look for or ask about in the image"
+                    "description": "URL of the image to fetch (public web or WebDAV file)"
                 }
             },
             "required": ["url"]
@@ -146,12 +133,7 @@ impl Tool for VisionTool {
             .and_then(|u| u.as_str())
             .ok_or_else(|| RockBotError::ToolCallParse("vision requires 'url' field".into()))?;
 
-        let prompt = args
-            .get("prompt")
-            .and_then(|p| p.as_str())
-            .unwrap_or("Describe this image in detail.");
-
-        self.analyze_image(url, prompt).await
+        self.fetch_image(url).await
     }
 }
 
@@ -163,10 +145,25 @@ mod tests {
     fn test_vision_tool_definition() {
         let tool = VisionTool::new();
         assert_eq!(tool.name(), "vision");
-        assert!(tool.description().contains("Download"));
+        assert!(tool.description().contains("Fetch"));
 
         let params = tool.parameters();
         assert_eq!(params["type"], "object");
+    }
+
+    #[test]
+    fn test_extract_image_name() {
+        assert_eq!(
+            extract_image_name("https://example.com/path/to/photo.png"),
+            "photo.png"
+        );
+        assert_eq!(
+            extract_image_name("https://example.com/photo.png?size=large"),
+            "photo.png"
+        );
+        assert_eq!(extract_image_name("https://example.com/path/"), "image");
+        assert_eq!(extract_image_name("photo.jpg"), "photo.jpg");
+        assert_eq!(extract_image_name("https://example.com/"), "image");
     }
 
     #[test]
@@ -203,17 +200,11 @@ mod tests {
     }
 
     #[test]
-    fn test_vision_output_serialization() {
-        let output = VisionOutput {
-            data_uri: "data:image/png;base64,abc".into(),
-            mime_type: "image/png".into(),
-            size_bytes: 1000,
-            prompt: "describe this".into(),
-        };
-        let json = serde_json::to_string(&output).unwrap();
-        let parsed: VisionOutput = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.data_uri, "data:image/png;base64,abc");
-        assert_eq!(parsed.size_bytes, 1000);
-        assert_eq!(parsed.prompt, "describe this");
+    fn test_markdown_tag_format() {
+        let tag = "![photo.png](data:image/png;base64,abc)";
+        assert!(tag.starts_with("!["));
+        assert!(tag.contains("](data:"));
+        assert!(tag.contains(";base64,"));
+        assert!(tag.ends_with(")"));
     }
 }

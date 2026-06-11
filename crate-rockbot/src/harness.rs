@@ -20,13 +20,15 @@ You respond to DMs and @mentions concisely and helpfully. \
 When you need the current date or time, use the datetime tool. \
 When you need information from the web, use the web_search tool. \
 When you need to fetch a URL, use web_fetch. \
-When you need to analyze an image, use the vision tool. \
+When you need to fetch an image from a WebDAV path or public URL, use the vision tool. \
 When you need to read, write, list, or manage files on remote storage, use the webdav tool. \
 When you need to manage calendar events or todo tasks, use the calendar tool. \
 When you need to generate an image, use the image_gen tool. \
 When a user sends an image and asks to edit, modify, transform, or use it \
-as a basis for image generation, use the image_gen tool — the attachment \
-images will be automatically provided as input to the tool. \
+as a basis for image generation, use the image_gen tool — user-attached images \
+appear as markdown ![image_name](image_name) in the conversation. Reference the \
+image by its image_name in your prompt (e.g. \"edit image1.png to add a hat\"). \
+The harness will automatically resolve image_name references to the actual images. \
 If the user asks to edit a previously generated image (no new attachment), \
 you MUST include the fal.ai CDN URL from the previous result in the \
 image_urls parameter yourself. \
@@ -156,23 +158,26 @@ impl AgentHarness {
 
         let user_text = format!("{}: {}", sender_name, clean_text);
 
-        // Download all image attachments and encode as data URIs.
-        // Store them so they can be injected into image_gen tool calls.
-        let attachment_urls = self.build_attachment_urls(attachments);
-        let attachment_data_uris = self
-            .download_and_encode_attachments(&attachment_urls)
-            .await;
+        // Download all image attachments and encode as data URIs,
+        // paired with their filenames for markdown-based referencing.
+        let attachment_refs = self.download_attachment_refs(attachments).await;
 
-        let user_msg = if !attachment_data_uris.is_empty() {
+        let user_msg = if !attachment_refs.is_empty() {
+            let data_uris: Vec<String> = attachment_refs.iter().map(|r| r.data_uri.clone()).collect();
+            let image_labels: String = attachment_refs
+                .iter()
+                .map(|r| format!("![{}]({})", r.title, r.title))
+                .collect::<Vec<_>>()
+                .join(" ");
             let prompt = if clean_text.is_empty() {
-                "Describe this image in detail."
+                format!("Describe this image in detail.\nAttached: {}", image_labels)
             } else {
-                &clean_text
+                format!(
+                    "{}: {}\nAttached: {}",
+                    sender_name, clean_text, image_labels
+                )
             };
-            ChatMessage::user_with_images(
-                format!("{}: {}", sender_name, prompt),
-                attachment_data_uris.clone(),
-            )
+            ChatMessage::user_with_images(prompt, data_uris)
         } else {
             ChatMessage::user(user_text)
         };
@@ -266,11 +271,11 @@ impl AgentHarness {
 
                             let arguments = if tool_call.function.name == "image_gen" {
                                 let wd = compute_webdav_dir(room_name, room_fname, is_dm);
-                                inject_room_context_with_images(
+                                inject_image_urls_from_refs(
                                     &tool_call.function.arguments,
                                     room_id,
                                     &wd,
-                                    &attachment_data_uris,
+                                    &attachment_refs,
                                 )
                             } else if tool_call.function.name == "webdav"
                                 || tool_call.function.name == "edit_soul"
@@ -289,29 +294,6 @@ impl AgentHarness {
                                 .tools
                                 .execute_by_name(&tool_call.id, &tool_call.function.name, &arguments)
                                 .await?;
-
-                            // Vision tool: if result contains a data_uri, inject it as an
-                            // image ContentPart so the LLM can "see" the image on the next iteration.
-                            if tool_call.function.name == "vision" {
-                                if let Ok(vision_out) = serde_json::from_str::<
-                                    serde_json::Value,
-                                >(&tool_result.content)
-                                {
-                                    if let Some(data_uri) = vision_out
-                                        .get("data_uri")
-                                        .and_then(|v| v.as_str())
-                                    {
-                                        let prompt = vision_out
-                                            .get("prompt")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("Describe this image in detail.");
-                                        let img_msg =
-                                            ChatMessage::user_with_image(prompt, data_uri);
-                                        self.append_to_history(room_id, img_msg);
-                                        continue;
-                                    }
-                                }
-                            }
 
                             let tool_msg = ChatMessage::tool(&tool_call.id, &tool_result.content);
                             self.append_to_history(room_id, tool_msg);
@@ -396,34 +378,33 @@ impl AgentHarness {
             })
     }
 
-    fn build_attachment_urls(&self, attachments: &[rocketchat::AttachmentInfo]) -> Vec<String> {
-        attachments
-            .iter()
-            .filter_map(|att| {
-                let title_link = att.title_link.as_deref()?;
-                if title_link.is_empty() {
-                    return None;
-                }
-                Some(format!(
-                    "https://{}{}",
-                    self.config.rocketchat.server.url.trim_end_matches('/'),
-                    title_link
-                ))
-            })
-            .collect()
-    }
-
-    async fn download_and_encode_attachments(&self, urls: &[String]) -> Vec<String> {
-        let mut data_uris = Vec::with_capacity(urls.len());
-        for url in urls {
-            match self.download_and_encode_single(url).await {
-                Ok(data_uri) => data_uris.push(data_uri),
-                Err(e) => {
-                    warn!("Failed to download attachment {}: {}", url, e);
-                }
+    async fn download_attachment_refs(
+        &self,
+        attachments: &[rocketchat::AttachmentInfo],
+    ) -> Vec<AttachmentRef> {
+        let mut refs = Vec::with_capacity(attachments.len());
+        for att in attachments {
+            let title_link = match att.title_link.as_deref() {
+                Some(link) if !link.is_empty() => link,
+                _ => continue,
+            };
+            let title = att
+                .title
+                .as_deref()
+                .filter(|t| !t.is_empty())
+                .unwrap_or("image")
+                .to_string();
+            let url = format!(
+                "https://{}{}",
+                self.config.rocketchat.server.url.trim_end_matches('/'),
+                title_link
+            );
+            match self.download_and_encode_single(&url).await {
+                Ok(data_uri) => refs.push(AttachmentRef { title, data_uri }),
+                Err(e) => warn!("Failed to download attachment {}: {}", url, e),
             }
         }
-        data_uris
+        refs
     }
 
     async fn download_and_encode_single(&self, url: &str) -> Result<String> {
@@ -997,6 +978,11 @@ impl AgentHarness {
     }
 }
 
+struct AttachmentRef {
+    pub title: String,
+    pub data_uri: String,
+}
+
 fn inject_room_context(arguments: &str, room_id: &str, webdav_dir: &str) -> String {
     let mut args: serde_json::Value =
         serde_json::from_str(arguments).unwrap_or(serde_json::json!({}));
@@ -1005,41 +991,47 @@ fn inject_room_context(arguments: &str, room_id: &str, webdav_dir: &str) -> Stri
     serde_json::to_string(&args).unwrap_or_else(|_| arguments.to_string())
 }
 
-fn inject_room_context_with_images(
+fn inject_image_urls_from_refs(
     arguments: &str,
     room_id: &str,
     webdav_dir: &str,
-    image_urls: &[String],
+    refs: &[AttachmentRef],
 ) -> String {
     let mut args: serde_json::Value =
         serde_json::from_str(arguments).unwrap_or(serde_json::json!({}));
     args["room_id"] = serde_json::Value::String(room_id.to_string());
     args["webdav_dir"] = serde_json::Value::String(webdav_dir.to_string());
-    if !image_urls.is_empty() {
-        // Always inject harness-downloaded data URIs (user attachments).
-        // The agent should NOT provide image_urls for attached images —
-        // those are handled automatically by the harness.
-        // We strip any agent-provided image_urls and replace them with
-        // the harness data URIs, which are the actual image data.
-        const MAX_DATA_URI_BYTES: usize = 25_000_000;
-        let harness_urls: Vec<serde_json::Value> = image_urls
-            .iter()
-            .filter(|u| {
-                if u.len() > MAX_DATA_URI_BYTES {
-                    warn!(
-                        "Skipping oversized data URI ({} bytes) for image_gen — exceeds fal.ai 30MB limit",
-                        u.len()
-                    );
-                    false
-                } else {
-                    true
-                }
-            })
-            .map(|u| serde_json::Value::String(u.clone()))
-            .collect();
-        if !harness_urls.is_empty() {
-            args["image_urls"] = serde_json::Value::Array(harness_urls);
+    // If the agent provided image_urls (e.g. fal CDN URLs from a previous
+    // generation), keep them. Always also inject harness-tagged data URIs
+    // whose alt-text appears in the prompt.
+    let mut injected: Vec<serde_json::Value> = Vec::new();
+    const MAX_DATA_URI_BYTES: usize = 25_000_000;
+    let prompt_lower = arguments.to_lowercase();
+    for r in refs {
+        if prompt_lower.contains(&r.title.to_lowercase()) {
+            if r.data_uri.len() <= MAX_DATA_URI_BYTES {
+                injected.push(serde_json::Value::String(r.data_uri.clone()));
+            } else {
+                warn!(
+                    "Skipping oversized data URI ({} bytes) for {}",
+                    r.data_uri.len(),
+                    r.title
+                );
+            }
         }
+    }
+    // Merge with any agent-provided URLs (e.g. fal CDN from previous generation)
+    if let Some(agent_urls) = args.get("image_urls").and_then(|v| v.as_array()) {
+        for url in agent_urls {
+            if let Some(s) = url.as_str() {
+                if !injected.iter().any(|v| v.as_str() == Some(s)) {
+                    injected.push(serde_json::Value::String(s.to_string()));
+                }
+            }
+        }
+    }
+    if !injected.is_empty() {
+        args["image_urls"] = serde_json::Value::Array(injected);
     }
     serde_json::to_string(&args).unwrap_or_else(|_| arguments.to_string())
 }
@@ -1361,43 +1353,47 @@ chat = "mock-model"
     }
 
     #[test]
-    fn test_inject_room_context_with_images() {
-        let args = r#"{"prompt":"edit this"}"#;
-        let images = vec![
-            "data:image/png;base64,abc".to_string(),
-            "https://example.com/img.png".to_string(),
+    fn test_inject_image_urls_from_refs_matches_title() {
+        let args = r#"{"prompt":"edit this apple.png for me"}"#;
+        let refs = vec![
+            AttachmentRef { title: "apple.png".into(), data_uri: "data:image/png;base64,abc".into() },
+            AttachmentRef { title: "banana.jpg".into(), data_uri: "data:image/jpg;base64,xyz".into() },
         ];
-        let result = inject_room_context_with_images(args, "general", "r-general", &images);
+        let result = inject_image_urls_from_refs(args, "general", "r-general", &refs);
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["room_id"], "general");
         assert_eq!(parsed["webdav_dir"], "r-general");
-        let injected_urls = parsed["image_urls"].as_array().unwrap();
-        assert_eq!(injected_urls.len(), 2);
-        assert_eq!(injected_urls[0], "data:image/png;base64,abc");
-        assert_eq!(injected_urls[1], "https://example.com/img.png");
+        let urls = parsed["image_urls"].as_array().unwrap();
+        // Only apple.png is referenced in the prompt
+        assert_eq!(urls.len(), 1);
+        assert_eq!(urls[0], "data:image/png;base64,abc");
     }
 
     #[test]
-    fn test_inject_room_context_with_images_empty() {
-        let args = r#"{"prompt":"test"}"#;
-        let images: Vec<String> = vec![];
-        let result = inject_room_context_with_images(args, "general", "r-general", &images);
+    fn test_inject_image_urls_from_refs_no_match() {
+        let args = r#"{"prompt":"edit this image"}"#;
+        let refs = vec![
+            AttachmentRef { title: "photo.png".into(), data_uri: "data:image/png;base64,abc".into() },
+        ];
+        let result = inject_image_urls_from_refs(args, "general", "r-general", &refs);
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
-        assert_eq!(parsed["room_id"], "general");
-        assert_eq!(parsed["webdav_dir"], "r-general");
+        // No title match in prompt -> nothing injected
         assert!(parsed.get("image_urls").is_none());
     }
 
     #[test]
-    fn test_inject_room_context_with_images_agent_provided() {
-        let args = r#"{"prompt":"edit","image_urls":["https://explicit.url/img.png"]}"#;
-        let images = vec!["data:image/png;base64,attachment".to_string()];
-        let result = inject_room_context_with_images(args, "general", "r-general", &images);
+    fn test_inject_image_urls_from_refs_merges_agent_urls() {
+        let args = r#"{"prompt":"edit photo.png","image_urls":["https://fal.media/prev.png"]}"#;
+        let refs = vec![
+            AttachmentRef { title: "photo.png".into(), data_uri: "data:image/png;base64,abc".into() },
+        ];
+        let result = inject_image_urls_from_refs(args, "general", "r-general", &refs);
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
-        // Harness data URIs always take precedence — agent-provided URLs are ignored
         let urls = parsed["image_urls"].as_array().unwrap();
-        assert_eq!(urls.len(), 1);
-        assert_eq!(urls[0], "data:image/png;base64,attachment");
+        // Both harness URI and agent-provided fal CDN URL should be present
+        assert_eq!(urls.len(), 2);
+        assert!(urls.iter().any(|v| v == "data:image/png;base64,abc"));
+        assert!(urls.iter().any(|v| v == "https://fal.media/prev.png"));
     }
 
     #[test]
