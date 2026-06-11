@@ -183,6 +183,7 @@ impl Tool for ImageGenTool {
     }
 
     async fn execute(&self, arguments: &str) -> Result<String> {
+        let t_start = std::time::Instant::now();
         let args: Value = serde_json::from_str(arguments).map_err(|e| {
             RockBotError::ToolCallParse(format!("Failed to parse image_gen arguments: {e}"))
         })?;
@@ -261,12 +262,29 @@ impl Tool for ImageGenTool {
         );
 
         let image_url = provider.generate_image(&params).await?;
-        debug!("Image generated, URL: {}", image_url);
+        debug!(
+            "Image generated (fal.ai): url={} elapsed_ms={}",
+            image_url,
+            t_start.elapsed().as_millis(),
+        );
         let image_bytes = self.download_image(&image_url).await?;
-        debug!("Downloaded generated image: {} bytes", image_bytes.len());
+        debug!(
+            "Downloaded generated image: {} bytes elapsed_ms={}",
+            image_bytes.len(),
+            t_start.elapsed().as_millis(),
+        );
 
         let webdav_path = self.upload_to_webdav(webdav_dir, ext, image_bytes).await?;
-        debug!("Uploaded image to WebDAV: {}", webdav_path);
+        debug!(
+            "Uploaded image to WebDAV: {} elapsed_ms={}",
+            webdav_path,
+            t_start.elapsed().as_millis(),
+        );
+
+        debug!(
+            "image_gen total elapsed_ms={}",
+            t_start.elapsed().as_millis(),
+        );
 
         Ok(serde_json::json!({
             "ok": true,

@@ -146,6 +146,7 @@ impl AgentHarness {
         text: &str,
         attachments: &[rocketchat::AttachmentInfo],
     ) -> Result<Option<String>> {
+        let msg_start = std::time::Instant::now();
         let clean_text = if !is_dm && !text.is_empty() {
             text.trim_start().to_string()
         } else {
@@ -229,6 +230,10 @@ impl AgentHarness {
                 let fallback = "I'm sorry, I got stuck in a loop. Could you rephrase your request?";
                 let assistant_msg = ChatMessage::assistant(fallback);
                 self.append_to_history(room_id, assistant_msg);
+                debug!(
+                    "process_message max_iterations reached: total_elapsed_ms={}",
+                    msg_start.elapsed().as_millis(),
+                );
                 return Ok(Some(fallback.to_string()));
             }
 
@@ -248,8 +253,17 @@ impl AgentHarness {
                 tool_choice: None,
             };
 
+            let llm_start = std::time::Instant::now();
             match self.provider.complete(request).await {
                 Ok(result) => {
+                    debug!(
+                        "LLM call completed in {}ms (iteration {}/{}, tool_calls={}, has_text={})",
+                        llm_start.elapsed().as_millis(),
+                        iterations,
+                        self.max_iterations,
+                        result.tool_calls.len(),
+                        result.text.is_some(),
+                    );
                     if !result.tool_calls.is_empty() {
                         let assistant_msg = ChatMessage::assistant_with_tool_calls(
                             "",
@@ -267,6 +281,7 @@ impl AgentHarness {
                                 tool_call.function.name, tool_call.id
                             );
 
+                            let tool_start = std::time::Instant::now();
                             if tool_call.function.name == "edit_soul" {
                                 altered_soul = true;
                             }
@@ -301,6 +316,13 @@ impl AgentHarness {
                                 .tools
                                 .execute_by_name(&tool_call.id, &tool_call.function.name, &arguments)
                                 .await?;
+
+                            debug!(
+                                "Tool {} completed in {}ms (is_error={})",
+                                tool_call.function.name,
+                                tool_start.elapsed().as_millis(),
+                                tool_result.is_error,
+                            );
 
                             if tool_call.function.name == "vision" && !tool_result.is_error {
                                 self.cache_vision_images(room_id, &tool_result.content);
@@ -344,12 +366,21 @@ impl AgentHarness {
                         } else {
                             clean
                         };
+                        debug!(
+                            "process_message done: total_elapsed_ms={} iterations={}",
+                            msg_start.elapsed().as_millis(),
+                            iterations,
+                        );
                         return Ok(Some(reply));
                     }
 
                     let fallback = "I received a response but it was empty. Please try again.";
                     let assistant_msg = ChatMessage::assistant(fallback);
                     self.append_to_history(room_id, assistant_msg);
+                    debug!(
+                        "process_message empty response fallback: total_elapsed_ms={}",
+                        msg_start.elapsed().as_millis(),
+                    );
                     return Ok(Some(fallback.to_string()));
                 }
                 Err(e) => {
@@ -357,6 +388,10 @@ impl AgentHarness {
                     let fallback = format!("I encountered an error: {}. Please try again.", e);
                     let assistant_msg = ChatMessage::assistant(&fallback);
                     self.append_to_history(room_id, assistant_msg);
+                    debug!(
+                        "process_message provider error: total_elapsed_ms={}",
+                        msg_start.elapsed().as_millis(),
+                    );
                     return Ok(Some(fallback));
                 }
             }
@@ -1158,7 +1193,7 @@ mod tests {
     use super::*;
     use crate::error::RockBotError;
     use crate::provider::AiProvider;
-    use crate::types::{CompletionResult, FinishReason, ToolCall};
+    use crate::types::{CompletionResult, ContentPart, FinishReason, MessageContent, ToolCall};
     use async_trait::async_trait;
 
     struct MockProvider {
@@ -1519,5 +1554,170 @@ chat = "mock-model"
             compute_webdav_dir("general", "", false),
             "r-general"
         );
+    }
+
+    #[test]
+    fn test_cache_vision_images_single() {
+        let config = make_test_config();
+        let provider = Box::new(MockProvider::new(vec![]));
+        let mut harness = AgentHarness::new(config, provider, None);
+
+        let result = "![photo.png](data:image/png;base64,iVBORw0KGgo)";
+        harness.cache_vision_images("room1", result);
+
+        let pool = harness.image_pool.get("room1").unwrap();
+        assert_eq!(pool.len(), 1);
+        assert_eq!(pool[0].name, "photo.png");
+        assert_eq!(pool[0].data_uri, "data:image/png;base64,iVBORw0KGgo");
+    }
+
+    #[test]
+    fn test_cache_vision_images_multiple() {
+        let config = make_test_config();
+        let provider = Box::new(MockProvider::new(vec![]));
+        let mut harness = AgentHarness::new(config, provider, None);
+
+        let result = "![photo1.png](data:image/png;base64,AAA) ![photo2.jpg](data:image/jpeg;base64,BBB)";
+        harness.cache_vision_images("room1", result);
+
+        let pool = harness.image_pool.get("room1").unwrap();
+        assert_eq!(pool.len(), 2);
+        assert_eq!(pool[0].name, "photo1.png");
+        assert_eq!(pool[0].data_uri, "data:image/png;base64,AAA");
+        assert_eq!(pool[1].name, "photo2.jpg");
+        assert_eq!(pool[1].data_uri, "data:image/jpeg;base64,BBB");
+    }
+
+    #[test]
+    fn test_cache_vision_images_skips_non_data_uri() {
+        let config = make_test_config();
+        let provider = Box::new(MockProvider::new(vec![]));
+        let mut harness = AgentHarness::new(config, provider, None);
+
+        // Only data: URIs are cached; https URLs are ignored
+        let result = "![img](https://example.com/img.png)";
+        harness.cache_vision_images("room1", result);
+
+        let pool = harness.image_pool.get("room1");
+        assert!(pool.is_none());
+    }
+
+    #[test]
+    fn test_cache_vision_images_malformed_markdown() {
+        let config = make_test_config();
+        let provider = Box::new(MockProvider::new(vec![]));
+        let mut harness = AgentHarness::new(config, provider, None);
+
+        harness.cache_vision_images("room1", "not a markdown tag at all");
+        harness.cache_vision_images("room1", "![no closing paren(data:image/png;base64,AAA");
+        harness.cache_vision_images("room1", "![valid](data:image/png;base64,CCC)");
+        harness.cache_vision_images("room1", "![nobase64](https://example.com/img.png)");
+
+        let pool = harness.image_pool.get("room1").unwrap();
+        assert_eq!(pool.len(), 1, "only the valid data-URI markdown should be cached");
+        assert_eq!(pool[0].name, "valid");
+        assert_eq!(pool[0].data_uri, "data:image/png;base64,CCC");
+    }
+
+    #[test]
+    fn test_inject_vision_images_injects_message() {
+        let config = make_test_config();
+        let provider = Box::new(MockProvider::new(vec![]));
+        let mut harness = AgentHarness::new(config, provider, None);
+
+        // Pre-populate the pool
+        harness.image_pool.insert(
+            "room1".into(),
+            vec![CachedImage {
+                data_uri: "data:image/png;base64,TEST".into(),
+                name: "photo.png".into(),
+            }],
+        );
+
+        let mut messages: Vec<ChatMessage> = vec![ChatMessage::system("sys")];
+        harness.inject_vision_images("room1", &mut messages);
+
+        // Check injected message
+        assert_eq!(messages.len(), 2);
+        let injected = &messages[1];
+        assert_eq!(injected.role, Role::User);
+        match &injected.content {
+            MessageContent::Multipart(parts) => {
+                assert!(parts.len() >= 2);
+                assert!(
+                    matches!(&parts[0], ContentPart::Text { text } if text.contains("photo1.png"))
+                );
+                assert!(
+                    matches!(&parts[1], ContentPart::ImageUrl { image_url } if image_url.url == "data:image/png;base64,TEST")
+                );
+            }
+            _ => panic!("Expected multipart content"),
+        }
+    }
+
+    #[test]
+    fn test_inject_vision_images_drains_pool() {
+        let config = make_test_config();
+        let provider = Box::new(MockProvider::new(vec![]));
+        let mut harness = AgentHarness::new(config, provider, None);
+
+        harness.image_pool.insert(
+            "room1".into(),
+            vec![CachedImage {
+                data_uri: "data:image/png;base64,ABC".into(),
+                name: "img.png".into(),
+            }],
+        );
+
+        let mut messages = vec![];
+        harness.inject_vision_images("room1", &mut messages);
+
+        // Pool should be drained
+        assert!(harness.image_pool.get("room1").is_none());
+    }
+
+    #[test]
+    fn test_inject_vision_images_empty_pool_noop() {
+        let config = make_test_config();
+        let provider = Box::new(MockProvider::new(vec![]));
+        let mut harness = AgentHarness::new(config, provider, None);
+
+        let mut messages: Vec<ChatMessage> = vec![ChatMessage::user("hello")];
+        harness.inject_vision_images("room1", &mut messages);
+
+        // No injection when pool is empty
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].text_content().unwrap(), "hello");
+    }
+
+    #[test]
+    fn test_inject_vision_images_numbered_labels() {
+        let config = make_test_config();
+        let provider = Box::new(MockProvider::new(vec![]));
+        let mut harness = AgentHarness::new(config, provider, None);
+
+        harness.image_pool.insert(
+            "room1".into(),
+            vec![
+                CachedImage { data_uri: "data:image/png;base64,AAA".into(), name: "a.png".into() },
+                CachedImage { data_uri: "data:image/png;base64,BBB".into(), name: "b.jpg".into() },
+            ],
+        );
+
+        let mut messages = vec![ChatMessage::user("before")];
+        harness.inject_vision_images("room1", &mut messages);
+
+        let injected = &messages[1];
+        match &injected.content {
+            MessageContent::Multipart(parts) => {
+                if let ContentPart::Text { text } = &parts[0] {
+                    assert!(text.contains("photo1.png"), "should label first image photo1.png: {}", text);
+                    assert!(text.contains("photo2.jpg"), "should label second image photo2.jpg: {}", text);
+                } else {
+                    panic!("Expected text part first");
+                }
+            }
+            _ => panic!("Expected multipart"),
+        }
     }
 }

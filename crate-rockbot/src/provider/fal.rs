@@ -216,6 +216,7 @@ impl FalAiProvider {
     async fn poll_status(&self, req: &SubmittedRequest) -> Result<String> {
         let max_attempts: u32 = 300;
         let delay_ms: u64 = 2000;
+        let poll_start = std::time::Instant::now();
 
         for attempt in 0..max_attempts {
             let response = self
@@ -257,7 +258,12 @@ impl FalAiProvider {
 
             match status {
                 "COMPLETED" => {
-                    debug!("fal.ai request completed: request_id={}", req.request_id);
+                    debug!(
+                        "fal.ai request completed: request_id={} attempts={} elapsed_ms={}",
+                        req.request_id,
+                        attempt + 1,
+                        poll_start.elapsed().as_millis(),
+                    );
                     return self.fetch_result(req).await;
                 }
                 "FAILED" => {
