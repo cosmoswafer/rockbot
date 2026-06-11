@@ -378,16 +378,23 @@ impl MemoryManager {
     }
 
     pub fn self_display_name(&self, room_id: &str) -> Option<String> {
-        let soul = self.souls.get(room_id)?;
+        let soul = match self.souls.get(room_id) {
+            Some(s) => s,
+            None => {
+                debug!("self_display_name: no soul found for room={}", room_id);
+                return None;
+            }
+        };
         let content = soul.content.trim();
         if content.is_empty() {
+            debug!("self_display_name: empty soul content for room={}", room_id);
             return None;
         }
 
         // Standard regex: captures the line immediately after "## Identity"
         // Matches the format prescribed in the system prompt.
         if let Some(name) = extract_identity_name(content) {
-            debug!("self_display_name: regex match: {:?}", name);
+            debug!("self_display_name: regex match, room={} name={:?}", room_id, name);
             return Some(name);
         }
 
@@ -398,11 +405,23 @@ impl MemoryManager {
                 continue;
             }
             if trimmed.len() <= 32 {
+                debug!("self_display_name: legacy fallback match, room={} name={:?}", room_id, trimmed);
                 return Some(trimmed.to_string());
             }
             break;
         }
 
+        debug!("self_display_name: no display name found for room={}", room_id);
+        None
+    }
+
+    /// Returns the first available self-display name from any room's soul memory.
+    pub fn any_display_name(&self) -> Option<String> {
+        for room_id in self.souls.keys() {
+            if let Some(name) = self.self_display_name(room_id) {
+                return Some(name);
+            }
+        }
         None
     }
 

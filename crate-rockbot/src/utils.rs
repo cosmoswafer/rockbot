@@ -63,7 +63,6 @@ fn is_emoji(c: char) -> bool {
         | '\u{1F900}'..='\u{1F9FF}' // Supplemental Symbols
         | '\u{1FA00}'..='\u{1FA6F}' // Chess Symbols
         | '\u{1FA70}'..='\u{1FAFF}' // Symbols Ext-A
-        | '\u{1F3FB}'..='\u{1F3FF}' // Skin tones
     )
 }
 

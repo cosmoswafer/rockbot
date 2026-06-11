@@ -14,6 +14,7 @@ use rockbot::tools::{
     CalendarTool, DateTimeTool, EditSoulTool, ForgetKnowledgeTool, ImageGenTool,
     RecallKnowledgeTool, SaveKnowledgeTool, VisionTool, WebDavTool, WebFetchTool, WebSearchTool,
 };
+use rockbot::utils::strip_emoji;
 
 fn setup_logging() {
     let filter = EnvFilter::try_from_default_env()
@@ -267,6 +268,11 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
         format!("@{}", h.config().rocketchat.server.username)
     };
 
+    let display_name = {
+        let h = harness.lock().await;
+        h.memory().any_display_name().map(|n| strip_emoji(&n))
+    };
+
     let rocketchat_config = {
         let h = harness.lock().await;
         rocketchat::RocketChatConfig {
@@ -295,7 +301,10 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     tokio::pin!(shutdown);
 
     loop {
-        let client = rocketchat::RocketChatClient::new(rocketchat_config.clone());
+        let mut client = rocketchat::RocketChatClient::new(rocketchat_config.clone());
+        if let Some(ref dn) = display_name {
+            client.set_display_name(dn.clone());
+        }
 
         let connect_fut = client
             .connect_and_run({
@@ -396,6 +405,7 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                                 // Try REST API with alias first, fall back to DDP
                                 let alias = h.memory().self_display_name(&msg.room_id);
                                 let rest_ok = if let Some(ref alias_name) = alias {
+                                    debug!("Sending with alias={:?} via REST", alias_name);
                                     let rc_config = rocketchat::RocketChatConfig {
                                         server: rocketchat::config::ServerConfig {
                                             url: h.config().rocketchat.server.url.clone(),
@@ -407,7 +417,7 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                                     let rest = sender.rest_client(&rc_config);
                                     match rest.send_message(&msg.room_id, &reply, Some(alias_name)).await {
                                         Ok(msg_id) => {
-                                            debug!("REST send_message ok, msg_id={}", msg_id);
+                                            debug!("REST send_message ok, msg_id={} alias={:?}", msg_id, alias_name);
                                             true
                                         }
                                         Err(e) => {
@@ -416,6 +426,7 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                                         }
                                     }
                                 } else {
+                                    debug!("No self_display_name for room={}, sending via DDP without alias", msg.room_id);
                                     false
                                 };
 

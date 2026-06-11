@@ -84,8 +84,9 @@ flowchart TD
 The `MessageFilter::filter()` method (`crate-rocketchat/src/types.rs:64`)
 implements a four-stage decision chain. Messages from the bot itself are
 silently dropped. The bot responds to: (1) `@botname` at the start of or
-contained in a channel message, (2) a specific registered room, or (3) a
-direct message with no room name.
+contained in a channel message, (2) the bot's self-display name from soul
+memory (with emoji stripped) appearing anywhere in the text, (3) a specific
+registered room, or (4) a direct message with no room name.
 
 ```mermaid
 flowchart TD
@@ -93,11 +94,13 @@ flowchart TD
     FILTER(FilterMessage)
     BOT_USER[BotUserId]
     ROOMS[(RegisteredRooms)]
+    DISP_NAME[(SelfDisplayName<br/>from soul memory<br/>emoji stripped)]
     DISPATCH[DispatchMessage]
 
     RAW -->|"raw event + sender id"| FILTER
     BOT_USER -->|"bot user id"| FILTER
     ROOMS -->|"registered room list"| FILTER
+    DISP_NAME -->|"display name"| FILTER
     FILTER -->|"incoming message + callback args"| DISPATCH
 ```
 
@@ -105,7 +108,8 @@ The filter process internally:
 1. Skips events where `sender_id == bot_user_id` (self-messages)
 2. Checks `is_dm` flag from the parsed event
 3. Matches messages starting with or containing `@botname` in channels
-4. Falls back to checking a registered-room list
+4. Matches messages containing the bot's self-display name (emoji stripped)
+5. Falls back to checking a registered-room list
 
 All other cases are silently dropped.
 
@@ -491,5 +495,18 @@ filters a raw DDP event, returning `None` for self-messages and `Some` for
 valid incoming messages. Callers then apply `is_dm_or_mention()` to decide
 dispatch. `room_fname` is parsed directly from the per-event `args[1].fname`
 field; there is no secondary cache lookup.
+
+#### `RocketChatClient`
+
+| Field          | Type              | Purpose                            |
+| -------------- | ----------------- | ---------------------------------- |
+| `bot_name`     | `String`          | `@username` for mention matching   |
+| `display_name` | `Option<String>`  | Self-display name from soul.md (emoji stripped) for content matching |
+
+The `display_name` is set via `set_display_name()` before `connect_and_run()`.
+It is sourced from the rocketbot harness's soul memory (`any_display_name()`)
+and run through `utils::strip_emoji()` to remove emoji codepoints (e.g. "零夢 ✨"
+→ "零夢"). When set, the event loop also dispatches messages whose text
+contains the display name, even without an `@username` mention.
 
 *(Room name cache removed — see `room-name-fields.md` for the rationale.)*
