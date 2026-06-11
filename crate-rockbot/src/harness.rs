@@ -747,7 +747,7 @@ impl AgentHarness {
                     .iter()
                     .take(5)
                     .filter_map(|m| m.text_content())
-                    .map(|t| if t.len() > 80 { format!("{}...", &t[..80]) } else { t.to_string() })
+                    .map(|t| if t.len() > 80 { let end = t.char_indices().map(|(i, _)| i).nth(80).unwrap_or(t.len()); format!("{}...", &t[..end]) } else { t.to_string() })
                     .collect();
                 if preview_parts.is_empty() {
                     format!("{} messages archived", messages.len())

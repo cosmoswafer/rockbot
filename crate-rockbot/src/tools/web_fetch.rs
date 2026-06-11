@@ -273,7 +273,12 @@ fn truncate(text: &str, max_chars: usize) -> String {
     if text.len() <= max_chars {
         text.to_string()
     } else {
-        let mut result = text[..max_chars].to_string();
+        let end = text
+            .char_indices()
+            .map(|(i, _)| i)
+            .nth(max_chars)
+            .unwrap_or(text.len());
+        let mut result = text[..end].to_string();
         result.push_str("\n\n... (truncated)");
         result
     }
