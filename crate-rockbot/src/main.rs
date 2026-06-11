@@ -137,13 +137,15 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
             info!("Registered calendar tool (per-room, auto-created)");
         }
 
-        let (image_provider_name, t2i_model_name, edit_model_name, default_quality) = {
+        let (image_provider_name, t2i_model_name, edit_model_name, default_quality, default_output_format, default_num_images) = {
             let im = &harness.config().image_model;
             (
                 im.default_provider.as_str(),
                 im.default_text_model.as_str(),
                 im.default_edit_model.as_str(),
                 im.default_quality.as_str(),
+                im.default_output_format.as_str(),
+                im.default_num_images,
             )
         };
 
@@ -185,6 +187,8 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                             fal_t2i,
                             fal_edit,
                             default_quality.to_string(),
+                            default_output_format.to_string(),
+                            default_num_images,
                             webdav_client.clone(),
                         )));
                     }

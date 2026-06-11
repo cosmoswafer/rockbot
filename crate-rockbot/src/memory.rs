@@ -129,6 +129,7 @@ pub struct MemoryManager {
     pub max_summary_chars: usize,
     pub summary_days: u32,
     pub max_soul_chars: usize,
+    max_context_bytes: usize,
     daily_summaries: HashMap<String, Vec<DailySummary>>,
     souls: HashMap<String, SoulMemory>,
     knowledge: HashMap<String, String>,
@@ -144,6 +145,7 @@ impl MemoryManager {
         summary_days: u32,
         max_soul_chars: usize,
         persist_interval_secs: u64,
+        max_context_bytes: usize,
     ) -> Self {
         Self {
             rooms: HashMap::new(),
@@ -152,6 +154,7 @@ impl MemoryManager {
             max_summary_chars,
             summary_days,
             max_soul_chars,
+            max_context_bytes,
             daily_summaries: HashMap::new(),
             souls: HashMap::new(),
             knowledge: HashMap::new(),
@@ -282,6 +285,31 @@ impl MemoryManager {
         }
 
         strip_orphaned_tool_calls(&mut messages);
+
+        // Enforce max_context_bytes: drop oldest images until under limit.
+        if self.max_context_bytes > 0 {
+            let mut total = messages
+                .iter()
+                .map(|m| serde_json::to_vec(m).map(|v| v.len()).unwrap_or(0))
+                .sum::<usize>();
+            if total > self.max_context_bytes {
+                // Walk from oldest to newest, stripping images until under limit.
+                // The last user message is preserved (the current request).
+                let last_user_idx = messages.iter().rposition(|m| m.role == crate::types::Role::User);
+                for i in 0..messages.len() {
+                    if total <= self.max_context_bytes {
+                        break;
+                    }
+                    if Some(i) == last_user_idx {
+                        continue; // preserve latest user message with images
+                    }
+                    let before = serde_json::to_vec(&messages[i]).map(|v| v.len()).unwrap_or(0);
+                    messages[i] = strip_images_from_message(messages[i].clone());
+                    let after = serde_json::to_vec(&messages[i]).map(|v| v.len()).unwrap_or(0);
+                    total = total.saturating_sub(before.saturating_sub(after));
+                }
+            }
+        }
 
         messages
     }
@@ -711,7 +739,7 @@ mod tests {
 
     #[test]
     fn test_memory_manager_get_or_create() {
-        let mut mgr = MemoryManager::new(1000, 12, 8000, 7, 2000, 60);
+        let mut mgr = MemoryManager::new(1000, 12, 8000, 7, 2000, 60, 30_000_000);
         let room = mgr.get_or_create("room1", "general", "", false);
         assert_eq!(room.room_id, "room1");
         assert_eq!(room.room_name, "general");
@@ -725,7 +753,7 @@ mod tests {
 
     #[test]
     fn test_memory_manager_build_context() {
-        let mut mgr = MemoryManager::new(1000, 3, 8000, 7, 2000, 60);
+        let mut mgr = MemoryManager::new(1000, 3, 8000, 7, 2000, 60, 30_000_000);
         let room = mgr.get_or_create("room1", "general", "", false);
         for i in 0..5 {
             room.history
@@ -742,7 +770,7 @@ mod tests {
 
     #[test]
     fn test_memory_manager_build_context_nonexistent_room() {
-        let mgr = MemoryManager::new(1000, 12, 8000, 7, 2000, 60);
+        let mgr = MemoryManager::new(1000, 12, 8000, 7, 2000, 60, 30_000_000);
         let ctx = mgr.build_context("nonexistent", "prompt", None, None);
         assert_eq!(ctx.len(), 1);
     }
@@ -777,7 +805,7 @@ mod tests {
 
     #[test]
     fn test_build_context_with_dm_name() {
-        let mut mgr = MemoryManager::new(1000, 12, 8000, 7, 2000, 60);
+        let mut mgr = MemoryManager::new(1000, 12, 8000, 7, 2000, 60, 30_000_000);
         let room = mgr.get_or_create("dm-xyz", "alice", "", true);
         assert_eq!(room.room_name, "alice");
         assert!(room.is_dm);

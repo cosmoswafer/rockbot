@@ -69,11 +69,12 @@ impl AgentHarness {
         let summary_days = config.rocketchat.model.summary_days;
         let max_soul_chars = config.rocketchat.model.max_soul_chars;
         let persist_interval = config.rocketchat.model.persist_interval_secs;
+        let max_context_bytes = config.rocketchat.model.max_context_bytes;
         let config = Arc::new(config);
         Self {
             config,
             provider,
-            memory: MemoryManager::new(max_chars, max_history, max_summary_chars, summary_days, max_soul_chars, persist_interval),
+            memory: MemoryManager::new(max_chars, max_history, max_summary_chars, summary_days, max_soul_chars, persist_interval, max_context_bytes),
             tools: ToolRegistry::new(),
             webdav,
             rest_client: None,
@@ -1277,7 +1278,7 @@ chat = "mock-model"
 
     #[test]
     fn test_check_and_archive_returns_seq() {
-        let mut mgr = MemoryManager::new(50, 12, 8000, 7, 2000, 60);
+        let mut mgr = MemoryManager::new(50, 12, 8000, 7, 2000, 60, 30_000_000);
         let room = mgr.get_or_create("room1", "general", "", false);
         for i in 0..10 {
             room.history.append(ChatMessage::user(format!(

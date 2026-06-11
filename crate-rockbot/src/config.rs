@@ -54,6 +54,8 @@ pub struct ModelConfig {
     pub persist_interval_secs: u64,
     #[serde(default = "default_memory_ttl_secs")]
     pub memory_ttl_secs: u64,
+    #[serde(default = "default_max_context_bytes")]
+    pub max_context_bytes: usize,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -66,6 +68,10 @@ pub struct ImageModelConfig {
     pub default_edit_model: String,
     #[serde(default = "default_image_quality")]
     pub default_quality: String,
+    #[serde(default = "default_image_output_format")]
+    pub default_output_format: String,
+    #[serde(default = "default_image_num_images")]
+    pub default_num_images: u32,
 }
 
 fn default_image_provider() -> String {
@@ -81,6 +87,14 @@ fn default_image_quality() -> String {
     "medium".into()
 }
 
+fn default_image_output_format() -> String {
+    "png".into()
+}
+
+fn default_image_num_images() -> u32 {
+    1
+}
+
 impl Default for ImageModelConfig {
     fn default() -> Self {
         Self {
@@ -88,6 +102,8 @@ impl Default for ImageModelConfig {
             default_text_model: default_image_text_model(),
             default_edit_model: default_image_edit_model(),
             default_quality: default_image_quality(),
+            default_output_format: default_image_output_format(),
+            default_num_images: default_image_num_images(),
         }
     }
 }
@@ -122,6 +138,10 @@ fn default_persist_interval_secs() -> u64 {
 
 fn default_memory_ttl_secs() -> u64 {
     300
+}
+
+fn default_max_context_bytes() -> usize {
+    30_000_000
 }
 
 #[derive(Debug, Clone, Deserialize)]

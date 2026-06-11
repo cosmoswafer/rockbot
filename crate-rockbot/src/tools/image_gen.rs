@@ -12,16 +12,26 @@ pub struct ImageGenTool {
     fal: FalAiProvider,
     fal_img2img: Option<FalAiProvider>,
     default_quality: String,
+    default_output_format: String,
+    default_num_images: u32,
     webdav: WebDavClient,
     http_client: reqwest::Client,
 }
 
 impl ImageGenTool {
-    pub fn new(fal: FalAiProvider, default_quality: String, webdav: WebDavClient) -> Self {
+    pub fn new(
+        fal: FalAiProvider,
+        default_quality: String,
+        default_output_format: String,
+        default_num_images: u32,
+        webdav: WebDavClient,
+    ) -> Self {
         Self {
             fal,
             fal_img2img: None,
             default_quality,
+            default_output_format,
+            default_num_images,
             webdav,
             http_client: reqwest::Client::new(),
         }
@@ -31,12 +41,16 @@ impl ImageGenTool {
         fal_text2img: FalAiProvider,
         fal_img2img: FalAiProvider,
         default_quality: String,
+        default_output_format: String,
+        default_num_images: u32,
         webdav: WebDavClient,
     ) -> Self {
         Self {
             fal: fal_text2img,
             fal_img2img: Some(fal_img2img),
             default_quality,
+            default_output_format,
+            default_num_images,
             webdav,
             http_client: reqwest::Client::new(),
         }
@@ -47,6 +61,8 @@ impl ImageGenTool {
             fal,
             fal_img2img: None,
             default_quality: "medium".into(),
+            default_output_format: "png".into(),
+            default_num_images: 1,
             webdav,
             http_client: client,
         }
@@ -133,8 +149,8 @@ impl Tool for ImageGenTool {
         "Generate or edit an image. For text-to-image, provide a prompt. \
          To edit or transform an image the user sent, just describe what to do \
          in the prompt — the user's image attachments will be automatically \
-         provided as image_urls input. Optional parameters: quality, image_size, \
-         output_format, num_images. \
+         provided as image_urls input. The only optional parameter is image_size. \
+         Quality, output format, and number of images are pre-configured. \
          Returns a JSON object: {\"ok\": true, \"fal_url\": \"...\", \"webdav_path\": \"...\"}. \
          Always share the fal_url with the user so they can view the image directly. \
          After a successful image_gen call, respond to the user — do not call image_gen again."
@@ -152,23 +168,9 @@ impl Tool for ImageGenTool {
                     "type": "string",
                     "description": "Room ID for image storage (injected automatically if omitted)"
                 },
-                "quality": {
-                    "type": "string",
-                    "enum": ["low", "medium", "high", "auto"],
-                    "description": "Image quality / reasoning budget. Default: medium. For gpt-image-2, medium is recommended for cost balance."
-                },
                 "image_size": {
                     "type": "string",
                     "description": "Aspect ratio preset or custom {\\\"width\\\": N, \\\"height\\\": N} JSON. Presets: square_hd (1:1 2880x2880), square (512x512), landscape_16_9 (3840x2160 4K), portrait_16_9 (2160x3840), landscape_4_3 (3312x2480), portrait_4_3 (2480x3312), landscape_3_2 (3504x2336), portrait_2_3 (2336x3504), auto. Default: landscape_4_3. Max edge 3840px, multiples of 16."
-                },
-                "output_format": {
-                    "type": "string",
-                    "enum": ["jpeg", "png", "webp"],
-                    "description": "Output image format. Default: png."
-                },
-                "num_images": {
-                    "type": "integer",
-                    "description": "Number of images to generate per request. Default: 1."
                 },
                 "image_urls": {
                     "type": "array",
@@ -200,14 +202,9 @@ impl Tool for ImageGenTool {
             .unwrap_or(room_id);
 
         let mut params = ImageGenParams::new(prompt);
-        params.quality = Some(
-            args.get("quality")
-                .and_then(|v| v.as_str())
-                .unwrap_or(&self.default_quality)
-                .to_string(),
-        );
-        params.output_format = args.get("output_format").and_then(|v| v.as_str()).map(String::from);
-        params.num_images = args.get("num_images").and_then(|v| v.as_u64()).map(|n| n as u32);
+        params.quality = Some(self.default_quality.clone());
+        params.output_format = Some(self.default_output_format.clone());
+        params.num_images = Some(self.default_num_images);
 
         if let Some(size_val) = args.get("image_size") {
             params.image_size = size_val.as_str().map(|s| ImageSizeValue::Preset(s.to_string())).or_else(|| {
@@ -294,7 +291,7 @@ mod tests {
         let config = make_fal_config();
         let fal = FalAiProvider::new(&config, "fal-ai/flux/schnell").unwrap();
         let webdav = webdav::WebDavClient::new("https://example.com", "user", "pass").unwrap();
-        let tool = ImageGenTool::new(fal, "medium".into(), webdav);
+        let tool = ImageGenTool::new(fal, "medium".into(), "png".into(), 1, webdav);
 
         assert_eq!(tool.name(), "image_gen");
         assert!(tool.description().contains("Generate or edit an image"));
@@ -306,11 +303,8 @@ mod tests {
                 .unwrap()
                 .contains(&serde_json::json!("prompt"))
         );
-        // verify new optional parameters exist
-        assert!(params["properties"].get("quality").is_some());
+        // verify optional parameters
         assert!(params["properties"].get("image_size").is_some());
-        assert!(params["properties"].get("output_format").is_some());
-        assert!(params["properties"].get("num_images").is_some());
         assert!(params["properties"].get("image_urls").is_some());
     }
 
@@ -319,7 +313,7 @@ mod tests {
         let config = make_fal_config();
         let fal = FalAiProvider::new(&config, "fal-ai/flux/schnell").unwrap();
         let webdav = webdav::WebDavClient::new("https://example.com", "user", "pass").unwrap();
-        let tool = ImageGenTool::new(fal, "medium".into(), webdav);
+        let tool = ImageGenTool::new(fal, "medium".into(), "png".into(), 1, webdav);
         let result = tool.execute(r#"{}"#).await;
         assert!(result.is_err());
     }
@@ -329,7 +323,7 @@ mod tests {
         let config = make_fal_config();
         let fal = FalAiProvider::new(&config, "fal-ai/flux/schnell").unwrap();
         let webdav = webdav::WebDavClient::new("https://example.com", "user", "pass").unwrap();
-        let tool = ImageGenTool::new(fal, "medium".into(), webdav);
+        let tool = ImageGenTool::new(fal, "medium".into(), "png".into(), 1, webdav);
         let result = tool.execute("not json").await;
         assert!(result.is_err());
     }
@@ -379,22 +373,20 @@ mod tests {
     fn test_image_gen_params_from_args() {
         let args: Value = serde_json::from_str(r#"{
             "prompt": "a cat",
-            "quality": "medium",
-            "image_size": "landscape_16_9",
-            "output_format": "png",
-            "num_images": 2
+            "image_size": "landscape_16_9"
         }"#).unwrap();
 
         let mut params = ImageGenParams::new(args["prompt"].as_str().unwrap());
-        params.quality = args.get("quality").and_then(|v| v.as_str()).map(String::from);
-        params.output_format = args.get("output_format").and_then(|v| v.as_str()).map(String::from);
-        params.num_images = args.get("num_images").and_then(|v| v.as_u64()).map(|n| n as u32);
+        params.quality = Some("medium".into());
+        params.output_format = Some("png".into());
+        params.num_images = Some(1);
         if let Some(size_val) = args.get("image_size") {
             params.image_size = size_val.as_str().map(|s| ImageSizeValue::Preset(s.to_string()));
         }
 
         assert_eq!(params.quality.as_deref(), Some("medium"));
-        assert_eq!(params.num_images, Some(2));
+        assert_eq!(params.output_format.as_deref(), Some("png"));
+        assert_eq!(params.num_images, Some(1));
 
         let resolved = params.resolve_image_size().unwrap();
         assert_eq!(resolved["width"], 3840);

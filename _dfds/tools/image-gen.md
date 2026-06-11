@@ -38,8 +38,8 @@ flowchart TD
     FORMAT(FormatResult)
     FAL_API[fal.ai API]
 
-    AGENT -->|"prompt + quality + image_size + output_format + num_images + model_id + room_id"| PARSE
-    PARSE -->|"validated params"| RESOLVE
+    AGENT -->|"prompt + image_size + room_id (LLM provides only these)"| PARSE
+    PARSE -->|"merged with config defaults (quality, output_format, num_images) + injected image_urls"| RESOLVE
     RESOLVE -->|"prompt + resolved {width, height} + quality + output_format + num_images"| FAL
     FAL -->|"submit request"| SUBMIT
     SUBMIT -->|"POST /{model_id}"| FAL_API
@@ -88,16 +88,19 @@ flowchart TD
 
 #### `ImageGenParams`
 
-| Field           | Type                                           | Description                                      |
-| --------------- | ---------------------------------------------- | ------------------------------------------------ |
-| `prompt`        | `string`                                       | **Required.** Text description of the image      |
-| `room_id`       | `string`                                       | Room UUID for image storage (injected by harness if omitted) |
-| `webdav_dir`    | `string`                                       | Type-prefixed room path (injected by harness; falls back to room_id) |
-| `model_id`      | `string`                                       | fal.ai model ID (default: `fal-ai/flux/schnell`) |
-| `quality`       | `"low" \| "medium" \| "high" \| "auto"`        | Image quality / reasoning budget (default: `"high"`). For gpt-image-2, `"medium"` is recommended for cost-balanced quality |
-| `image_size`    | preset name or `{width: int, height: int}`     | Aspect ratio preset or custom dimensions. Both edges must be multiples of 16, max edge 3840px, aspect ratio ≤ 3:1, total pixels 655,360–8,294,400. Default: `"landscape_4_3"` |
-| `output_format` | `"jpeg" \| "png" \| "webp"`                    | Output image format (default: `"png"`)           |
-| `num_images`    | `integer`                                      | Number of images to generate per request (default: 1) |
+LLM provides only `prompt` and `image_size`; all other fields come from `[image_model]` config.
+
+| Field           | Source            | Type                                           | Description                                      |
+| --------------- | ----------------- | ---------------------------------------------- | ------------------------------------------------ |
+| `prompt`        | LLM               | `string`                                       | **Required.** Text description of the image      |
+| `image_size`    | LLM               | preset name or `{width: int, height: int}`     | Aspect ratio preset or custom dimensions. Both edges must be multiples of 16, max edge 3840px, aspect ratio ≤ 3:1, total pixels 655,360–8,294,400. Default: `"landscape_4_3"` |
+| `room_id`       | Harness           | `string`                                       | Room UUID for image storage (injected by harness if omitted) |
+| `webdav_dir`    | Harness           | `string`                                       | Type-prefixed room path (injected by harness; falls back to room_id) |
+| `image_urls`    | Harness (auto)    | `[]string`                                     | Injected automatically from user attachments or LLM-provided fal.ai URLs |
+| `model_id`      | Config            | `string`                                       | Hardcoded from `default_text_model` / `default_edit_model` |
+| `quality`       | Config            | `string`                                       | Hardcoded from `default_quality` (e.g. `"medium"`) |
+| `output_format` | Config            | `string`                                       | Hardcoded from `default_output_format` (e.g. `"png"`) |
+| `num_images`    | Config            | `integer`                                      | Hardcoded from `default_num_images` (e.g. `1`) |
 
 **Resolution presets** (maps aspect ratio → highest available dimensions):
 
@@ -123,10 +126,10 @@ Custom `{width, height}` is also supported, passed directly to the API.
 
 #### `ImageGenResult`
 
-The tool returns a formatted string containing both paths:
+The tool returns a JSON object:
 
-```
-Image generated and stored at {webdav_path}. Original fal.ai URL: {fal_url}
+```json
+{"ok": true, "fal_url": "https://v3b.fal.media/...", "webdav_path": "..."}
 ```
 
 | Value        | Source                     | Purpose                                   |
