@@ -306,8 +306,11 @@ fn test_send_message_payload() {
 
 #[test]
 fn test_send_message_payload_with_alias() {
-    let msg = rocketchat::ddp::send_message_payload("room1", "hello world");
+    let msg = rocketchat::ddp::send_message_payload_with_alias("room1", "hello world", "TotallyRealHuman");
     assert!(msg["params"][0]["_id"].as_str().unwrap().parse::<u64>().is_ok());
+    assert_eq!(msg["params"][0]["rid"], "room1");
+    assert_eq!(msg["params"][0]["msg"], "hello world");
+    assert_eq!(msg["params"][0]["alias"], "TotallyRealHuman");
 }
 
 #[test]
@@ -395,6 +398,16 @@ fn test_bot_reply_new() {
     assert_eq!(reply.room_id, "room1");
     assert_eq!(reply.text, "hello");
     assert_eq!(reply.thread_id, None);
+    assert_eq!(reply.alias, None);
+}
+
+#[test]
+fn test_bot_reply_with_alias() {
+    let reply = rocketchat::BotReply::with_alias("room1", "hello", "ImposterBot");
+    assert_eq!(reply.room_id, "room1");
+    assert_eq!(reply.text, "hello");
+    assert_eq!(reply.alias.as_deref(), Some("ImposterBot"));
+    assert_eq!(reply.thread_id, None);
 }
 
 #[test]
@@ -409,6 +422,7 @@ fn test_incoming_message_dm_detection() {
         is_dm: true,
         timestamp: None,
         sender_id: "uid".into(),
+        alias: None,
     };
 
     let rooms: HashMap<String, bool> = HashMap::new();
@@ -426,6 +440,7 @@ fn test_incoming_message_dm_detection() {
         is_dm: false,
         timestamp: None,
         sender_id: "uid".into(),
+        alias: None,
     };
     assert!(!MessageFilter::is_dm_or_mention(&msg2, bot_name, &rooms));
 
@@ -439,6 +454,7 @@ fn test_incoming_message_dm_detection() {
         is_dm: false,
         timestamp: None,
         sender_id: "uid".into(),
+        alias: None,
     };
     assert!(MessageFilter::is_dm_or_mention(&msg3, bot_name, &rooms));
 }
@@ -458,6 +474,7 @@ fn test_registered_room_dispatch() {
         is_dm: false,
         timestamp: None,
         sender_id: "uid".into(),
+        alias: None,
     };
 
     assert!(MessageFilter::is_dm_or_mention(&msg, "@rockbot", &rooms));

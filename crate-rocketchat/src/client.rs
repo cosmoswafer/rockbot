@@ -35,6 +35,12 @@ impl MessageSender {
         writer.send(&payload).await
     }
 
+    pub async fn reply_with_alias(&self, text: &str, alias: &str) -> Result<()> {
+        let payload = ddp::send_message_payload_with_alias(&self.room_id, text, alias);
+        let mut writer = self.writer.lock().await;
+        writer.send(&payload).await
+    }
+
     pub async fn reply_code(&self, text: &str) -> Result<()> {
         let formatted = format!("```\n{}\n```", text);
         self.reply(&formatted).await

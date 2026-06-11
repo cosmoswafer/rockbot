@@ -66,6 +66,21 @@ pub fn send_message_payload(room_id: &str, text: &str) -> Value {
     })
 }
 
+pub fn send_message_payload_with_alias(room_id: &str, text: &str, alias: &str) -> Value {
+    let params = json!({
+        "_id": next_id(),
+        "rid": room_id,
+        "msg": text,
+        "alias": alias,
+    });
+    json!({
+        "msg": "method",
+        "method": "sendMessage",
+        "id": next_id(),
+        "params": [params]
+    })
+}
+
 pub fn typing_payload(room_id: &str, username: &str, is_typing: bool) -> Value {
     json!({
         "msg": "method",
@@ -219,6 +234,17 @@ mod tests {
         assert!(msg["params"][0]["_id"].as_str().unwrap().parse::<u64>().is_ok());
         assert_eq!(msg["params"][0]["rid"], "room123");
         assert_eq!(msg["params"][0]["msg"], "hello!");
+    }
+
+    #[test]
+    fn test_send_message_payload_with_alias() {
+        let msg = send_message_payload_with_alias("room123", "hello!", "FakeHuman");
+        assert_eq!(msg["msg"], "method");
+        assert_eq!(msg["method"], "sendMessage");
+        assert!(msg["id"].as_str().unwrap().parse::<u64>().is_ok());
+        assert_eq!(msg["params"][0]["rid"], "room123");
+        assert_eq!(msg["params"][0]["msg"], "hello!");
+        assert_eq!(msg["params"][0]["alias"], "FakeHuman");
     }
 
     #[test]

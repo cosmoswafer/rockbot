@@ -12,18 +12,24 @@ pub struct IncomingMessage {
     pub is_dm: bool,
     pub timestamp: Option<i64>,
     pub sender_id: String,
+    pub alias: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BotReply {
     pub room_id: String,
     pub text: String,
+    pub alias: Option<String>,
     pub thread_id: Option<String>,
 }
 
 impl BotReply {
     pub fn new(room_id: impl Into<String>, text: impl Into<String>) -> Self {
-        Self { room_id: room_id.into(), text: text.into(), thread_id: None }
+        Self { room_id: room_id.into(), text: text.into(), alias: None, thread_id: None }
+    }
+
+    pub fn with_alias(room_id: impl Into<String>, text: impl Into<String>, alias: impl Into<String>) -> Self {
+        Self { room_id: room_id.into(), text: text.into(), alias: Some(alias.into()), thread_id: None }
     }
 }
 
@@ -77,8 +83,10 @@ impl<'a> MessageFilter<'a> {
             String::new()
         };
 
+        let alias = first_arg.get("alias").and_then(|v| v.as_str()).map(String::from);
+
         Some(IncomingMessage {
-            msg_id, room_id, room_name, room_fname, sender_name, text, is_dm, timestamp, sender_id,
+            msg_id, room_id, room_name, room_fname, sender_name, text, is_dm, timestamp, sender_id, alias,
         })
     }
 
@@ -133,5 +141,35 @@ mod tests {
         });
         let msg = MessageFilter::new("bot").filter(&event).unwrap();
         assert_eq!(msg.room_fname, "");
+    }
+
+    #[test]
+    fn test_message_filter_parses_alias() {
+        let event = serde_json::json!({
+            "msg": "changed", "fields": {
+                "eventName": "room1",
+                "args": [
+                    {"_id": "m1", "rid": "r1", "msg": "hello", "u": {"_id": "u1", "username": "user1"}, "alias": "TotallyRealHuman"},
+                    {"roomName": "general"}
+                ]
+            }
+        });
+        let msg = MessageFilter::new("bot").filter(&event).unwrap();
+        assert_eq!(msg.alias.as_deref(), Some("TotallyRealHuman"));
+    }
+
+    #[test]
+    fn test_message_filter_no_alias_is_none() {
+        let event = serde_json::json!({
+            "msg": "changed", "fields": {
+                "eventName": "room1",
+                "args": [
+                    {"_id": "m1", "rid": "r1", "msg": "hello", "u": {"_id": "u1", "username": "user1"}},
+                    {"roomName": "general"}
+                ]
+            }
+        });
+        let msg = MessageFilter::new("bot").filter(&event).unwrap();
+        assert_eq!(msg.alias, None);
     }
 }
