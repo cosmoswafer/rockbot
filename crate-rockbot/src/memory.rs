@@ -391,24 +391,11 @@ impl MemoryManager {
             return None;
         }
 
-        // Standard regex: captures the line immediately after "## Identity"
-        // Matches the format prescribed in the system prompt.
+        // Standard regex: `## Identity[ \t]*\n?[ \t]*(.+)`
+        // Supports both same-line and next-line name formats.
         if let Some(name) = extract_identity_name(content) {
             debug!("self_display_name: regex match, room={} name={:?}", room_id, name);
             return Some(name);
-        }
-
-        // Legacy fallback: first non-header line (pre-regex soul formats)
-        for line in content.lines() {
-            let trimmed = line.trim();
-            if trimmed.is_empty() || trimmed.starts_with('#') {
-                continue;
-            }
-            if trimmed.len() <= 32 {
-                debug!("self_display_name: legacy fallback match, room={} name={:?}", room_id, trimmed);
-                return Some(trimmed.to_string());
-            }
-            break;
         }
 
         debug!("self_display_name: no display name found for room={}", room_id);
@@ -648,11 +635,12 @@ fn strip_orphaned_tool_calls(messages: &mut Vec<ChatMessage>) {
 
 /// Extract display name from soul content using a standard regex.
 ///
-/// Regex: `## Identity\n(.+)` — captures the first line immediately after
-/// the `## Identity` header. The LLM is instructed to use exactly this format.
+/// Regex: `## Identity[ \t]*\n?[ \t]*(.+)` — captures the text after
+/// `## Identity`, supporting both same-line (`## Identity Name`) and
+/// next-line (`## Identity\nName`) formats.
 fn extract_identity_name(content: &str) -> Option<String> {
     static RE: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"## Identity\n(.+)").expect("hardcoded regex")
+        Regex::new(r"## Identity[ \t]*\n?[ \t]*(.+)").expect("hardcoded regex")
     });
     let caps = RE.captures(content)?;
     let name = caps.get(1)?.as_str().trim().to_string();
@@ -933,6 +921,12 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_identity_name_same_line() {
+        let content = "# Soul Memory\n\n## Identity 零夢 ✨\n\n## Preferences\nfoo";
+        assert_eq!(extract_identity_name(content), Some("零夢 ✨".into()));
+    }
+
+    #[test]
     fn test_extract_identity_name_no_match() {
         let content = "# Soul Memory\n\n## Preferences\nlikes cats\n\n## Facts\nborn 2024";
         assert_eq!(extract_identity_name(content), None);
@@ -976,6 +970,7 @@ mod tests {
             updated_at: String::new(),
         };
         mm.set_soul("r-test", soul);
-        assert_eq!(mm.self_display_name("r-test"), Some("零夢".into()));
+        // No ## Identity header — returns None
+        assert_eq!(mm.self_display_name("r-test"), None);
     }
 }

@@ -14,7 +14,6 @@ use rockbot::tools::{
     CalendarTool, DateTimeTool, EditSoulTool, ForgetKnowledgeTool, ImageGenTool,
     RecallKnowledgeTool, SaveKnowledgeTool, VisionTool, WebDavTool, WebFetchTool, WebSearchTool,
 };
-use rockbot::utils::strip_emoji;
 
 fn setup_logging() {
     let filter = EnvFilter::try_from_default_env()
@@ -268,11 +267,6 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
         format!("@{}", h.config().rocketchat.server.username)
     };
 
-    let display_name = {
-        let h = harness.lock().await;
-        h.memory().any_display_name().map(|n| strip_emoji(&n))
-    };
-
     let rocketchat_config = {
         let h = harness.lock().await;
         rocketchat::RocketChatConfig {
@@ -301,10 +295,7 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     tokio::pin!(shutdown);
 
     loop {
-        let mut client = rocketchat::RocketChatClient::new(rocketchat_config.clone());
-        if let Some(ref dn) = display_name {
-            client.set_display_name(dn.clone());
-        }
+        let client = rocketchat::RocketChatClient::new(rocketchat_config.clone());
 
         let connect_fut = client
             .connect_and_run({
@@ -314,6 +305,31 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                     let harness = harness.clone();
                     let bot_name = bot_name.clone();
                     async move {
+                        // If not DM and not @username mention, check per-room display name
+                        if !msg.is_dm && !msg.text.contains(&bot_name) {
+                            let mut h = harness.lock().await;
+                            let room_name = if msg.room_name.is_empty() {
+                                msg.sender_name.clone()
+                            } else {
+                                msg.room_name.clone()
+                            };
+                            // Restore snapshot to load per-room soul/display name
+                            h.restore_history(
+                                &msg.room_id,
+                                &room_name,
+                                &msg.room_fname,
+                                msg.is_dm,
+                            )
+                            .await;
+                            let per_room_name =
+                                h.memory().self_display_name(&msg.room_id);
+                            if !per_room_name
+                                .is_some_and(|dn| msg.text.contains(&dn))
+                            {
+                                return;
+                            }
+                        }
+
                         let username = bot_name.trim_start_matches('@').to_string();
                         if let Err(e) = sender.typing(true, &username).await {
                             warn!("Failed to send typing indicator: {}", e);

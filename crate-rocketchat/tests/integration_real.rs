@@ -456,3 +456,186 @@ async fn test_set_real_name_via_ddp() {
     assert!(set_ok, "setRealName DDP method failed");
     eprintln!("SUCCESS: setRealName DDP method works");
 }
+
+/// Parse [webdav] section from config.toml for test credentials.
+fn load_webdav_config() -> Option<(String, String, String, String)> {
+    let config_path = config_path();
+    let content = std::fs::read_to_string(&config_path).ok()?;
+    let config: Value = toml::from_str(&content).ok()?;
+    let wd = config.get("webdav")?;
+    Some((
+        wd.get("url")?.as_str()?.to_string(),
+        wd.get("username")?.as_str()?.to_string(),
+        wd.get("password")?.as_str()?.to_string(),
+        wd.get("root")?.as_str()?.to_string(),
+    ))
+}
+
+/// Fetch soul.md from WebDAV and extract display name using the standard regex.
+async fn fetch_soul_display_name(
+    webdav_url: &str,
+    webdav_user: &str,
+    webdav_pass: &str,
+    webdav_root: &str,
+    webdav_dir: &str,
+) -> Option<String> {
+    let soul_url = format!(
+        "{}/remote.php/dav/files/{}/{}/{}/memory/soul.md",
+        webdav_url.trim_end_matches('/'),
+        webdav_user,
+        webdav_root.trim_matches('/'),
+        webdav_dir,
+    );
+    eprintln!("[WebDAV] Fetching soul.md from {}", soul_url);
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(&soul_url)
+        .basic_auth(webdav_user, Some(webdav_pass))
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await
+        .ok()?;
+
+    if !resp.status().is_success() {
+        eprintln!("[WebDAV] soul.md not found (status={})", resp.status());
+        return None;
+    }
+
+    let content = resp.text().await.ok()?;
+    eprintln!("[WebDAV] soul.md loaded ({} bytes)", content.len());
+
+    // Same regex as extract_identity_name in rockbot::memory:
+    //   ## Identity[ \t]*\n?[ \t]*(.+)
+    let re = regex::Regex::new(r"## Identity[ \t]*\n?[ \t]*(.+)").unwrap();
+    let caps = re.captures(&content)?;
+    let name = caps.get(1)?.as_str().trim().to_string();
+    if !name.is_empty() && name.len() <= 32 {
+        eprintln!("[Regex] Extracted display name: {:?}", name);
+        Some(name)
+    } else {
+        eprintln!("[Regex] Name too long or empty");
+        None
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires a running RocketChat server, WebDAV with soul.md, and valid config.toml"]
+async fn test_soul_to_rest_alias_end_to_end() {
+    init_crypto();
+
+    let path = config_path();
+    let config =
+        rocketchat::RocketChatConfig::from_file(&path).expect("Failed to parse config.toml");
+    let ws_uri = config.ws_uri().unwrap();
+    let username = &config.server.username;
+    let password = &config.server.password;
+
+    // Read soul.md from WebDAV and extract the display name
+    let (wd_url, wd_user, wd_pass, wd_root) =
+        load_webdav_config().expect("WebDAV config required for this test");
+
+    // The bot's DM with saru: webdav_dir = "d-🐵 猴一隻"
+    // We test with all the known soul directories
+    let possible_dirs = ["d-saru", "d-🐵 猴一隻"];
+    let mut alias_name = None;
+    for dir in &possible_dirs {
+        if let Some(name) =
+            fetch_soul_display_name(&wd_url, &wd_user, &wd_pass, &wd_root, dir).await
+        {
+            alias_name = Some(name);
+            break;
+        }
+    }
+
+    let alias_name = alias_name.expect("Could not find soul.md with display name");
+    eprintln!("[Test] Using alias from soul: {:?}", alias_name);
+
+    let test_text = format!("Soul-to-REST alias test {}", std::process::id());
+
+    // Connect Client A
+    eprintln!("[Client A] Connecting to {}", ws_uri);
+    let (mut ws_a, _) = connect_async(&ws_uri)
+        .await
+        .expect("Failed to connect Client A");
+    let (user_id_a, token_a) = ddp_handshake(&mut ws_a, username, password).await;
+
+    // Create DM to self
+    let dm_msg = serde_json::json!({
+        "msg": "method", "method": "createDirectMessage", "id": "cdm2",
+        "params": [username]
+    });
+    ws_a.send(Message::Text(dm_msg.to_string().into())).await.unwrap();
+    let dm_result = expect_msg(&mut ws_a, "result").await;
+    let room_id = dm_result["result"]["rid"].as_str().unwrap().to_string();
+    eprintln!("[Client A] DM room: {}", room_id);
+
+    // Subscribe
+    let sub_a = serde_json::json!({
+        "msg": "sub", "id": "sub_a2", "name": "stream-room-messages",
+        "params": [room_id, false]
+    });
+    ws_a.send(Message::Text(sub_a.to_string().into())).await.unwrap();
+    let _ = expect_msg(&mut ws_a, "ready").await;
+
+    // Connect Client B
+    eprintln!("[Client B] Connecting");
+    let (mut ws_b, _) = connect_async(&ws_uri)
+        .await
+        .expect("Failed to connect Client B");
+    let (user_id_b, _token_b) = ddp_handshake(&mut ws_b, username, password).await;
+    eprintln!("[Client B] Logged in, user_id={}", user_id_b);
+
+    let sub_b = serde_json::json!({
+        "msg": "sub", "id": "sub_b2", "name": "stream-room-messages",
+        "params": [room_id, false]
+    });
+    ws_b.send(Message::Text(sub_b.to_string().into())).await.unwrap();
+    let _ = expect_msg(&mut ws_b, "ready").await;
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Send message with alias via REST
+    eprintln!("[REST] Sending message with alias '{}'", alias_name);
+    let host = config.host();
+    let rest_url = format!("https://{}/api/v1/chat.sendMessage", host);
+    let rest_body = serde_json::json!({
+        "message": {
+            "rid": &room_id,
+            "msg": &test_text,
+            "alias": &alias_name
+        }
+    });
+
+    let http_client = reqwest::Client::new();
+    let resp = http_client
+        .post(&rest_url)
+        .header("Content-Type", "application/json")
+        .header("X-Auth-Token", &token_a)
+        .header("X-User-Id", &user_id_a)
+        .json(&rest_body)
+        .send()
+        .await
+        .expect("REST request failed");
+
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    eprintln!("[REST] status={}, body={}", status, &body[..body.len().min(300)]);
+    assert!(status.is_success(), "REST API sendMessage failed: {}", body);
+
+    // Verify Client A receives the message with alias
+    let ca_result = read_until_alias(&mut ws_a, &test_text, &alias_name).await;
+    assert!(ca_result, "Client A failed to receive alias '{}'", alias_name);
+
+    // Verify Client B receives the message with alias
+    let cb_result = read_until_alias(&mut ws_b, &test_text, &alias_name).await;
+    assert!(cb_result, "Client B failed to receive alias '{}'", alias_name);
+
+    let _ = ws_a.close(None).await;
+    let _ = ws_b.close(None).await;
+
+    eprintln!(
+        "SUCCESS: Soul.md display name '{}' → REST alias → verified by 2 clients",
+        alias_name
+    );
+}
