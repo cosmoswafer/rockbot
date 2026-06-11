@@ -37,6 +37,7 @@ flowchart TD
     DIRTY(MarkSnapshotDirty)
     SNAPSHOT(FlushSnapshots)
     ARCHIVE(CompressDaily)
+    REVIEW(DailySummaryReview)
     EVICT_ROOMS(EvictStaleRooms)
     PERSIST_ASSETS(PersistAssets)
     CFG[(AppConfig)]
@@ -70,6 +71,9 @@ flowchart TD
     PERSIST_ASSETS -->|"file data"| DAV
     DAV -->|"file data"| PERSIST_ASSETS
     ARCHIVE -->|"pruned history"| HISTORY
+    ARCHIVE -->|"post-archive"| REVIEW
+    TIMER -->|"every persist_interval_secs"| REVIEW
+    REVIEW -->|"scan summaries,<br/>recalc knowledge priorities"| DAV
     LOOP -->|"updated room state"| ROOMS
     TIMER -->|"every persist_interval_secs"| SNAPSHOT
     ROOMS -->|"dirty rooms"| SNAPSHOT

@@ -59,6 +59,8 @@ agent fetch additional entries on demand during the agent loop.
 - Downstream: [AI Provider](ai-provider.md) synthesizes knowledge entries from
   user instructions via `save_knowledge` tool calls
 - Downstream: `BuildContext` receives injected knowledge as system messages
+- Downstream: [Knowledge Priority Algorithm](knowledge-priority.md) adaptively recalculates entry
+  priorities based on daily summary mentions
 
 ## 2. Diagram
 
@@ -245,7 +247,7 @@ Machine-readable JSON file at `{root}/{webdav_dir}/knowledge/index.json`.
 | `title`       | `String`           | Human-readable title                           |
 | `when_useful` | `String`           | Situation description for retrieval matching   |
 | `tags`        | `Vec<String>`      | Searchable keywords                            |
-| `priority`    | `KnowledgePriority` | P0 (highest), P1, P2, P3; boosts recall rate |
+| `priority`    | `KnowledgePriority` | P0 (highest), P1, P2 (default for new entries), P3 (stale); managed by [Knowledge Priority Algorithm](knowledge-priority.md) |
 | `created_at`  | `String`           | ISO 8601                                       |
 | `updated_at`  | `String`           | ISO 8601                                       |
 
@@ -253,10 +255,10 @@ Machine-readable JSON file at `{root}/{webdav_dir}/knowledge/index.json`.
 
 ```rust
 enum KnowledgePriority {
-    P0, // highest priority — always loaded, maximum recall boost
-    P1, // high priority — strong recall boost
-    P2, // medium priority — moderate recall boost
-    P3, // low priority (default for new entries) — baseline recall
+    P0, // used every day in latest 7-day window — always loaded
+    P1, // used ≥ 1 in latest 7-day window — strong boost (+5)
+    P2, // not used in latest 7 days (1st cycle) OR new entry — moderate boost (+2)
+    P3, // not used for 2+ consecutive cycles — baseline (+0)
 }
 ```
 
@@ -264,6 +266,11 @@ enum KnowledgePriority {
 score bonus on top of keyword matching. P0 entries are always selected
 regardless of keyword overlap. Higher priority means the entry is recalled
 more frequently and surfaced earlier in the injected knowledge list.
+
+Priorities are adaptively recalculated by the [Knowledge Priority
+Algorithm](knowledge-priority.md) during daily summary review, using a single
+7-day sliding window against Layer 2 daily summaries. Degradation is
+incremental (P0/P1→P2→P3); promotion is immediate (≥1 mention→P1, 7/7→P0).
 
 | Priority | Score bonus | Always selected? |
 |----------|------------|-------------------|
@@ -332,7 +339,7 @@ Registered in `ToolRegistry`. Parameters:
 | `content`     | `string` | Yes      | Markdown body                                    |
 | `when_useful` | `string` | Yes      | Situation description (retrieval trigger)        |
 | `tags`        | `string` | No       | Comma-separated keywords                         |
-| `priority`    | `string` | No       | `"P0"`, `"P1"`, `"P2"`, or `"P3"` (default: P3) |
+| `priority`    | `string` | No       | `"P0"`, `"P1"`, `"P2"`, or `"P3"` (default: P2) |
 
 ### Tool: `forget_knowledge`
 

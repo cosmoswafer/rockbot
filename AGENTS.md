@@ -102,6 +102,7 @@ For each DFD (ordered by the mapping table below):
 | `tools/edit-soul.md` | `tools/edit_soul.rs` | `memory.rs`, `webdav` crate |
 | `tools/knowledge.md` | `tools/save_knowledge.rs`, `tools/forget_knowledge.rs`, `tools/recall_knowledge.rs` | `knowledge.rs`, `webdav` crate |
 | `base/knowledge.md` | `knowledge.rs` | `tools/save_knowledge.rs`, `tools/forget_knowledge.rs`, `tools/recall_knowledge.rs` |
+| `base/knowledge-priority.md` | `knowledge.rs` | `harness.rs`, `memory.rs` |
 | `context-diagram.md` | (Level 0 — system boundary, no code changes) | — |
 
 ## Testing
