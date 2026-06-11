@@ -315,7 +315,15 @@ impl AgentHarness {
                             let tool_result = self
                                 .tools
                                 .execute_by_name(&tool_call.id, &tool_call.function.name, &arguments)
-                                .await?;
+                                .await
+                                .unwrap_or_else(|e| {
+                                    crate::tool::ToolResult {
+                                        call_id: tool_call.id.clone(),
+                                        name: tool_call.function.name.clone(),
+                                        is_error: true,
+                                        content: format!("Tool error: {}", e),
+                                    }
+                                });
 
                             debug!(
                                 "Tool {} completed in {}ms (is_error={})",

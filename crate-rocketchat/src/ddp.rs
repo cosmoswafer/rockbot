@@ -102,11 +102,12 @@ pub fn set_real_name_payload(name: &str) -> Value {
 }
 
 pub fn typing_payload(room_id: &str, username: &str, is_typing: bool) -> Value {
+    let activities: Vec<&str> = if is_typing { vec!["user-typing"] } else { vec![] };
     json!({
         "msg": "method",
         "method": "stream-notify-room",
         "id": next_id(),
-        "params": [format!("{}/typing", room_id), username, is_typing]
+        "params": [format!("{}/user-activity", room_id), username, activities, {}]
     })
 }
 
@@ -268,9 +269,22 @@ mod tests {
         assert_eq!(msg["msg"], "method");
         assert_eq!(msg["method"], "stream-notify-room");
         assert!(msg["id"].as_str().unwrap().parse::<u64>().is_ok());
-        assert_eq!(msg["params"][0], "room123/typing");
+        assert_eq!(msg["params"][0], "room123/user-activity");
         assert_eq!(msg["params"][1], "user1");
-        assert_eq!(msg["params"][2], true);
+        let activities = msg["params"][2].as_array().unwrap();
+        assert_eq!(activities.len(), 1);
+        assert_eq!(activities[0], "user-typing");
+        assert!(msg["params"][3].is_object());
+    }
+
+    #[test]
+    fn test_typing_payload_false() {
+        let msg = typing_payload("room123", "user1", false);
+        assert_eq!(msg["params"][0], "room123/user-activity");
+        assert_eq!(msg["params"][1], "user1");
+        let activities = msg["params"][2].as_array().unwrap();
+        assert!(activities.is_empty());
+        assert!(msg["params"][3].is_object());
     }
 
     #[test]

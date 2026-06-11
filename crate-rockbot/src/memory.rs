@@ -458,8 +458,12 @@ impl MemoryManager {
 
     pub fn restore_snapshot(&mut self, snapshot: &PersistSnapshot) {
         if let Some(room) = self.rooms.get_mut(&snapshot.room_id) {
-            room.history.messages = snapshot.messages.clone();
-            room.history.char_count = snapshot.char_count;
+            let mut messages = snapshot.messages.clone();
+            strip_orphaned_tool_calls(&mut messages);
+            // Recompute char_count from cleaned messages
+            let char_count: usize = messages.iter().filter_map(|m| m.text_content()).map(|t| t.chars().count()).sum();
+            room.history.messages = messages;
+            room.history.char_count = char_count;
             room.history.archive_seq = snapshot.archive_seq;
         }
 
@@ -585,25 +589,39 @@ fn strip_orphaned_tool_calls(messages: &mut Vec<ChatMessage>) {
         i += 1;
     }
 
-    // Phase 2: remove trailing assistant tool_calls that have no tool
-    // replies (e.g. the AI's last message was a tool call that never
-    // completed before the loop was interrupted).
+    // Phase 2: remove assistant tool_calls that have no tool replies
+    // (e.g. the AI's last message was a tool call that never completed
+    // before the loop was interrupted, or a tool execution failed and
+    // later messages were appended after it).
     let mut i = 0;
     while i < messages.len() {
         if messages[i].role == crate::types::Role::Assistant && messages[i].tool_calls.is_some() {
-            let mut has_tool_reply = false;
+            // Collect expected tool_call_ids
+            let expected_ids: Vec<String> = messages[i]
+                .tool_calls
+                .as_ref()
+                .map(|tcs| tcs.iter().map(|tc| tc.id.clone()).collect())
+                .unwrap_or_default();
+            let mut matched = HashSet::new();
             for item in messages.iter().skip(i + 1) {
                 if item.role == crate::types::Role::Tool {
-                    has_tool_reply = true;
-                    break;
-                }
-                if item.role != crate::types::Role::Tool {
+                    if let Some(ref id) = item.tool_call_id {
+                        if expected_ids.contains(id) {
+                            matched.insert(id.clone());
+                        }
+                    }
+                } else {
                     break;
                 }
             }
-            if !has_tool_reply && i + 1 >= messages.len() {
-                messages.truncate(i);
-                break;
+            if matched.len() != expected_ids.len() {
+                // Remove this assistant
+                messages.remove(i);
+                // Remove orphaned tool results that followed it
+                while i < messages.len() && messages[i].role == crate::types::Role::Tool {
+                    messages.remove(i);
+                }
+                continue;
             }
         }
         i += 1;

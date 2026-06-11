@@ -351,15 +351,22 @@ fn test_subscribe_payload() {
 #[test]
 fn test_typing_payload_true() {
     let msg = rocketchat::ddp::typing_payload("room123", "botuser", true);
-    assert_eq!(msg["params"][0], "room123/typing");
+    assert_eq!(msg["params"][0], "room123/user-activity");
     assert_eq!(msg["params"][1], "botuser");
-    assert_eq!(msg["params"][2], true);
+    let activities = msg["params"][2].as_array().unwrap();
+    assert_eq!(activities.len(), 1);
+    assert_eq!(activities[0], "user-typing");
+    assert!(msg["params"][3].is_object());
 }
 
 #[test]
 fn test_typing_payload_false() {
     let msg = rocketchat::ddp::typing_payload("room123", "botuser", false);
-    assert_eq!(msg["params"][2], false);
+    assert_eq!(msg["params"][0], "room123/user-activity");
+    assert_eq!(msg["params"][1], "botuser");
+    let activities = msg["params"][2].as_array().unwrap();
+    assert!(activities.is_empty());
+    assert!(msg["params"][3].is_object());
 }
 
 #[test]
