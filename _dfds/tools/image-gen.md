@@ -65,20 +65,24 @@ flowchart TD
 flowchart TD
     SUBMIT(SubmitToQueue)
     POLL(PollStatus)
+    FETCH(FetchResult)
     DOWNLOAD(DownloadImage)
     UPLOAD(UploadToWebDAV)
     ERR_SUBMIT[Error: Submit Failed]
     ERR_POLL[Error: Poll Failed / Timeout]
+    ERR_FETCH[Error: Fetch Result Failed]
     ERR_DOWNLOAD[Error: Download Failed]
     ERR_UPLOAD[Error: WebDAV Upload Failed]
     FALLBACK[Return Error to Agent]
 
-    SUBMIT -.->|"HTTP error / missing request_id"| ERR_SUBMIT
-    POLL -.->|"FAILED status / timeout"| ERR_POLL
+    SUBMIT -.->|"HTTP error / missing request_id / status_url / response_url"| ERR_SUBMIT
+    POLL -.->|"HTTP error / FAILED status / timeout"| ERR_POLL
+    FETCH -.->|"HTTP error / missing image URL"| ERR_FETCH
     DOWNLOAD -.->|"HTTP error / read error"| ERR_DOWNLOAD
     UPLOAD -.->|"WebDAV PUT error"| ERR_UPLOAD
     ERR_SUBMIT --> FALLBACK
     ERR_POLL --> FALLBACK
+    ERR_FETCH --> FALLBACK
     ERR_DOWNLOAD --> FALLBACK
     ERR_UPLOAD --> FALLBACK
     FALLBACK -->|"error message"| AGENT[Agent Loop]

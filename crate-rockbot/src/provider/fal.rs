@@ -225,7 +225,23 @@ impl FalAiProvider {
                 .send()
                 .await?;
 
+            let http_status = response.status();
             let body: serde_json::Value = response.json().await?;
+
+            if !http_status.is_success() {
+                let detail = body
+                    .get("detail")
+                    .and_then(|d| d.as_str())
+                    .unwrap_or("Unknown error");
+                warn!(
+                    "fal.ai poll HTTP {}: request_id={} detail={}",
+                    http_status.as_u16(), req.request_id, detail
+                );
+                return Err(RockBotError::Provider(format!(
+                    "fal.ai poll failed (HTTP {}): {}",
+                    http_status.as_u16(), detail
+                )));
+            }
 
             let status = body
                 .get("status")
@@ -273,7 +289,19 @@ impl FalAiProvider {
             .send()
             .await?;
 
+        let http_status = response.status();
         let body: serde_json::Value = response.json().await?;
+
+        if !http_status.is_success() {
+            let detail = body
+                .get("detail")
+                .and_then(|d| d.as_str())
+                .unwrap_or("Unknown error");
+            return Err(RockBotError::Provider(format!(
+                "fal.ai fetch result failed (HTTP {}): {}",
+                http_status.as_u16(), detail
+            )));
+        }
 
         let image_url = body
             .get("images")
