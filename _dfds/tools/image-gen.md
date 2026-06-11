@@ -131,7 +131,7 @@ flowchart TD
     DLOAD(DownloadAttachment)
     ENCODE(EncodeDataURI)
     LABEL[AssignTitle<br/>from filename]
-    BUILD_MSG(BuildUserMessage<br/>with ![title](title))
+    BUILD_MSG["BuildUserMessage<br/>with image tags"]
     LLM_CTX[(LLM Context)]
     GEN_PROMPT{LLM prompt<br/>mentions title?}
     INJECT(InjectMatched<br/>DataURIs)
