@@ -5,8 +5,9 @@
 Rust crate (`crate-rocketchat`) that manages the full lifecycle of a
 RocketChat connection over **DDP (Distributed Data Protocol)** via WebSocket:
 authentication, subscription to message stream, event dispatch, message
-parsing/filtering, and reply delivery. DMs, messages that start with or contain `@botname`,
-and room-specific registered callbacks are forwarded to the agent.
+parsing/filtering, and reply delivery. DMs, messages that start with or contain `@botname` or the bot's
+self-display name (emoji stripped), and room-specific registered callbacks
+are forwarded to the agent.
 
 > **Deprecation note**: Rocket.Chat's official documentation marks the raw
 > DDP/bots approach as **deprecated** (2025). The recommended replacement is
@@ -82,7 +83,7 @@ flowchart TD
 ### 2c. Message Filter Deep Dive
 
 The `MessageFilter::filter()` method (`crate-rocketchat/src/types.rs:64`)
-implements a four-stage decision chain. Messages from the bot itself are
+implements a five-stage decision chain. Messages from the bot itself are
 silently dropped. The bot responds to: (1) `@botname` at the start of or
 contained in a channel message, (2) the bot's self-display name from soul
 memory (with emoji stripped) appearing anywhere in the text, (3) a specific
@@ -492,9 +493,10 @@ To construct the full download URL: join `{server_config.host()}{attachment.titl
 
 Method `filter(&self, raw: &Value) -> Option<IncomingMessage>` parses and
 filters a raw DDP event, returning `None` for self-messages and `Some` for
-valid incoming messages. Callers then apply `is_dm_or_mention()` to decide
-dispatch. `room_fname` is parsed directly from the per-event `args[1].fname`
-field; there is no secondary cache lookup.
+valid incoming messages. The dispatch decision (DM, mention, display name,
+registered rooms) is implemented inline in `client.rs:226-235` at the
+`connect_and_run` event loop level. `room_fname` is parsed directly from the
+per-event `args[1].fname` field; there is no secondary cache lookup.
 
 #### `RocketChatClient`
 
