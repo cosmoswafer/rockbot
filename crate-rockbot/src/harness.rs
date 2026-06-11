@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use base64::Engine;
@@ -57,6 +58,8 @@ pub struct AgentHarness {
     webdav: Option<WebDavClient>,
     rest_client: Option<RestApiClient>,
     max_iterations: u32,
+    max_attachment_bytes: u64,
+    image_pool: HashMap<String, Vec<CachedImage>>,
 }
 
 impl AgentHarness {
@@ -73,6 +76,7 @@ impl AgentHarness {
         let max_soul_chars = config.rocketchat.model.max_soul_chars;
         let persist_interval = config.rocketchat.model.persist_interval_secs;
         let max_context_bytes = config.rocketchat.model.max_context_bytes;
+        let max_attachment_bytes = config.rocketchat.model.max_attachment_bytes;
         let config = Arc::new(config);
         Self {
             config,
@@ -82,6 +86,8 @@ impl AgentHarness {
             webdav,
             rest_client: None,
             max_iterations,
+            max_attachment_bytes,
+            image_pool: HashMap::new(),
         }
     }
 
@@ -202,6 +208,7 @@ impl AgentHarness {
         let mut messages = self
             .memory
             .build_context(room_id, &system_prompt, None, None);
+        self.inject_vision_images(room_id, &mut messages);
         debug!(
             "Built context for room {}: {} messages (model={}, have_tools={})",
             room_id,
@@ -295,6 +302,10 @@ impl AgentHarness {
                                 .execute_by_name(&tool_call.id, &tool_call.function.name, &arguments)
                                 .await?;
 
+                            if tool_call.function.name == "vision" && !tool_result.is_error {
+                                self.cache_vision_images(room_id, &tool_result.content);
+                            }
+
                             let tool_msg = ChatMessage::tool(&tool_call.id, &tool_result.content);
                             self.append_to_history(room_id, tool_msg);
                         }
@@ -315,6 +326,7 @@ impl AgentHarness {
                         messages = self
                             .memory
                             .build_context(room_id, &system_prompt, None, None);
+                        self.inject_vision_images(room_id, &mut messages);
                         continue;
                     }
 
@@ -434,13 +446,11 @@ impl AgentHarness {
 
         let mime = content_type.as_deref().unwrap_or("image/png");
 
-        // Reject oversized attachments (20 MB limit) to prevent memory exhaustion.
-        const MAX_ATTACHMENT_BYTES: u64 = 20_000_000;
         if let Some(len) = response.content_length() {
-            if len > MAX_ATTACHMENT_BYTES {
+            if len > self.max_attachment_bytes {
                 return Err(crate::error::RockBotError::Provider(format!(
-                    "Attachment too large: {} bytes exceeds 20 MB limit",
-                    len
+                    "Attachment too large: {} bytes exceeds {} byte limit",
+                    len, self.max_attachment_bytes
                 )));
             }
         }
@@ -454,6 +464,63 @@ impl AgentHarness {
             mime,
             base64::engine::general_purpose::STANDARD.encode(&bytes)
         ))
+    }
+
+    fn cache_vision_images(&mut self, room_id: &str, result: &str) {
+        // Parse markdown image tags from vision tool result:
+        // ![name](data:mime/type;base64,...)
+        let mut remaining = result;
+        while let Some(start) = remaining.find("![") {
+            let after_bang = &remaining[start + 2..];
+            if let Some(alt_end) = after_bang.find("](") {
+                let name = &after_bang[..alt_end];
+                let after_alt = &after_bang[alt_end + 2..];
+                if let Some(paren_end) = after_alt.find(')') {
+                    let url = &after_alt[..paren_end];
+                    if url.starts_with("data:") {
+                        debug!(
+                            "Vision tool: caching image '{}' for room {}",
+                            name, room_id
+                        );
+                        self.image_pool
+                            .entry(room_id.to_string())
+                            .or_default()
+                            .push(CachedImage {
+                                data_uri: url.to_string(),
+                                name: name.to_string(),
+                            });
+                    }
+                    remaining = &after_alt[paren_end + 1..];
+                    continue;
+                }
+            }
+            break;
+        }
+    }
+
+    fn inject_vision_images(&mut self, room_id: &str, messages: &mut Vec<ChatMessage>) {
+        if let Some(images) = self.image_pool.remove(room_id) {
+            let count = images.len();
+            if count == 0 {
+                return;
+            }
+            let names: Vec<String> = images.iter().map(|ci| ci.name.clone()).collect();
+            let data_uris: Vec<String> = images.into_iter().map(|ci| ci.data_uri).collect();
+            let prompt = format!(
+                "The requested image{} visible below:\nAttached: {}",
+                if count > 1 { "s are" } else { " is" },
+                names
+                    .iter()
+                    .map(|n| format!("![{}]({})", n, n))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            );
+            debug!(
+                "Injecting {} vision image(s) for room {} into LLM context",
+                count, room_id
+            );
+            messages.push(ChatMessage::user_with_images(prompt, data_uris));
+        }
     }
 
     fn provider_http_client(&self) -> reqwest::Client {
@@ -983,6 +1050,11 @@ struct AttachmentRef {
     pub data_uri: String,
 }
 
+struct CachedImage {
+    data_uri: String,
+    name: String,
+}
+
 fn inject_room_context(arguments: &str, room_id: &str, webdav_dir: &str) -> String {
     let mut args: serde_json::Value =
         serde_json::from_str(arguments).unwrap_or(serde_json::json!({}));
@@ -1005,19 +1077,10 @@ fn inject_image_urls_from_refs(
     // generation), keep them. Always also inject harness-tagged data URIs
     // whose alt-text appears in the prompt.
     let mut injected: Vec<serde_json::Value> = Vec::new();
-    const MAX_DATA_URI_BYTES: usize = 25_000_000;
     let prompt_lower = arguments.to_lowercase();
     for r in refs {
         if prompt_lower.contains(&r.title.to_lowercase()) {
-            if r.data_uri.len() <= MAX_DATA_URI_BYTES {
-                injected.push(serde_json::Value::String(r.data_uri.clone()));
-            } else {
-                warn!(
-                    "Skipping oversized data URI ({} bytes) for {}",
-                    r.data_uri.len(),
-                    r.title
-                );
-            }
+            injected.push(serde_json::Value::String(r.data_uri.clone()));
         }
     }
     // Merge with any agent-provided URLs (e.g. fal CDN from previous generation)

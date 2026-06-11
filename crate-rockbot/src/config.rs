@@ -56,6 +56,8 @@ pub struct ModelConfig {
     pub memory_ttl_secs: u64,
     #[serde(default = "default_max_context_bytes")]
     pub max_context_bytes: usize,
+    #[serde(default = "default_max_attachment_bytes")]
+    pub max_attachment_bytes: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -142,6 +144,10 @@ fn default_memory_ttl_secs() -> u64 {
 
 fn default_max_context_bytes() -> usize {
     30_000_000
+}
+
+fn default_max_attachment_bytes() -> u64 {
+    25_000_000
 }
 
 #[derive(Debug, Clone, Deserialize)]

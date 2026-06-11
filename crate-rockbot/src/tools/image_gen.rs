@@ -86,7 +86,7 @@ impl ImageGenTool {
         let response = self
             .http_client
             .get(url)
-            .timeout(std::time::Duration::from_secs(60))
+            .timeout(std::time::Duration::from_secs(600))
             .send()
             .await
             .map_err(|e| {
@@ -217,20 +217,24 @@ impl Tool for ImageGenTool {
         }
 
         if let Some(image_urls) = args.get("image_urls").and_then(|v| v.as_array()) {
-            const MAX_DATA_URI_BYTES: usize = 5_000_000;
             let mut urls: Vec<String> = Vec::with_capacity(image_urls.len());
             for v in image_urls {
                 let raw = v.as_str().map(String::from);
                 match raw.as_deref() {
-                    Some(uri) if uri.len() > MAX_DATA_URI_BYTES && uri.starts_with("data:") => {
+                    Some(uri) if uri.starts_with("data:") => {
                         if let Ok(uploaded_url) = self.upload_data_uri(uri).await {
-                            debug!("Uploaded oversized image to fal storage: {}", uploaded_url);
+                            debug!("Uploaded image to fal storage: {}", uploaded_url);
                             urls.push(uploaded_url);
                         } else {
-                            warn!("Failed to upload oversized data URI, skipping it");
+                            warn!("Failed to upload data URI to fal storage, skipping it");
                         }
                     }
-                    Some(s) => urls.push(s.to_string()),
+                    Some(s) if s.starts_with("http://") || s.starts_with("https://") => {
+                        urls.push(s.to_string());
+                    }
+                    Some(_) => {
+                        debug!("Skipping non-URL image_urls entry");
+                    }
                     None => {}
                 }
             }

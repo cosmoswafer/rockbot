@@ -107,6 +107,30 @@ impl ChatMessage {
         }
     }
 
+    pub fn user_with_image_url(
+        text: impl Into<String>,
+        image_url: impl Into<String>,
+    ) -> Self {
+        Self {
+            role: Role::User,
+            content: MessageContent::Multipart(vec![
+                ContentPart::Text {
+                    text: text.into(),
+                },
+                ContentPart::ImageUrl {
+                    image_url: ImageUrlPayload {
+                        url: image_url.into(),
+                        detail: Some("high".into()),
+                    },
+                },
+            ]),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+            reasoning_content: None,
+        }
+    }
+
     pub fn user_with_images(
         text: impl Into<String>,
         image_data_uris: Vec<String>,
