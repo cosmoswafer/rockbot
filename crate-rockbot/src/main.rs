@@ -305,31 +305,6 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                     let harness = harness.clone();
                     let bot_name = bot_name.clone();
                     async move {
-                        // If not DM and not @username mention, check per-room display name
-                        if !msg.is_dm && !msg.text.contains(&bot_name) {
-                            let mut h = harness.lock().await;
-                            let room_name = if msg.room_name.is_empty() {
-                                msg.sender_name.clone()
-                            } else {
-                                msg.room_name.clone()
-                            };
-                            // Restore snapshot to load per-room soul/display name
-                            h.restore_history(
-                                &msg.room_id,
-                                &room_name,
-                                &msg.room_fname,
-                                msg.is_dm,
-                            )
-                            .await;
-                            let per_room_name =
-                                h.memory().self_display_name(&msg.room_id);
-                            if !per_room_name
-                                .is_some_and(|dn| msg.text.contains(&dn))
-                            {
-                                return;
-                            }
-                        }
-
                         let username = bot_name.trim_start_matches('@').to_string();
                         if let Err(e) = sender.typing(true, &username).await {
                             warn!("Failed to send typing indicator: {}", e);
