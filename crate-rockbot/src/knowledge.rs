@@ -4,7 +4,8 @@ use tracing::{debug, warn};
 use webdav::{WebDavClient, WebDavPath};
 
 use crate::error::Result;
-use crate::utils::now_iso_string;
+use crate::memory::DailySummary;
+use crate::utils::{now_iso_string, today_iso_date};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum KnowledgeCategory {
@@ -51,12 +52,12 @@ impl std::fmt::Display for KnowledgePriority {
 
 impl Default for KnowledgePriority {
     fn default() -> Self {
-        KnowledgePriority::P3
+        KnowledgePriority::P2
     }
 }
 
 impl KnowledgePriority {
-    fn score_bonus(&self) -> usize {
+    pub(crate) fn score_bonus(&self) -> usize {
         match self {
             KnowledgePriority::P0 => 8,
             KnowledgePriority::P1 => 5,
@@ -76,6 +77,8 @@ pub struct IndexEntry {
     pub tags: Vec<String>,
     #[serde(default)]
     pub priority: KnowledgePriority,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_degraded_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -201,6 +204,7 @@ impl KnowledgeManager {
                 when_useful: when_useful.to_string(),
                 tags: tags.to_vec(),
                 priority: priority.clone(),
+                last_degraded_at: None,
                 created_at: now.clone(),
                 updated_at: now.clone(),
             });
@@ -391,6 +395,163 @@ impl KnowledgeManager {
             crate::error::RockBotError::Provider(format!("Failed to read knowledge entry: {e}"))
         })
     }
+
+    /// Extracts keywords from an entry: title tokens, when_useful tokens,
+    /// and tags, each > 2 chars, lowercased.
+    fn entry_keywords(entry: &IndexEntry) -> Vec<String> {
+        let mut keys: Vec<String> = entry
+            .title
+            .split(|c: char| !c.is_alphanumeric())
+            .chain(entry.when_useful.split(|c: char| !c.is_alphanumeric()))
+            .filter(|w| w.len() > 2)
+            .map(|w| w.to_lowercase())
+            .collect();
+        for tag in &entry.tags {
+            keys.push(tag.to_lowercase());
+        }
+        keys.sort();
+        keys.dedup();
+        keys
+    }
+
+    /// Checks whether any keyword from the entry appears in the given text.
+    fn entry_mentioned_in_text(entry: &IndexEntry, text: &str) -> bool {
+        let text_lower = text.to_lowercase();
+        Self::entry_keywords(entry)
+            .iter()
+            .any(|kw| text_lower.contains(kw.as_str()))
+    }
+
+    /// Counts how many of the latest 7 daily summaries mention the entry.
+    fn count_mentioned_days(entry: &IndexEntry, summaries: &[DailySummary]) -> usize {
+        let mut sorted: Vec<&DailySummary> = summaries.iter().collect();
+        sorted.sort_by_key(|s| std::cmp::Reverse(s.date.as_str()));
+        sorted
+            .iter()
+            .take(7)
+            .filter(|s| Self::entry_mentioned_in_text(entry, &s.summary))
+            .count()
+    }
+
+    /// Determines whether a degradation is allowed (at most once per day).
+    fn can_degrade(last_degraded_at: &Option<String>) -> bool {
+        let Some(iso_str) = last_degraded_at else {
+            return true;
+        };
+        if iso_str.len() < 10 {
+            return true;
+        }
+        let today = today_iso_date();
+        &iso_str[..10] != today.as_str()
+    }
+
+    /// Computes the new priority given current priority and mention count.
+    /// Returns (new_priority, is_degradation).
+    pub fn compute_new_priority(
+        current: &KnowledgePriority,
+        week_count: usize,
+    ) -> (KnowledgePriority, bool) {
+        let new = if week_count == 7 {
+            KnowledgePriority::P0
+        } else if week_count >= 1 {
+            KnowledgePriority::P1
+        } else {
+            match current {
+                KnowledgePriority::P0 | KnowledgePriority::P1 => KnowledgePriority::P2,
+                KnowledgePriority::P2 => KnowledgePriority::P3,
+                KnowledgePriority::P3 => KnowledgePriority::P3,
+            }
+        };
+
+        // Degradation = new priority is higher enum ordinal (P0=0, P3=3)
+        let is_degradation = priority_ord(&new) > priority_ord(current);
+        (new, is_degradation)
+    }
+
+    /// Scans daily summaries for mentions and recalculates priorities for all
+    /// knowledge entries in a room. Returns true if any priority was changed.
+    pub async fn review_priorities(
+        webdav: &WebDavClient,
+        webdav_dir: &str,
+        summaries: &[DailySummary],
+    ) -> Result<bool> {
+        let mut index = match Self::load_index(webdav, webdav_dir).await {
+            Ok(idx) => idx,
+            Err(_) => return Ok(false),
+        };
+
+        if index.entries.is_empty() {
+            return Ok(false);
+        }
+
+        let now = now_iso_string();
+        let mut changed = false;
+
+        for entry in &mut index.entries {
+            let week_count = Self::count_mentioned_days(entry, summaries);
+            let (new_prio, is_degradation) =
+                Self::compute_new_priority(&entry.priority, week_count);
+
+            if new_prio == entry.priority {
+                continue;
+            }
+
+            if is_degradation && !Self::can_degrade(&entry.last_degraded_at) {
+                debug!(
+                    "Rate-limited degradation for {} (last degraded {})",
+                    entry.title,
+                    entry.last_degraded_at.as_deref().unwrap_or("never")
+                );
+                continue;
+            }
+
+            debug!(
+                "Priority change for {}: {:?} → {:?} (week_count={})",
+                entry.title, entry.priority, new_prio, week_count
+            );
+            entry.priority = new_prio;
+            if is_degradation {
+                entry.last_degraded_at = Some(now.clone());
+            }
+            changed = true;
+        }
+
+        if changed {
+            index.updated = now;
+            let index_body = serde_json::to_string_pretty(&index).map_err(|e| {
+                crate::error::RockBotError::Provider(format!(
+                    "Failed to serialize knowledge index: {e}"
+                ))
+            })?;
+            webdav
+                .write_file_with_fallback(
+                    &Self::index_path(webdav_dir),
+                    index_body.as_bytes().to_vec(),
+                )
+                .await
+                .map_err(|e| {
+                    crate::error::RockBotError::Provider(format!(
+                        "Knowledge index write failed: {e}"
+                    ))
+                })?;
+            debug!(
+                "Updated knowledge priorities for room {}",
+                webdav_dir
+            );
+        }
+
+        Ok(changed)
+    }
+}
+
+/// Returns ordinal for priority: P0=0, P1=1, P2=2, P3=3
+fn priority_ord(p: &KnowledgePriority) -> u8 {
+    match p {
+        KnowledgePriority::P0 => 0,
+        KnowledgePriority::P1 => 1,
+        KnowledgePriority::P2 => 2,
+        KnowledgePriority::P3 => 3,
+    }
 }
 
 #[cfg(test)]
@@ -436,6 +597,7 @@ mod tests {
                 when_useful: "when calling the database API".into(),
                 tags: vec!["api".into(), "database".into()],
                 priority: KnowledgePriority::P3,
+                last_degraded_at: None,
                 created_at: String::new(),
                 updated_at: String::new(),
             }],
@@ -459,6 +621,7 @@ mod tests {
                 when_useful: "when calling the database API".into(),
                 tags: vec![],
                 priority: KnowledgePriority::P3,
+                last_degraded_at: None,
                 created_at: String::new(),
                 updated_at: String::new(),
             }],
@@ -486,6 +649,7 @@ mod tests {
                 when_useful: "general reference".into(),
                 tags: vec!["build".into(), "cargo".into()],
                 priority: KnowledgePriority::P3,
+                last_degraded_at: None,
                 created_at: String::new(),
                 updated_at: String::new(),
             }],
@@ -511,6 +675,7 @@ mod tests {
                 when_useful: "when calling the database API".into(),
                 tags: vec!["api".into()],
                 priority: KnowledgePriority::P3,
+                last_degraded_at: None,
                 created_at: String::new(),
                 updated_at: String::new(),
             }],
@@ -538,6 +703,7 @@ mod tests {
                     when_useful: "when talking about weather".into(),
                     tags: vec![],
                     priority: KnowledgePriority::P3,
+                    last_degraded_at: None,
                     created_at: String::new(),
                     updated_at: String::new(),
                 },
@@ -549,6 +715,7 @@ mod tests {
                     when_useful: "general reference".into(),
                     tags: vec![],
                     priority: KnowledgePriority::P3,
+                    last_degraded_at: None,
                     created_at: String::new(),
                     updated_at: String::new(),
                 },
@@ -588,6 +755,7 @@ mod tests {
                 when_useful: "when talking about shared topics".into(),
                 tags: vec!["shared".into()],
                 priority: KnowledgePriority::P3,
+                last_degraded_at: None,
                 created_at: String::new(),
                 updated_at: String::new(),
             });
@@ -619,6 +787,7 @@ mod tests {
                 when_useful: "for specific rare scenarios only".into(),
                 tags: vec!["rare".into()],
                 priority: KnowledgePriority::P0,
+                last_degraded_at: None,
                 created_at: String::new(),
                 updated_at: String::new(),
             }],
@@ -631,5 +800,234 @@ mod tests {
         );
         assert_eq!(matches.len(), 1, "P0 entry should always be returned");
         assert_eq!(matches[0].id, "critical_rule");
+    }
+
+    // --- Knowledge priority algorithm tests ---
+
+    fn make_entry(priority: KnowledgePriority, title: &str, when_useful: &str, tags: &[&str]) -> IndexEntry {
+        IndexEntry {
+            id: title.to_lowercase().replace(' ', "_"),
+            filename: format!("{}.md", title.to_lowercase().replace(' ', "_")),
+            category: KnowledgeCategory::Skill,
+            title: title.to_string(),
+            when_useful: when_useful.to_string(),
+            tags: tags.iter().map(|t| t.to_string()).collect(),
+            priority,
+            last_degraded_at: None,
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
+
+    fn make_summary(date: &str, text: &str) -> DailySummary {
+        DailySummary {
+            date: date.to_string(),
+            summary: text.to_string(),
+            msg_count: 5,
+            char_count: 200,
+        }
+    }
+
+    #[test]
+    fn test_compute_new_priority_p0_to_p0_when_mentioned_every_day() {
+        let (prio, degraded) = KnowledgeManager::compute_new_priority(&KnowledgePriority::P0, 7);
+        assert_eq!(prio, KnowledgePriority::P0);
+        assert!(!degraded, "P0→P0 should not be a degradation");
+    }
+
+    #[test]
+    fn test_compute_new_priority_p0_to_p1_when_mentioned_some_days() {
+        let (prio, degraded) = KnowledgeManager::compute_new_priority(&KnowledgePriority::P0, 3);
+        assert_eq!(prio, KnowledgePriority::P1);
+        assert!(degraded, "P0→P1 is a degradation");
+    }
+
+    #[test]
+    fn test_compute_new_priority_p0_to_p2_when_zero_mentions() {
+        let (prio, degraded) = KnowledgeManager::compute_new_priority(&KnowledgePriority::P0, 0);
+        assert_eq!(prio, KnowledgePriority::P2);
+        assert!(degraded);
+    }
+
+    #[test]
+    fn test_compute_new_priority_p1_to_p0_when_7() {
+        let (prio, _) = KnowledgeManager::compute_new_priority(&KnowledgePriority::P1, 7);
+        assert_eq!(prio, KnowledgePriority::P0);
+    }
+
+    #[test]
+    fn test_compute_new_priority_p1_to_p1_when_some() {
+        let (prio, degraded) = KnowledgeManager::compute_new_priority(&KnowledgePriority::P1, 1);
+        assert_eq!(prio, KnowledgePriority::P1);
+        assert!(!degraded, "P1→P1 is not a degradation");
+    }
+
+    #[test]
+    fn test_compute_new_priority_p1_to_p2_when_zero() {
+        let (prio, degraded) = KnowledgeManager::compute_new_priority(&KnowledgePriority::P1, 0);
+        assert_eq!(prio, KnowledgePriority::P2);
+        assert!(degraded);
+    }
+
+    #[test]
+    fn test_compute_new_priority_p2_to_p0_when_7() {
+        let (prio, _) = KnowledgeManager::compute_new_priority(&KnowledgePriority::P2, 7);
+        assert_eq!(prio, KnowledgePriority::P0);
+    }
+
+    #[test]
+    fn test_compute_new_priority_p2_to_p1_when_some() {
+        let (prio, degraded) = KnowledgeManager::compute_new_priority(&KnowledgePriority::P2, 3);
+        assert_eq!(prio, KnowledgePriority::P1);
+        assert!(!degraded, "P2→P1 is not a degradation");
+    }
+
+    #[test]
+    fn test_compute_new_priority_p2_to_p3_when_zero() {
+        let (prio, degraded) = KnowledgeManager::compute_new_priority(&KnowledgePriority::P2, 0);
+        assert_eq!(prio, KnowledgePriority::P3);
+        assert!(degraded);
+    }
+
+    #[test]
+    fn test_compute_new_priority_p3_to_p0_when_7() {
+        let (prio, _) = KnowledgeManager::compute_new_priority(&KnowledgePriority::P3, 7);
+        assert_eq!(prio, KnowledgePriority::P0);
+    }
+
+    #[test]
+    fn test_compute_new_priority_p3_to_p1_when_some() {
+        let (prio, degraded) = KnowledgeManager::compute_new_priority(&KnowledgePriority::P3, 1);
+        assert_eq!(prio, KnowledgePriority::P1);
+        assert!(!degraded, "P3→P1 is not a degradation");
+    }
+
+    #[test]
+    fn test_compute_new_priority_p3_stays_p3_when_zero() {
+        let (prio, degraded) = KnowledgeManager::compute_new_priority(&KnowledgePriority::P3, 0);
+        assert_eq!(prio, KnowledgePriority::P3);
+        assert!(!degraded, "P3→P3 is not a degradation (no change)");
+    }
+
+    #[test]
+    fn test_entry_mentioned_in_text_title_match() {
+        let entry = make_entry(
+            KnowledgePriority::P2,
+            "Database API",
+            "when calling the api",
+            &[],
+        );
+        assert!(KnowledgeManager::entry_mentioned_in_text(&entry, "Today we discussed the database access patterns"));
+        assert!(KnowledgeManager::entry_mentioned_in_text(&entry, "api usage was high"));
+    }
+
+    #[test]
+    fn test_entry_mentioned_in_text_when_useful_match() {
+        let entry = make_entry(
+            KnowledgePriority::P2,
+            "Build Config",
+            "when setting up the build pipeline on CI",
+            &[],
+        );
+        assert!(KnowledgeManager::entry_mentioned_in_text(&entry, "I was working on the CI build pipeline today"));
+    }
+
+    #[test]
+    fn test_entry_mentioned_in_text_tag_match() {
+        let entry = make_entry(
+            KnowledgePriority::P2,
+            "Cargo Setup",
+            "general reference",
+            &["cargo", "rust", "build"],
+        );
+        assert!(KnowledgeManager::entry_mentioned_in_text(&entry, "We used cargo to compile the project"));
+    }
+
+    #[test]
+    fn test_entry_mentioned_in_text_no_match() {
+        let entry = make_entry(
+            KnowledgePriority::P2,
+            "Database API",
+            "when calling the database API",
+            &["database", "sql"],
+        );
+        assert!(!KnowledgeManager::entry_mentioned_in_text(&entry, "Today was quiet, nothing special happened"));
+    }
+
+    #[test]
+    fn test_entry_mentioned_in_text_short_tokens_filtered() {
+        let entry = make_entry(
+            KnowledgePriority::P2,
+            "DB API",
+            "hi",
+            &[],
+        );
+        // "db" and "hi" are both <= 2 chars, so no keywords
+        assert!(!KnowledgeManager::entry_mentioned_in_text(&entry, "Today we talked about the DB and said hi"));
+    }
+
+    #[test]
+    fn test_count_mentioned_days() {
+        let entry = make_entry(
+            KnowledgePriority::P2,
+            "Database API",
+            "when calling the api",
+            &[],
+        );
+        let summaries = vec![
+            make_summary("2026-06-11", "We discussed the database today"),
+            make_summary("2026-06-10", "Just general chat"),
+            make_summary("2026-06-09", "We used the api again"),
+            make_summary("2026-06-08", "database migration planning"),
+            make_summary("2026-06-07", "nothing relevant"),
+            make_summary("2026-06-06", "api version 2 discussion"),
+            make_summary("2026-06-05", "deployment went fine"),
+        ];
+        // Match on: 06-11 (database), 06-09 (api), 06-08 (database), 06-06 (api) = 4 matches
+        assert_eq!(KnowledgeManager::count_mentioned_days(&entry, &summaries), 4);
+    }
+
+    #[test]
+    fn test_count_mentioned_days_only_latest_7() {
+        let entry = make_entry(
+            KnowledgePriority::P2,
+            "Database API",
+            "when calling the api",
+            &[],
+        );
+        // 10 summaries, only latest 7 should be checked
+        let mut summaries = Vec::new();
+        for i in 0..10 {
+            summaries.push(make_summary(
+                &format!("2026-06-{:02}", 11 - i),
+                if i == 8 { "database was discussed" } else { "irrelevant" },
+            ));
+        }
+        // Day 3 (i=8 from top, so 11-8=3 meaning 06-03) is outside latest 7
+        // Latest 7: 06-11 down to 06-05. Only 06-11 through 06-05 are checked.
+        // 06-03 is the 9th entry from bottom = position 8 from end = outside latest 7
+        assert_eq!(KnowledgeManager::count_mentioned_days(&entry, &summaries), 0);
+    }
+
+    #[test]
+    fn test_can_degrade_none() {
+        assert!(KnowledgeManager::can_degrade(&None));
+    }
+
+    #[test]
+    fn test_can_degrade_yesterday() {
+        assert!(KnowledgeManager::can_degrade(&Some("2020-01-01T00:00:00Z".to_string())));
+    }
+
+    #[test]
+    fn test_can_degrade_today_blocked() {
+        let today = crate::utils::today_iso_date();
+        let today_iso = format!("{}T12:00:00Z", today);
+        assert!(!KnowledgeManager::can_degrade(&Some(today_iso)));
+    }
+
+    #[test]
+    fn test_default_priority_is_p2() {
+        assert_eq!(KnowledgePriority::default(), KnowledgePriority::P2);
     }
 }

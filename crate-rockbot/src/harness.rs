@@ -720,6 +720,11 @@ impl AgentHarness {
                     }
 
                     self.memory.prune_archived(&rid, count);
+
+                    // Review knowledge priorities after daily summary write
+                    if self.review_knowledge_priorities_for_room(webdav_client, &wd).await {
+                        self.memory.mark_snapshot_dirty(&rid);
+                    }
                 }
             } else {
                 debug!(
@@ -1177,6 +1182,50 @@ impl AgentHarness {
         }
     }
 
+    async fn review_knowledge_priorities_for_room(
+        &self,
+        webdav: &WebDavClient,
+        webdav_dir: &str,
+    ) -> bool {
+        let summaries = self.memory.get_daily_summaries(webdav_dir);
+        match KnowledgeManager::review_priorities(webdav, webdav_dir, summaries).await {
+            Ok(changed) => changed,
+            Err(e) => {
+                warn!(
+                    "Failed to review knowledge priorities for {}: {}",
+                    webdav_dir, e
+                );
+                false
+            }
+        }
+    }
+
+    async fn review_knowledge_priorities(&self) {
+        if self.webdav.is_none() {
+            return;
+        }
+        let webdav = self.webdav.as_ref().unwrap();
+        let room_ids = self.memory.room_ids();
+        for rid in room_ids {
+            let summaries = self.memory.get_daily_summaries(&rid);
+            let wd = {
+                let room = self.memory.get(&rid);
+                let (rn, rf, dm) = room
+                    .map(|r| (r.room_name.as_str(), r.room_fname.as_str(), r.is_dm))
+                    .unwrap_or((rid.as_str(), "", false));
+                compute_webdav_dir(rn, rf, dm)
+            };
+            if let Err(e) =
+                KnowledgeManager::review_priorities(webdav, &wd, summaries).await
+            {
+                warn!(
+                    "Failed to review knowledge priorities for {}: {}",
+                    wd, e
+                );
+            }
+        }
+    }
+
     pub async fn maintenance_tick(&mut self, memory_ttl_secs: u64) {
         // Phase 1: persist dirty snapshots
         if self.webdav.is_some() {
@@ -1185,6 +1234,9 @@ impl AgentHarness {
                 debug!("maintenance_tick: flushing {} dirty snapshot(s)", dirty_count);
             }
             self.flush_all_snapshots().await;
+
+            // Phase 1.5: review knowledge priorities
+            self.review_knowledge_priorities().await;
         }
 
         // Phase 2: evict stale rooms

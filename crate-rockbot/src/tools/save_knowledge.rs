@@ -73,7 +73,7 @@ impl Tool for SaveKnowledgeTool {
                 "priority": {
                     "type": "string",
                     "enum": ["P0", "P1", "P2", "P3"],
-                    "description": "Knowledge priority: P0 (highest, always recalled), P1 (high), P2 (medium), P3 (low, default). Higher priority means more frequently recalled."
+                    "description": "Knowledge priority: P0 (highest, always recalled), P1 (high), P2 (medium, default), P3 (low). Higher priority means more frequently recalled."
                 }
             },
             "required": ["category", "topic", "content", "when_useful"]
