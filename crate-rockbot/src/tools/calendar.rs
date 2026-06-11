@@ -4,7 +4,7 @@ use std::sync::Mutex;
 use async_trait::async_trait;
 use serde_json::Value;
 use tracing::{debug, warn};
-use webdav::{CaldavEvent, Reminder, WebDavClient, WebDavConfig, build_vevent_ics, quick_uid};
+use webdav::{CaldavEvent, CaldavTodo, Reminder, WebDavClient, WebDavConfig, build_vevent_ics, quick_uid};
 
 use crate::error::{Result, RockBotError};
 use crate::tool::Tool;
@@ -96,6 +96,27 @@ impl CalendarTool {
                 "  Reminder: {} {}\n",
                 r.action, r.trigger
             ));
+        }
+        out
+    }
+
+    fn format_todo(todo: &CaldavTodo) -> String {
+        let mut out = format!(
+            "Todo: {}\n  UID: {}\n  Status: {}\n",
+            todo.summary, todo.uid, todo.status
+        );
+        if let Some(ref desc) = todo.description {
+            if !desc.is_empty() {
+                out.push_str(&format!("  Description: {}\n", desc));
+            }
+        }
+        if let Some(ref due) = todo.due {
+            if !due.is_empty() {
+                out.push_str(&format!("  Due: {}\n", due));
+            }
+        }
+        if let Some(priority) = todo.priority {
+            out.push_str(&format!("  Priority: {}\n", priority));
         }
         out
     }
@@ -218,7 +239,7 @@ impl Tool for CalendarTool {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["list_events", "get_event", "add_event", "update_event", "delete_event"],
+                    "enum": ["list_events", "get_event", "add_event", "update_event", "delete_event", "list_todos"],
                     "description": "Calendar operation to perform"
                 },
                 "start": {
@@ -405,8 +426,27 @@ impl Tool for CalendarTool {
                     })?;
                 Ok(format!("Event deleted: {}", uid))
             }
+            "list_todos" => {
+                debug!("calendar list_todos (room={})", room_id);
+                let todos = self
+                    .client
+                    .list_todos(&caldav_url)
+                    .await
+                    .map_err(|e| RockBotError::Provider(format!("Calendar todo list failed: {e}")))?;
+
+                if todos.is_empty() {
+                    Ok("No todos found.".to_string())
+                } else {
+                    let mut out = format!("{} todo(s):\n\n", todos.len());
+                    for todo in &todos {
+                        out.push_str(&Self::format_todo(todo));
+                        out.push('\n');
+                    }
+                    Ok(out)
+                }
+            }
             other => Err(RockBotError::ToolCallParse(format!(
-                "Unknown calendar action: {other}. Valid: list_events, get_event, add_event, update_event, delete_event"
+                "Unknown calendar action: {other}. Valid: list_events, get_event, add_event, update_event, delete_event, list_todos"
             ))),
         }
     }
@@ -447,7 +487,7 @@ mod tests {
                 .contains(&serde_json::json!("action"))
         );
         let actions = params["properties"]["action"]["enum"].as_array().unwrap();
-        assert_eq!(actions.len(), 5);
+        assert_eq!(actions.len(), 6);
     }
 
     #[test]
@@ -492,6 +532,19 @@ mod tests {
             let map = tool.room_calendars.lock().unwrap();
             assert_eq!(map.get("room1").unwrap(), "r-hr");
         }
+    }
+
+    #[test]
+    fn test_calendar_tool_parameters_include_all_actions() {
+        let tool = make_test_tool();
+        let params = tool.parameters();
+        let actions = params["properties"]["action"]["enum"].as_array().unwrap();
+        assert!(actions.contains(&serde_json::json!("list_events")));
+        assert!(actions.contains(&serde_json::json!("get_event")));
+        assert!(actions.contains(&serde_json::json!("add_event")));
+        assert!(actions.contains(&serde_json::json!("update_event")));
+        assert!(actions.contains(&serde_json::json!("delete_event")));
+        assert!(actions.contains(&serde_json::json!("list_todos")));
     }
 
     #[tokio::test]

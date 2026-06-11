@@ -342,4 +342,33 @@ mod tests {
         let v = serde_json::json!({"msg": "ready"});
         assert!(subs_list(&v).is_empty());
     }
+
+    #[test]
+    fn test_typing_payload_structure() {
+        let payload = typing_payload("room123", "testuser", true);
+        assert_eq!(payload["msg"], "method");
+        assert_eq!(payload["method"], "stream-notify-room");
+        assert!(payload["id"].as_str().unwrap().parse::<u64>().is_ok());
+        let params = &payload["params"];
+        assert_eq!(params[0], "room123/user-activity");
+        assert_eq!(params[1], "testuser");
+        let activities = params[2].as_array().unwrap();
+        assert_eq!(activities.len(), 1);
+        assert_eq!(activities[0], "user-typing");
+        assert!(params[3].is_object());
+    }
+
+    #[test]
+    fn test_typing_payload_stop() {
+        let payload = typing_payload("room456", "otheruser", false);
+        assert_eq!(payload["msg"], "method");
+        assert_eq!(payload["method"], "stream-notify-room");
+        assert!(payload["id"].as_str().unwrap().parse::<u64>().is_ok());
+        let params = &payload["params"];
+        assert_eq!(params[0], "room456/user-activity");
+        assert_eq!(params[1], "otheruser");
+        let activities = params[2].as_array().unwrap();
+        assert!(activities.is_empty());
+        assert!(params[3].is_object());
+    }
 }

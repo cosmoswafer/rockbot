@@ -364,4 +364,108 @@ mod tests {
         let msg = MessageFilter::new("bot").filter(&event).unwrap();
         assert_eq!(msg.alias, None);
     }
+
+    #[test]
+    fn test_strip_emoji_removes_common_emojis() {
+        let result = strip_emoji("Hello \u{1F389}\u{1F31F} World");
+        assert_eq!(result, "Hello  World");
+    }
+
+    #[test]
+    fn test_strip_emoji_preserves_non_emoji_text() {
+        let result = strip_emoji("RockAI \u{2728} the bot");
+        assert_eq!(result, "RockAI  the bot");
+    }
+
+    #[test]
+    fn test_strip_emoji_no_emojis() {
+        assert_eq!(strip_emoji("plain text"), "plain text");
+    }
+
+    #[test]
+    fn test_is_dm_or_mention_with_display_name() {
+        let msg = IncomingMessage {
+            msg_id: None,
+            room_id: "r1".into(),
+            room_name: "general".into(),
+            room_fname: "General".into(),
+            sender_name: "user1".into(),
+            text: "Hello RockAI bot".into(),
+            is_dm: false,
+            timestamp: None,
+            sender_id: "u1".into(),
+            alias: None,
+            file: None,
+            files: vec![],
+            attachments: vec![],
+        };
+        let registered_rooms = HashMap::new();
+        assert!(MessageFilter::is_dm_or_mention(
+            &msg, "somebot", &registered_rooms, Some("RockAI")
+        ));
+    }
+
+    #[test]
+    fn test_is_dm_or_mention_display_name_no_match() {
+        let msg = IncomingMessage {
+            msg_id: None,
+            room_id: "r1".into(),
+            room_name: "general".into(),
+            room_fname: "General".into(),
+            sender_name: "user1".into(),
+            text: "Hello RockAI bot".into(),
+            is_dm: false,
+            timestamp: None,
+            sender_id: "u1".into(),
+            alias: None,
+            file: None,
+            files: vec![],
+            attachments: vec![],
+        };
+        let registered_rooms = HashMap::new();
+        assert!(!MessageFilter::is_dm_or_mention(
+            &msg, "somebot", &registered_rooms, Some("OtherName")
+        ));
+    }
+
+    #[test]
+    fn test_is_dm_or_mention_display_name_none() {
+        let msg_match = IncomingMessage {
+            msg_id: None,
+            room_id: "r1".into(),
+            room_name: "general".into(),
+            room_fname: "General".into(),
+            sender_name: "user1".into(),
+            text: "somebot help".into(),
+            is_dm: false,
+            timestamp: None,
+            sender_id: "u1".into(),
+            alias: None,
+            file: None,
+            files: vec![],
+            attachments: vec![],
+        };
+        let msg_no_match = IncomingMessage {
+            msg_id: None,
+            room_id: "r1".into(),
+            room_name: "general".into(),
+            room_fname: "General".into(),
+            sender_name: "user1".into(),
+            text: "hello".into(),
+            is_dm: false,
+            timestamp: None,
+            sender_id: "u1".into(),
+            alias: None,
+            file: None,
+            files: vec![],
+            attachments: vec![],
+        };
+        let registered_rooms = HashMap::new();
+        assert!(MessageFilter::is_dm_or_mention(
+            &msg_match, "somebot", &registered_rooms, None
+        ));
+        assert!(!MessageFilter::is_dm_or_mention(
+            &msg_no_match, "somebot", &registered_rooms, None
+        ));
+    }
 }

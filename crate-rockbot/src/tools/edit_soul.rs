@@ -294,4 +294,27 @@ mod tests {
         let path = soul_path("r-general");
         assert_eq!(path, "//r-general/memory/soul.md");
     }
+
+    #[test]
+    fn test_execute_append_duplicate_section() {
+        fn section_exists(text: &str, header: &str) -> bool {
+            text.contains(&format!("\n## {} ", header))
+                || text.contains(&format!("\n## {}", header))
+                || text.starts_with(&format!("## {} ", header))
+                || text.starts_with(&format!("## {}", header))
+        }
+
+        let existing = "# Soul Memory\n\n## Preferences\nold content\n";
+        assert!(section_exists(existing, "Preferences"));
+        assert!(!section_exists(existing, "Facts"));
+
+        let starts_with = "## Identity\nsome content\n";
+        assert!(section_exists(starts_with, "Identity"));
+
+        let no_space = "# Soul Memory\n\n## Facts\nno space\n";
+        assert!(section_exists(no_space, "Facts"));
+
+        let empty = "";
+        assert!(!section_exists(empty, "Anything"));
+    }
 }

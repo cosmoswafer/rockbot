@@ -221,4 +221,23 @@ mod tests {
         assert!(tag.contains(";base64,"));
         assert!(tag.ends_with(")"));
     }
+
+    #[test]
+    fn test_vision_tool_with_max_bytes() {
+        let tool = VisionTool::with_max_bytes(1000);
+        assert_eq!(tool.max_image_bytes, 1000);
+        assert_eq!(tool.name(), "vision");
+    }
+
+    #[test]
+    fn test_vision_parameters_includes_prompt() {
+        let tool = VisionTool::new();
+        let params = tool.parameters();
+        assert!(params["properties"].get("prompt").is_some());
+        assert_eq!(params["properties"]["prompt"]["type"], "string");
+        let prompt_desc = params["properties"]["prompt"]["description"]
+            .as_str()
+            .unwrap();
+        assert!(prompt_desc.contains("Optional"));
+    }
 }

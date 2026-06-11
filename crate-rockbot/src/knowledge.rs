@@ -575,4 +575,61 @@ mod tests {
         assert!(path.ends_with("knowledge/index.json"));
         assert!(path.contains("d-saru"));
     }
+
+    #[test]
+    fn test_match_relevant_returns_all_when_more_than_5() {
+        let mut entries = Vec::new();
+        for i in 1..=7 {
+            entries.push(IndexEntry {
+                id: format!("entry_{}", i),
+                filename: format!("entry_{}.md", i),
+                category: KnowledgeCategory::Note,
+                title: format!("Entry {}", i),
+                when_useful: "when talking about shared topics".into(),
+                tags: vec!["shared".into()],
+                priority: KnowledgePriority::P3,
+                created_at: String::new(),
+                updated_at: String::new(),
+            });
+        }
+        let index = KnowledgeIndex {
+            version: "rockbot-knowledge/1".into(),
+            room_id: "r-test".into(),
+            entries,
+            updated: String::new(),
+        };
+
+        let matches = KnowledgeManager::match_relevant(
+            &index,
+            &["shared topic discussion"],
+        );
+        assert_eq!(matches.len(), 7, "all 7 matching entries should be returned (no cap)");
+    }
+
+    #[test]
+    fn test_match_relevant_p0_always_matches_even_without_keywords() {
+        let index = KnowledgeIndex {
+            version: "rockbot-knowledge/1".into(),
+            room_id: "r-test".into(),
+            entries: vec![IndexEntry {
+                id: "critical_rule".into(),
+                filename: "critical_rule.md".into(),
+                category: KnowledgeCategory::Secret,
+                title: "Critical Rule".into(),
+                when_useful: "for specific rare scenarios only".into(),
+                tags: vec!["rare".into()],
+                priority: KnowledgePriority::P0,
+                created_at: String::new(),
+                updated_at: String::new(),
+            }],
+            updated: String::new(),
+        };
+
+        let matches = KnowledgeManager::match_relevant(
+            &index,
+            &["completely unrelated topic"],
+        );
+        assert_eq!(matches.len(), 1, "P0 entry should always be returned");
+        assert_eq!(matches[0].id, "critical_rule");
+    }
 }

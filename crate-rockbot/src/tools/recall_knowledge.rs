@@ -76,4 +76,13 @@ mod tests {
         assert_eq!(tool.name(), "recall_knowledge");
         assert!(tool.description().contains("Search the knowledge index"));
     }
+
+    #[test]
+    fn test_recall_knowledge_tool_description() {
+        let webdav = webdav::WebDavClient::new("https://example.com", "user", "pass").unwrap();
+        let tool = RecallKnowledgeTool::new(webdav);
+        let desc = tool.description();
+        assert!(desc.contains("query"), "description should mention query search");
+        assert!(desc.contains("Search"), "description should contain 'Search'");
+    }
 }

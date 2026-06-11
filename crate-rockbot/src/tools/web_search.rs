@@ -381,4 +381,36 @@ mod tests {
         };
         assert!(!summary.is_empty());
     }
+
+    #[test]
+    fn test_exa_contents_mode_highlights() {
+        let tool = WebSearchTool::new("test-key");
+        let params = tool.parameters();
+        let contents_mode = &params["properties"]["contents_mode"];
+        assert_eq!(contents_mode["type"], "string");
+        let contents_enums = contents_mode["enum"].as_array().unwrap();
+        assert_eq!(contents_enums.len(), 3);
+        assert!(contents_enums.contains(&serde_json::json!("highlights")));
+        assert!(contents_enums.contains(&serde_json::json!("text")));
+        assert!(contents_enums.contains(&serde_json::json!("deep")));
+        assert!(
+            contents_mode["description"]
+                .as_str()
+                .unwrap()
+                .contains("highlights")
+        );
+    }
+
+    #[test]
+    fn test_exa_contents_mode_text_in_execute() {
+        let args: Value =
+            serde_json::from_str(r#"{"query": "rust", "contents_mode": "text"}"#).unwrap();
+        assert_eq!(args["query"], "rust");
+        assert_eq!(args["contents_mode"], "text");
+        let contents_mode = args
+            .get("contents_mode")
+            .and_then(|c| c.as_str())
+            .unwrap_or("highlights");
+        assert_eq!(contents_mode, "text");
+    }
 }

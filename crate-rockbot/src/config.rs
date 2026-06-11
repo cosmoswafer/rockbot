@@ -241,7 +241,7 @@ impl AppConfig {
 
 /// Recursively merge two TOML values. `base` provides defaults, `override_` wins.
 /// Arrays of tables are merged by matching a `name` key in each element.
-fn merge_toml(base: toml::Value, override_: toml::Value) -> toml::Value {
+pub fn merge_toml(base: toml::Value, override_: toml::Value) -> toml::Value {
     match (base, override_) {
         (toml::Value::Table(mut base), toml::Value::Table(over)) => {
             for (k, v) in over {

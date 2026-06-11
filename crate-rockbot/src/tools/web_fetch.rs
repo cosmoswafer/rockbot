@@ -648,4 +648,32 @@ mod tests {
         let tool2 = WebFetchTool::with_client_and_key(reqwest::Client::new(), None);
         assert_eq!(tool2.exa_api_key, None);
     }
+
+    #[test]
+    fn test_verified_field_only_when_performed() {
+        let json_snippet = serde_json::json!({
+            "url": "https://example.com",
+            "status": 200,
+            "content_type": "text/html",
+            "content": "hello",
+            "verified": false
+        });
+        let output = json_snippet.to_string();
+        let parsed: Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(parsed["verified"], false);
+        assert!(parsed.get("related_sources").is_none());
+
+        let json_verified = serde_json::json!({
+            "url": "https://example.com",
+            "status": 200,
+            "content_type": "text/html",
+            "content": "hello",
+            "verified": true,
+            "related_sources": []
+        });
+        let out2 = json_verified.to_string();
+        let parsed2: Value = serde_json::from_str(&out2).unwrap();
+        assert_eq!(parsed2["verified"], true);
+        assert_eq!(parsed2["related_sources"].as_array().unwrap().len(), 0);
+    }
 }

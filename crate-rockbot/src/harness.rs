@@ -1833,4 +1833,184 @@ chat = "mock-model"
             _ => panic!("Expected multipart"),
         }
     }
+
+    #[tokio::test]
+    async fn test_truncate_and_summarize_below_limit() {
+        let config = make_test_config();
+        let provider = Box::new(MockProvider::new(vec![]));
+        let harness = AgentHarness::new(config, provider, None);
+
+        let messages = vec![
+            ChatMessage::system("You are a helpful assistant."),
+            ChatMessage::user("Hello"),
+            ChatMessage::assistant("Hi there!"),
+        ];
+
+        let result = harness
+            .truncate_and_summarize("room1", messages.clone(), 1_000_000)
+            .await;
+
+        assert_eq!(result.len(), messages.len());
+        for (a, b) in result.iter().zip(messages.iter()) {
+            assert_eq!(a.role, b.role);
+            assert_eq!(a.text_content(), b.text_content());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_truncate_and_summarize_above_limit() {
+        let config = make_test_config();
+        let provider = Box::new(MockProvider::new(vec![CompletionResult {
+            text: Some("Summary of earlier conversation.".into()),
+            tool_calls: vec![],
+            finish: FinishReason::Stop,
+            reasoning_content: None,
+            usage: None,
+        }]));
+        let harness = AgentHarness::new(config, provider, None);
+
+        let messages: Vec<ChatMessage> = (0..10)
+            .map(|i| {
+                ChatMessage::user(format!(
+                    "Message number {} with enough padding text to make bytes count",
+                    i
+                ))
+            })
+            .collect();
+
+        let input_len = messages.len();
+        let result = harness
+            .truncate_and_summarize("room1", messages.clone(), 1)
+            .await;
+
+        assert!(
+            result.len() < input_len,
+            "Expected fewer messages after summarization ({} -> {})",
+            input_len,
+            result.len()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_truncate_and_summarize_preserves_system_prompt() {
+        let config = make_test_config();
+        let provider = Box::new(MockProvider::new(vec![CompletionResult {
+            text: Some("Summary text.".into()),
+            tool_calls: vec![],
+            finish: FinishReason::Stop,
+            reasoning_content: None,
+            usage: None,
+        }]));
+        let harness = AgentHarness::new(config, provider, None);
+
+        let system_msg = ChatMessage::system("You are a helpful assistant.");
+        let mut messages: Vec<ChatMessage> = vec![system_msg.clone()];
+        for i in 0..12 {
+            messages.push(ChatMessage::user(format!(
+                "Message number {} with padding text for bytes",
+                i
+            )));
+        }
+
+        let result = harness
+            .truncate_and_summarize("room1", messages, 1)
+            .await;
+
+        assert_eq!(result[0].role, Role::System);
+        assert_eq!(result[0].text_content(), system_msg.text_content());
+    }
+
+    #[tokio::test]
+    async fn test_truncate_and_summarize_preserves_last_messages() {
+        let config = make_test_config();
+        let provider = Box::new(MockProvider::new(vec![CompletionResult {
+            text: Some("Summary text.".into()),
+            tool_calls: vec![],
+            finish: FinishReason::Stop,
+            reasoning_content: None,
+            usage: None,
+        }]));
+        let harness = AgentHarness::new(config, provider, None);
+
+        let last_user = ChatMessage::user("LAST user message to keep");
+        let last_assistant = ChatMessage::assistant("LAST assistant message to keep");
+        let mut messages: Vec<ChatMessage> = vec![ChatMessage::system("sys")];
+        for i in 0..15 {
+            messages.push(ChatMessage::user(format!("msg {}", i)));
+        }
+        messages.push(last_user.clone());
+        messages.push(last_assistant.clone());
+
+        let result = harness
+            .truncate_and_summarize("room1", messages, 1)
+            .await;
+
+        let result_texts: Vec<_> = result.iter().filter_map(|m| m.text_content()).collect();
+        assert!(
+            result_texts.iter().any(|t| *t == "LAST user message to keep"),
+            "Last user message should be preserved in result"
+        );
+        assert!(
+            result_texts
+                .iter()
+                .any(|t| *t == "LAST assistant message to keep"),
+            "Last assistant message should be preserved in result"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_process_message_mark_snapshot_dirty() {
+        let config = make_test_config();
+        let provider = Box::new(MockProvider::new(vec![CompletionResult {
+            text: Some("Hello! How can I help?".into()),
+            tool_calls: vec![],
+            finish: FinishReason::Stop,
+            reasoning_content: None,
+            usage: None,
+        }]));
+
+        let mut harness = AgentHarness::new(config, provider, None);
+        harness
+            .process_message("room1", "general", "", false, "user", "Hi", &[])
+            .await
+            .unwrap();
+
+        let dirty = harness.memory().dirty_snapshots();
+        assert!(
+            dirty.contains(&"room1".to_string()),
+            "room1 should be marked dirty after process_message, got: {:?}",
+            dirty
+        );
+    }
+
+    #[tokio::test]
+    async fn test_process_message_appends_user_and_assistant() {
+        let config = make_test_config();
+        let provider = Box::new(MockProvider::new(vec![CompletionResult {
+            text: Some("Hello! How can I help?".into()),
+            tool_calls: vec![],
+            finish: FinishReason::Stop,
+            reasoning_content: None,
+            usage: None,
+        }]));
+
+        let mut harness = AgentHarness::new(config, provider, None);
+        harness
+            .process_message("room1", "general", "", false, "user", "Hi", &[])
+            .await
+            .unwrap();
+
+        let room = harness.memory().get("room1").expect("room1 should exist");
+        let roles: Vec<_> = room.history.messages.iter().map(|m| &m.role).collect();
+        assert!(
+            roles.contains(&&Role::User),
+            "History should contain a User message, got: {:?}",
+            roles
+        );
+        assert!(
+            roles.contains(&&Role::Assistant),
+            "History should contain an Assistant message, got: {:?}",
+            roles
+        );
+    }
 }

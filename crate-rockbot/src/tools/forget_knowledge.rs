@@ -75,6 +75,15 @@ mod tests {
         assert!(tool.description().contains("Remove a previously saved knowledge"));
     }
 
+    #[test]
+    fn test_forget_knowledge_tool_description() {
+        let webdav = webdav::WebDavClient::new("https://example.com", "user", "pass").unwrap();
+        let tool = ForgetKnowledgeTool::new(webdav);
+        let desc = tool.description();
+        assert!(desc.to_lowercase().contains("delete"), "description should contain 'delete'");
+        assert!(desc.contains("index"), "description should contain 'index'");
+    }
+
     #[tokio::test]
     async fn test_execute_missing_topic() {
         let webdav = webdav::WebDavClient::new("https://example.com", "user", "pass").unwrap();
