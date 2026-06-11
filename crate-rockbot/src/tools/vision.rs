@@ -93,15 +93,15 @@ fn detect_mime_type(url: &str, content_type: Option<&str>) -> String {
     }
 
     let url_lower = url.to_lowercase();
-    if url_lower.contains(".png") {
+    if url_lower.ends_with(".png") {
         "image/png"
-    } else if url_lower.contains(".jpg") || url_lower.contains(".jpeg") {
+    } else if url_lower.ends_with(".jpg") || url_lower.ends_with(".jpeg") {
         "image/jpeg"
-    } else if url_lower.contains(".gif") {
+    } else if url_lower.ends_with(".gif") {
         "image/gif"
-    } else if url_lower.contains(".webp") {
+    } else if url_lower.ends_with(".webp") {
         "image/webp"
-    } else if url_lower.contains(".svg") {
+    } else if url_lower.ends_with(".svg") {
         "image/svg+xml"
     } else {
         "image/png"

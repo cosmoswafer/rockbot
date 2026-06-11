@@ -68,9 +68,9 @@ flowchart TD
 | `rocketchat` | `RocketChatSection`          | Server connection + chat model settings        |
 | `chat_providers` | `Vec<ProviderConfig>`    | Chat AI provider definitions (array-of-tables) |
 | `image_providers`| `Vec<ProviderConfig>`    | Image generation provider definitions          |
-| `image_model`    | `Option<ImageModelConfig>`| Default image provider + model alias           |
+| `image_model`    | `ImageModelConfig` (always present via default)| Default image provider + model alias           |
 | `webdav`     | `Option<WebDavConfig>`       | NextCloud WebDAV endpoint and credentials      |
-| `tools`      | `HashMap<String, ToolSvcCfg>`| Tool-specific API keys (generic map)           |
+| `tools`      | `HashMap<String, ToolServiceConfig>`| Tool-specific API keys (generic map)     |
 
 #### `RocketChatSection`
 

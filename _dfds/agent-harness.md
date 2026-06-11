@@ -66,9 +66,9 @@ flowchart TD
 ```
 
 After every response (including errors and fallbacks), the room is marked dirty for
-snapshot persistence. The periodic maintenance timer (every `persist_interval_secs`)
-flushes all dirty snapshots to WebDAV. The snapshot contains all three persistence
-layers: chat history, daily summaries, and soul memory.
+snapshot persistence. The room is also marked dirty immediately when a new user message
+is appended to history. The periodic maintenance timer (every `persist_interval_secs`)
+flushes all dirty snapshots to WebDAV.
 
 ### 2b. Error Handling & Fallbacks
 
@@ -140,7 +140,7 @@ flowchart TD
 
     CALL -->|"tool name + args"| INJECT
     ROOM_CTX -->|"room_id + webdav_dir"| INJECT
-    INJECT -->|"webdav / image_gen / edit_soul / save_knowledge / forget_knowledge / recall_knowledge: enriched args"| EXEC
+    INJECT -->|"webdav / image_gen / edit_soul / save_knowledge / forget_knowledge / recall_knowledge / calendar: enriched args"| EXEC
     INJECT -->|"other tools: raw args"| EXEC
     REG -->|"tool definitions"| EXEC
     EXEC -->|"search query"| EXA
@@ -317,7 +317,7 @@ flowchart TD
 | `web_fetch`   | Fetch a URL, optionally as markdown              | `url: string, markdown: bool`      |
 | `vision`      | Download an image, encode as base64, and send to the AI provider for multimodal vision analysis; auto-invoked by the harness when an incoming message has image attachments _(requires an AI provider with vision support)_ | `url: string, prompt: string`      |
 | `webdav`      | Read, write, edit, list, mkdir, delete, and check existence in the room's WebDAV directory | `action: string, path: string, content?: string, oldString?: string, newString?: string` |
-| `image_gen`   | Generate an image using fal.ai models; returns both the WebDAV path and the original fal.ai CDN URL — prefer the fal.ai URL in responses _(requires `fal` provider in config)_ | `prompt: string, model_id: string` |
+| `image_gen`   | Generate or edit an image using fal.ai; returns JSON `{"ok": true, "fal_url": "...", "webdav_path": "..."}` — prefer the fal.ai URL in responses _(model/quality/output_format/num_images from config)_ | `prompt: string, image_size: string (optional), image_urls: string[] (auto-injected)` |
 | `calendar`    | Manage calendar events via CalDAV _(requires WebDAV + calendar_name)_ | `action: string, uid?: string, summary?: string, ...` |
 | `datetime`    | Get current date/time in various formats           | `timezone: string, format: string` |
 | `edit_soul`   | Edit the bot's permanent core memory per room (Layer 3) | `action: string, section_header: string, content: string` |

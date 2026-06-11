@@ -194,6 +194,12 @@ impl AppConfig {
         let provider_name = &self.rocketchat.model.default_provider;
         self.find_chat_provider(provider_name)
             .ok_or_else(|| crate::error::RockBotError::ProviderNotFound(provider_name.clone()))?;
+
+        let image_provider = &self.image_model.default_provider;
+        if !self.image_providers.is_empty() {
+            self.find_image_provider(image_provider)
+                .ok_or_else(|| crate::error::RockBotError::ProviderNotFound(image_provider.clone()))?;
+        }
         Ok(())
     }
 

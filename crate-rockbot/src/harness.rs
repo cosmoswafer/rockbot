@@ -441,11 +441,23 @@ impl AgentHarness {
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string());
 
+        let mime = content_type.as_deref().unwrap_or("image/png");
+
+        // Reject oversized attachments (20 MB limit) to prevent memory exhaustion.
+        const MAX_ATTACHMENT_BYTES: u64 = 20_000_000;
+        if let Some(len) = response.content_length() {
+            if len > MAX_ATTACHMENT_BYTES {
+                return Err(crate::error::RockBotError::Provider(format!(
+                    "Attachment too large: {} bytes exceeds 20 MB limit",
+                    len
+                )));
+            }
+        }
+
         let bytes = response.bytes().await.map_err(|e| {
             crate::error::RockBotError::Provider(format!("Attachment read failed: {e}"))
         })?;
 
-        let mime = content_type.as_deref().unwrap_or("image/png");
         Ok(format!(
             "data:{};base64,{}",
             mime,
