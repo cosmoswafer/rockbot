@@ -1119,7 +1119,6 @@ mod tests {
 url = "test.example.com"
 username = "bot"
 password = "secret"
-debug = false
 
 [rocketchat.model]
 default_provider = "mock"

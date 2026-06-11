@@ -10,7 +10,6 @@ fn test_config(host: &str) -> RocketChatConfig {
             url: host.to_string(),
             username: "bot".into(),
             password: "pw".into(),
-            debug: false,
             use_tls: false,
         },
     }

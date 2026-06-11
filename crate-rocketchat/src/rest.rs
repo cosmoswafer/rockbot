@@ -260,7 +260,6 @@ mod tests {
                 url: "chat.example.com".into(),
                 username: "bot".into(),
                 password: "pw".into(),
-                debug: false,
                 use_tls: true,
             },
         }
