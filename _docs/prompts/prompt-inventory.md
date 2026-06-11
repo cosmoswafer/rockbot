@@ -6,10 +6,10 @@ All prompts and prompt-adjacent strings in the Rust codebase, organized by what 
 
 ## 1. System Prompt (sent to AI provider)
 
-**File:** `crate-rockbot/src/harness.rs:17-47`
+**File:** `crate-rockbot/src/harness.rs:18-54`
 **Constant:** `DEFAULT_SYSTEM_PROMPT`
 **Sent to:** AI provider as the `system` role message in `ChatRequest.messages`
-**Used via:** `build_system_prompt()` (line 368) → `MemoryManager::build_context()` (memory.rs:211) → prepended as first message in context
+**Used via:** `build_system_prompt()` (line 418) → `MemoryManager::build_context()` → prepended as first message in context
 
 Note: `{name}` is replaced at runtime with the bot's configured username via `build_system_prompt()`.
 
@@ -19,13 +19,15 @@ You respond to DMs and @mentions concisely and helpfully. \
 When you need the current date or time, use the datetime tool. \
 When you need information from the web, use the web_search tool. \
 When you need to fetch a URL, use web_fetch. \
-When you need to analyze an image, use the vision tool. \
+When you need to fetch an image from a WebDAV path or public URL, use the vision tool. \
 When you need to read, write, list, or manage files on remote storage, use the webdav tool. \
 When you need to manage calendar events or todo tasks, use the calendar tool. \
 When you need to generate an image, use the image_gen tool. \
 When a user sends an image and asks to edit, modify, transform, or use it \
-as a basis for image generation, use the image_gen tool — the attachment \
-images will be automatically provided as input to the tool. \
+as a basis for image generation, use the image_gen tool — user-attached images \
+appear as markdown ![image_name](image_name) in the conversation. Reference the \
+image by its image_name in your prompt (e.g. \"edit image1.png to add a hat\"). \
+The harness will automatically resolve image_name references to the actual images. \
 If the user asks to edit a previously generated image (no new attachment), \
 you MUST include the fal.ai CDN URL from the previous result in the \
 image_urls parameter yourself. \
@@ -38,24 +40,35 @@ information worth persisting, use the save_knowledge tool. \
 When a user says !forget or asks to remove something you learned, \
 use the forget_knowledge tool. \
 When you need to recall previously saved knowledge, use the recall_knowledge tool. \
-Your display name is the first non-heading line of your soul file. \
-When setting your name via edit_soul, create an Identity section with \
-your name on its own line (e.g. "## Identity\n零夢"). \
-Use a short name under 32 characters. \
+When setting your soul via edit_soul, always use this exact format: \
+\"# Soul Memory\\n\\n## Identity\\nYourName ✨\". \
+Your display name is extracted by the regex \\\"## Identity\\n(.+)\\\" — \
+the first line immediately after \"## Identity\" becomes your name. \
+The name MUST be on its own line immediately after \"## Identity\", \
+with no descriptions, dashes, or extra text. Keep it under 32 characters. \
+You may add ## Preferences and ## Facts sections below Identity. \
 Answer in the same language as the user. \
-Keep responses clear and to the point.
+Keep responses clear and to the point.\
 ```
 
 ---
 
 ## 2. User Message Template (sent to AI provider)
 
-**File:** `crate-rockbot/src/harness.rs:156`
+**File:** `crate-rockbot/src/harness.rs:169-193`
 **Template:** `ChatMessage::user(format!("{}: {}", sender_name, clean_text))`
 **Role:** `user`
 **Purpose:** Wraps every incoming RocketChat message as `"SenderName: message text"` before appending to history. Preserves sender identity in group chats.
 
-When image attachments are present (harness.rs:165-177), the user message is created as `ChatMessage::user_with_images` with the attachment images encoded as data URIs, and the prompt defaults to `"Describe this image in detail."` if the text is empty.
+When image attachments are present (harness.rs:175-190), they are downloaded and
+encoded as data URIs, then injected into the conversation as markdown
+`![image_name](image_name)` labels. The user message is created as
+`ChatMessage::user_with_images` with the prompt including an `Attached:` line
+listing the image labels. If the text is empty, the prompt defaults to
+`"Describe this image in detail.\nAttached: ![name](name)"`.
+
+The harness later resolves `image_name` references in `image_gen` tool calls
+by matching them against these cached data URIs.
 
 Example output: `"Alice: what's the weather in Tokyo?"`
 
@@ -85,9 +98,11 @@ Optionally cross-verifies content via web search when verify=true.
 ```
 
 ### 3d. `vision`
-**File:** `crate-rockbot/src/tools/vision.rs:118-120`
+**File:** `crate-rockbot/src/tools/vision.rs:107-111`
 ```
-Download and analyze an image from a URL using AI vision. Provide an image URL (public web or WebDAV file) and a prompt describing what to look for. User attachments are already visible to you — only use this tool to fetch images from external URLs.
+Fetch an image from a WebDAV file path or public URL and return it as a base64 markdown image tag.
+Use this to retrieve images the user is asking about from WebDAV storage or external URLs.
+User attachments are already visible to you — only use this tool for images at explicit URLs.
 ```
 
 ### 3e. `webdav`
@@ -153,8 +168,7 @@ Search the knowledge index for entries matching a query. If no query is given, r
 | `web_fetch.rs` | 442 | `web_fetch` | `url` | The URL to fetch |
 | `web_fetch.rs` | 447-449 | `web_fetch` | `format` | Output format: json returns structured metadata, markdown converts HTML to markdown for AI, raw returns unmodified text (default: raw) |
 | `web_fetch.rs` | 453 | `web_fetch` | `verify` | Perform a web search to cross-verify content (default: false) |
-| `vision.rs` | 128 | `vision` | `url` | URL of the image to analyze |
-| `vision.rs` | 133 | `vision` | `prompt` | What to look for or ask about in the image |
+| `vision.rs` | 118-119 | `vision` | `url` | URL of the image to fetch (public web or WebDAV file) |
 | `webdav.rs` | 201 | `webdav` | `action` | The WebDAV operation to perform |
 | `webdav.rs` | 205 | `webdav` | `room_id` | Room ID for scoping the operation (injected automatically if omitted) |
 | `webdav.rs` | 209 | `webdav` | `path` | File or directory path relative to the room root |
@@ -192,13 +206,11 @@ Search the knowledge index for entries matching a query. If no query is given, r
 
 ## 5. Default Vision Prompt (fallback for tool execution)
 
-**File:** `crate-rockbot/src/tools/vision.rs:152`
+**File:** `crate-rockbot/src/harness.rs:183`
 ```
 Describe this image in detail.
 ```
-**Used when:** AI calls `vision` tool without providing a `prompt` argument. Passed to `analyze_image()` as the prompt parameter.
-
-Also used as the default prompt in `harness.rs:167` when a user sends image attachments with no text.
+**Used when:** A user sends image attachments with no text. The harness constructs a user message with this prompt plus the `Attached:` image labels. Not used by the `vision` tool itself (vision tool has no `prompt` parameter).
 
 ---
 
@@ -208,11 +220,11 @@ Also used as the default prompt in `harness.rs:167` when a user sends image atta
 
 | Line | Condition | Text |
 |------|-----------|------|
-| 207 | Max agent iterations exceeded | `I'm sorry, I got stuck in a loop. Could you rephrase your request?` |
-| 332 | AI returned empty text (stored in history) | `(no response)` |
-| 339 | AI returned empty text (user-facing) | `I processed your request but received an empty response.` |
-| 346 | AI returned no text at all | `I received a response but it was empty. Please try again.` |
-| 352-353 | AI provider error (dynamic) | `I encountered an error: {e}. Please try again.` |
+| 233 | Max agent iterations exceeded | `I'm sorry, I got stuck in a loop. Could you rephrase your request?` |
+| 369 | AI returned empty text (stored in history) | `(no response)` |
+| 376 | AI returned empty text (user-facing) | `I processed your request but received an empty response.` |
+| 388 | AI returned no text at all | `I received a response but it was empty. Please try again.` |
+| 399 | AI provider error (dynamic) | `I encountered an error: {e}. Please try again.` |
 
 **File:** `crate-rockbot/src/main.rs`
 
@@ -249,7 +261,7 @@ Result message returned to AI (image_gen.rs:262-267):
 ## 8. Memory / Context Prompts (sent to AI provider as system messages)
 
 ### 8a. Soul memory prefix
-**File:** `crate-rockbot/src/memory.rs:233-236`
+**File:** `crate-rockbot/src/memory.rs:239-242`
 **Type:** Dynamic — loaded from WebDAV `memory/soul.md`
 ```
 [Core memory — permanent preferences, identity, and facts]
@@ -257,8 +269,13 @@ Result message returned to AI (image_gen.rs:262-267):
 ```
 Injected as a second system message when soul content is non-empty.
 
-### 8b. Daily summaries header
-**File:** `crate-rockbot/src/memory.rs:246-259`
+### 8b. Knowledge context (from WebDAV knowledge index)
+**File:** `crate-rockbot/src/memory.rs:246-250`
+**Type:** Dynamic — loaded by `AgentHarness::refresh_knowledge_context()` and stored in `MemoryManager.knowledge`
+Injected as a system message when relevant knowledge entries exist for the room. Fetched on each `process_message` call before building context (harness.rs:208).
+
+### 8c. Daily summaries header
+**File:** `crate-rockbot/src/memory.rs:253-267`
 **Type:** Static prefix + dynamic per-summary lines
 ```
 [Recent conversation summaries]
@@ -268,20 +285,11 @@ Injected as a second system message when soul content is non-empty.
 ```
 Injected as a system message when daily summaries exist (loaded from `memory/summaries/` on WebDAV).
 
-### 8c. Knowledge context (from WebDAV knowledge index)
-**File:** `crate-rockbot/src/memory.rs:240-244`
-**Type:** Dynamic — loaded by `AgentHarness::refresh_knowledge_context()` (harness.rs:878) and stored in `MemoryManager.knowledge`
-```
-[Knowledge — automatically recalled for this conversation]
-{formatted entries from knowledge index}
-```
-Injected as a system message when relevant knowledge entries exist for the room. Fetched on each `process_message` call before building context (harness.rs:192).
-
 ---
 
 ## 9. Summarize-for-Archive Prompt (sent to AI provider)
 
-**File:** `crate-rockbot/src/harness.rs:616-620`
+**File:** `crate-rockbot/src/harness.rs:733-737`
 **Role:** `user` (one-shot completion, no tools)
 **Purpose:** Generates a short summary of archived messages for daily summaries.
 ```
@@ -291,11 +299,11 @@ decisions, and factual information shared:
 <joined message texts, each truncated to 300 chars, max 20 messages>
 ```
 
-**Fallback (line 638-652):** If AI summarization fails:
+**Fallback (line 755-764):** If AI summarization fails:
 ```
 {messages.len()} messages: {preview of up to 5 message snippets truncated to 80 chars each}
 ```
-**Minimal fallback (line 646-648):** If no previewable messages:
+**Minimal fallback (line 763-764):** If no previewable messages:
 ```
 {messages.len()} messages archived
 ```
@@ -355,17 +363,18 @@ Append appends another `## Section\ncontent` block to the existing file.
 
 | # | What | Where | Sent To | Dynamic? |
 |---|------|-------|---------|----------|
-| 1 | **System prompt** — defines persona & capabilities | `harness.rs:17-47` | AI provider (`system` role) | Static (with `{name}` template) |
-| 2 | **User message template** — wraps chat text | `harness.rs:156` | AI provider (`user` role) | Per-message |
+| 1 | **System prompt** — defines persona & capabilities | `harness.rs:18-54` | AI provider (`system` role) | Static (with `{name}` template) |
+| 2 | **User message template** — wraps chat text | `harness.rs:169-193` | AI provider (`user` role) | Per-message |
 | 3a-k | **Tool descriptions** — teach AI what tools do | 11 files in `tools/` | AI provider (tool definitions) | Static |
 | 4 | **Tool param descriptions** — describe JSON fields | 11 files in `tools/` | AI provider (tool schema) | Static |
-| 5 | **Default vision prompt** — fallback | `vision.rs:152`, `harness.rs:167` | Downstream tool code | Static |
-| 6 | **Fallback messages** — error/loop handling | `harness.rs:207-353`, `main.rs:429` | RocketChat user | Partially |
+| 5 | **Default vision prompt** — fallback | `harness.rs:183` | Downstream tool code | Static |
+| 6 | **Fallback messages** — error/loop handling | `harness.rs:233-399`, `main.rs:429` | RocketChat user | Partially |
 | 7 | **Image gen request body** — fal.ai API | `fal.rs:129-181` | fal.ai API | Dynamic |
-| 8a-b | **Memory/context prompts** — soul, summaries | `memory.rs:233-259` | AI provider (`system` role) | Dynamic |
-| 8c | **Knowledge context** — matched entries | `memory.rs:240-244` | AI provider (`system` role) | Dynamic |
-| 9 | **Summarize-for-archive** — daily summary | `harness.rs:616-620` | AI provider (one-shot) | Dynamic |
-| 10a-b | **WebDAV storage templates** — summaries, soul | `harness.rs:522-559`, `edit_soul.rs:133-135` | WebDAV storage | Dynamic |
+| 8a | **Soul memory prefix** | `memory.rs:239-242` | AI provider (`system` role) | Dynamic |
+| 8b | **Knowledge context** | `memory.rs:246-250` | AI provider (`system` role) | Dynamic |
+| 8c | **Daily summaries** | `memory.rs:253-267` | AI provider (`system` role) | Dynamic |
+| 9 | **Summarize-for-archive** — daily summary | `harness.rs:733-737` | AI provider (one-shot) | Dynamic |
+| 10a-b | **WebDAV storage templates** — summaries, soul | `harness.rs:634-659`, `edit_soul.rs:133-135` | WebDAV storage | Dynamic |
 | 11 | **Debug binary messages** | `rocketchat/main.rs:39-64`, `client.rs:46-49` | RocketChat / console | Dynamic |
 
 (End of file - total lines may vary)

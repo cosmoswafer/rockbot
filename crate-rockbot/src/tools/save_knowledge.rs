@@ -4,7 +4,7 @@ use tracing::debug;
 use webdav::WebDavClient;
 
 use crate::error::{Result, RockBotError};
-use crate::knowledge::{KnowledgeCategory, KnowledgeManager};
+use crate::knowledge::{KnowledgeCategory, KnowledgeManager, KnowledgePriority};
 use crate::tool::Tool;
 
 pub struct SaveKnowledgeTool {
@@ -69,6 +69,11 @@ impl Tool for SaveKnowledgeTool {
                 "tags": {
                     "type": "string",
                     "description": "Comma-separated keywords for search (e.g. 'api, database, python')"
+                },
+                "priority": {
+                    "type": "string",
+                    "enum": ["P0", "P1", "P2", "P3"],
+                    "description": "Knowledge priority: P0 (highest, always recalled), P1 (high), P2 (medium), P3 (low, default). Higher priority means more frequently recalled."
                 }
             },
             "required": ["category", "topic", "content", "when_useful"]
@@ -116,6 +121,18 @@ impl Tool for SaveKnowledgeTool {
 
         let tags = parse_tags(&args);
 
+        let priority = args
+            .get("priority")
+            .and_then(|p| p.as_str())
+            .map(|s| match s {
+                "P0" => KnowledgePriority::P0,
+                "P1" => KnowledgePriority::P1,
+                "P2" => KnowledgePriority::P2,
+                "P3" => KnowledgePriority::P3,
+                _ => KnowledgePriority::default(),
+            })
+            .unwrap_or_default();
+
         let webdav_dir = args
             .get("webdav_dir")
             .and_then(|d| d.as_str())
@@ -129,6 +146,7 @@ impl Tool for SaveKnowledgeTool {
             content,
             when_useful,
             &tags,
+            &priority,
         )
         .await?;
 

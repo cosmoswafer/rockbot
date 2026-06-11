@@ -26,6 +26,46 @@ impl std::fmt::Display for KnowledgeCategory {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum KnowledgePriority {
+    #[serde(rename = "P0")]
+    P0,
+    #[serde(rename = "P1")]
+    P1,
+    #[serde(rename = "P2")]
+    P2,
+    #[serde(rename = "P3")]
+    P3,
+}
+
+impl std::fmt::Display for KnowledgePriority {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            KnowledgePriority::P0 => write!(f, "P0"),
+            KnowledgePriority::P1 => write!(f, "P1"),
+            KnowledgePriority::P2 => write!(f, "P2"),
+            KnowledgePriority::P3 => write!(f, "P3"),
+        }
+    }
+}
+
+impl Default for KnowledgePriority {
+    fn default() -> Self {
+        KnowledgePriority::P3
+    }
+}
+
+impl KnowledgePriority {
+    fn score_bonus(&self) -> usize {
+        match self {
+            KnowledgePriority::P0 => 8,
+            KnowledgePriority::P1 => 5,
+            KnowledgePriority::P2 => 2,
+            KnowledgePriority::P3 => 0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexEntry {
     pub id: String,
@@ -34,6 +74,8 @@ pub struct IndexEntry {
     pub title: String,
     pub when_useful: String,
     pub tags: Vec<String>,
+    #[serde(default)]
+    pub priority: KnowledgePriority,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -119,6 +161,7 @@ impl KnowledgeManager {
         content: &str,
         when_useful: &str,
         tags: &[String],
+        priority: &KnowledgePriority,
     ) -> Result<()> {
         let now = now_iso_string();
         let slug = format!("{}_{}", category, Self::slugify(topic));
@@ -131,8 +174,8 @@ impl KnowledgeManager {
         }
 
         let md_body = format!(
-            "# {}\n\n**Category:** {}\n**When Useful:** {}\n**Tags:** {}\n**Created:** {}\n**Updated:** {}\n\n{}",
-            topic, category, when_useful, tags.join(", "), now, now, content
+            "# {}\n\n**Category:** {}\n**Priority:** {}\n**When Useful:** {}\n**Tags:** {}\n**Created:** {}\n**Updated:** {}\n\n{}",
+            topic, category, priority, when_useful, tags.join(", "), now, now, content
         );
 
         webdav
@@ -147,6 +190,7 @@ impl KnowledgeManager {
             existing.title = topic.to_string();
             existing.when_useful = when_useful.to_string();
             existing.tags = tags.to_vec();
+            existing.priority = priority.clone();
             existing.updated_at = now.clone();
         } else {
             index.entries.push(IndexEntry {
@@ -156,6 +200,7 @@ impl KnowledgeManager {
                 title: topic.to_string(),
                 when_useful: when_useful.to_string(),
                 tags: tags.to_vec(),
+                priority: priority.clone(),
                 created_at: now.clone(),
                 updated_at: now.clone(),
             });
@@ -262,7 +307,7 @@ impl KnowledgeManager {
                     .map(|t| t.to_lowercase())
                     .collect();
 
-                let mut score = 0usize;
+                let mut score = entry.priority.score_bonus();
                 for kw in &keywords {
                     if useful_lower.contains(kw.as_str()) {
                         score += 3;
@@ -275,7 +320,7 @@ impl KnowledgeManager {
                     }
                 }
 
-                if score > 0 {
+                if score > 0 || entry.priority == KnowledgePriority::P0 {
                     Some((score, entry.clone()))
                 } else {
                     None
@@ -385,6 +430,7 @@ mod tests {
                 title: "API Access".into(),
                 when_useful: "when calling the database API".into(),
                 tags: vec!["api".into(), "database".into()],
+                priority: KnowledgePriority::P3,
                 created_at: String::new(),
                 updated_at: String::new(),
             }],
@@ -407,6 +453,7 @@ mod tests {
                 title: "API Access".into(),
                 when_useful: "when calling the database API".into(),
                 tags: vec![],
+                priority: KnowledgePriority::P3,
                 created_at: String::new(),
                 updated_at: String::new(),
             }],
@@ -433,6 +480,7 @@ mod tests {
                 title: "Build Commands".into(),
                 when_useful: "general reference".into(),
                 tags: vec!["build".into(), "cargo".into()],
+                priority: KnowledgePriority::P3,
                 created_at: String::new(),
                 updated_at: String::new(),
             }],
@@ -457,6 +505,7 @@ mod tests {
                 title: "API Access".into(),
                 when_useful: "when calling the database API".into(),
                 tags: vec!["api".into()],
+                priority: KnowledgePriority::P3,
                 created_at: String::new(),
                 updated_at: String::new(),
             }],
@@ -483,6 +532,7 @@ mod tests {
                     title: "Entry A".into(),
                     when_useful: "when talking about weather".into(),
                     tags: vec![],
+                    priority: KnowledgePriority::P3,
                     created_at: String::new(),
                     updated_at: String::new(),
                 },
@@ -493,6 +543,7 @@ mod tests {
                     title: "Weather Report".into(),
                     when_useful: "general reference".into(),
                     tags: vec![],
+                    priority: KnowledgePriority::P3,
                     created_at: String::new(),
                     updated_at: String::new(),
                 },
