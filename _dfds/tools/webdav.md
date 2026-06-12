@@ -12,6 +12,9 @@ its own subtree created proactively on first use. Room names use type prefixes
   the AI agent
 - Downstream: [Knowledge Management](../base/knowledge.md) persists `.md` files
 - Downstream: [Memory Management](../base/memory.md) uses PUT/GET/PROPFIND
+- Related: [Vision Tool](vision.md) — webdav tool's `read` action detects
+  image files by extension and returns base64 markdown tags (`![name](data:...)`),
+  which the harness intercepts via the same vision image injection pipeline.
   operations for JSON archive persistence
 
 ## 2. Diagram

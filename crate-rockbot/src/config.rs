@@ -137,7 +137,7 @@ fn default_max_text_length() -> usize {
 }
 
 fn default_summary_days() -> u32 {
-    7
+    3
 }
 
 fn default_max_summary_chars() -> usize {

@@ -249,7 +249,7 @@ Machine-readable JSON file at `{root}/{webdav_dir}/knowledge/index.json`.
 | `title`       | `String`           | Human-readable title                           |
 | `when_useful` | `String`           | Situation description for retrieval matching   |
 | `tags`        | `Vec<String>`      | Searchable keywords                            |
-| `priority`    | `KnowledgePriority` | P0 (highest), P1, P2 (default for new entries), P3 (stale); managed by [Knowledge Priority Algorithm](knowledge-priority.md) |
+| `priority`    | `KnowledgePriority` | P0 (highest), P1 (default for new entries), P2, P3 (stale); managed by [Knowledge Priority Algorithm](knowledge-priority.md) |
 | `last_degraded_at` | `String` (ISO 8601) | Timestamp of last degradation; enforces ≤1 degrade/day |
 | `created_at`  | `String`           | ISO 8601                                       |
 | `updated_at`  | `String`           | ISO 8601                                       |
@@ -258,8 +258,8 @@ Machine-readable JSON file at `{root}/{webdav_dir}/knowledge/index.json`.
 
 ```rust
 enum KnowledgePriority {
-    P0, // used every day in latest 7-day window — always loaded
-    P1, // used ≥ 1 in latest 7-day window — strong boost (+5)
+    P0, // used every day in latest 3-day window — always loaded
+    P1, // used ≥ 1 in latest 3-day window — strong boost (+5)
     P2, // not used in latest 7 days (1st cycle) OR new entry — moderate boost (+2)
     P3, // not used for 2+ consecutive cycles — baseline (+0)
 }
@@ -272,8 +272,8 @@ more frequently and surfaced earlier in the injected knowledge list.
 
 Priorities are adaptively recalculated by the [Knowledge Priority
 Algorithm](knowledge-priority.md) during daily summary review, using a single
-7-day sliding window against Layer 2 daily summaries. Degradation is
-incremental (P0/P1→P2→P3); promotion is immediate (≥1 mention→P1, 7/7→P0).
+3-day sliding window against Layer 2 daily summaries. Degradation is
+incremental (P0→P1→P2→P3); promotion is immediate (≥1 mention→P1, 3/3→P0).
 
 | Priority | Score bonus | Always selected? |
 |----------|------------|-------------------|
@@ -342,7 +342,7 @@ Registered in `ToolRegistry`. Parameters:
 | `content`     | `string` | Yes      | Markdown body                                    |
 | `when_useful` | `string` | Yes      | Situation description (retrieval trigger)        |
 | `tags`        | `string` | No       | Comma-separated keywords                         |
-| `priority`    | `string` | No       | `"P0"`, `"P1"`, `"P2"`, or `"P3"` (default: P2) |
+| `priority`    | `string` | No       | `"P0"`, `"P1"`, `"P2"`, or `"P3"` (default: P1) |
 
 ### Tool: `forget_knowledge`
 
