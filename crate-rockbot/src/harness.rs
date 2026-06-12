@@ -456,13 +456,14 @@ impl AgentHarness {
                             );
                             self.compress_history_for_retry(room_id);
                             context_compressed = true;
+                            // Rebuild with minimal history (last 4 messages only)
+                            // and aggressive byte limit to ensure token fit.
                             messages = self
                                 .memory
-                                .build_context(room_id, &system_prompt, None, None);
+                                .build_context(room_id, &system_prompt, Some(4), None);
                             self.inject_vision_images(room_id, &mut messages);
-                            // Use a much stricter byte limit for the retry
                             let max_ctx =
-                                (self.config.rocketchat.model.max_context_bytes as u64) / 4;
+                                (self.config.rocketchat.model.max_context_bytes as u64) / 16;
                             messages = self.truncate_and_summarize(room_id, messages, max_ctx).await;
                             continue;
                         }
@@ -492,17 +493,23 @@ impl AgentHarness {
     }
 
     /// Aggressively compress conversation history for a room by stripping all
-    /// images from every message. Called when the provider returns a
-    /// ContextLengthExceeded error to make space before retrying.
+    /// images from every message and pruning to the last 6 messages.
+    /// Called when the provider returns a ContextLengthExceeded error to make
+    /// space before retrying.
     fn compress_history_for_retry(&mut self, room_id: &str) {
         if let Some(room) = self.memory.get_mut(room_id) {
-            let before = room.history.messages.len();
+            let before_len = room.history.messages.len();
             for msg in &mut room.history.messages {
                 *msg = strip_images_from_message(msg.clone());
             }
+            // Prune to last 6 messages to reduce text token load
+            if room.history.messages.len() > 6 {
+                let prune_count = room.history.messages.len() - 6;
+                room.history.prune_first(prune_count);
+            }
             debug!(
-                "compress_history_for_retry room={}: stripped images from {} messages",
-                room_id, before
+                "compress_history_for_retry room={}: stripped images, pruned {} -> {} messages",
+                room_id, before_len, room.history.messages.len()
             );
         }
     }

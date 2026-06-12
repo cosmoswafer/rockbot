@@ -79,8 +79,8 @@ flowchart TD
     APPEND(AppendToolResult)
     FALLBACK(SendFallbackReply)
     COMPRESS{ContextLength<br/>Exceeded?}
-    STRIP(CompressHistoryForRetry<br/>strip all images)
-    REBUILD(RebuildContext<br/>÷4 byte limit)
+    STRIP(CompressHistoryForRetry<br/>strip images + prune to 6 msgs)
+    REBUILD(RebuildContext<br/>last 4 msgs + ÷16 byte limit)
     RETRY(Retry LLM Call)
     REPLY[BotReply]
 
@@ -377,8 +377,8 @@ is a provider-initiated recovery path that complements the proactive
 flowchart TD
     AI[AiProvider]
     CHECK{ContextLengthExceeded?}
-    COMPRESS["CompressHistoryForRetry<br/>(strip all images from history)"]
-    REBUILD["RebuildContext<br/>(with stricter byte limit ÷4)"]
+    COMPRESS["CompressHistoryForRetry<br/>(strip images + prune to 6 msgs)"]
+    REBUILD["RebuildContext<br/>(last 4 msgs + ÷16 byte limit)"]
     RETRY["Retry LLM Call"]
     FALLBACK["SendErrorFallback<br/>(already compressed once)"]
     REPLY[BotReply]
@@ -393,11 +393,18 @@ flowchart TD
     FALLBACK --> REPLY
 ```
 
-**Aggressive compression** (`compress_history_for_retry`): strips all
-`ContentPart::ImageUrl` parts from every message in the room's conversation
-history, converting them to `[image]` text placeholders. This includes the
-most recent user message — unlike the normal context assembly which preserves
-images on the last user message.
+**Aggressive compression** (`compress_history_for_retry`): 
+1. Strips all `ContentPart::ImageUrl` parts from every message in the room's
+   conversation history, converting them to `[image]` text placeholders
+2. Prunes chat history to the last 6 messages to reduce text token load
+
+Then rebuilds context with `max_history: Some(4)` (4 most recent messages
+plus system prompt) and runs `truncate_and_summarize` with
+`max_context_bytes / 16` byte limit for an extra safety margin.
+
+This covers both the image-stripping and text-pruning dimensions —
+prior versions that only stripped images failed when the overflow was
+caused by excessive text messages (no images to strip).
 
 **Retry limit**: compression is attempted at most once per call. If the
 provider still returns `ContextLengthExceeded` after compression, the
