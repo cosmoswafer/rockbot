@@ -9,13 +9,17 @@ All prompts and prompt-adjacent strings in the Rust codebase, organized by what 
 **File:** `crate-rockbot/src/harness.rs:18-53`
 **Constant:** `DEFAULT_SYSTEM_PROMPT`
 **Sent to:** AI provider as the `system` role message in `ChatRequest.messages`
-**Used via:** `build_system_prompt()` (line 426) → `MemoryManager::build_context()` → prepended as first message in context
+**Used via:** `build_system_prompt()` (line 471) → `MemoryManager::build_context()` → prepended as first message in context
 
-Note: `{name}` is replaced at runtime with the bot's configured username via `build_system_prompt()`.
+Note: `{name}`, `{max_context_mb}`, and `{max_iterations}` are replaced at runtime with config values via `build_system_prompt()`.
 
 ```
 You are {name}, a helpful AI assistant running on a RocketChat server. \
 You respond to DMs and @mentions concisely and helpfully. \
+Context space is limited to ~{max_context_mb}MB / 1M tokens. Keep your \
+reasoning brief and avoid verbose explanations. Use tools to fetch \
+information rather than guessing. You have up to {max_iterations} iterations \
+per task — plan your tool calls efficiently. \
 When you need the current date or time, use the datetime tool. \
 When you need information from the web, use the web_search tool. \
 When you need to fetch a URL, use web_fetch. \
@@ -31,9 +35,9 @@ The harness will automatically resolve image_name references to the actual image
 If the user asks to edit a previously generated image (no new attachment), \
 you MUST include the image CDN URL from the previous result in the \
 image_urls parameter yourself. \
-The image_gen tool returns both a WebDAV path and an image URL — \
-always share the image URL with the user in markdown image format \
-as `![{description}]({image_url})` so they can view the image inline. \
+The image_gen tool returns a WebDAV path and an image_key — \
+always share the image with the user in markdown image format \
+as `![{description}]({image_key})` so they can view the image inline. \
 When a user says !soul or asks to save or update preferences, identity, or facts, use the edit_soul tool. \
 When a user asks you to remember something, shares notes, or says !remember, !note, !save or shares important \
 information worth persisting, use the save_knowledge tool. \
@@ -44,7 +48,7 @@ When setting your soul via edit_soul, always use this exact format: \
 \"# Soul Memory\\n\\n## Identity\\nYourName ✨\". \
 Your display name is extracted by the regex \\\"## Identity[ \\t]*\\n?[ \\t]*(.+)\\\" — \
 the text after \"## Identity\" (same line or very next line) becomes your name. \
-The name MUST immediately follow \"## Identity\". Keep it under 32 characters. \
+The name MUST immediately follow \"## Identity\". Keep it under 32 characters.
 You may add ## Preferences and ## Facts sections below Identity. \
 Answer in the same language as the user. \
 Keep responses clear and to the point.\
@@ -122,10 +126,21 @@ Manage calendar events on NextCloud CalDAV. Events are stored per-room — each 
 ```
 
 ### 3g. `image_gen`
-**File:** `crate-rockbot/src/tools/image_gen.rs:107-115`
+**File:** `crate-rockbot/src/tools/image_gen.rs:117-128`
 ```
-Generate or edit an image. For text-to-image, provide a prompt and optional image_size. To edit or transform an image, the user's attachments are automatically provided as image_urls — just describe what to do in the prompt. Returns a JSON object: {"ok": true, "image_url": "...", "webdav_path": "..."}. Always share the image_url with the user in markdown image format as `![{description}]({image_url})` so they can view the image inline. After a successful image_gen call, respond to the user — do not call image_gen again.
+Generate or edit an image. For text-to-image, provide a prompt
+and optional image_size. To edit or transform an image, the user's
+attachments are automatically provided as image_urls — just describe
+what to do in the prompt.
+Returns a JSON object: {"ok": true, "image_key": "...", "webdav_path": "..."}.
+Always share the image with the user in markdown image format
+as `![{description}]({image_key})` so they can view the image inline.
+After a successful image_gen call, respond to the user — do not call image_gen again.
 ```
+
+Note: `image_size` is NOT exposed to the LLM — it is set from `[image_model]` config
+(`default_image_size`, `default_image_size_tier`). The harness injects `room_id`,
+`webdav_dir`, and `image_cache_key` automatically.
 
 ### 3h. `edit_soul`
 **File:** `crate-rockbot/src/tools/edit_soul.rs:159-165`
@@ -195,10 +210,9 @@ Search the knowledge index for entries matching a query. If no query is given, r
 | `calendar.rs` | 278 | `calendar` | `location` | Optional event location. |
 | `calendar.rs` | 282 | `calendar` | `rrule` | Optional recurrence rule in RFC 5545 format (e.g. FREQ=WEEKLY;BYDAY=MO). |
 | `calendar.rs` | 286 | `calendar` | `reminder_minutes` | Optional reminder in minutes before event (e.g. 15). |
-| `image_gen.rs` | 122 | `image_gen` | `prompt` | Text description of the image to generate |
-| `image_gen.rs` | 126 | `image_gen` | `room_id` | Room ID for image storage (injected automatically if omitted) |
-| `image_gen.rs` | 130-132 | `image_gen` | `image_size` | Aspect ratio preset or custom {\"width\": N, \"height\": N} JSON. Presets: square_hd (1:1 2880x2880), square (512x512), landscape_16_9 (3840x2160 4K), portrait_16_9 (2160x3840), landscape_4_3 (3312x2480), portrait_4_3 (2480x3312), landscape_3_2 (3504x2336), portrait_2_3 (2336x3504), auto. Default: landscape_4_3. Max edge 3840px, multiples of 16. |
-| `image_gen.rs` | 134-139 | `image_gen` | `image_urls` | Image URLs for editing/transformations. When the user sends images, they are automatically injected. Do NOT try to reference data URIs from vision context — they will be provided automatically. |
+| `image_gen.rs` | 135 | `image_gen` | `prompt` | Text description of the image to generate |
+| `image_gen.rs` | 139 | `image_gen` | `room_id` | Room ID for image storage (injected automatically if omitted) |
+| `image_gen.rs` | 145-149 | `image_gen` | `image_urls` | Image URLs for editing/transformations. When the user sends images, they are automatically injected. Do NOT try to reference data URIs from vision context — they will be provided automatically. |
 | `edit_soul.rs` | 175-177 | `edit_soul` | `action` | Soul memory operation: append (add new section/content), replace (update existing section), delete_section (remove a section) |
 | `edit_soul.rs` | 182 | `edit_soul` | `section_header` | Target ## Section name (e.g. Preferences, Identity, Facts) |
 | `edit_soul.rs` | 186 | `edit_soul` | `content` | New content for the section (required for append and replace) |
@@ -246,25 +260,34 @@ Describe this image in detail.
 
 ## 7. Image Generation Request Body (sent to image provider API)
 
-**File:** `crate-rockbot/src/types.rs:347-430` (ImageGenParams struct), `crate-rockbot/src/provider/fal.rs:80-219` (submit_request for fal.ai)
+**Files:** `crate-rockbot/src/types.rs:349-357` (ImageGenParams struct),
+`crate-rockbot/src/provider/fal.rs:80-219` (fal.ai submit_request),
+`crate-rockbot/src/provider/openrouter.rs:779-840` (OpenRouter build_request_body)
 
-The user-provided `prompt` string plus optional parameters are sent as a JSON body:
+The provider-agnostic `ImageGenParams` struct:
 ```json
 {
   "prompt": "<user provided>",
-  "quality": "<optional>",
-  "output_format": "<optional>",
-  "num_images": <optional>,
-  "image_size": "<optional preset or object>",
+  "quality": "<from config>",
+  "output_format": "<from config>",
+  "num_images": <from config>,
+  "image_size": "<preset from config, hidden from LLM>",
+  "size_tier": "<4K|2K|1K from config, OpenRouter only>",
   "image_urls": ["<optional URL(s) for img2img>"]
 }
 ```
-Sent as a POST to `{base_url}/{model_id}` with `Authorization: Key {api_key}` header. Returns a `request_id` that is polled until completion via `poll_status()`.
 
-Result message returned to AI (image_gen.rs:261-266):
+**fal.ai** (POST `{base_url}/{model_id}`): resolved pixel dimensions in submit body.
+**OpenRouter** (POST `/chat/completions`): maps to `image_config.aspect_ratio` + `image_config.image_size: "4K"`.
+
+Tool result returned to LLM (image_gen.rs):
 ```json
-{"ok": true, "image_url": "<CDN URL>", "webdav_path": "<WebDAV path>"}
+{"ok": true, "webdav_path": "<WebDAV path>", "image_key": "<call_id>"}
 ```
+
+The LLM includes `image_key` in its reply markdown. The agent loop (main.rs)
+replaces it with a NextCloud share URL (`/download` suffix, 7-day expiry)
+before sending to RocketChat.
 
 ---
 
@@ -373,7 +396,7 @@ Append appends another `## Section\ncontent` block to the existing file.
 
 | # | What | Where | Sent To | Dynamic? |
 |---|------|-------|---------|----------|
-| 1 | **System prompt** — defines persona & capabilities | `harness.rs:18-53` | AI provider (`system` role) | Static (with `{name}` template) |
+| 1 | **System prompt** — defines persona & capabilities | `harness.rs:19-53` | AI provider (`system` role) | Dynamic (`{name}`, `{max_context_mb}`, `{max_iterations}` from config) |
 | 2 | **User message template** — wraps chat text | `harness.rs:168-193` | AI provider (`user` role) | Per-message |
 | 3a-k | **Tool descriptions** — teach AI what tools do | 11 files in `tools/` | AI provider (tool definitions) | Static |
 | 4 | **Tool param descriptions** — describe JSON fields | 11 files in `tools/` | AI provider (tool schema) | Static |
