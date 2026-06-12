@@ -57,53 +57,40 @@ DFD must be:
 
 ## Type-Driven Design & Validation Implementation
 
-DFD data structures (section 3) are implemented as Rust types following strict
-**"Parse, don't validate"** discipline:
+DFD data structures (section 3) are implemented following strict
+**"Parse, don't validate"** discipline.  These principles apply regardless of
+language:
 
-- **Parse at boundaries** — all external input (JSON, config, CLI args, HTTP
-  responses) is parsed into infallible domain types at the subsystem entry
-  point.  After parsing, the rest of the system uses only these types — never
-  raw strings, `serde_json::Value`, or untyped collections.
-- **Newtype wrapping** — primitives that carry invariants (IDs, emails, URLs,
-  non-empty strings, bounded integers) are wrapped in single-field structs
-  using crates such as [`nutype`](https://crates.io/crates/nutype) (validation
-  at construction), [`derive_more`](https://crates.io/crates/derive_more)
-  (boilerplate `Deref`/`From`), or hand-rolled newtypes with private fields
-  and a fallible constructor (`TryFrom`/`FromStr`).  An invalid value must be
-  impossible to construct — if you hold an instance, the invariants are
-  guaranteed.
+- **Parse at boundaries** — all external input (wire formats, config files, CLI
+  args) is parsed into domain types at the subsystem entry point.  After
+  parsing, the rest of the system uses only those types — never raw strings,
+  untyped dictionaries, or loose primitives.
+- **Make invalid states unrepresentable** — any value carrying an invariant
+  (non-empty string, valid email, bounded number, well-formed URL) must be
+  wrapped in a dedicated type whose constructor enforces the invariant at
+  creation time.  Holding an instance of the type *guarantees* the invariant;
+  no downstream validation needed.
+- **Newtype / wrapper pattern** — single-field types that wrap a primitive and
+  expose only valid constructions (`TryFrom`, factory function, builder).  In
+  Rust this is achieved with crates like
+  [`nutype`](https://crates.io/crates/nutype),
+  [`derive_more`](https://crates.io/crates/derive_more), or hand-rolled
+  newtypes.  Equivalent patterns exist in every language (data classes with
+  private constructors, tagged types, opaque types, smart constructors).
 - **Type-first implementation** — design types from the DFD data structure
-  tables _before_ writing functions.  Each table row becomes a struct or enum
-  variant.  Functions then operate on those types, with the compiler enforcing
-  correctness at every call site.
+  tables *before* writing functions.  Each table row becomes a record or enum
+  variant.  Functions operate on those types; the compiler/type-checker
+  enforces correctness at every call site.
 - **Cross-DFD shared types** — a data structure consumed by multiple DFDs is
-  defined once in a canonical crate or module.  Both producer and consumer
-  crates import it, making type mismatches a **compile-time error** — no
-  runtime check or test suite needed.
-- **Fallible conversion layer** — all `TryFrom`/`FromStr`/`nutype` constructors
-  return `Result` with a specific error type (via
-  [`thiserror`](https://crates.io/crates/thiserror)).  Failure messages name
-  the DFD data structure and the offending field so errors are
-  self-documenting.
-- **Avoid `unwrap()`/`expect()`** — production code uses `?` with `thiserror`
-  error types.  Panics are reserved for truly unrecoverable programmer errors
-  (invariant violations that indicate a bug).
-
-### Example: newtype with `nutype`
-
-```rust
-use nutype::nutype;
-
-#[nutype(validate(len_char_min = 1, len_char_max = 100), derive(Debug, Clone, Serialize, Deserialize))]
-struct UserName(String);
-
-// Construction fails for invalid input — no .unwrap() needed downstream.
-let name = UserName::new(input)?;
-```
-
-Plain newtypes with manual `TryFrom` or builder patterns are equally valid when
-`nutype`'s attribute macros are too restrictive.  The invariant is what matters,
-not the crate.
+  defined once in a canonical location.  Both producer and consumer modules
+  import it, making type mismatches a **compile-time (or static-analysis)
+  error** — no runtime check or test suite needed.
+- **Fallible construction** — all constructors that can reject invalid input
+  return a result or throw a specific error naming the DFD data structure and
+  the offending field.  Errors are self-documenting.
+- **No bare `unwrap()`/panics in production** — use structured error types or
+  checked exceptions.  Panics only for truly unrecoverable programmer bugs
+  (invariant violations indicating a logic error).
 
 ## Notation
 
