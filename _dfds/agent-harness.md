@@ -259,6 +259,45 @@ a separate vision tool call. Injection happens at two points in the agent loop:
 (1) before the first LLM call for a message, and (2) after each tool-execution
 iteration before the next LLM call.
 
+### 2g2. Image Interception for Editing — inject_image_urls_from_refs
+
+When the LLM calls `image_gen` for editing, the harness intercepts the arguments
+and injects real image data from **three sources** into `image_urls`:
+
+1. **User attachments** — downloaded from RocketChat as `data:` URIs, matched by
+   filename substring in the LLM prompt (e.g. "edit apple.png")
+2. **Vision/webdav-fetched images** — stored in `image_pool` as
+   `CachedImage { data_uri, name }`, matched by name or `![name]` label in prompt
+3. **Agent-provided URLs** — any `share_url` or `https://` URL the LLM explicitly
+   includes in `image_urls` (e.g. from a previous `image_gen` result)
+
+```mermaid
+flowchart TD
+    ATTACH["1. User Attachments<br/>download_attachment_refs"]
+    VISION["2. Vision/WebDAV Fetch<br/>cache_vision_images"]
+    AGENT_URL["3. Agent-Provided URLs<br/>share_url from prev result"]
+    POOL[(ImagePool<br/>room_id → Vec<CachedImage>)]
+    INJECT[inject_image_urls_from_refs]
+
+    ATTACH -->|"data: URIs"| INJECT
+    VISION -->|"parse ![name](data:...)"| POOL
+    POOL -->|"match by name"| INJECT
+    AGENT_URL -->|"https:// or data: URLs"| INJECT
+    INJECT -->|"args['image_urls']"| IMG_GEN[image_gen Tool]
+```
+
+All three sources converge in `inject_image_urls_from_refs()` — it matches image
+names from the LLM prompt against `AttachmentRef` titles and `image_pool` entries,
+merges with any explicit `image_urls` the LLM provided, and injects the combined
+list. The `image_gen` tool then uploads `data:` URIs to the provider's CDN (Fal)
+or passes `https://` URLs directly. Deduplication is by URL string equality.
+
+This covers all four image sources for editing:
+- Previous `image_gen` results (via agent-provided `share_url` in `image_urls`)
+- User-attached images (via `AttachmentRef` title match)
+- Vision-fetched images from public URLs (via `image_pool` name match)
+- WebDAV-read images (via `image_pool` name match, same pipeline as vision)
+
 ### 2h. Daily Summary Review — Knowledge Retrieval Ordering
 
 After each daily summary write (archive) and during periodic maintenance, the
