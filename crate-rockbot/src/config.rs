@@ -129,7 +129,7 @@ fn default_max_iterations() -> u32 {
 }
 
 fn default_max_history_size() -> usize {
-    12
+    8
 }
 
 fn default_max_text_length() -> usize {
@@ -157,7 +157,7 @@ fn default_memory_ttl_secs() -> u64 {
 }
 
 fn default_max_context_bytes() -> usize {
-    30_000_000
+    2_000_000
 }
 
 fn default_max_attachment_bytes() -> u64 {
