@@ -97,7 +97,22 @@ impl WebDavClient {
             "{}/ocs/v2.php/apps/files_sharing/api/v1/shares",
             server_root.trim_end_matches('/')
         );
-        let ocs_path = file_path.trim_start_matches('/');
+        let ocs_path = {
+            let root = self
+                .base_url
+                .trim_end_matches('/')
+                .rsplit('/')
+                .next()
+                .unwrap_or("");
+            let clean = file_path.trim_start_matches('/');
+            // If the path starts with the root, use it as-is (minus leading /)
+            // Otherwise prepend the root (e.g. image_gen paths from WebDavPath::new(""))
+            if clean.starts_with(root) || root.is_empty() {
+                clean.replace("//", "/")
+            } else {
+                format!("{}/{}", root, clean).replace("//", "/")
+            }
+        };
         let expire_date = {
             let now = time::OffsetDateTime::now_utc();
             let seven_days = now + time::Duration::days(7);
