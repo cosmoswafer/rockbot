@@ -6,10 +6,10 @@ All prompts and prompt-adjacent strings in the Rust codebase, organized by what 
 
 ## 1. System Prompt (sent to AI provider)
 
-**File:** `crate-rockbot/src/harness.rs:18-53`
+**File:** `crate-rockbot/src/harness.rs:20-64`
 **Constant:** `DEFAULT_SYSTEM_PROMPT`
 **Sent to:** AI provider as the `system` role message in `ChatRequest.messages`
-**Used via:** `build_system_prompt()` (line 471) → `MemoryManager::build_context()` → prepended as first message in context
+**Used via:** `build_system_prompt()` (line 597) → `MemoryManager::build_context()` → prepended as first message in context
 
 Note: `{name}`, `{max_context_mb}`, and `{max_iterations}` are replaced at runtime with config values via `build_system_prompt()`.
 
@@ -23,7 +23,10 @@ per task — plan your tool calls efficiently. \
 When you need the current date or time, use the datetime tool. \
 When you need information from the web, use the web_search tool. \
 When you need to fetch a URL, use web_fetch. \
-When you need to fetch an image from a WebDAV path or public URL, use the vision tool. \
+When you need to describe or analyze an image, use the vision tool. \
+Do NOT use vision just to identify an image before editing — when a user \
+shares an image URL and asks to modify/edit/transform it, call image_gen directly. \
+The harness will automatically provide the image URL as the image_urls parameter. \
 When you need to read, write, list, or manage files on remote storage, use the webdav tool. \
 When you need to manage calendar events or todo tasks, use the calendar tool. \
 When you need to generate an image, use the image_gen tool. \
@@ -31,7 +34,8 @@ When a user sends an image and asks to edit, modify, transform, or use it \
 as a basis for image generation, use the image_gen tool — user-attached images \
 appear as markdown ![image_name](image_name) in the conversation. Reference the \
 image by its image_name in your prompt (e.g. \"edit image1.png to add a hat\"). \
-The harness will automatically resolve image_name references to the actual images. \
+The harness will automatically resolve image_name references and image URLs \
+to the actual images. \
 If the user asks to edit a previously generated image (no new attachment), \
 you MUST include the image CDN URL from the previous result in the \
 image_urls parameter yourself. \
@@ -39,17 +43,18 @@ The image_gen tool returns a WebDAV path and an image_key — \
 always share the image with the user in markdown image format \
 as `![{description}]({image_key})` so they can view the image inline. \
 When a user says !soul or asks to save or update preferences, identity, or facts, use the edit_soul tool. \
+edit_soul performs a full replace — it overwrites the entire soul with the content you provide. \
+The soul is a flat enumeration list — each line is a \"- \" bullet item with no sub-headings. \
+When setting your soul, always use this exact template: \
+\"# Soul Memory\\n\\n- My name is YourName ✨\\n- (optional)\\n- (optional)\\n- (optional)\\n- (optional)\". \
+Your display name is extracted by the regex \\\"My name is (.+)\\\" — \
+the first item must start with \"My name is ...\" and becomes your name. \
+Keep the name under 32 characters. \
 When a user asks you to remember something, shares notes, or says !remember, !note, !save or shares important \
 information worth persisting, use the save_knowledge tool. \
 When a user says !forget or asks to remove something you learned, \
 use the forget_knowledge tool. \
 When you need to recall previously saved knowledge, use the recall_knowledge tool. \
-When setting your soul via edit_soul, always use this exact format: \
-\"# Soul Memory\\n\\n## Identity\\nYourName ✨\". \
-Your display name is extracted by the regex \\\"## Identity[ \\t]*\\n?[ \\t]*(.+)\\\" — \
-the text after \"## Identity\" (same line or very next line) becomes your name. \
-The name MUST immediately follow \"## Identity\". Keep it under 32 characters.
-You may add ## Preferences and ## Facts sections below Identity. \
 Answer in the same language as the user. \
 Keep responses clear and to the point.\
 ```
@@ -58,17 +63,17 @@ Keep responses clear and to the point.\
 
 ## 2. User Message Template (sent to AI provider)
 
-**File:** `crate-rockbot/src/harness.rs:168-193`
+**File:** `crate-rockbot/src/harness.rs:172-234`
 **Template:** `ChatMessage::user(format!("{}: {}", sender_name, clean_text))`
 **Role:** `user`
 **Purpose:** Wraps every incoming RocketChat message as `"SenderName: message text"` before appending to history. Preserves sender identity in group chats.
 
-When image attachments are present (harness.rs:172-184), they are downloaded and
-encoded as data URIs, then injected into the conversation as markdown
-`![image_name](image_name)` labels. The user message is created as
-`ChatMessage::user_with_images` with the prompt including an `Attached:` line
-listing the image labels. If the text is empty, the prompt defaults to
-`"Describe this image in detail.\nAttached: ![name](name)"`.
+When image attachments are present (harness.rs:214-231), they are downloaded via
+`download_attachment_refs()` and encoded as data URIs, then injected into the
+conversation as markdown `![image_name](image_name)` labels. The user message is
+created as `ChatMessage::user_with_images` with the prompt including an
+`Attached:` line listing the image labels. If the text is empty, the prompt
+defaults to `"SenderName: Describe this image in detail.\nAttached: ![name](name)"`.
 
 The harness later resolves `image_name` references in `image_gen` tool calls
 by matching them against these cached data URIs.
@@ -110,7 +115,7 @@ User attachments are already visible to you — only use this tool for images at
 ```
 
 ### 3e. `webdav`
-**File:** `crate-rockbot/src/tools/webdav.rs:184-192`
+**File:** `crate-rockbot/src/tools/webdav.rs:198-205`
 ```
 Manage files on remote WebDAV storage (NextCloud). Each room has its own file space —
 paths are automatically scoped. Actions: read (get file content), write (create/overwrite
@@ -126,7 +131,7 @@ Manage calendar events on NextCloud CalDAV. Events are stored per-room — each 
 ```
 
 ### 3g. `image_gen`
-**File:** `crate-rockbot/src/tools/image_gen.rs:117-128`
+**File:** `crate-rockbot/src/tools/image_gen.rs:125-133`
 ```
 Generate or edit an image. For text-to-image, provide a prompt
 and optional image_size. To edit or transform an image, the user's
@@ -138,18 +143,21 @@ as `![{description}]({image_key})` so they can view the image inline.
 After a successful image_gen call, respond to the user — do not call image_gen again.
 ```
 
-Note: `image_size` is NOT exposed to the LLM — it is set from `[image_model]` config
-(`default_image_size`, `default_image_size_tier`). The harness injects `room_id`,
-`webdav_dir`, and `image_cache_key` automatically.
+Note: `image_size` is NOT exposed to the LLM as a tool parameter — it is set from `[image_model]` config (`default_image_size`, `default_image_size_tier`). The harness injects `room_id` and `image_cache_key` automatically. `image_urls` are auto-injected from message attachments.
 
 ### 3h. `edit_soul`
-**File:** `crate-rockbot/src/tools/edit_soul.rs:159-165`
+**File:** `crate-rockbot/src/tools/edit_soul.rs:38-48`
 ```
-Edit the bot's permanent memory (soul) for this room.
-Actions: append (add a new section or content),
-replace (replace an existing section's content),
-delete_section (remove a section entirely).
-Use section_header to target the ## Section name.
+Overwrite the bot's permanent soul memory for this room.
+The soul is a flat enumeration list — each line is a "- " bullet item.
+Provide the full soul.md content using this template:
+# Soul Memory
+
+- My name is YourName ✨
+- (optional preference)
+- (optional fact)
+- (optional preference)
+- (optional fact)
 ```
 
 ### 3i. `save_knowledge`
@@ -165,7 +173,7 @@ Remove a previously saved knowledge entry. Provide the topic title of the entry 
 ```
 
 ### 3k. `recall_knowledge`
-**File:** `crate-rockbot/src/tools/recall_knowledge.rs:26-30`
+**File:** `crate-rockbot/src/tools/recall_knowledge.rs:26-29`
 ```
 Search the knowledge index for entries matching a query. If no query is given, returns all stored knowledge entries. Matches by topic title, when_useful description, and tags.
 ```
@@ -180,25 +188,22 @@ Search the knowledge index for entries matching a query. If no query is given, r
 | `web_search.rs` | 200 | `web_search` | `query` | The search query to execute |
 | `web_search.rs` | 205 | `web_search` | `type` | Search type: auto (balanced with autoprompt), fast (quick results), deep (comprehensive). Default: auto |
 | `web_search.rs` | 211 | `web_search` | `num_results` | Number of results to return (default: 5, max: 20) |
-| `web_fetch.rs` | 442 | `web_fetch` | `url` | The URL to fetch |
-| `web_fetch.rs` | 447-449 | `web_fetch` | `format` | Output format: json returns structured metadata, markdown converts HTML to markdown for AI, raw returns unmodified text (default: raw) |
-| `web_fetch.rs` | 453 | `web_fetch` | `verify` | Perform a web search to cross-verify content (default: false) |
 | `web_search.rs` | 216 | `web_search` | `contents_mode` | Content detail level: highlights (default), text (full text), deep (thorough analysis) |
-| `web_fetch.rs` | 662 | `web_fetch` | `url` | The URL to fetch |
-| `web_fetch.rs` | 667-669 | `web_fetch` | `format` | Output format: json returns structured metadata, markdown converts HTML to markdown for AI, raw returns unmodified text (default: raw) |
-| `web_fetch.rs` | 672 | `web_fetch` | `verify` | Perform a web search to cross-verify content (default: false) |
-| `web_fetch.rs` | 675 | `web_fetch` | `method` | HTTP method: GET (default), POST, PUT, PATCH, DELETE, HEAD, OPTIONS |
-| `web_fetch.rs` | 680 | `web_fetch` | `headers` | JSON object of HTTP headers (e.g. {"Authorization": "Bearer ..."}) |
-| `web_fetch.rs` | 684 | `web_fetch` | `body` | Request body for POST/PUT/PATCH (string or JSON) |
-| `web_fetch.rs` | 688 | `web_fetch` | `save_to` | WebDAV path to save response (optional, relative to room root) |
-| `web_fetch.rs` | 692 | `web_fetch` | `upload_file_path` | WebDAV file path to upload as multipart body (optional, relative to room root) |
+| `web_fetch.rs` | 658 | `web_fetch` | `url` | The URL to fetch |
+| `web_fetch.rs` | 663-665 | `web_fetch` | `format` | Output format: json returns structured metadata, markdown converts HTML to markdown for AI, raw returns unmodified text (default: raw) |
+| `web_fetch.rs` | 668 | `web_fetch` | `verify` | Perform a web search to cross-verify content (default: false) |
+| `web_fetch.rs` | 671 | `web_fetch` | `method` | HTTP method: GET (default), POST, PUT, PATCH, DELETE, HEAD, OPTIONS |
+| `web_fetch.rs` | 676 | `web_fetch` | `headers` | JSON object of HTTP headers (e.g. {"Authorization": "Bearer ..."}) |
+| `web_fetch.rs` | 680 | `web_fetch` | `body` | Request body for POST/PUT/PATCH (string or JSON) |
+| `web_fetch.rs` | 684 | `web_fetch` | `save_to` | WebDAV path to save response (optional, relative to room root) |
+| `web_fetch.rs` | 688 | `web_fetch` | `upload_file_path` | WebDAV file path to upload as multipart body (optional, relative to room root) |
 | `vision.rs` | 130-131 | `vision` | `url` | URL of the image to fetch (public web or WebDAV file) |
-| `webdav.rs` | 203 | `webdav` | `action` | The WebDAV operation to perform |
-| `webdav.rs` | 207 | `webdav` | `room_id` | Room ID for scoping the operation (injected automatically if omitted) |
-| `webdav.rs` | 211 | `webdav` | `path` | File or directory path relative to the room root |
-| `webdav.rs` | 215 | `webdav` | `content` | File content to write (required for 'write' action) |
-| `webdav.rs` | 219 | `webdav` | `oldString` | Exact text to find and replace (required for 'edit' action, must be unique in the file) |
-| `webdav.rs` | 223 | `webdav` | `newString` | Replacement text (required for 'edit' action) |
+| `webdav.rs` | 212-215 | `webdav` | `action` | The WebDAV operation to perform |
+| `webdav.rs` | 217-219 | `webdav` | `room_id` | Room ID for scoping the operation (injected automatically if omitted) |
+| `webdav.rs` | 221-223 | `webdav` | `path` | File or directory path relative to the room root |
+| `webdav.rs` | 225-227 | `webdav` | `content` | File content to write (required for 'write' action) |
+| `webdav.rs` | 229-231 | `webdav` | `oldString` | Exact text to find and replace (required for 'edit' action, must be unique in the file) |
+| `webdav.rs` | 233-235 | `webdav` | `newString` | Replacement text (required for 'edit' action) |
 | `calendar.rs` | 246 | `calendar` | `action` | Calendar operation to perform |
 | `calendar.rs` | 250 | `calendar` | `start` | Start of date range in ISO 8601 UTC (e.g. 20260601T000000Z). Used by list_events. |
 | `calendar.rs` | 254 | `calendar` | `end` | End of date range in ISO 8601 UTC. Used by list_events. |
@@ -210,31 +215,29 @@ Search the knowledge index for entries matching a query. If no query is given, r
 | `calendar.rs` | 278 | `calendar` | `location` | Optional event location. |
 | `calendar.rs` | 282 | `calendar` | `rrule` | Optional recurrence rule in RFC 5545 format (e.g. FREQ=WEEKLY;BYDAY=MO). |
 | `calendar.rs` | 286 | `calendar` | `reminder_minutes` | Optional reminder in minutes before event (e.g. 15). |
-| `image_gen.rs` | 135 | `image_gen` | `prompt` | Text description of the image to generate |
-| `image_gen.rs` | 139 | `image_gen` | `room_id` | Room ID for image storage (injected automatically if omitted) |
-| `image_gen.rs` | 145-149 | `image_gen` | `image_urls` | Image URLs for editing/transformations. When the user sends images, they are automatically injected. Do NOT try to reference data URIs from vision context — they will be provided automatically. |
-| `edit_soul.rs` | 175-177 | `edit_soul` | `action` | Soul memory operation: append (add new section/content), replace (update existing section), delete_section (remove a section) |
-| `edit_soul.rs` | 182 | `edit_soul` | `section_header` | Target ## Section name (e.g. Preferences, Identity, Facts) |
-| `edit_soul.rs` | 186 | `edit_soul` | `content` | New content for the section (required for append and replace) |
-| `edit_soul.rs` | 190 | `edit_soul` | `webdav_dir` | Room WebDAV directory key (injected automatically) |
-| `save_knowledge.rs` | 52-54 | `save_knowledge` | `category` | Knowledge category: skill (procedural/how-to), secret (credential/sensitive), note (factual info) |
-| `save_knowledge.rs` | 58 | `save_knowledge` | `topic` | Short title or topic for the entry (e.g. 'DB API', 'Build Commands') |
-| `save_knowledge.rs` | 62 | `save_knowledge` | `content` | Markdown body of the knowledge entry |
-| `save_knowledge.rs` | 66-67 | `save_knowledge` | `when_useful` | Describe the situation that makes this knowledge relevant, used for automatic retrieval (e.g. 'when calling the database API') |
-| `save_knowledge.rs` | 71 | `save_knowledge` | `tags` | Comma-separated keywords for search (e.g. 'api, database, python') |
-| `save_knowledge.rs` | 73-76 | `save_knowledge` | `priority` | Knowledge priority: P0 (highest, always recalled), P1 (high), P2 (medium), P3 (low, default). Higher priority means more frequently recalled. |
-| `forget_knowledge.rs` | 38 | `forget_knowledge` | `topic` | Title or topic of the knowledge entry to delete |
-| `recall_knowledge.rs` | 38-39 | `recall_knowledge` | `query` | Topic or keyword to search for in knowledge entries. Leave empty to retrieve all entries. |
+| `image_gen.rs` | 140-142 | `image_gen` | `prompt` | Text description of the image to generate |
+| `image_gen.rs` | 144-146 | `image_gen` | `room_id` | Room ID for image storage (injected automatically if omitted) |
+| `image_gen.rs` | 148-151 | `image_gen` | `image_urls` | Image URLs for editing/transformations. When the user sends images, they are automatically injected. Do NOT try to reference data URIs from vision context — they will be provided automatically. |
+| `edit_soul.rs` | 55-57 | `edit_soul` | `content` | Full soul.md content following the template: # Soul Memory\n\n- My name is Name ✨\n- ...\n- ..." |
+| `edit_soul.rs` | 59-61 | `edit_soul` | `webdav_dir` | Room WebDAV directory key (injected automatically) |
+| `save_knowledge.rs` | 50-53 | `save_knowledge` | `category` | Knowledge category: skill (procedural/how-to), secret (credential/sensitive), note (factual info) |
+| `save_knowledge.rs` | 56-58 | `save_knowledge` | `topic` | Short title or topic for the entry (e.g. 'DB API', 'Build Commands') |
+| `save_knowledge.rs` | 60-62 | `save_knowledge` | `content` | Markdown body of the knowledge entry |
+| `save_knowledge.rs` | 64-67 | `save_knowledge` | `when_useful` | Describe the situation that makes this knowledge relevant, used for automatic retrieval (e.g. 'when calling the database API') |
+| `save_knowledge.rs` | 69-71 | `save_knowledge` | `tags` | Comma-separated keywords for search (e.g. 'api, database, python') |
+| `save_knowledge.rs` | 73-76 | `save_knowledge` | `priority` | Knowledge priority: P0 (highest, always recalled), P1 (high), P2 (medium, default), P3 (low). Higher priority means more frequently recalled. |
+| `forget_knowledge.rs` | 36-38 | `forget_knowledge` | `topic` | Title or topic of the knowledge entry to delete |
+| `recall_knowledge.rs` | 36-39 | `recall_knowledge` | `query` | Topic or keyword to search for in knowledge entries. Leave empty to retrieve all entries. |
 
 ---
 
 ## 5. Default Vision Prompt (fallback for tool execution)
 
-**File:** `crate-rockbot/src/harness.rs:182`
+**File:** `crate-rockbot/src/harness.rs:224`
 ```
-Describe this image in detail.
+{}: Describe this image in detail.
 ```
-**Used when:** A user sends image attachments with no text. The harness constructs a user message with this prompt plus the `Attached:` image labels. Not used by the `vision` tool itself (vision tool has no `prompt` parameter).
+**Used when:** A user sends image attachments with no text. The harness constructs a user message as `"{sender_name}: Describe this image in detail.\nAttached: ..."` with the attached image labels. Not used by the `vision` tool itself (vision tool has no `prompt` parameter).
 
 ---
 
@@ -244,17 +247,17 @@ Describe this image in detail.
 
 | Line | Condition | Text |
 |------|-----------|------|
-| 235 | Max agent iterations exceeded | `I'm sorry, I got stuck in a loop. Could you rephrase your request?` |
-| 377 | AI returned empty text (stored in history) | `(no response)` |
-| 384 | AI returned empty text (user-facing) | `I processed your request but received an empty response.` |
-| 396 | AI returned no text at all | `I received a response but it was empty. Please try again.` |
-| 407 | AI provider error (dynamic) | `I encountered an error: {e}. Please try again.` |
+| 280 | Max agent iterations exceeded | `I'm sorry, I got stuck in a loop. Could you rephrase your request?` |
+| 476 | AI returned empty text (stored in history) | `(no response)` |
+| 483 | AI returned empty text (user-facing) | `I processed your request but received an empty response.` |
+| 496 | AI returned no text at all | `I received a response but it was empty. Please try again.` |
+| 552 | AI provider error (dynamic) | `I encountered an error: {e}. Please try again.` |
 
 **File:** `crate-rockbot/src/main.rs`
 
 | Line | Condition | Text |
 |------|-----------|------|
-| 486 | Outer catch-all for message processing | `Error processing message: {e}` |
+| 549 | Outer catch-all for message processing | `Error processing message: {e}` |
 
 ---
 
@@ -305,7 +308,7 @@ Injected as a second system message when soul content is non-empty.
 ### 8b. Knowledge context (from WebDAV knowledge index)
 **File:** `crate-rockbot/src/memory.rs:246-250`
 **Type:** Dynamic — loaded by `AgentHarness::refresh_knowledge_context()` and stored in `MemoryManager.knowledge`
-Injected as a system message when relevant knowledge entries exist for the room. Fetched on each `process_message` call before building context (harness.rs:207).
+Injected as a system message when relevant knowledge entries exist for the room. Fetched on each `process_message` call before building context (harness.rs:249).
 
 ### 8c. Daily summaries header
 **File:** `crate-rockbot/src/memory.rs:253-267`
@@ -322,9 +325,9 @@ Injected as a system message when daily summaries exist (loaded from `memory/sum
 
 ## 9. Summarize-for-Archive Prompt (sent to AI provider)
 
-**File:** `crate-rockbot/src/harness.rs:828-882`
+**File:** `crate-rockbot/src/harness.rs:1021-1074`
 **Role:** `user` (one-shot completion, no tools)
-**Purpose:** Generates a short summary of archived messages for daily summaries. Also used inline by `truncate_and_summarize()` (line 628) for context overflow.
+**Purpose:** Generates a short summary of archived messages for daily summaries. Also used inline by `truncate_and_summarize()` (line 768) for context overflow.
 ```
 Summarize this conversation excerpt in 1-3 concise sentences. Focus on key topics,
 decisions, and factual information shared:
@@ -332,11 +335,11 @@ decisions, and factual information shared:
 <joined message texts, each truncated to 300 chars, max 20 messages>
 ```
 
-**Fallback (line 867-880):** If AI summarization fails:
+**Fallback (line 1060-1072):** If AI summarization fails:
 ```
 {messages.len()} messages: {preview of up to 5 message snippets truncated to 80 chars each}
 ```
-**Minimal fallback (line 876):** If no previewable messages:
+**Minimal fallback (line 1069):** If no previewable messages:
 ```
 {messages.len()} messages archived
 ```
@@ -346,29 +349,28 @@ decisions, and factual information shared:
 ## 10. WebDAV Storage Templates (not AI prompts)
 
 ### 10a. Daily summary file (upsert_daily_summary)
-**File:** `crate-rockbot/src/harness.rs:746-785`
+**File:** `crate-rockbot/src/harness.rs:922-978`
 **Stored at:** `{room_dir}memory/summaries/{date}.md`
 ```
 # Daily Summaries — {webdav_dir}
 
 ## {today_date} ({msg_count} messages, {char_count} chars)
-{ai_generated_summary}
-
-## {date2} ({msg_count2} messages)
-{summary2}
-...
+{merged_summary}
 ```
+Merges today's new summary into existing content using `extract_latest_summary()` and `parse_summary_header()` helpers.
 
 ### 10b. Soul memory file
-**File:** `crate-rockbot/src/tools/edit_soul.rs:149-150`
+**File:** `crate-rockbot/src/tools/edit_soul.rs:38-48` (description), `:74` (execute)
 **Stored at:** `{room_dir}memory/soul.md`
 ```
 # Soul Memory
 
-## {section_header}
-{content}
+- My name is YourName ✨
+- (optional preference)
+- (optional fact)
+...
 ```
-Append appends another `## Section\ncontent` block to the existing file.
+edit_soul performs a full replace — it overwrites the entire soul.md with the content provided by the LLM.
 
 ---
 
@@ -378,17 +380,17 @@ Append appends another `## Section\ncontent` block to the existing file.
 
 | Line | Command | Reply |
 |------|---------|-------|
-| 39-50 | — | Console-only: `DM from {sender_name}` / `#{room_name} from {sender_name}` |
-| 53 | `!ping` | `pong @{sender_name}` |
+| 39-50 | — | Console-only: `DM from {sender_name}` / `#{name} from {sender_name}` |
+| 53-57 | `!ping` | `pong @{sender_name}` |
 | 58-62 | `!echo <text>` | Echoes the text back |
-| 63 | `!help` | `Commands: !ping, !echo <text>, !help` |
+| 63-68 | `!help` | `Commands: !ping, !echo <text>, !help` |
 
 **File:** `crate-rocketchat/src/client.rs`
 
 | Line | Purpose | Template |
 |------|---------|----------|
-| 46-49 | Code-block reply wrapper | `` ```\n{text}\n``` `` |
-| 104 | Bot mention pattern for detection | `@{username}` (constructor of `RocketChatClient`, stored in `bot_name` field) |
+| 58-61 | Code-block reply wrapper | `` ```\n{text}\n``` `` |
+| 123 | Bot mention pattern for detection | `@{username}` (constructor of `RocketChatClient`, stored in `bot_name` field) |
 
 ---
 
@@ -396,18 +398,16 @@ Append appends another `## Section\ncontent` block to the existing file.
 
 | # | What | Where | Sent To | Dynamic? |
 |---|------|-------|---------|----------|
-| 1 | **System prompt** — defines persona & capabilities | `harness.rs:19-53` | AI provider (`system` role) | Dynamic (`{name}`, `{max_context_mb}`, `{max_iterations}` from config) |
-| 2 | **User message template** — wraps chat text | `harness.rs:168-193` | AI provider (`user` role) | Per-message |
+| 1 | **System prompt** — defines persona & capabilities | `harness.rs:20-64` | AI provider (`system` role) | Dynamic (`{name}`, `{max_context_mb}`, `{max_iterations}` from config) |
+| 2 | **User message template** — wraps chat text | `harness.rs:172-234` | AI provider (`user` role) | Per-message |
 | 3a-k | **Tool descriptions** — teach AI what tools do | 11 files in `tools/` | AI provider (tool definitions) | Static |
 | 4 | **Tool param descriptions** — describe JSON fields | 11 files in `tools/` | AI provider (tool schema) | Static |
-| 5 | **Default vision prompt** — fallback | `harness.rs:182` | Downstream tool code | Static |
-| 6 | **Fallback messages** — error/loop handling | `harness.rs:235-407`, `main.rs:486` | RocketChat user | Partially |
-| 7 | **Image gen request body** — image provider API | `types.rs:347-430`, `fal.rs:80-219` | image provider API | Dynamic |
-| 8a | **Soul memory prefix** | `memory.rs:240` | AI provider (`system` role) | Dynamic |
+| 5 | **Default vision prompt** — fallback | `harness.rs:224` | Downstream tool code | Static |
+| 6 | **Fallback messages** — error/loop handling | `harness.rs:280-552`, `main.rs:549` | RocketChat user | Partially |
+| 7 | **Image gen request body** — image provider API | `types.rs:349-357`, `fal.rs:80-219` | image provider API | Dynamic |
+| 8a | **Soul memory prefix** | `memory.rs:239-242` | AI provider (`system` role) | Dynamic |
 | 8b | **Knowledge context** | `memory.rs:246-250` | AI provider (`system` role) | Dynamic |
 | 8c | **Daily summaries** | `memory.rs:253-267` | AI provider (`system` role) | Dynamic |
-| 9 | **Summarize-for-archive** — daily summary | `harness.rs:828-882` | AI provider (one-shot) | Dynamic |
-| 10a-b | **WebDAV storage templates** — summaries, soul | `harness.rs:746-785`, `edit_soul.rs:149-150` | WebDAV storage | Dynamic |
-| 11 | **Debug binary messages** | `rocketchat/main.rs:39-64`, `client.rs:46-49` | RocketChat / console | Dynamic |
-
-(End of file - total lines may vary)
+| 9 | **Summarize-for-archive** — daily summary | `harness.rs:1021-1074` | AI provider (one-shot) | Dynamic |
+| 10a-b | **WebDAV storage templates** — summaries, soul | `harness.rs:922-978`, `edit_soul.rs:38-48` | WebDAV storage | Dynamic |
+| 11 | **Debug binary messages** | `rocketchat/main.rs:39-68`, `client.rs:58-123` | RocketChat / console | Dynamic |
