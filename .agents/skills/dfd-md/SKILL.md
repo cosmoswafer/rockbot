@@ -41,12 +41,7 @@ DFD must be:
 2. **Integration probe (data collection)** — write a live-data probe (no
    mocking; targets a live server, API, or resource) and run it to collect
    actual data shapes. Use this data as reference for the implementation phase.
-3. **Concrete implementation** — code the types, core logic, and wiring
-   described by the DFD. Favour incremental, type-first implementation.
-4. **Review all DFDs** — once the implementation is stable, re-read every DFD
-   in the project and confirm it still matches the code. Update any DFD that
-   has drifted.
-5. **Implement data flow validation constraints** — enforce data structure
+3. **Implement data flow validation constraints** — enforce data structure
    correctness through code-level constraints.  Every data flow crossing DFD
    boundaries must carry a concrete type/struct; parse and validate at
    subsystem entry points ("parse, don't validate").  Cross-DFD shared
@@ -54,6 +49,11 @@ DFD must be:
    producer and consumer crates — this makes mismatches a compile-time error.
    Where runtime validation is unavoidable, fail fast with a clear error naming
    the expected DFD data structure and the offending field.
+4. **Concrete implementation** — code the types, core logic, and wiring
+   described by the DFD. Favour incremental, type-first implementation.
+5. **Review all DFDs** — once the implementation is stable, re-read every DFD
+   in the project and confirm it still matches the code. Update any DFD that
+   has drifted.
 
 ## Notation
 
