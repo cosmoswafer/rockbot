@@ -32,14 +32,12 @@ cargo test                          # all unit + mock integration tests
 cargo test -p rocketchat            # single crate
 cargo test -p rockbot
 cargo test -p webdav
-cargo test -- --ignored             # real integration tests (needs config.toml credentials)
-cargo test --test integration_real -- --ignored   # single test file (ignored)
+cargo test -- --ignored             # live data integration probes (needs config.toml credentials)
+cargo test --test integration_real -- --ignored   # single probe file (ignored)
 RUST_LOG=debug cargo test -p rocketchat --test integration_real -- --ignored --nocapture  # with logging
 ```
 
 No CI, no `rustfmt.toml`, no `clippy.toml`, no `rust-toolchain` file.
-
-Full test inventory: `_docs/test_suite/running.md` (588 tests: 391 core + 174 user + 23 real).
 
 ## Code style
 
@@ -68,8 +66,10 @@ Full test inventory: `_docs/test_suite/running.md` (588 tests: 391 core + 174 us
 
 Data Flow Diagrams in `_dfds/` are the design spec. The development flow is defined in the [`dfd-md` skill](.agents/skills/dfd-md/SKILL.md). Key rules:
 
-- **Phase 1-3**: Design DFD → write real integration test for live data → implement.
-- **Phase 4**: Three test layers — Core (inline `#[cfg(test)]` per DFD), User (multi-DFD wiremock scenarios), Real (`#[ignore]`-ed live-server tests). Every DFD's structures, regexes, and formats must have test coverage.
+- **Phase 1**: Design or revise the DFD to accurately model desired data movement.
+- **Phase 2**: Write an integration probe (no mocking, live server) to collect actual data shapes for reference.
+- **Phase 3**: Implement data flow validation constraints — parse-and-validate at subsystem boundaries with concrete types. Cross-DFD shared structures defined once in a canonical location, imported by both producer and consumer crates, making mismatches compile-time errors.
+- **Phase 4**: Concrete implementation — code types, core logic, and wiring described by the DFD.
 - **Phase 5**: Re-read all DFDs and confirm they match the code. If a DFD's mtime is newer than its corresponding Rust source, the code is stale and must be updated to match the DFD. If the code was updated first, update the DFD.
 - **Phase 6**: `cargo build --release` → commit → push → restart bot.
 
