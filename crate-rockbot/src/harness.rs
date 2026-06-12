@@ -19,8 +19,10 @@ use crate::utils::{now_iso_string, today_iso_date};
 const DEFAULT_SYSTEM_PROMPT: &str = "\
 You are {name}, a helpful AI assistant running on a RocketChat server. \
 You respond to DMs and @mentions concisely and helpfully. \
-Context space is limited — keep your reasoning brief and avoid verbose \
-explanations. Use tools to fetch information rather than guessing. \
+Context space is limited to ~{max_context_mb}MB / 1M tokens. Keep your \
+reasoning brief and avoid verbose explanations. Use tools to fetch \
+information rather than guessing. You have up to {max_iterations} iterations \
+per task — plan your tool calls efficiently. \
 When you need the current date or time, use the datetime tool. \
 When you need information from the web, use the web_search tool. \
 When you need to fetch a URL, use web_fetch. \
@@ -465,7 +467,12 @@ impl AgentHarness {
 
     fn build_system_prompt(&self) -> String {
         let name = &self.config.rocketchat.server.username;
-        DEFAULT_SYSTEM_PROMPT.replace("{name}", name)
+        let max_ctx = self.config.rocketchat.model.max_context_bytes as f64 / 1_000_000.0;
+        let max_iter = self.config.rocketchat.model.max_iterations;
+        DEFAULT_SYSTEM_PROMPT
+            .replace("{name}", name)
+            .replace("{max_context_mb}", &format!("{max_ctx:.1}"))
+            .replace("{max_iterations}", &max_iter.to_string())
     }
 
     fn resolve_model(&self) -> String {
