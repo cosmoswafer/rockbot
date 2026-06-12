@@ -78,15 +78,41 @@ URLs may be HTTP(S) URLs, or data URIs (`data:image/...;base64,...`). Both are p
 
 ### `image_config` Parameters
 
-| Parameter | Type | Description |
-|---|---|---|
-| `aspect_ratio` | string | `"1:1"`, `"16:9"`, `"9:16"`, `"4:3"`, `"3:4"`, `"2:3"`, `"3:2"`, `"21:9"`, `"4:5"`, `"5:4"` |
-| `image_size` | string | `"1K"`, `"2K"`, `"4K"`, `"0.5K"`; or explicit `"WIDTHxHEIGHT"` for custom |
-| `output_format` | string | `"png"`, `"jpeg"`, `"webp"` |
-| `quality` | string | `"low"`, `"medium"`, `"high"` (model-dependent) |
-| `num_images` | number | Number of images to generate |
+Our `ImageSizeValue::Preset` names are mapped to `aspect_ratio`. The resolution
+tier is hardcoded to `"4K"` (highest available). Both are set from config —
+the LLM does not control image size.
 
-Our `ImageSizeValue::Preset` names are mapped to `aspect_ratio`:
+| Parameter | Type | Source | Description |
+|---|---|---|---|
+| `aspect_ratio` | string | Config `default_image_size` → preset_to_aspect_ratio | `"2:3"`, `"16:9"`, `"9:16"`, `"4:3"`, `"3:4"`, `"3:2"`, `"1:1"` |
+| `image_size` | string | Hardcoded `"4K"` | `"1K"`, `"2K"`, `"4K"`, `"0.5K"`; or `"WxH"` for custom |
+| `output_format` | string | Config `default_output_format` | `"png"`, `"jpeg"`, `"webp"` |
+| `quality` | string | Config `default_quality` | `"low"`, `"medium"`, `"high"` |
+| `num_images` | integer | Config `default_num_images` | Number of images to generate |
+
+Example request with all `image_config` fields:
+
+```json
+{
+  "model": "bytedance-seed/seedream-4.5",
+  "modalities": ["image"],
+  "image_config": {
+    "aspect_ratio": "2:3",
+    "image_size": "4K",
+    "output_format": "png",
+    "quality": "medium",
+    "num_images": 1
+  },
+  "messages": [{"role": "user", "content": "..."}]
+}
+```
+
+> **Seedream note**: the `output_format: "png"` parameter is ignored by
+> `bytedance-seed/seedream-4.5` — it always returns JPEG regardless.
+> At `image_size: "4K"` with `aspect_ratio: "2:3"` the output is
+> ~2730×4096 px (11.2 MP).
+
+Preset → `aspect_ratio` mapping:
 
 | Preset | → `aspect_ratio` |
 |---|---|
@@ -99,7 +125,8 @@ Our `ImageSizeValue::Preset` names are mapped to `aspect_ratio`:
 | `square` / `square_hd` | `"1:1"` |
 | unknown / `auto` | passed through as-is |
 
-Custom sizes (`ImageSizeValue::Custom { width, height }`) are sent as `"WxH"` in the `image_size` field.
+Custom sizes (`ImageSizeValue::Custom { width, height }`) are sent as
+`"W:H"` ratio in `aspect_ratio`.
 
 ### Success Response
 
