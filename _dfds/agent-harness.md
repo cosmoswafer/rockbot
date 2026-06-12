@@ -34,8 +34,9 @@ Intentionally absent — not needed for rockbot's scope:
   room and receives new messages for archival
 - Downstream: [Knowledge Management](base/knowledge.md) extracts and persists
   domain facts, loads entries into agent context on room init
-- Downstream: Individual tools (see `tools/` directory) are registered in
-  `ToolRegistry` and invoked by the agent loop via `execute_by_name()`
+ - Downstream: Individual tools (see `tools/` directory) are registered in
+   `ToolRegistry` and invoked by the agent loop via `execute_by_name()`
+ - Shared: `ImageCache` (`image_cache.rs`) stores `GeneratedImage` entries keyed by call_id for the image upload pipeline (§2i)
 
 ## 2. Diagram
 
@@ -233,7 +234,7 @@ ephemeral, used for a single LLM cycle.
 
 ```mermaid
 flowchart TD
-    VISION_RESULT[Vision Tool Result<br/>![n](data:...)]
+    VISION_RESULT["Vision Tool Result<br/>(image data URIs)"]
     CACHE(CacheVisionImages<br/>parse data URIs)
     POOL[(ImagePool<br/>HashMap<room_id, Vec<CachedImage>>)]
     BUILD(BuildContext)
@@ -309,6 +310,51 @@ tokens > 2 characters, split on non-alphanumeric boundaries). The resulting
 `week_count` (0-7) and current priority drive a state machine (see
 knowledge-priority.md section 2b).
 
+### 2i. Generated Image Upload & Injection Pipeline
+
+After the LLM produces a final text reply, the harness scans for image_gen
+tool calls made during the agent loop. For each successful image_gen call,
+it retrieves the `GeneratedImage` from `ImageCache`, uploads the raw image
+bytes to RocketChat as a file attachment, and replaces the `image_key`
+placeholder in the reply text with the attachment URL. This keeps the
+message payload small — no base64 data URIs are embedded.
+
+```mermaid
+flowchart TD
+    LLM_TEXT["text reply<br/>(references image_key)"]
+    IMG_IDS["image_ids_this_turn<br/>(call_ids from image_gen)"]
+    CACHE[(ImageCache)]
+    TAKE(CacheTake<br/>by call_id)
+    BYTES["image_bytes<br/>+ mime_type"]
+    UPLOAD(UploadToRocketChat<br/>POST rooms.upload)
+    RC[RocketChat]
+    URL["attachment URL<br/>from upload response"]
+    REPLACE(Replace image_key<br/>with URL in reply)
+    SEND(SendReply<br/>via REST or DDP)
+
+    LLM_TEXT --> REPLACE
+    IMG_IDS --> TAKE
+    TAKE -->|"lookup by call_id"| CACHE
+    CACHE -->|"GeneratedImage"| BYTES
+    BYTES -->|"multipart file"| UPLOAD
+    UPLOAD -->|"POST /api/v1/rooms.upload/{roomId}"| RC
+    RC -->|"file_id + download URL"| URL
+    URL --> REPLACE
+    REPLACE -->|"reply text (small, no base64)"| SEND
+    SEND -->|"chat.sendMessage"| RC
+```
+
+**Design rationale**: embedding multi-megabyte base64 data URIs in message text
+exceeds RocketChat's `Message_MaxAllowedSize` (HTTP 400). Uploading the image
+as a proper file attachment — which RocketChat can store and serve natively —
+eliminates the size limit while preserving inline image display for the user.
+The `ImageCache` stores `image_bytes: Vec<u8>` specifically to enable this
+upload without re-downloading from WebDAV.
+
+**Fallback**: if the RocketChat upload fails, the image URL is omitted from the
+reply and the LLM's text is sent as-is. No retry or error injection — the
+image remains on WebDAV for inspection.
+
 ## 3. Data Structures
 
 - **AgentContext** — does not exist as a struct. The harness constructs these values on the fly: `system_prompt` is built by `build_system_prompt()`, `history` by `build_context()`, `tools` by `ToolRegistry::definitions()`, `room_id` is a method parameter, `webdav_dir` is computed by `compute_webdav_dir()`.
@@ -343,6 +389,16 @@ knowledge-priority.md section 2b).
 | `description`| `Option<String>`| Human-readable description for the LLM  |
 | `parameters` | `Option<Value>` | JSON Schema for arguments               |
 | `strict`     | `Option<bool>`  | Whether to enforce strict schema        |
+
+#### `GeneratedImage` (ImageCache Entry)
+
+Stored in `Arc<Mutex<HashMap<String, GeneratedImage>>>` keyed by tool call_id.
+
+| Field          | Type     | Description                                   |
+| -------------- | -------- | --------------------------------------------- |
+| `webdav_path`  | `string` | WebDAV path where the image was persisted     |
+| `image_bytes`  | `Vec<u8>`| Raw image bytes for RocketChat file upload    |
+| `mime_type`    | `string` | MIME type, e.g. `image/png`                  |
 
 #### Registered Tools
 

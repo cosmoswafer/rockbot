@@ -287,6 +287,69 @@ impl RestApiClient {
 
         Ok(())
     }
+
+    pub async fn upload_file_to_room(
+        &self,
+        room_id: &str,
+        file_name: &str,
+        file_bytes: Vec<u8>,
+        mime_type: &str,
+    ) -> Result<String> {
+        let url = self.api_url(&format!("rooms.upload/{}", room_id));
+        debug!("REST POST {} (upload file: {})", url, file_name);
+
+        let part = reqwest::multipart::Part::bytes(file_bytes)
+            .file_name(file_name.to_string())
+            .mime_str(mime_type)
+            .map_err(|e| RocketChatError::Protocol(format!("MIME parse error: {e}")))?;
+
+        let form = reqwest::multipart::Form::new()
+            .part("file", part)
+            .text("msg", format!("{} uploaded", file_name));
+
+        let resp = self
+            .http
+            .post(&url)
+            .headers({
+                let mut headers = self.headers();
+                headers.remove("Content-Type");
+                headers
+            })
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| RocketChatError::Protocol(format!("rooms.upload HTTP error: {e}")))?;
+
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+
+        if !status.is_success() {
+            return Err(RocketChatError::Protocol(format!(
+                "rooms.upload returned {status}: {body}"
+            )));
+        }
+
+        let data: serde_json::Value = serde_json::from_str(&body).map_err(|e| {
+            RocketChatError::Protocol(format!("Failed to parse rooms.upload response: {e}"))
+        })?;
+
+        if data.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
+            // Return the file attachment URL path (e.g. /file-upload/uuid/filename)
+            let file_url = data
+                .get("files")
+                .and_then(|f| f.get(0))
+                .and_then(|f| f.get("url"))
+                .and_then(|u| u.as_str())
+                .map(String::from)
+                .unwrap_or_default();
+            debug!("REST rooms.upload ok, file_url: {}", file_url);
+            Ok(file_url)
+        } else {
+            Err(RocketChatError::Protocol(format!(
+                "rooms.upload failed: {body}"
+            )))
+        }
+    }
 }
 
 #[cfg(test)]

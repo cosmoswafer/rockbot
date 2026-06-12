@@ -411,14 +411,56 @@ impl AgentHarness {
                                 if let Some(img) =
                                     self.image_cache.take(image_id)
                                 {
-                                    let markdown = image_markdown(
-                                        "Generated image",
-                                        &img.data_uri,
-                                    );
+                                    let image_url = if let Some(ref rc) =
+                                        self.rest_client
+                                    {
+                                        let file_name = format!(
+                                            "{}.{}",
+                                            image_id,
+                                            img.file_extension()
+                                        );
+                                        match rc
+                                            .upload_file_to_room(
+                                                room_id,
+                                                &file_name,
+                                                img.image_bytes.clone(),
+                                                &img.mime_type,
+                                            )
+                                            .await
+                                        {
+                                            Ok(url) => {
+                                                let base =
+                                                    &self.config.rocketchat.server.url;
+                                                let slot =
+                                                    if base.starts_with("https") {
+                                                        "https"
+                                                    } else {
+                                                        "http"
+                                                    };
+                                                format!(
+                                                    "{}://{}{}",
+                                                    slot, base, url
+                                                )
+
+                                            }
+                                            Err(e) => {
+                                                warn!(
+                                                    "Image upload to RocketChat failed for {}: {}, falling back to data URI",
+                                                    image_id, e
+                                                );
+                                                img.data_uri()
+                                            }
+                                        }
+                                    } else {
+                                        img.data_uri()
+                                    };
+
+                                    let markdown =
+                                        image_markdown("Generated image", &image_url);
                                     if reply.contains(image_id.as_str()) {
                                         reply = reply.replace(
                                             image_id.as_str(),
-                                            &img.data_uri,
+                                            &image_url,
                                         );
                                     } else {
                                         reply.push_str(&format!(

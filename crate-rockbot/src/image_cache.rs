@@ -1,9 +1,28 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+use base64::Engine;
+
 pub struct GeneratedImage {
     pub webdav_path: String,
-    pub data_uri: String,
+    pub image_bytes: Vec<u8>,
+    pub mime_type: String,
+}
+
+impl GeneratedImage {
+    pub fn data_uri(&self) -> String {
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&self.image_bytes);
+        format!("data:{};base64,{}", self.mime_type, b64)
+    }
+
+    pub fn file_extension(&self) -> &str {
+        match self.mime_type.as_str() {
+            "image/jpeg" | "image/jpg" => "jpg",
+            "image/png" => "png",
+            "image/webp" => "webp",
+            _ => "png",
+        }
+    }
 }
 
 pub struct ImageCache {
@@ -33,6 +52,6 @@ impl ImageCache {
     }
 }
 
-pub fn image_markdown(description: &str, data_uri: &str) -> String {
-    format!("![{}]({})", description, data_uri)
+pub fn image_markdown(description: &str, url: &str) -> String {
+    format!("![{}]({})", description, url)
 }

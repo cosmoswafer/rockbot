@@ -255,10 +255,9 @@ impl Tool for ImageGenTool {
             t_start.elapsed().as_millis(),
         );
 
-        let image_url = format!(
-            "data:image/{};base64,{}",
-            ext.replace("jpg", "jpeg"),
-            base64::engine::general_purpose::STANDARD.encode(&image_bytes)
+        let mime = format!(
+            "image/{}",
+            ext.replace("jpg", "jpeg")
         );
 
         let image_key = args
@@ -271,7 +270,8 @@ impl Tool for ImageGenTool {
             &image_key,
             GeneratedImage {
                 webdav_path: webdav_path.clone(),
-                data_uri: image_url,
+                image_bytes: image_bytes.clone(),
+                mime_type: mime,
             },
         );
 
