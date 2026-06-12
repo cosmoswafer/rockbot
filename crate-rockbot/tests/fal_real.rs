@@ -2,7 +2,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use rockbot::config::ProviderConfig;
-use rockbot::provider::fal::{FalAiProvider, ImageGenParams, ImageSizeValue};
+use rockbot::provider::fal::FalAiProvider;
+use rockbot::types::{ImageGenParams, ImageSizeValue};
 
 /// Find the workspace root by walking up from CARGO_MANIFEST_DIR.
 fn workspace_root() -> PathBuf {
@@ -87,7 +88,7 @@ async fn test_fal_image_edit_with_p1() {
 
     // This call exercises submit_request → poll_status → fetch_result.
     // With the current buggy status URL, poll_status will fail with an empty 405 response.
-    let result = provider.generate_image(&params).await;
+    let result = provider.generate_image_url(&params).await;
 
     match result {
         Ok(url) => {

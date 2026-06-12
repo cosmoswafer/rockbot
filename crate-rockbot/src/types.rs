@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::error::{Result, RockBotError};
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
@@ -335,4 +337,98 @@ pub struct UsageInfo {
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
     pub total_tokens: u64,
+}
+
+#[derive(Debug, Clone)]
+pub enum ImageSizeValue {
+    Preset(String),
+    Custom { width: u32, height: u32 },
+}
+
+#[derive(Debug, Clone)]
+pub struct ImageGenParams {
+    pub prompt: String,
+    pub quality: Option<String>,
+    pub image_size: Option<ImageSizeValue>,
+    pub output_format: Option<String>,
+    pub num_images: Option<u32>,
+    pub model_id: Option<String>,
+    pub image_urls: Option<Vec<String>>,
+}
+
+impl ImageGenParams {
+    pub fn new(prompt: impl Into<String>) -> Self {
+        Self {
+            prompt: prompt.into(),
+            quality: None,
+            image_size: None,
+            output_format: None,
+            num_images: None,
+            model_id: None,
+            image_urls: None,
+        }
+    }
+
+    pub fn resolve_image_size(&self) -> Option<serde_json::Value> {
+        match &self.image_size {
+            Some(ImageSizeValue::Preset(name)) => Self::lookup_preset(name)
+                .map(|(w, h)| serde_json::json!({ "width": w, "height": h }))
+                .or_else(|| Some(serde_json::json!(name))),
+            Some(ImageSizeValue::Custom { width, height }) => {
+                Some(serde_json::json!({ "width": width, "height": height }))
+            }
+            None => None,
+        }
+    }
+
+    fn lookup_preset(name: &str) -> Option<(u32, u32)> {
+        match name {
+            "square_hd" => Some((2880, 2880)),
+            "landscape_16_9" => Some((3840, 2160)),
+            "portrait_16_9" => Some((2160, 3840)),
+            "landscape_4_3" => Some((3312, 2480)),
+            "portrait_4_3" => Some((2480, 3312)),
+            "landscape_3_2" => Some((3504, 2336)),
+            "portrait_2_3" => Some((2336, 3504)),
+            "square" => Some((512, 512)),
+            _ => None,
+        }
+    }
+
+    pub fn validate_dimensions(&self) -> Result<()> {
+        if let Some(ImageSizeValue::Custom { width, height }) = &self.image_size {
+            let pixels = (*width as u64) * (*height as u64);
+            let max_edge = std::cmp::max(*width, *height);
+            let min_edge = std::cmp::min(*width, *height);
+
+            if max_edge > 3840 {
+                return Err(RockBotError::Provider(format!(
+                    "image_size max edge must be ≤3840px (got {}×{}).",
+                    width, height
+                )));
+            }
+
+            if min_edge > 0 && max_edge as f64 / min_edge as f64 > 3.0 {
+                return Err(RockBotError::Provider(format!(
+                    "image_size aspect ratio must be ≤3:1 (got {}×{}).",
+                    width, height
+                )));
+            }
+
+            if pixels < 655_360 || pixels > 8_294_400 {
+                return Err(RockBotError::Provider(format!(
+                    "image_size pixel count must be 655,360–8,294,400 (got {} from {}×{}).",
+                    pixels, width, height
+                )));
+            }
+
+            if *width % 16 != 0 || *height % 16 != 0 {
+                return Err(RockBotError::Provider(format!(
+                    "image_size dimensions must be multiples of 16 (got {}×{}).",
+                    width, height
+                )));
+            }
+        }
+        Ok(())
+    }
 }

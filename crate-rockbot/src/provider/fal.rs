@@ -1,63 +1,8 @@
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 use crate::config::ProviderConfig;
 use crate::error::{Result, RockBotError};
-
-#[derive(Debug, Clone)]
-pub enum ImageSizeValue {
-    Preset(String),
-    Custom { width: u32, height: u32 },
-}
-
-#[derive(Debug, Clone)]
-pub struct ImageGenParams {
-    pub prompt: String,
-    pub quality: Option<String>,
-    pub image_size: Option<ImageSizeValue>,
-    pub output_format: Option<String>,
-    pub num_images: Option<u32>,
-    pub model_id: Option<String>,
-    pub image_urls: Option<Vec<String>>,
-}
-
-impl ImageGenParams {
-    pub fn new(prompt: impl Into<String>) -> Self {
-        Self {
-            prompt: prompt.into(),
-            quality: None,
-            image_size: None,
-            output_format: None,
-            num_images: None,
-            model_id: None,
-            image_urls: None,
-        }
-    }
-
-    pub fn resolve_image_size(&self) -> Option<serde_json::Value> {
-        match &self.image_size {
-            Some(ImageSizeValue::Preset(name)) => Self::lookup_preset(name)
-                .map(|(w, h)| serde_json::json!({ "width": w, "height": h }))
-                .or_else(|| Some(serde_json::json!(name))),
-            Some(ImageSizeValue::Custom { width, height }) => {
-                Some(serde_json::json!({ "width": width, "height": height }))
-            }
-            None => None,
-        }
-    }
-
-    fn lookup_preset(name: &str) -> Option<(u32, u32)> {
-        match name {
-            "square_hd" => Some((2880, 2880)),
-            "landscape_16_9" => Some((3840, 2160)),
-            "portrait_16_9" => Some((2160, 3840)),
-            "landscape_4_3" => Some((3312, 2480)),
-            "portrait_4_3" => Some((2480, 3312)),
-            "landscape_3_2" => Some((3504, 2336)),
-            "portrait_2_3" => Some((2336, 3504)),
-            "square" => Some((512, 512)),
-            _ => None,
-        }
-    }
-}
+#[allow(unused_imports)]
+use crate::types::{ImageGenParams, ImageSizeValue};
 
 struct SubmittedRequest {
     request_id: String,
@@ -178,12 +123,17 @@ impl FalAiProvider {
         let resp_body: serde_json::Value = response.json().await?;
 
         if !status.is_success() {
+            let detail = resp_body
+                .get("detail")
+                .and_then(|d| d.as_str())
+                .unwrap_or("Unknown error");
+            warn!(
+                "fal.ai submit failed (HTTP {}): model={} detail={}",
+                status.as_u16(), model_id, detail
+            );
             return Err(RockBotError::Provider(format!(
                 "fal.ai submit failed: {}",
-                resp_body
-                    .get("detail")
-                    .and_then(|d| d.as_str())
-                    .unwrap_or("Unknown error")
+                detail
             )));
         }
 
@@ -205,7 +155,7 @@ impl FalAiProvider {
             .map(String::from)
             .ok_or_else(|| RockBotError::Provider("fal.ai response missing response_url".into()))?;
 
-        debug!("fal.ai request submitted: request_id={}", request_id);
+        debug!("fal.ai request submitted: request_id={} status_url={}", request_id, status_url);
         Ok(SubmittedRequest {
             request_id,
             status_url,
@@ -249,7 +199,7 @@ impl FalAiProvider {
                 .and_then(|s| s.as_str())
                 .unwrap_or("unknown");
 
-            if attempt > 0 && attempt % 10 == 0 {
+            if attempt % 5 == 0 {
                 debug!(
                     "fal.ai poll progress: request_id={} attempt={}/{} status={}",
                     req.request_id, attempt, max_attempts, status
@@ -258,7 +208,7 @@ impl FalAiProvider {
 
             match status {
                 "COMPLETED" => {
-                    debug!(
+                    info!(
                         "fal.ai request completed: request_id={} attempts={} elapsed_ms={}",
                         req.request_id,
                         attempt + 1,
@@ -288,6 +238,7 @@ impl FalAiProvider {
     }
 
     async fn fetch_result(&self, req: &SubmittedRequest) -> Result<String> {
+        debug!("fal.ai fetch_result: request_id={} url={}", req.request_id, req.response_url);
         let response = self
             .http_client
             .get(&req.response_url)
@@ -303,6 +254,10 @@ impl FalAiProvider {
                 .get("detail")
                 .and_then(|d| d.as_str())
                 .unwrap_or("Unknown error");
+            warn!(
+                "fal.ai fetch_result failed (HTTP {}): request_id={} detail={}",
+                http_status.as_u16(), req.request_id, detail
+            );
             return Err(RockBotError::Provider(format!(
                 "fal.ai fetch result failed (HTTP {}): {}",
                 http_status.as_u16(), detail
@@ -317,14 +272,21 @@ impl FalAiProvider {
             .and_then(|u| u.as_str());
 
         match image_url {
-            Some(url) => Ok(url.to_string()),
-            None => Err(RockBotError::Provider(
-                "fal.ai result missing image URL".into(),
-            )),
+            Some(url) => {
+                debug!("fal.ai fetch_result: got image url={}", url);
+                Ok(url.to_string())
+            }
+            None => {
+                warn!("fal.ai fetch_result: missing image URL in response body={:?}", body);
+                Err(RockBotError::Provider(
+                    "fal.ai result missing image URL".into(),
+                ))
+            }
         }
     }
 
-    pub async fn generate_image(&self, params: &ImageGenParams) -> Result<String> {
+    pub async fn generate_image_url(&self, params: &ImageGenParams) -> Result<String> {
+        params.validate_dimensions()?;
         let req = self.submit_request(params).await?;
         self.poll_status(&req).await
     }
@@ -339,6 +301,7 @@ impl FalAiProvider {
             .unwrap_or_default()
             .as_secs();
         let filename = format!("rockbot-{}.{}", ts, ext);
+        debug!("fal.ai upload init: filename={} storage_url={}", filename, self.storage_url);
         let init_body = serde_json::json!({
             "content_type": content_type,
             "file_name": filename,
@@ -355,9 +318,11 @@ impl FalAiProvider {
         let status = response.status();
         let body: serde_json::Value = response.json().await?;
         if !status.is_success() {
+            let detail = body.get("detail").and_then(|d| d.as_str()).unwrap_or("Unknown error");
+            warn!("fal.ai upload init failed (HTTP {}): detail={}", status.as_u16(), detail);
             return Err(RockBotError::Provider(format!(
                 "fal.ai upload init failed: {}",
-                body.get("detail").and_then(|d| d.as_str()).unwrap_or("Unknown error")
+                detail
             )));
         }
         let file_url = body
@@ -368,8 +333,10 @@ impl FalAiProvider {
             .get("upload_url")
             .and_then(|u| u.as_str())
             .ok_or_else(|| RockBotError::Provider("fal.ai upload init missing upload_url".into()))?;
+        debug!("fal.ai upload init ok: file_url={}", file_url);
 
         // Step 2: PUT the file binary
+        debug!("fal.ai upload PUT: sending {}B to presigned URL", data.len());
         let put_response = self
             .http_client
             .put(upload_url)
@@ -381,14 +348,54 @@ impl FalAiProvider {
         let put_status = put_response.status();
         if !put_status.is_success() {
             let put_body: serde_json::Value = put_response.json().await?;
+            let detail = put_body.get("detail").and_then(|d| d.as_str()).unwrap_or("Unknown error");
+            warn!("fal.ai upload PUT failed (HTTP {}): detail={}", put_status.as_u16(), detail);
             return Err(RockBotError::Provider(format!(
                 "fal.ai upload PUT failed (HTTP {}): {}",
-                put_status,
-                put_body.get("detail").and_then(|d| d.as_str()).unwrap_or("Unknown error")
+                put_status, detail
             )));
         }
 
+        debug!("fal.ai upload PUT ok: file_url={}", file_url);
         Ok(file_url.to_string())
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::provider::ImageProvider for FalAiProvider {
+    async fn generate_image(&self, params: &ImageGenParams) -> Result<Vec<u8>> {
+        let url = self.generate_image_url(params).await?;
+        let response = self
+            .http_client
+            .get(&url)
+            .timeout(std::time::Duration::from_secs(600))
+            .send()
+            .await
+            .map_err(|e| RockBotError::Provider(format!("Failed to download generated image: {e}")))?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(RockBotError::Provider(format!(
+                "Failed to download generated image: HTTP {}",
+                status
+            )));
+        }
+        response
+            .bytes()
+            .await
+            .map(|b| b.to_vec())
+            .map_err(|e| RockBotError::Provider(format!("Failed to read image bytes: {e}")))
+    }
+
+    async fn upload_file(&self, data: &[u8], content_type: &str) -> Result<String> {
+        FalAiProvider::upload_file(self, data, content_type).await
+    }
+
+    fn provider_name(&self) -> &str {
+        FalAiProvider::provider_name(self)
+    }
+
+    fn model_id(&self) -> &str {
+        FalAiProvider::model_id(self)
     }
 }
 

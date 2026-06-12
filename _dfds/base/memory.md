@@ -238,6 +238,8 @@ flowchart TD
     INJECT -->|"soul + summaries + history"| CTX[Agent Context]
 ```
 
+> **Note:** The diagram shows parallel branches for loading `soul.md` and summaries. The current implementation loads them sequentially — soul first, then summaries — rather than issuing concurrent WebDAV requests.
+
 Knowledge entries are also restored during room init — see [Knowledge Management](knowledge.md).
 
 Key properties:
@@ -339,6 +341,7 @@ change). Source of truth for each layer remains its dedicated file
 | `daily_summaries`      | `HashMap<String, Vec<DailySummary>>` | Layer 2 in-memory cache           |
 | `souls`                | `HashMap<String, SoulMemory>`| Layer 3 in-memory cache                  |
 | `dirty_snapshots`      | `HashSet<String>`            | Room IDs needing snapshot rebuild        |
+| `knowledge`            | `HashMap<String, String>`    | Pre-formatted knowledge system messages per room |
 | `persist_interval_secs`| `u64`                        | Timer interval for writing snapshots (default 60) |
 | `max_context_bytes`    | `usize`                      | Max total JSON bytes sent to LLM (default 30MB). Drops oldest `ImageUrl` parts first when exceeded, preserving the latest user message images. |
 

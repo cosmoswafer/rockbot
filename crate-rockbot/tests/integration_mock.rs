@@ -1,9 +1,8 @@
 use rockbot::config::ProviderConfig;
 use rockbot::error::RockBotError;
-use rockbot::provider::fal::ImageGenParams;
 use rockbot::provider::{AiProvider, DeepSeekProvider, FalAiProvider, OpenRouterProvider};
 use rockbot::tool::Tool;
-use rockbot::types::{ChatMessage, ChatRequest, FinishReason, ThinkingConfig, ToolDef};
+use rockbot::types::{ChatMessage, ChatRequest, FinishReason, ImageGenParams, ThinkingConfig, ToolDef};
 use std::collections::HashMap;
 use wiremock::matchers::{body_string_contains, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -1535,7 +1534,7 @@ async fn test_webdav_edit_multiple_matches() {
     assert!(err.contains("found 2 times"));
 }
 
-// ─── Mock HTTP Tests: FalAiProvider.generate_image() ──────────────────────────
+// ─── Mock HTTP Tests: FalAiProvider.generate_image_url() ──────────────────────────
 
 fn make_fal_config(mock_uri: &str) -> ProviderConfig {
     ProviderConfig {
@@ -1588,7 +1587,7 @@ async fn test_fal_submit_request() {
 
     let config = make_fal_config(&base);
     let provider = FalAiProvider::new(&config, "fal-ai/flux/schnell").unwrap();
-    let url = provider.generate_image(&ImageGenParams::new("a sunset")).await.unwrap();
+    let url = provider.generate_image_url(&ImageGenParams::new("a sunset")).await.unwrap();
     assert_eq!(url, "https://fal.media/result.png");
 }
 
@@ -1606,7 +1605,7 @@ async fn test_fal_submit_unauthorized() {
 
     let config = make_fal_config(&mock_server.uri());
     let provider = FalAiProvider::new(&config, "fal-ai/flux/schnell").unwrap();
-    let result = provider.generate_image(&ImageGenParams::new("test")).await;
+    let result = provider.generate_image_url(&ImageGenParams::new("test")).await;
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("Invalid key"));
 }
@@ -1623,7 +1622,7 @@ async fn test_fal_submit_missing_request_id() {
 
     let config = make_fal_config(&mock_server.uri());
     let provider = FalAiProvider::new(&config, "fal-ai/flux/schnell").unwrap();
-    let result = provider.generate_image(&ImageGenParams::new("test")).await;
+    let result = provider.generate_image_url(&ImageGenParams::new("test")).await;
     assert!(result.is_err());
 }
 
@@ -1653,7 +1652,7 @@ async fn test_fal_poll_status_failed() {
 
     let config = make_fal_config(&base);
     let provider = FalAiProvider::new(&config, "fal-ai/flux/schnell").unwrap();
-    let result = provider.generate_image(&ImageGenParams::new("test")).await;
+    let result = provider.generate_image_url(&ImageGenParams::new("test")).await;
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("NSFW"));
 }
@@ -1683,7 +1682,7 @@ async fn test_fal_poll_status_http_error() {
 
     let config = make_fal_config(&base);
     let provider = FalAiProvider::new(&config, "fal-ai/flux/schnell").unwrap();
-    let result = provider.generate_image(&ImageGenParams::new("test")).await;
+    let result = provider.generate_image_url(&ImageGenParams::new("test")).await;
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("503"));
 }
@@ -1703,7 +1702,7 @@ async fn test_fal_submit_missing_status_url() {
 
     let config = make_fal_config(&mock_server.uri());
     let provider = FalAiProvider::new(&config, "fal-ai/flux/schnell").unwrap();
-    let result = provider.generate_image(&ImageGenParams::new("test")).await;
+    let result = provider.generate_image_url(&ImageGenParams::new("test")).await;
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("status_url"));
 }
@@ -1724,7 +1723,7 @@ async fn test_fal_submit_missing_response_url() {
 
     let config = make_fal_config(&base);
     let provider = FalAiProvider::new(&config, "fal-ai/flux/schnell").unwrap();
-    let result = provider.generate_image(&ImageGenParams::new("test")).await;
+    let result = provider.generate_image_url(&ImageGenParams::new("test")).await;
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("response_url"));
 }

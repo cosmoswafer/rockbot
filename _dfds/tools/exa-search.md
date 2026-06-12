@@ -64,9 +64,9 @@ flowchart TD
     WARN_FALLBACK -->|"empty search results"| AGENT
 ```
 
-Note: RetryWithBackoff is not yet implemented — all HTTP errors are returned immediately.
+Note: HTTP errors are retried with up to 3 attempts using exponential backoff before returning a failure.
 
-Note: 401 is not currently differentiated from other HTTP errors.
+Note: 401 errors return a specific message: `"Exa search failed: invalid API key (401). Check your EXA_API_KEY env var or [tools.exa] config."`
 
 ### 2c. Search Request Construction Deep Dive
 
@@ -185,7 +185,7 @@ enables multi-step reasoning with structured outputs via `outputSchema`.
 | `text`           | `Option<String>`      | Full page markdown text (if requested)      |
 | `summary`        | `Option<String>`      | LLM-generated summary (if requested)        |
 
-Note: The tool currently (web_search.rs:39-49) only sends `query`, `numResults`, `type`, and `contents.highlights`. The following SearchRequest fields are defined but not yet wired to the tool: `category`, `include_domains`, `exclude_domains`, `start_published_date`, `end_published_date`, `user_location`, `output_schema`. Content modes 'text' and 'deep' are also not wired.
+Note: The following SearchRequest fields are defined but not yet wired to the tool: `category`, `include_domains`, `exclude_domains`, `start_published_date`, `end_published_date`, `user_location`, `output_schema`. All three content modes (highlights, text, deep) are now supported.
 
 ### `SearchResponse`
 

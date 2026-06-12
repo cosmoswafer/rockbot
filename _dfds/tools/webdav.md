@@ -182,7 +182,7 @@ the raw RocketChat room UUID is never used as a path segment.
 
 | Method                   | Returns  | Notes                                       |
 | ------------------------ | -------- | ------------------------------------------- |
-| `room_dir(key)`          | `String` | `/{root}/{key}/`                            |
+| `memory_dir(key)`        | `String` | `/{root}/{key}/memory/`                      |
 | `room_path(key, file)`   | `String` | `/{root}/{key}/{file_path}`                 |
 | `image_dir(key)`         | `String` | `/{root}/{key}/images/`                     |
 | `workspace_dir(key)`     | `String` | `/{root}/{key}/workspace/`                  |

@@ -94,15 +94,16 @@ flowchart TD
 | ---------------------- | ------- | ------------------------------------------------------------- |
 | `default_provider`     | `String`| Must match a `[[chat_providers]].name`                        |
 | `default_model`        | `String`| Model alias key in provider's models map                      |
-| `max_history_size`     | `usize` | Max conversation turns (default 12)                           |
+| `max_history_size`     | `usize` | Max conversation turns (default 21)                           |
 | `max_text_length`      | `usize` | Layer 1 overflow threshold chars (default 50000)              |
-| `max_iterations`       | `u32`   | Max agent loop iterations (default 8)                         |
+| `max_iterations`       | `u32`   | Max agent loop iterations (default 38)                         |
 | `max_summary_chars`    | `usize` | Layer 2 max chars across loaded summaries (default 8000)      |
 | `max_soul_chars`       | `usize` | Layer 3 max chars for soul.md content (default 2000)          |
 | `summary_days`         | `u32`   | Layer 2 retention window in days (default 7)                  |
 | `memory_ttl_secs`      | `u64`   | Room idle timeout — snapshot to WebDAV then evict (default 300)|
 | `persist_interval_secs`| `u64`   | Snapshot persist timer interval (default 60)                  |
 | `max_context_bytes`    | `usize` | Max total byte size of context sent to LLM (default 30MB). Exceeding this drops oldest image data first, preserving the latest user message images. |
+| `max_attachment_bytes` | `u64`   | Max size of a single attachment in bytes (default 25_000_000) |
 
 #### `ProviderConfig`
 
@@ -111,18 +112,29 @@ flowchart TD
 | `name`       | `String`                 | Provider identifier ("openrouter", etc.)                          |
 | `api_key`    | `String`                 | Provider API key (`""` in defaults, filled in user config)        |
 | `base_url`   | `String`                 | API endpoint base URL                                             |
-| `basecf_url` | `Option<String>`         | Cloudflare worker proxy override (opt.)                           |
+| `basecf_url` | `Option<String>`         | Cloudflare worker proxy override; used by Fal as storage/CDN upload URL |
 | `chat_path`  | `Option<String>`         | Chat completions path (Default: `/chat/completions`)             |
 | `draw_path`  | `Option<String>`         | Image generation path (opt.)                                      |
 | `models`     | `HashMap<String, String>`| Alias → model-id map                                              |
 
-> **Note:** `basecf_url` is deserialized but currently unused — both providers use `base_url` + `chat_path` via `ProviderConfig::chat_url()`.
+> **Note:** `basecf_url` is used by `FalAiProvider` as the `storage_url` for CDN uploads. Chat providers use `base_url` + `chat_path` via `ProviderConfig::chat_url()`.
 
 #### `ToolServiceConfig`
 
 | Field     | Type     | Notes                  |
 | --------- | -------- | ---------------------- |
 | `api_key` | `String` | Service-specific key   |
+
+#### `ImageModelConfig`
+
+| Field                   | Type     | Notes                                                     |
+| ----------------------- | -------- | --------------------------------------------------------- |
+| `default_provider`      | `String` | Must match an `[[image_providers]].name`                   |
+| `default_text_model`    | `String` | Model alias for text-to-image generation                  |
+| `default_edit_model`    | `String` | Model alias for image editing                             |
+| `default_quality`       | `String` | Image quality level (default `"standard"`)                 |
+| `default_output_format` | `String` | Output image format (default `"png"`)                      |
+| `default_num_images`    | `u32`    | Number of images per generation (default 1)                |
 
 #### `WebDavConfig`
 
@@ -133,6 +145,7 @@ flowchart TD
 | `password` | `String` | NextCloud app password                  |
 | `root`     | `String` | Base directory for bot data             |
 | `calendar_name` | `Option<String>` | CalDAV calendar name (enables calendar tool if set) |
+| `dav_path`      | `String`         | WebDAV/NextCloud API path prefix (default `"/remote.php/dav"`) |
 
 ## 4. Config Files
 

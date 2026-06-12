@@ -8,7 +8,7 @@ use tracing_subscriber::EnvFilter;
 
 use rockbot::config::AppConfig;
 use rockbot::harness::AgentHarness;
-use rockbot::provider::{AiProvider, DeepSeekProvider, FalAiProvider, OpenRouterProvider};
+use rockbot::provider::{AiProvider, DeepSeekProvider, FalAiProvider, ImageProvider, OpenRouterImageProvider, OpenRouterProvider};
 use rockbot::tool::ToolRegistry;
 use rockbot::tools::{
     CalendarTool, DateTimeTool, EditSoulTool, ForgetKnowledgeTool, ImageGenTool,
@@ -184,41 +184,60 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
 
             debug!("Resolved image models: t2i='{}' edit='{}'", resolved_t2i, resolved_edit);
 
-            match FalAiProvider::new(img_cfg, &resolved_t2i) {
-                Ok(fal_t2i) => {
-                    let fal_edit = if same_provider {
-                        FalAiProvider::new(img_cfg, &resolved_edit)
-                            .map_err(|e| warn!("Failed to create image gen provider ({}): {}", resolved_edit, e))
-                            .ok()
-                    } else {
-                        FalAiProvider::new(img_cfg, &resolved_edit)
-                            .map_err(|e| warn!("Failed to create edit-image provider ({}): {} — image_gen tool not registered", resolved_edit, e))
-                            .ok()
-                    };
-                    if let Some(fal_edit) = fal_edit {
-                        info!(
-                            "Registered image_gen with t2i={} / edit={}{}",
-                            resolved_t2i,
-                            resolved_edit,
-                            if same_provider { " (same provider)" } else { "" }
-                        );
-                        tool_registry.register(Box::new(ImageGenTool::with_img2img(
-                            fal_t2i,
-                            fal_edit,
-                            default_quality.to_string(),
-                            default_output_format.to_string(),
-                            default_num_images,
-                            webdav_client.clone(),
-                        )));
-                    } else {
-                        warn!("image_gen tool not registered — failed to create edit provider for '{}'", resolved_edit);
-                    }
+            let t2i_provider: Option<Box<dyn ImageProvider>> = match image_provider_name {
+                "fal" => FalAiProvider::new(img_cfg, &resolved_t2i).ok().map(|p| Box::new(p) as Box<dyn ImageProvider>),
+                "openrouter" => OpenRouterImageProvider::new(img_cfg, &resolved_t2i).ok().map(|p| Box::new(p) as Box<dyn ImageProvider>),
+                other => {
+                    warn!("Unknown image provider '{}' — image_gen tool not registered", other);
+                    None
                 }
-                Err(e) => {
-                    warn!(
-                        "Failed to create image gen provider ({}): {} — image_gen tool not registered",
-                        resolved_t2i, e
+            };
+
+            if let Some(t2i) = t2i_provider {
+                let edit_provider: Option<Box<dyn ImageProvider>> = {
+                    let same_match = if same_provider {
+                        match image_provider_name {
+                            "fal" => FalAiProvider::new(img_cfg, &resolved_edit).ok().map(|p| Box::new(p) as Box<dyn ImageProvider>),
+                            "openrouter" => OpenRouterImageProvider::new(img_cfg, &resolved_edit).ok().map(|p| Box::new(p) as Box<dyn ImageProvider>),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
+                    if same_provider && same_match.is_none() {
+                        warn!("Failed to create same-provider edit provider ({}) — image_gen tool not registered", resolved_edit);
+                    }
+                    if same_provider {
+                        same_match
+                    } else {
+                        match image_provider_name {
+                            "fal" => FalAiProvider::new(img_cfg, &resolved_edit).ok().map(|p| Box::new(p) as Box<dyn ImageProvider>),
+                            "openrouter" => OpenRouterImageProvider::new(img_cfg, &resolved_edit).ok().map(|p| Box::new(p) as Box<dyn ImageProvider>),
+                            _ => {
+                                warn!("image_gen tool not registered — unknown edit provider '{}'", image_provider_name);
+                                None
+                            }
+                        }
+                    }
+                };
+
+                if let Some(edit) = edit_provider {
+                    info!(
+                        "Registered image_gen with t2i={} / edit={}{}",
+                        resolved_t2i,
+                        resolved_edit,
+                        if same_provider { " (same provider)" } else { "" }
                     );
+                    tool_registry.register(Box::new(ImageGenTool::with_img2img(
+                        t2i,
+                        edit,
+                        default_quality.to_string(),
+                        default_output_format.to_string(),
+                        default_num_images,
+                        webdav_client.clone(),
+                    )));
+                } else {
+                    warn!("image_gen tool not registered — failed to create edit provider for '{}'", resolved_edit);
                 }
             }
         } else {

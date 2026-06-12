@@ -1,75 +1,60 @@
 use async_trait::async_trait;
 use base64::Engine;
 use serde_json::Value;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 use webdav::{WebDavClient, WebDavPath};
 
 use crate::error::{Result, RockBotError};
-use crate::provider::fal::{FalAiProvider, ImageGenParams, ImageSizeValue};
+use crate::provider::ImageProvider;
 use crate::tool::Tool;
+use crate::types::{ImageGenParams, ImageSizeValue};
 
 pub struct ImageGenTool {
-    fal: FalAiProvider,
-    fal_img2img: Option<FalAiProvider>,
+    provider: Box<dyn ImageProvider>,
+    edit_provider: Option<Box<dyn ImageProvider>>,
     default_quality: String,
     default_output_format: String,
     default_num_images: u32,
     webdav: WebDavClient,
-    http_client: reqwest::Client,
 }
 
 impl ImageGenTool {
     pub fn new(
-        fal: FalAiProvider,
+        provider: Box<dyn ImageProvider>,
         default_quality: String,
         default_output_format: String,
         default_num_images: u32,
         webdav: WebDavClient,
     ) -> Self {
         Self {
-            fal,
-            fal_img2img: None,
+            provider,
+            edit_provider: None,
             default_quality,
             default_output_format,
             default_num_images,
             webdav,
-            http_client: reqwest::Client::new(),
         }
     }
 
     pub fn with_img2img(
-        fal_text2img: FalAiProvider,
-        fal_img2img: FalAiProvider,
+        text2img: Box<dyn ImageProvider>,
+        img2img: Box<dyn ImageProvider>,
         default_quality: String,
         default_output_format: String,
         default_num_images: u32,
         webdav: WebDavClient,
     ) -> Self {
         Self {
-            fal: fal_text2img,
-            fal_img2img: Some(fal_img2img),
+            provider: text2img,
+            edit_provider: Some(img2img),
             default_quality,
             default_output_format,
             default_num_images,
             webdav,
-            http_client: reqwest::Client::new(),
-        }
-    }
-
-    pub fn with_client(fal: FalAiProvider, webdav: WebDavClient, client: reqwest::Client) -> Self {
-        Self {
-            fal,
-            fal_img2img: None,
-            default_quality: "medium".into(),
-            default_output_format: "png".into(),
-            default_num_images: 1,
-            webdav,
-            http_client: client,
         }
     }
 
     async fn upload_data_uri(&self, data_uri: &str) -> Result<String> {
-        // Parse data URI: data:<mime>;base64,<data>
         let after_data = data_uri
             .strip_prefix("data:")
             .ok_or_else(|| RockBotError::ToolCallParse("Invalid data URI".into()))?;
@@ -79,33 +64,7 @@ impl ImageGenTool {
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(b64)
             .map_err(|e| RockBotError::ToolCallParse(format!("Base64 decode failed: {e}")))?;
-        self.fal.upload_file(&bytes, mime_part).await
-    }
-
-    async fn download_image(&self, url: &str) -> Result<Vec<u8>> {
-        let response = self
-            .http_client
-            .get(url)
-            .timeout(std::time::Duration::from_secs(600))
-            .send()
-            .await
-            .map_err(|e| {
-                RockBotError::Provider(format!("Failed to download generated image: {e}"))
-            })?;
-
-        let status = response.status();
-        if !status.is_success() {
-            return Err(RockBotError::Provider(format!(
-                "Failed to download generated image: HTTP {}",
-                status
-            )));
-        }
-
-        response
-            .bytes()
-            .await
-            .map(|b| b.to_vec())
-            .map_err(|e| RockBotError::Provider(format!("Failed to read image bytes: {e}")))
+        self.provider.upload_file(&bytes, mime_part).await
     }
 
     async fn upload_to_webdav(&self, room_id: &str, ext: &str, image_bytes: Vec<u8>) -> Result<String> {
@@ -150,9 +109,9 @@ impl Tool for ImageGenTool {
          and optional image_size. To edit or transform an image, the user's \
          attachments are automatically provided as image_urls — just describe \
          what to do in the prompt. \
-         Returns a JSON object: {\"ok\": true, \"fal_url\": \"...\", \"webdav_path\": \"...\"}. \
-         Always share the fal_url with the user in markdown image format \
-         as `![{description}]({fal_url})` so they can view the image inline. \
+         Returns a JSON object: {\"ok\": true, \"image_url\": \"...\", \"webdav_path\": \"...\"}. \
+         Always share the image_url with the user in markdown image format \
+         as `![{description}]({image_url})` so they can view the image inline. \
          After a successful image_gen call, respond to the user — do not call image_gen again."
     }
 
@@ -170,7 +129,7 @@ impl Tool for ImageGenTool {
                 },
                 "image_size": {
                     "type": "string",
-                    "description": "Aspect ratio preset or custom {\\\"width\\\": N, \\\"height\\\": N} JSON. Presets: square_hd (1:1 2880x2880), square (512x512), landscape_16_9 (3840x2160 4K), portrait_16_9 (2160x3840), landscape_4_3 (3312x2480), portrait_4_3 (2480x3312), landscape_3_2 (3504x2336), portrait_2_3 (2336x3504), auto. Default: landscape_4_3. Max edge 3840px, multiples of 16."
+                    "description": "Aspect ratio preset or custom {\"width\": N, \"height\": N} JSON. Presets: square_hd (1:1 2880x2880), square (512x512), landscape_16_9 (3840x2160 4K), portrait_16_9 (2160x3840), landscape_4_3 (3312x2480), portrait_4_3 (2480x3312), landscape_3_2 (3504x2336), portrait_2_3 (2336x3504), auto. Default: landscape_4_3. Max edge 3840px, multiples of 16."
                 },
                 "image_urls": {
                     "type": "array",
@@ -224,10 +183,10 @@ impl Tool for ImageGenTool {
                 match raw.as_deref() {
                     Some(uri) if uri.starts_with("data:") => {
                         if let Ok(uploaded_url) = self.upload_data_uri(uri).await {
-                            debug!("Uploaded image to fal storage: {}", uploaded_url);
+                            debug!("Uploaded image to provider storage: {}", uploaded_url);
                             urls.push(uploaded_url);
                         } else {
-                            warn!("Failed to upload data URI to fal storage, skipping it");
+                            warn!("Failed to upload data URI to provider storage, skipping it");
                         }
                     }
                     Some(s) if s.starts_with("http://") || s.starts_with("https://") => {
@@ -247,41 +206,54 @@ impl Tool for ImageGenTool {
         let ext = ext_from_output_format(params.output_format.as_deref());
 
         let is_img2img = params.image_urls.is_some();
-        let provider = if is_img2img {
-            self.fal_img2img.as_ref().unwrap_or(&self.fal)
+        let provider: &dyn ImageProvider = if is_img2img {
+            self.edit_provider.as_deref().unwrap_or(self.provider.as_ref())
         } else {
-            &self.fal
+            self.provider.as_ref()
         };
 
         debug!(
-            "Generating image: model={} img2img={} prompt={} room={}",
+            "image_gen params: provider={} model={} img2img={} num_images={} quality={:?} output_format={:?} image_size={:?} image_urls_count={} prompt_len={} room={}",
+            provider.provider_name(),
             provider.model_id(),
             is_img2img,
-            prompt,
+            params.num_images.unwrap_or(1),
+            params.quality,
+            params.output_format,
+            params.image_size,
+            params.image_urls.as_ref().map(|u| u.len()).unwrap_or(0),
+            prompt.len(),
             room_id,
         );
 
-        let image_url = provider.generate_image(&params).await?;
-        debug!(
-            "Image generated (fal.ai): url={} elapsed_ms={}",
-            image_url,
-            t_start.elapsed().as_millis(),
-        );
-        let image_bytes = self.download_image(&image_url).await?;
-        debug!(
-            "Downloaded generated image: {} bytes elapsed_ms={}",
+        let image_bytes = provider.generate_image(&params).await.map_err(|e| {
+            warn!("image_gen: generate_image failed: {e}");
+            e
+        })?;
+        info!(
+            "Image generated ({}): {} bytes elapsed_ms={}",
+            provider.provider_name(),
             image_bytes.len(),
             t_start.elapsed().as_millis(),
         );
 
-        let webdav_path = self.upload_to_webdav(webdav_dir, ext, image_bytes).await?;
-        debug!(
+        let webdav_path = self.upload_to_webdav(webdav_dir, ext, image_bytes.clone()).await.map_err(|e| {
+            warn!("image_gen: upload_to_webdav failed: {e}");
+            e
+        })?;
+        info!(
             "Uploaded image to WebDAV: {} elapsed_ms={}",
             webdav_path,
             t_start.elapsed().as_millis(),
         );
 
-        debug!(
+        let image_url = format!(
+            "data:image/{};base64,{}",
+            ext.replace("jpg", "jpeg"),
+            base64::engine::general_purpose::STANDARD.encode(&image_bytes)
+        );
+
+        info!(
             "image_gen total elapsed_ms={}",
             t_start.elapsed().as_millis(),
         );
@@ -289,7 +261,7 @@ impl Tool for ImageGenTool {
         Ok(serde_json::json!({
             "ok": true,
             "webdav_path": webdav_path,
-            "fal_url": image_url,
+            "image_url": image_url,
         })
         .to_string())
     }
@@ -313,12 +285,19 @@ mod tests {
         }
     }
 
+    fn make_fal_provider() -> Box<dyn ImageProvider> {
+        use crate::provider::FalAiProvider;
+        let config = make_fal_config();
+        Box::new(FalAiProvider::new(&config, "fal-ai/flux/schnell").unwrap())
+    }
+
+    fn make_webdav() -> WebDavClient {
+        webdav::WebDavClient::new("https://example.com", "user", "pass").unwrap()
+    }
+
     #[test]
     fn test_image_gen_tool_definition() {
-        let config = make_fal_config();
-        let fal = FalAiProvider::new(&config, "fal-ai/flux/schnell").unwrap();
-        let webdav = webdav::WebDavClient::new("https://example.com", "user", "pass").unwrap();
-        let tool = ImageGenTool::new(fal, "medium".into(), "png".into(), 1, webdav);
+        let tool = ImageGenTool::new(make_fal_provider(), "medium".into(), "png".into(), 1, make_webdav());
 
         assert_eq!(tool.name(), "image_gen");
         assert!(tool.description().contains("Generate or edit an image"));
@@ -330,27 +309,20 @@ mod tests {
                 .unwrap()
                 .contains(&serde_json::json!("prompt"))
         );
-        // verify optional parameters
         assert!(params["properties"].get("image_size").is_some());
         assert!(params["properties"].get("image_urls").is_some());
     }
 
     #[tokio::test]
     async fn test_execute_missing_prompt() {
-        let config = make_fal_config();
-        let fal = FalAiProvider::new(&config, "fal-ai/flux/schnell").unwrap();
-        let webdav = webdav::WebDavClient::new("https://example.com", "user", "pass").unwrap();
-        let tool = ImageGenTool::new(fal, "medium".into(), "png".into(), 1, webdav);
+        let tool = ImageGenTool::new(make_fal_provider(), "medium".into(), "png".into(), 1, make_webdav());
         let result = tool.execute(r#"{}"#).await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn test_execute_invalid_json() {
-        let config = make_fal_config();
-        let fal = FalAiProvider::new(&config, "fal-ai/flux/schnell").unwrap();
-        let webdav = webdav::WebDavClient::new("https://example.com", "user", "pass").unwrap();
-        let tool = ImageGenTool::new(fal, "medium".into(), "png".into(), 1, webdav);
+        let tool = ImageGenTool::new(make_fal_provider(), "medium".into(), "png".into(), 1, make_webdav());
         let result = tool.execute("not json").await;
         assert!(result.is_err());
     }

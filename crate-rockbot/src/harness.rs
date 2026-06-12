@@ -31,11 +31,11 @@ appear as markdown ![image_name](image_name) in the conversation. Reference the 
 image by its image_name in your prompt (e.g. \"edit image1.png to add a hat\"). \
 The harness will automatically resolve image_name references to the actual images. \
 If the user asks to edit a previously generated image (no new attachment), \
-you MUST include the fal.ai CDN URL from the previous result in the \
+you MUST include the image CDN URL from the previous result in the \
 image_urls parameter yourself. \
-The image_gen tool returns both a WebDAV path and an original fal.ai CDN URL — \
-always share the fal.ai CDN URL with the user in markdown image format \
-as `![{description}]({fal_url})` so they can view the image inline. \
+The image_gen tool returns both a WebDAV path and an image URL — \
+always share the image URL with the user in markdown image format \
+as `![{description}]({image_url})` so they can view the image inline. \
 When a user says !soul or asks to save or update preferences, identity, or facts, use the edit_soul tool. \
 When a user asks you to remember something, shares notes, or says !remember, !note, !save or shares important \
 information worth persisting, use the save_knowledge tool. \
@@ -713,6 +713,11 @@ impl AgentHarness {
                     // Mark snapshot dirty after Layer 2 write
                     self.memory.mark_snapshot_dirty(&rid);
 
+                    // Refresh in-memory summaries cache so priority review sees fresh data
+                    if let Ok(fresh) = self.load_daily_summaries(webdav_client, &wd).await {
+                        self.memory.set_daily_summaries(&rid, fresh);
+                    }
+
                     // Age out old summaries
                     let summary_days = self.memory.summary_days;
                     if let Err(e) = self.delete_old_summaries(webdav_client, &wd, summary_days).await {
@@ -1200,7 +1205,7 @@ impl AgentHarness {
         }
     }
 
-    async fn review_knowledge_priorities(&self) {
+    async fn review_knowledge_priorities(&mut self) {
         if self.webdav.is_none() {
             return;
         }
@@ -1215,13 +1220,17 @@ impl AgentHarness {
                     .unwrap_or((rid.as_str(), "", false));
                 compute_webdav_dir(rn, rf, dm)
             };
-            if let Err(e) =
-                KnowledgeManager::review_priorities(webdav, &wd, summaries).await
-            {
-                warn!(
-                    "Failed to review knowledge priorities for {}: {}",
-                    wd, e
-                );
+            match KnowledgeManager::review_priorities(webdav, &wd, summaries).await {
+                Ok(true) => {
+                    self.memory.mark_snapshot_dirty(&rid);
+                }
+                Ok(false) => {}
+                Err(e) => {
+                    warn!(
+                        "Failed to review knowledge priorities for {}: {}",
+                        wd, e
+                    );
+                }
             }
         }
     }

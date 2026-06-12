@@ -465,23 +465,23 @@ with the `"msg"` field extracted via helper functions: `msg_field()`, `is_ping()
 | `name`     | `String` | `args[0]["file"]["name"]`                |
 | `type`     | `String` | MIME type (e.g. `image/png`)             |
 | `size`     | `u64`    | File size in bytes                       |
-| `format`   | `String` | File extension (e.g. `png`)              |
-| `type_group` | `String` | `"image"`, `"video"`, `"thumb"`, etc.  |
+| `format`     | `Option<String>` | File extension (e.g. `png`)              |
+| `type_group` | `Option<String>` | `"image"`, `"video"`, `"thumb"`, etc.  |
 
 #### `AttachmentInfo`
 
 | Field             | Type                | Source                                       |
 | ----------------- | ------------------- | -------------------------------------------- |
-| `title`           | `String`            | Display title (filename)                     |
-| `title_link`      | `String`            | Relative path to **original file** download  |
-| `title_link_download` | `bool`          | True for file uploads                        |
-| `image_url`       | `String`            | Relative path to **thumbnail** image         |
-| `image_type`      | `String`            | MIME type                                    |
-| `image_size`      | `u64`               | Original file size in bytes                  |
+| `title`           | `Option<String>`    | Display title (filename)                     |
+| `title_link`      | `Option<String>`    | Relative path to **original file** download  |
+| `title_link_download` | `Option<bool>`  | True for file uploads                        |
+| `image_url`       | `Option<String>`    | Relative path to **thumbnail** image         |
+| `image_type`      | `Option<String>`    | MIME type                                    |
+| `image_size`      | `Option<u64>`       | Original file size in bytes                  |
 | `image_dimensions`| `Option<ImageDim>`  | `{width, height}` pixel dimensions           |
-| `image_preview`   | `String`            | Base64-encoded inline preview                |
-| `type`            | `String`            | `"file"` for uploads                         |
-| `file_id`         | `String`            | Back-reference to original `file._id`        |
+| `image_preview`   | `Option<String>`    | Base64-encoded inline preview                |
+| `type`            | `Option<String>`    | `"file"` for uploads                         |
+| `file_id`         | `Option<String>`    | Back-reference to original `file._id`        |
 
 To construct the full download URL: join `{server_config.host()}{attachment.title_link}`. The `image_url` field points to a thumbnail variant — use `title_link` for the original, full-quality image.
 
@@ -502,8 +502,13 @@ per-event `args[1].fname` field; there is no secondary cache lookup.
 
 | Field          | Type              | Purpose                            |
 | -------------- | ----------------- | ---------------------------------- |
-| `bot_name`     | `String`          | `@username` for mention matching   |
-| `display_name` | `Option<String>`  | Self-display name from soul.md (emoji stripped) for content matching |
+| `bot_name`       | `String`              | `@username` for mention matching            |
+| `display_name`   | `Option<String>`     | Self-display name from soul.md (emoji stripped) for content matching |
+| `config`         | `RocketChatConfig`   | Server connection configuration             |
+| `username`       | `String`             | Bot login username                          |
+| `user_id`        | `Option<String>`     | User ID received after authentication       |
+| `auth_token`     | `Option<String>`     | Auth token received after login             |
+| `registered_rooms` | `HashMap<String, bool>` | Rooms the bot should listen in regardless of mentions |
 
 The `display_name` is set via `set_display_name()` before `connect_and_run()`.
 It is sourced from the rocketbot harness's soul memory (`any_display_name()`)

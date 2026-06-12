@@ -28,7 +28,7 @@ draw_path = "/images/generations"
 
 [image_providers.models]
 seedream = "bytedance-seed/seedream-4.5"
-grok = "x-ai/grok-imagine-image-quality"
+banana = "google/gemini-3.1-flash-image-preview"
 
 [[image_providers]]
 name = "fal"

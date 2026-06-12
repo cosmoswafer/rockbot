@@ -602,3 +602,202 @@ mod tests {
         assert_eq!(provider.model_name(), "openai/gpt-4");
     }
 }
+
+pub struct OpenRouterImageProvider {
+    api_key: String,
+    base_url: String,
+    model: String,
+    http_client: reqwest::Client,
+}
+
+impl std::fmt::Debug for OpenRouterImageProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OpenRouterImageProvider")
+            .field("base_url", &self.base_url)
+            .field("model", &self.model)
+            .finish()
+    }
+}
+
+impl OpenRouterImageProvider {
+    pub fn new(config: &ProviderConfig, model: impl Into<String>) -> Result<Self> {
+        config.validate_api_key()?;
+        let full_url = config.chat_url();
+        Ok(Self {
+            api_key: config.api_key.clone(),
+            base_url: full_url,
+            model: model.into(),
+            http_client: reqwest::Client::new(),
+        })
+    }
+
+    pub fn model_id(&self) -> &str {
+        &self.model
+    }
+
+    pub fn provider_name(&self) -> &str {
+        "openrouter"
+    }
+
+    fn preset_to_aspect_ratio(preset: &str) -> &str {
+        match preset {
+            "landscape_16_9" => "16:9",
+            "portrait_16_9" => "9:16",
+            "landscape_4_3" => "4:3",
+            "portrait_4_3" => "3:4",
+            "landscape_3_2" => "3:2",
+            "portrait_2_3" => "2:3",
+            "square" | "square_hd" => "1:1",
+            _ => preset,
+        }
+    }
+}
+
+#[async_trait]
+impl crate::provider::ImageProvider for OpenRouterImageProvider {
+    async fn generate_image(&self, params: &crate::types::ImageGenParams) -> Result<Vec<u8>> {
+        use crate::types::ImageSizeValue;
+
+        let mut body = serde_json::Map::new();
+        body.insert("model".into(), serde_json::json!(params.model_id.as_deref().unwrap_or(&self.model)));
+        body.insert("stream".into(), serde_json::json!(false));
+
+        // Build messages with image_urls if present (img2img)
+        let user_content = if let Some(ref image_urls) = params.image_urls {
+            if image_urls.is_empty() {
+                serde_json::json!(&params.prompt)
+            } else {
+                let mut parts: Vec<serde_json::Value> = vec![serde_json::json!({
+                    "type": "text",
+                    "text": &params.prompt,
+                })];
+                for url in image_urls {
+                    parts.push(serde_json::json!({
+                        "type": "image_url",
+                        "image_url": { "url": url, "detail": "high" },
+                    }));
+                }
+                serde_json::json!(parts)
+            }
+        } else {
+            serde_json::json!(&params.prompt)
+        };
+
+        body.insert(
+            "messages".into(),
+            serde_json::json!([{ "role": "user", "content": user_content }]),
+        );
+        body.insert("modalities".into(), serde_json::json!(["image"]));
+
+        // Build image_config
+        let mut image_config = serde_json::Map::new();
+        if let Some(ref size) = params.image_size {
+            match size {
+                ImageSizeValue::Preset(name) => {
+                    image_config.insert(
+                        "aspect_ratio".into(),
+                        serde_json::json!(Self::preset_to_aspect_ratio(name)),
+                    );
+                }
+                ImageSizeValue::Custom { width, height } => {
+                    image_config.insert(
+                        "image_size".into(),
+                        serde_json::json!(format!("{}x{}", width, height)),
+                    );
+                }
+            }
+        }
+        if let Some(ref format) = params.output_format {
+            image_config.insert("output_format".into(), serde_json::json!(format));
+        }
+        if let Some(ref quality) = params.quality {
+            image_config.insert("quality".into(), serde_json::json!(quality));
+        }
+        if let Some(n) = params.num_images {
+            image_config.insert("num_images".into(), serde_json::json!(n));
+        }
+        if !image_config.is_empty() {
+            body.insert("image_config".into(), serde_json::Value::Object(image_config));
+        }
+
+        let body_value = serde_json::Value::Object(body);
+
+        debug!(
+            "OpenRouter image gen request: model={} prompt_len={} img2img={}",
+            params.model_id.as_deref().unwrap_or(&self.model),
+            params.prompt.len(),
+            params.image_urls.as_ref().map(|u| u.len()).unwrap_or(0),
+        );
+
+        let response = self
+            .http_client
+            .post(&self.base_url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json")
+            .header("HTTP-Referer", "https://github.com/anomalyco/rockbot")
+            .header("X-Title", "RockBot")
+            .json(&body_value)
+            .send()
+            .await?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let error_body = response.text().await.unwrap_or_default();
+            let msg = serde_json::from_str::<serde_json::Value>(&error_body)
+                .ok()
+                .and_then(|v| {
+                    v.get("error")
+                        .and_then(|e| e.get("message"))
+                        .and_then(|m| m.as_str())
+                        .map(String::from)
+                })
+                .unwrap_or(error_body);
+            return Err(RockBotError::Provider(format!(
+                "OpenRouter image gen failed (HTTP {}): {}",
+                status.as_u16(),
+                msg
+            )));
+        }
+
+        let resp_body: serde_json::Value = response.json().await?;
+        let choices = resp_body
+            .get("choices")
+            .and_then(|c| c.as_array())
+            .ok_or(RockBotError::NoChoices)?;
+        let choice = choices.first().ok_or(RockBotError::NoChoices)?;
+        let message = choice.get("message").ok_or(RockBotError::EmptyResponse)?;
+        let images = message
+            .get("images")
+            .and_then(|imgs| imgs.as_array())
+            .ok_or_else(|| RockBotError::Provider("OpenRouter image gen: no images in response".into()))?;
+        let image = images
+            .first()
+            .ok_or_else(|| RockBotError::Provider("OpenRouter image gen: empty images array".into()))?;
+        let data_url = image
+            .get("image_url")
+            .and_then(|iu| iu.get("url"))
+            .and_then(|u| u.as_str())
+            .ok_or_else(|| RockBotError::Provider("OpenRouter image gen: missing image_url.url".into()))?;
+
+        // Parse data URI: data:image/png;base64,<data>
+        let b64 = data_url
+            .split_once(";base64,")
+            .ok_or_else(|| RockBotError::Provider("OpenRouter image gen: non-base64 image URL".into()))?
+            .1;
+        base64::Engine::decode(&base64::engine::general_purpose::STANDARD, b64)
+            .map_err(|e| RockBotError::Provider(format!("OpenRouter image gen: base64 decode failed: {e}")))
+    }
+
+    async fn upload_file(&self, data: &[u8], content_type: &str) -> Result<String> {
+        let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, data);
+        Ok(format!("data:{};base64,{}", content_type, b64))
+    }
+
+    fn provider_name(&self) -> &str {
+        "openrouter"
+    }
+
+    fn model_id(&self) -> &str {
+        &self.model
+    }
+}

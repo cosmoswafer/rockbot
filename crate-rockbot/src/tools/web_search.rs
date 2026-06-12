@@ -98,6 +98,12 @@ impl WebSearchTool {
                     )));
                 }
 
+                if status.as_u16() == 401 {
+                    return Err(RockBotError::Provider(
+                        "Exa search failed: invalid API key (401). Check your EXA_API_KEY env var or [tools.exa] config.".into(),
+                    ));
+                }
+
                 let error_body = resp
                     .text()
                     .await
