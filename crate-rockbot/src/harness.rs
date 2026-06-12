@@ -493,13 +493,17 @@ impl AgentHarness {
     }
 
     /// Aggressively compress conversation history for a room by stripping all
-    /// images from every message and pruning to the last 6 messages.
-    /// Called when the provider returns a ContextLengthExceeded error to make
-    /// space before retrying.
+    /// images from every message except the last one, then pruning to the last
+    /// 6 messages. Called when the provider returns a ContextLengthExceeded
+    /// error to make space before retrying.
     fn compress_history_for_retry(&mut self, room_id: &str) {
         if let Some(room) = self.memory.get_mut(room_id) {
             let before_len = room.history.messages.len();
-            for msg in &mut room.history.messages {
+            let len = room.history.messages.len();
+            for (i, msg) in room.history.messages.iter_mut().enumerate() {
+                if i == len - 1 {
+                    continue; // preserve last message's images (current request)
+                }
                 *msg = strip_images_from_message(msg.clone());
             }
             // Prune to last 6 messages to reduce text token load
@@ -508,7 +512,7 @@ impl AgentHarness {
                 room.history.prune_first(prune_count);
             }
             debug!(
-                "compress_history_for_retry room={}: stripped images, pruned {} -> {} messages",
+                "compress_history_for_retry room={}: stripped images (kept last), pruned {} -> {} messages",
                 room_id, before_len, room.history.messages.len()
             );
         }
