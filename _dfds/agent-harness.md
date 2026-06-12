@@ -251,14 +251,18 @@ flowchart TD
 
 This bridges the gap between the vision tool (which returns plain text) and
 the AI provider's multimodal requirement (which needs structured
-`ContentPart::ImageUrl` parts). Injection happens at two points in the agent loop:
+`ContentPart::ImageUrl` parts). The same pipeline also intercepts `webdav`
+tool results — when the webdav tool reads an image file, it returns a base64
+markdown tag (`![name](data:...)`), and the harness caches it identically to
+vision results. This lets the LLM inspect images from WebDAV storage without
+a separate vision tool call. Injection happens at two points in the agent loop:
 (1) before the first LLM call for a message, and (2) after each tool-execution
 iteration before the next LLM call.
 
 ### 2h. Daily Summary Review — Knowledge Priority Recalculation
 
 After each daily summary write (archive) and during periodic maintenance, the
-harness runs a review step that scans the latest 7 days of Layer 2 summaries
+harness runs a review step that scans the latest 3 days of Layer 2 summaries
 for mentions of each knowledge entry, then recalculates priorities using a
 state machine that depends on both mention count and current priority.
 Degradation is rate-limited to at most once per 24 hours per entry. The full
@@ -307,10 +311,41 @@ Mention matching uses keyword tokenization against summary texts — an entry is
 considered "mentioned" on a given day if any of its title tokens, `when_useful`
 tokens, or tags appear as substrings in that day's summary (case-insensitive,
 tokens > 2 characters, split on non-alphanumeric boundaries). The resulting
-`week_count` (0-7) and current priority drive a state machine (see
+`day_count` (0-3) and current priority drive a state machine (see
 knowledge-priority.md section 2b).
 
-### 2i. Generated Image Sharing via NextCloud Share Links
+### 2i. Inline Context Overflow — truncate_and_summarize
+
+Before each LLM call, the harness checks if the total JSON byte size of the
+messages exceeds `max_context_bytes`. If so, it summarises older messages
+inline — replacing them with a concise AI-generated summary — without
+touching WebDAV. This is a separate mechanism from the Layer 1→Layer 2
+archive (which writes daily summaries to WebDAV).
+
+```mermaid
+flowchart TD
+    CTX[BuildContext Messages]
+    CHECK{"current_bytes<br/>> max_context_bytes?"}
+    SPLIT["Split messages:<br/>prefix (system) + older + suffix (last 2)"]
+    SUMMARIZE["AI Summarize<br/>(older messages → 1-3 sentences)"]
+    AI[AiProvider<br/>one-shot, tools=off]
+    REPLACE["Replace older messages<br/>with [summary] system msg"]
+    OUT[Return Summarized Messages]
+
+    CTX --> CHECK
+    CHECK -->|"no"| OUT
+    CHECK -->|"yes"| SPLIT
+    SPLIT -->|"older message texts (trimmed)"| SUMMARIZE
+    SUMMARIZE -->|"summary prompt"| AI
+    AI -->|"summary text"| REPLACE
+    REPLACE --> OUT
+```
+
+**Fallback**: if the AI summarization fails, falls back to plain text
+`"N earlier messages (truncated due to context limit)"`. At least the
+last 2 messages plus the system prompt are always preserved.
+
+### 2j. Generated Image Sharing via NextCloud Share Links
 
 The `image_gen` tool creates a NextCloud public share link (7-day expiry)
 during tool execution and stores it in `ImageCache`. The harness records the
