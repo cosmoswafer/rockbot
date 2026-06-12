@@ -91,6 +91,27 @@ pub fn civil_from_days(days: i64) -> (i64, u32, u32) {
     (y, m, d)
 }
 
+/// Removes a markdown image link `![any text](image_id)` from text.
+/// Also strips any trailing newline left behind.
+pub fn strip_markdown_image_id(text: &str, image_id: &str) -> String {
+    let search = format!("]({})", image_id);
+    if let Some(pos) = text.find(&search) {
+        if let Some(start) = text[..pos].rfind("![") {
+            let end = pos + search.len();
+            let mut result = String::with_capacity(text.len());
+            result.push_str(&text[..start]);
+            if end < text.len() && text.as_bytes().get(end) == Some(&b'\n') {
+                result.push_str(&text[end + 1..]);
+            } else {
+                result.push_str(&text[end..]);
+            }
+            return result.trim().to_string();
+        }
+    }
+    text.replace(image_id, "")
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -127,5 +148,38 @@ mod tests {
     #[test]
     fn test_strip_emoji_emoji_only() {
         assert_eq!(strip_emoji("✨🌿"), "");
+    }
+
+    #[test]
+    fn test_strip_markdown_image_id_basic() {
+        let text = "Here is an image:\n\n![A cat](call_abc123)\n\nDo you like it?";
+        let result = strip_markdown_image_id(text, "call_abc123");
+        assert!(!result.contains("call_abc123"));
+        assert!(!result.contains("!["), "markdown image syntax should be removed");
+        assert!(result.contains("Here is an image"));
+        assert!(result.contains("Do you like it"));
+    }
+
+    #[test]
+    fn test_strip_markdown_image_id_no_match() {
+        let text = "No image here, just text.";
+        let result = strip_markdown_image_id(text, "call_abc123");
+        assert_eq!(result, text);
+    }
+
+    #[test]
+    fn test_strip_markdown_image_id_inline() {
+        let text = "Look at ![the cat](call_xyz)\nSo cute!";
+        let result = strip_markdown_image_id(text, "call_xyz");
+        assert!(!result.contains("!["), "markdown image syntax should be removed");
+        assert!(result.contains("So cute!"));
+    }
+
+    #[test]
+    fn test_strip_markdown_image_id_key_only() {
+        let text = "The image key is call_abc123 in plain text.";
+        let result = strip_markdown_image_id(text, "call_abc123");
+        assert!(!result.contains("call_abc123"));
+        assert!(result.contains("The image key is"));
     }
 }

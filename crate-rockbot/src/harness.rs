@@ -8,7 +8,7 @@ use rocketchat::RestApiClient;
 
 use crate::AppConfig;
 use crate::error::Result;
-use crate::image_cache::{ImageCache, image_markdown};
+use crate::image_cache::ImageCache;
 use crate::knowledge::KnowledgeManager;
 use crate::memory::{DailySummary, MemoryManager, SoulMemory};
 use crate::provider::AiProvider;
@@ -64,6 +64,7 @@ pub struct AgentHarness {
     max_attachment_bytes: u64,
     image_pool: HashMap<String, Vec<CachedImage>>,
     image_cache: Arc<ImageCache>,
+    last_image_ids: Vec<String>,
 }
 
 impl AgentHarness {
@@ -94,6 +95,7 @@ impl AgentHarness {
             max_attachment_bytes,
             image_pool: HashMap::new(),
             image_cache,
+            last_image_ids: Vec::new(),
         }
     }
 
@@ -132,6 +134,14 @@ impl AgentHarness {
 
     pub fn has_rest_client(&self) -> bool {
         self.rest_client.is_some()
+    }
+
+    pub fn take_last_image_ids(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.last_image_ids)
+    }
+
+    pub fn take_image(&self, key: &str) -> Option<crate::image_cache::GeneratedImage> {
+        self.image_cache.take(key)
     }
 
     pub async fn resolve_room_fname(&mut self, room_id: &str) -> Option<String> {
@@ -406,77 +416,14 @@ impl AgentHarness {
                         let reply = if clean.is_empty() {
                             "I processed your request but received an empty response.".to_string()
                         } else {
-                            let mut reply = clean;
-                            for image_id in &image_ids_this_turn {
-                                if let Some(img) =
-                                    self.image_cache.take(image_id)
-                                {
-                                    let image_url = if let Some(ref rc) =
-                                        self.rest_client
-                                    {
-                                        let file_name = format!(
-                                            "{}.{}",
-                                            image_id,
-                                            img.file_extension()
-                                        );
-                                        match rc
-                                            .upload_file_to_room(
-                                                room_id,
-                                                &file_name,
-                                                img.image_bytes.clone(),
-                                                &img.mime_type,
-                                            )
-                                            .await
-                                        {
-                                            Ok(url) => {
-                                                let base =
-                                                    &self.config.rocketchat.server.url;
-                                                let slot =
-                                                    if base.starts_with("https") {
-                                                        "https"
-                                                    } else {
-                                                        "http"
-                                                    };
-                                                format!(
-                                                    "{}://{}{}",
-                                                    slot, base, url
-                                                )
-
-                                            }
-                                            Err(e) => {
-                                                warn!(
-                                                    "Image upload to RocketChat failed for {}: {}, falling back to data URI",
-                                                    image_id, e
-                                                );
-                                                img.data_uri()
-                                            }
-                                        }
-                                    } else {
-                                        img.data_uri()
-                                    };
-
-                                    let markdown =
-                                        image_markdown("Generated image", &image_url);
-                                    if reply.contains(image_id.as_str()) {
-                                        reply = reply.replace(
-                                            image_id.as_str(),
-                                            &image_url,
-                                        );
-                                    } else {
-                                        reply.push_str(&format!(
-                                            "\n\n{}",
-                                            markdown
-                                        ));
-                                    }
-                                }
-                            }
-                            reply
+                            clean
                         };
                         debug!(
                             "process_message done: total_elapsed_ms={} iterations={}",
                             msg_start.elapsed().as_millis(),
                             iterations,
                         );
+                        self.last_image_ids = image_ids_this_turn;
                         return Ok(Some(reply));
                     }
 

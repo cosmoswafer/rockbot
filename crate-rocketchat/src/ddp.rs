@@ -83,6 +83,29 @@ pub fn send_message_payload_with_alias(room_id: &str, text: &str, alias: Option<
     })
 }
 
+pub fn send_message_payload_with_attachments(
+    room_id: &str,
+    text: &str,
+    attachments: &[serde_json::Value],
+    alias: Option<&str>,
+) -> Value {
+    let mut params = json!({
+        "_id": unique_msg_id(),
+        "rid": room_id,
+        "msg": text,
+        "attachments": attachments,
+    });
+    if let Some(a) = alias {
+        params["alias"] = serde_json::Value::String(a.to_string());
+    }
+    json!({
+        "msg": "method",
+        "method": "sendMessage",
+        "id": next_id(),
+        "params": [params]
+    })
+}
+
 pub fn create_direct_message_payload(username: &str) -> Value {
     json!({
         "msg": "method",

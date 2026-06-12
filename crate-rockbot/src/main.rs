@@ -15,6 +15,7 @@ use rockbot::tools::{
     CalendarTool, DateTimeTool, EditSoulTool, ForgetKnowledgeTool, ImageGenTool,
     RecallKnowledgeTool, SaveKnowledgeTool, VisionTool, WebDavTool, WebFetchTool, WebSearchTool,
 };
+use rockbot::utils::strip_markdown_image_id;
 
 fn setup_logging() {
     let filter = EnvFilter::try_from_default_env()
@@ -433,37 +434,77 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                                 }
                                 tokio::time::sleep(Duration::from_millis(300)).await;
 
-                                // Try REST API with alias first, fall back to DDP
-                                let alias = h.memory().self_display_name(&msg.room_id);
-                                let rest_ok = if let Some(ref alias_name) = alias {
-                                    debug!("Sending with alias={:?} via REST", alias_name);
-                                    let rc_config = rocketchat::RocketChatConfig {
-                                        server: rocketchat::config::ServerConfig {
-                                            url: h.config().rocketchat.server.url.clone(),
-                                            username: h.config().rocketchat.server.username.clone(),
-                                            password: String::new(),
-                                            use_tls: true,
-                                        },
-                                    };
-                                    let rest = sender.rest_client(&rc_config);
-                                    match rest.send_message(&msg.room_id, &reply, Some(alias_name)).await {
-                                        Ok(msg_id) => {
-                                            debug!("REST send_message ok, msg_id={} alias={:?}", msg_id, alias_name);
-                                            true
-                                        }
-                                        Err(e) => {
-                                            warn!("REST send_message failed: {}, falling back to DDP", e);
-                                            false
+                                // Check for generated image attachments
+                                let image_ids = h.take_last_image_ids();
+                                let mut attachments: Vec<serde_json::Value> = Vec::new();
+                                let mut reply_text = reply.clone();
+
+                                for image_id in &image_ids {
+                                    if reply_text.contains(image_id.as_str()) {
+                                        if let Some(img) = h.take_image(image_id) {
+                                            let data_uri = img.data_uri();
+                                            attachments.push(serde_json::json!({
+                                                "image_url": data_uri
+                                            }));
+                                            reply_text = strip_markdown_image_id(
+                                                &reply_text,
+                                                image_id,
+                                            );
                                         }
                                     }
-                                } else {
-                                    debug!("No self_display_name for room={}, sending via DDP without alias", msg.room_id);
-                                    false
-                                };
+                                }
 
-                                if !rest_ok {
-                                    if let Err(e) = sender.reply(&reply).await {
-                                        error!("Failed to send reply: {}", e);
+                                let has_attachments = !attachments.is_empty();
+                                if has_attachments {
+                                    let alias = h
+                                        .memory()
+                                        .self_display_name(&msg.room_id);
+                                    if let Err(e) = sender
+                                        .reply_with_attachments(
+                                            &reply_text,
+                                            &attachments,
+                                            alias.as_deref(),
+                                        )
+                                        .await
+                                    {
+                                        error!(
+                                            "Failed to send reply with attachments: {}",
+                                            e
+                                        );
+                                    }
+                                } else {
+                                    // Try REST API with alias first, fall back to DDP
+                                    let alias = h.memory().self_display_name(&msg.room_id);
+                                    let rest_ok = if let Some(ref alias_name) = alias {
+                                        debug!("Sending with alias={:?} via REST", alias_name);
+                                        let rc_config = rocketchat::RocketChatConfig {
+                                            server: rocketchat::config::ServerConfig {
+                                                url: h.config().rocketchat.server.url.clone(),
+                                                username: h.config().rocketchat.server.username.clone(),
+                                                password: String::new(),
+                                                use_tls: true,
+                                            },
+                                        };
+                                        let rest = sender.rest_client(&rc_config);
+                                        match rest.send_message(&msg.room_id, &reply, Some(alias_name)).await {
+                                            Ok(msg_id) => {
+                                                debug!("REST send_message ok, msg_id={} alias={:?}", msg_id, alias_name);
+                                                true
+                                            }
+                                            Err(e) => {
+                                                warn!("REST send_message failed: {}, falling back to DDP", e);
+                                                false
+                                            }
+                                        }
+                                    } else {
+                                        debug!("No self_display_name for room={}, sending via DDP without alias", msg.room_id);
+                                        false
+                                    };
+
+                                    if !rest_ok {
+                                        if let Err(e) = sender.reply(&reply).await {
+                                            error!("Failed to send reply: {}", e);
+                                        }
                                     }
                                 }
                                 if let Err(e) = h.archive_room_if_needed(&msg.room_id).await {

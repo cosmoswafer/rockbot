@@ -639,3 +639,138 @@ async fn test_soul_to_rest_alias_end_to_end() {
         alias_name
     );
 }
+
+#[tokio::test]
+#[ignore]
+async fn test_send_image_attachment_via_ddp() {
+    // Verifies that RocketChat's DDP sendMessage method accepts image
+    // attachments with data URIs — the path used by rockbot to send
+    // generated images without hitting the REST Message_MaxAllowedSize limit.
+    init_crypto();
+    let config = rocketchat::RocketChatConfig::from_file(&config_path())
+        .expect("Failed to load config.toml");
+    let username = &config.server.username;
+    let password = &config.server.password;
+    let host = config.host();
+    let ws_uri = format!("wss://{}/websocket", host);
+
+    eprintln!("Connecting to {}", ws_uri);
+    let (mut ws, _) = connect_async(&ws_uri)
+        .await
+        .expect("Failed to connect");
+
+    let (_user_id, _auth_token) = ddp_handshake(&mut ws, username, password).await;
+    eprintln!("Logged in");
+
+    // Create DM
+    let dm = serde_json::json!({
+        "msg": "method",
+        "method": "createDirectMessage",
+        "id": "dm_att",
+        "params": [username]
+    });
+    ws.send(Message::Text(dm.to_string().into())).await.unwrap();
+    let dm_result: Value = loop {
+        if let Some(msg) = expect_msg_json(&mut ws).await {
+            if msg.get("id").and_then(|v| v.as_str()) == Some("dm_att") {
+                break msg;
+            }
+        }
+    };
+    let room_id = dm_result["result"]["rid"].as_str().unwrap().to_string();
+    eprintln!("DM room: {}", room_id);
+
+    // Subscribe
+    let sub = serde_json::json!({
+        "msg": "sub", "id": "sub_att", "name": "stream-room-messages",
+        "params": [room_id, false]
+    });
+    ws.send(Message::Text(sub.to_string().into())).await.unwrap();
+    let _ = expect_msg(&mut ws, "ready").await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // Build a small 1x1 transparent PNG as data URI (valid, tiny image)
+    let tiny_png_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+    let data_uri = format!("data:image/png;base64,{}", tiny_png_b64);
+
+    let test_text = "Here is an image attachment test via DDP";
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let send_msg = serde_json::json!({
+        "msg": "method",
+        "method": "sendMessage",
+        "id": "send_att",
+        "params": [{
+            "_id": format!("att_msg_{}", now_ms),
+            "rid": &room_id,
+            "msg": test_text,
+            "attachments": [{
+                "image_url": &data_uri,
+                "title": "test_image.png"
+            }]
+        }]
+    });
+    ws.send(Message::Text(send_msg.to_string().into())).await.unwrap();
+
+    // Wait for the result
+    let send_result: Value = loop {
+        if let Some(msg) = expect_msg_json(&mut ws).await {
+            let msg_id = msg.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            if msg_id == "send_att" {
+                break msg;
+            }
+        }
+    };
+    eprintln!("sendMessage result: {}", serde_json::to_string_pretty(&send_result).unwrap());
+
+    assert!(
+        send_result.get("error").is_none(),
+        "sendMessage with attachment returned error"
+    );
+
+    // Verify message was received
+    let received = read_until_text(&mut ws, test_text).await;
+    assert!(received, "Failed to receive message with image attachment");
+
+    let _ = ws.close(None).await;
+    eprintln!("SUCCESS: Image attachment sent and received via DDP");
+}
+
+/// Reads a frame from the WebSocket as typed JSON.
+async fn expect_msg_json(ws: &mut WsStream) -> Option<Value> {
+    match ws.next().await {
+        Some(Ok(Message::Text(text))) => {
+            match serde_json::from_str::<Value>(&text) {
+                Ok(v) => {
+                    if v.get("msg").and_then(|m| m.as_str()) == Some("ping") {
+                        let pong = serde_json::json!({"msg": "pong"});
+                        let _ = ws.send(Message::Text(pong.to_string().into())).await;
+                    }
+                    Some(v)
+                }
+                Err(_) => None,
+            }
+        }
+        Some(Ok(Message::Close(_))) => None,
+        _ => None,
+    }
+}
+
+async fn read_until_text(ws: &mut WsStream, expected: &str) -> bool {
+    for _ in 0..50 {
+        if let Some(msg) = expect_msg_json(ws).await {
+            if let Some(args) = msg["fields"]["args"].as_array() {
+                for arg in args {
+                    if let Some(msg_text) = arg["msg"].as_str() {
+                        if msg_text.contains(expected) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    false
+}

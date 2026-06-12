@@ -21,3 +21,4 @@ pub use types::{
     ChatMessage, ChatRequest, CompletionResult, ContentPart, FinishReason, ImageGenParams,
     ImageSizeValue, MessageContent, Role, ToolCall, ToolDef,
 };
+pub use utils::strip_markdown_image_id;
