@@ -56,7 +56,7 @@ flowchart TD
     DL(DownloadImage)
     WEB[(Public / WebDAV Server)]
     ENCODE(Base64Encode)
-    RESULT[ToolResult<br/>![name]&#40data:...&#41]
+    RESULT["ToolResult<br/>(markdown image tag)"]
 
     RC -->|"message + attachments"| HARNESS
     HARNESS -->|"user msg + data uris"| HIST
@@ -133,6 +133,15 @@ The image name is extracted from the URL path (last segment, stripped of query
 parameters). The result is appended to history as a standard
 `ChatMessage::tool(call_id, content)`, then the harness intercepts it for
 injection into the next LLM call (see §2d).
+
+**Why base64 here but share links for image_gen**: the vision tool's base64 data
+URIs flow only through the AI provider context and the harness's internal vision
+image pool — they are never sent to RocketChat in the final reply. The LLM
+receives them as `ContentPart::ImageUrl` parts (which AI providers handle
+natively), and the harness collapses old vision data to `[image]` placeholders
+in the conversation history. In contrast, `image_gen` results go into the
+RocketChat reply text, where multi-megabyte base64 strings exceed
+`Message_MaxAllowedSize` — hence the NextCloud share link approach.
 
 ### 2d. Harness Vision Injection
 
