@@ -111,7 +111,7 @@ flowchart TD
     HTTP -->|"http request"| DAV
     DAV -->|"200 .md bodies"| GET_MD
     GET_MD -->|"entry contents"| FORMAT_CONTENT
-    FORMAT_CONTENT -->|"[Knowledge: {cat}/{title}]\n{body}"| RECALL
+    FORMAT_CONTENT -->|"[Knowledge: {display_title}]\n{body}\nUse when: {when_useful}"| RECALL
     RECALL -->|"formatted result"| AGENT
     AGENT -->|"context"| AI
 ```

@@ -26,9 +26,10 @@ daily summary. Summaries older than `summary_days` (default 3 days) are
 deleted. The archived messages are pruned from Layer 1. The raw conversation
 state is also periodically saved to WebDAV as a crash-recovery checkpoint.
 
-Layer 3 (soul) is permanent — the user can add, revise, or remove entries
-through normal conversation (e.g. "remember I prefer short answers"). The agent
-edits soul via the `edit_soul` tool.
+Layer 3 (soul) is permanent — the user can rewrite the bot's identity,
+preferences, and facts through normal conversation (e.g. "update my soul to
+say I prefer short answers"). The agent overwrites the entire `soul.md` file
+via the `edit_soul` tool (full replace, no sectional editing).
 
 - Upstream: [Configuration Management](config.md) provides `ModelConfig`
   (`max_text_length`, `max_history_size`, `max_summary_chars`, `max_soul_chars`,
@@ -376,7 +377,7 @@ struct SoulMemory {
 
 The `content` is plain markdown with optional section headers (`## Preferences`,
 `## Identity`, `## Facts`). Sections are separated by `## ` headers for
-targeted editing via the `edit_soul` tool.
+display and name extraction; the `edit_soul` tool overwrites the entire file.
 
 ### File Layout
 

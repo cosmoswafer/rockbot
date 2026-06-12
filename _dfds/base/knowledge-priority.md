@@ -56,7 +56,7 @@ flowchart TD
     EMPTY -->|"yes"| TICK
     TICK -->|"next entry"| NEXT
     TICK -->|"no more"| WRITE_IDX
-    NEXT -->|"entry title, tags, when_useful"| SCAN
+    NEXT -->|"entry filename, tags, when_useful"| SCAN
     LOAD_SUMS -.->|"summary texts passed by caller"| SCAN
     SCAN -->|"per-day match bool"| COUNT
     COUNT -->|"day_count + current priority"| NEW_PRIO
@@ -164,7 +164,7 @@ flowchart TD
 ```
 
 A day is a **mention** if the daily summary text contains any entry keyword
-(title tokens, `when_useful` tokens, or tag tokens — tokens > 2 characters,
+(filename-derived title tokens, `when_useful` tokens, or tag tokens — tokens > 2 characters,
 case-insensitive, split on non-alphanumeric boundaries). Simple boolean
 `contains()` per keyword; no fuzzy matching.
 
