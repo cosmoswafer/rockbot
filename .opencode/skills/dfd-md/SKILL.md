@@ -22,10 +22,15 @@ DFD must be:
   flows beyond those required by the specified constraints are expected and
   allowed
 - **Compact & cohesive** — one DFD per subsystem; split large systems across
-  multiple files
+  multiple files. Each Level 1 DFD is composed of several small, standalone,
+  simple happy flows — not one monolithic diagram
 - **Low redundancy** — cross-reference instead of duplicating flows. Never
   repeat the same data structure or flow in multiple DFDs; reference the
   original document instead
+- **Data-structure coupled** — DFDs are linked together through shared data
+  structures: an upstream DFD produces a data shape that a downstream DFD
+  consumes. Every cross-DFD reference must name the specific data structure
+  (section 3 table) that forms the coupling
 
 ## DFD-Driven Development Workflow ("DFD Dev Flow")
 
@@ -103,9 +108,12 @@ flowchart LR
 Decomposes the Context diagram's single process into major sub-processes. Adds
 data stores where processes read/write persistent data.
 
-Split into two diagrams to keep the happy flow clean:
+A Level 1 DFD is composed of several **small, standalone, simple happy flows**
+(2a, 2b, …), each covering a distinct sub-process or data path. Keep each happy
+flow under 5–7 nodes. Exception handling, non-functional concerns, and abstract
+components belong in Level 2 inline diagrams — never mixed into the happy flow.
 
-**2a. Happy Flow:**
+**Happy Flow example (one of several):**
 
 ```mermaid
 flowchart TD
@@ -121,32 +129,35 @@ flowchart TD
     P2 -->|"output data"| EE1
 ```
 
-**2b. Error Handling:**
-
-```mermaid
-flowchart TD
-    EE1[External Entity]
-    P2(Sub-Process B)
-    ERROR(Error Handler)
-
-    P2 -->|"error message"| ERROR
-    ERROR -->|"error signal"| EE1
-```
-
 **Rules:**
 
 - Each process maps to one identifiable subsystem or module
+- Each happy flow is a self-contained data path — a reader can understand it
+  without consulting other happy flows
 - Data stores appear only when ≥2 processes read/write the same store
 - Every process must be reachable from ≥1 flow
-- Caching layers (e.g. IndexedDB) are Level 2 details; at Level 1, show only the
-  authoritative store
+- Caching layers are Level 2 details; at Level 1, show only the authoritative
+  store
+- Error paths, fallbacks, rate limits, and other non-functional concerns go in
+  Level 2 inline diagrams — not in the happy flow
 
-### Level 2 — Process Deep Dive (inline)
+### Level 2 — Inline Detail Diagrams
 
-Decompose a single Level 1 process into internal sub-processes and flows. Use
-when a Level 1 process hides significant transformation logic or caching. Level
-2 diagrams live **inline** within the parent Level 1 `.md` file as subsection
-`2c`, `2d`, etc. — not as separate files.
+Level 2 diagrams live **inline** within the parent Level 1 `.md` file as
+`2c`, `2d`, … — not as separate files. One diagram per Level 1 process or
+concern needing deeper detail.
+
+Level 2 inline diagrams cover four categories of detail that are
+never mixed into the happy flow:
+
+| Category | When to use |
+| -------- | ----------- |
+| **Exceptional Handling** | Error paths, fallbacks, retries, edge-case recovery diverging from the happy path |
+| **Non-Functional Requirements** | Rate limits, throttling, debouncing, security checkpoints, input sanitization, data retention/cleanup |
+| **Abstract Components** | Caching layers, shared utilities, retry mechanics, cross-cutting infrastructure |
+| **Process Deep Dive** | Internal transformation logic inside a Level 1 process that is too complex for Level 1 |
+
+**Example — Abstract Component (Cache Layer):**
 
 ```mermaid
 flowchart TD
@@ -167,9 +178,11 @@ flowchart TD
 **Rules:**
 
 - Inline within the parent Level 1 file as `2c`, `2d`, etc.
-- One diagram per Level 1 process needing decomposition
-- Dashed `-.->` arrows for fallback paths (cache-miss reads, retries)
-- Caching layers and retry logic live here — not at Level 1
+- One diagram per concern or process
+- Dashed `-.->` arrows for fallback paths (cache-miss reads, retries, error
+  recovery)
+- Use `shared/{concern}.md` when the same detail diagram is reused across
+  multiple Level 1 DFDs
 
 ## File Naming
 
@@ -213,31 +226,16 @@ DFDs whose _data flows directly feed into or consume from_ this diagram's flows
 Mermaid `flowchart` block. `LR` for Level 0, `TD` for Level 1+. Keep under 20
 nodes. Apply shape conventions from the notation table above.
 
-For Level 1, split into sub-sections as needed. The first two are required when
-applicable; the rest are optional inline Level 2 diagrams:
+For Level 1, split into sub-sections as needed:
 
-- **2a. Happy Flow (Main Success Path)** — _required_. Success path only; no
-  error processes or fallback flows.
-- **2b. Error Handling & Fallbacks** — error processes and fallback flows
-  diverging from the happy path. Use dashed `-.->` for silent fallbacks (no
-  user-visible error). Omit when there are no error paths.
-- **2c+. Additional Level 2 Inline Diagrams** — any of the following, numbered
-  `2c`, `2d`, `2e`, … as needed:
-
-  | Sub-diagram type                | When to include                                                                                                                                         |
-  | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-  | **Process Deep Dive**           | A Level 1 process hides significant transformation logic, caching, or retry mechanics                                                                   |
-  | **UI/UX Flow**                  | User-facing states matter — loading spinners, empty states, progressive disclosure, interaction sequences, optimistic updates                           |
-  | **Non-Functional Concerns**     | Performance boundaries (rate limits, throttling, debouncing), security checkpoints (auth gates, input sanitization paths), data retention/cleanup flows |
-  | **Other Implementation Detail** | Any cross-cutting concern or subsystem internals that don't fit the categories above but are worth documenting                                          |
-
-  Each sub-diagram must be scoped to a single concern or process. Title as
-  `2c. {Concern}`, e.g. `2c. Loading States`, `2d. Rate Limiting`,
-  `2e. Validate Prompt Deep Dive`.
-
-  When a concern is **shared across multiple Level 1 DFDs** (e.g. a common UI
-  component, auth flow, or error boundary used by many pages), extract it into
-  `shared/{concern}.md` and reference it instead of duplicating inline.
+- **2a, 2b, … — Happy Flows** — _required_. Each is a small, standalone,
+  simple data path (one sub-process or subsystem). No error handling, no
+  non-functional concerns. Keep each happy flow under 5–7 nodes. A typical
+  Level 1 DFD has 2–4 happy flows.
+- **2c+. Level 2 Inline Diagrams** — one per exceptional handling path,
+  non-functional requirement, abstract component, or process deep dive:
+  numbered `2c`, `2d`, `2e`, … as needed. Each diagram is scoped to a single
+  concern or process.
 
 ### 3. Data Structures (Level 1 only)
 
