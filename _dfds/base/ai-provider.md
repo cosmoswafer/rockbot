@@ -73,6 +73,8 @@ flowchart TD
     MULTI(FormatMultipartContent)
     IMG_URL(FormatImageUrl)
     IMG_B64(FormatImageBase64)
+    STRIP{Provider<br/>supports vision?}
+    CONVERT(Convert ImageUrl<br/>to [image] text)
     REQ[ProviderRequest]
 
     MSG -->|"chat message"| CHECK
@@ -81,10 +83,22 @@ flowchart TD
     CHECK -->|"image url"| IMG_URL
     CHECK -->|"image base64"| IMG_B64
     TEXT_ONLY -->|"content string"| REQ
-    MULTI -->|"content array"| REQ
     IMG_URL -->|"image url part"| MULTI
     IMG_B64 -->|"image base64 part"| MULTI
+    MULTI -->|"content array"| STRIP
+    STRIP -->|"yes (OpenRouter)"| REQ
+    STRIP -->|"no (DeepSeek)"| CONVERT
+    CONVERT -->|"text-only content"| REQ
 ```
+
+**Provider-specific handling**: DeepSeek models currently do not support vision
+(multimodal) input. Until DeepSeek adds `image_url` content part support, the
+`DeepSeekProvider::build_request_body()` method strips all `ContentPart::ImageUrl`
+parts from every `ChatMessage`, converting multipart content to plain text with
+`[image]` placeholders. This keeps the shared `ChatMessage`/`ContentPart` data
+structures intact across all providers while preventing 400 errors from
+`unknown variant 'image_url', expected 'text'`. OpenRouter passes vision payloads
+through as-is — any model-specific vision support is handled by OpenRouter's API.
 
 ## 3. Data Structures
 

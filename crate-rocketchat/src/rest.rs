@@ -260,6 +260,33 @@ impl RestApiClient {
             None
         })
     }
+
+    pub async fn set_avatar(&self, avatar_url: &str) -> Result<()> {
+        let url = self.api_url("users.setAvatar");
+        let body = serde_json::json!({
+            "avatarUrl": avatar_url
+        });
+        debug!("REST POST {} <- avatarUrl={}", url, avatar_url);
+
+        let resp = self
+            .http
+            .post(&url)
+            .headers(self.headers())
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| RocketChatError::Protocol(format!("HTTP request failed: {e}")))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let resp_body = resp.text().await.unwrap_or_default();
+            return Err(RocketChatError::Protocol(format!(
+                "users.setAvatar returned {status}: {resp_body}"
+            )));
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]

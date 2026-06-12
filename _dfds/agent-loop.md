@@ -216,3 +216,17 @@ The main loop uses `tokio::signal::unix::signal(SignalKind::terminate())` raced 
 `retry_count: u32` variable for reconnect backoff. Graceful shutdown calls
 `AgentHarness::flush_all_snapshots()` (harness.rs:1126) to sync dirty per-room
 state to WebDAV before exiting.
+
+## 4. Non-Functional Requirements
+
+- **No local file access**: The agent loop and all subsystems MUST NOT read from or
+  write to the local filesystem at runtime. The only local file read is `config.toml`
+  (and `default.config.toml`) at startup. All persistent state lives in WebDAV.
+- **No tool touches local files**: Every tool (web_fetch, webdav, calendar, datetime,
+  vision, web_search, image_gen, edit_soul, knowledge tools) MUST NOT access the
+  local filesystem. All I/O goes through WebDAV or HTTP.
+- **Config-only startup**: The application only loads `config.toml` (merged with
+  `default.config.toml`) on startup. No other local files are read or created.
+- **Avatar from URL only**: Avatar changes use the `users.setAvatar` REST API
+  (`setAvatarFromService` DDP method) with a URL parameter. Local file paths are
+  never used for avatar images.

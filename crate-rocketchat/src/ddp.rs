@@ -101,6 +101,15 @@ pub fn set_real_name_payload(name: &str) -> Value {
     })
 }
 
+pub fn set_avatar_from_service_payload(avatar_url: &str) -> Value {
+    json!({
+        "msg": "method",
+        "method": "setAvatarFromService",
+        "id": next_id(),
+        "params": [{"url": avatar_url}]
+    })
+}
+
 pub fn typing_payload(room_id: &str, username: &str, is_typing: bool) -> Value {
     let activities: Vec<&str> = if is_typing { vec!["user-typing"] } else { vec![] };
     json!({

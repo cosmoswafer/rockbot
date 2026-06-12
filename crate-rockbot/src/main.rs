@@ -117,11 +117,21 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     let has_exa = !exa_key.is_empty();
     tool_registry.register(Box::new(WebSearchTool::new(exa_key.clone())));
     if has_exa {
-        tool_registry.register(Box::new(WebFetchTool::with_exa_key(exa_key)));
-        debug!("WebFetchTool registered with Exa verification support");
+        if let Some(ref webdav_client) = webdav {
+            tool_registry.register(Box::new(WebFetchTool::with_exa_key_and_webdav(exa_key, webdav_client.clone())));
+            debug!("WebFetchTool registered with Exa verification and WebDAV support");
+        } else {
+            tool_registry.register(Box::new(WebFetchTool::with_exa_key(exa_key)));
+            debug!("WebFetchTool registered with Exa verification support");
+        }
     } else {
-        tool_registry.register(Box::new(WebFetchTool::new()));
-        debug!("WebFetchTool registered without Exa verification (no Exa API key)");
+        if let Some(ref webdav_client) = webdav {
+            tool_registry.register(Box::new(WebFetchTool::with_webdav(webdav_client.clone())));
+            debug!("WebFetchTool registered with WebDAV support (no Exa)");
+        } else {
+            tool_registry.register(Box::new(WebFetchTool::new()));
+            debug!("WebFetchTool registered without Exa or WebDAV support");
+        }
     }
     tool_registry.register(Box::new(DateTimeTool::new()));
     tool_registry.register(Box::new(VisionTool::with_max_bytes(

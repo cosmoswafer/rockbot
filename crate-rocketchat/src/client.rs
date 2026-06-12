@@ -60,6 +60,12 @@ impl MessageSender {
         writer.send(&payload).await
     }
 
+    pub async fn set_avatar(&self, avatar_url: &str) -> Result<()> {
+        let payload = ddp::set_avatar_from_service_payload(avatar_url);
+        let mut writer = self.writer.lock().await;
+        writer.send(&payload).await
+    }
+
     pub fn room_id(&self) -> &str {
         &self.room_id
     }

@@ -4,7 +4,10 @@ use tracing::debug;
 use crate::config::ProviderConfig;
 use crate::error::{Result, RockBotError};
 use crate::provider::AiProvider;
-use crate::types::{ChatRequest, CompletionResult, FinishReason, ToolCall, UsageInfo};
+use crate::types::{
+    ChatMessage, ChatRequest, CompletionResult, ContentPart, FinishReason, MessageContent, ToolCall,
+    UsageInfo,
+};
 
 pub struct DeepSeekProvider {
     api_key: String,
@@ -54,10 +57,35 @@ impl DeepSeekProvider {
         })
     }
 
+    fn strip_message_images(mut msg: ChatMessage) -> ChatMessage {
+        let MessageContent::Multipart(ref parts) = msg.content else {
+            return msg;
+        };
+        if !parts.iter().any(|p| matches!(p, ContentPart::ImageUrl { .. })) {
+            return msg;
+        }
+        let text = parts
+            .iter()
+            .filter_map(|p| match p {
+                ContentPart::Text { text } => Some(text.as_str()),
+                ContentPart::ImageUrl { .. } => Some("[image]"),
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        msg.content = MessageContent::Text(text);
+        msg
+    }
+
     pub(crate) fn build_request_body(&self, request: &ChatRequest) -> serde_json::Value {
+        let messages: Vec<ChatMessage> = request
+            .messages
+            .iter()
+            .map(|m| Self::strip_message_images(m.clone()))
+            .collect();
+
         let mut body = serde_json::json!({
             "model": request.model,
-            "messages": request.messages,
+            "messages": messages,
             "stream": request.stream,
         });
 

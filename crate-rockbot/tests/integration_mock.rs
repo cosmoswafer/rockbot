@@ -1741,3 +1741,263 @@ fn test_webdav_tool_webdav_dir_not_in_llm_schema() {
         "webdav_dir should not be in LLM-facing schema (injected by harness)"
     );
 }
+
+// ─── Memory Conflict: Multiple Messages Before Bot Response ─────────────────
+
+/// Simulates rapid incoming messages before bot responds.
+/// Verifies memory cache is not corrupted and all messages are preserved.
+#[test]
+fn test_memory_rapid_messages_no_loss() {
+    let mut mm = rockbot::memory::MemoryManager::new(
+        10000, // max_chars
+        50,    // max_history
+        5000,  // max_summary_chars
+        7,     // summary_days
+        2000,  // max_soul_chars
+        60,    // persist_interval_secs
+        0,     // max_context_bytes (disabled)
+    );
+
+    let room_id = "test-room-rapid";
+    // Create room state
+    let _room = mm.get_or_create(room_id, "test-channel", "Test Channel", false);
+
+    // Simulate 5 rapid incoming messages before bot responds
+    let messages = [
+        ("alice", "Hello bot!"),
+        ("bob", "@rockbot help"),
+        ("charlie", "What's the weather?"),
+        ("alice", "Also tell me about Docker"),
+        ("bob", "@rockbot urgent: server down"),
+    ];
+
+    for (sender, text) in &messages {
+        let msg = ChatMessage::user(format!("{}: {}", sender, text));
+        if let Some(room) = mm.get_mut(room_id) {
+            room.history.append(msg);
+        }
+    }
+
+    // Verify all messages are present
+    let room = mm.get(room_id).unwrap();
+    assert_eq!(
+        room.history.messages.len(),
+        5,
+        "All 5 rapid messages should be in history"
+    );
+
+    // Verify message content is preserved
+    for (i, (sender, text)) in messages.iter().enumerate() {
+        let msg = &room.history.messages[i];
+        if let MessageContent::Text(ref t) = msg.content {
+            assert!(
+                t.contains(sender) && t.contains(text),
+                "Message {} content should match: got '{}'",
+                i,
+                t
+            );
+        } else {
+            panic!("Expected text message at index {}", i);
+        }
+    }
+}
+
+/// Verifies that snapshot loading (history + daily_summaries + soul)
+/// doesn't conflict with in-memory state when all three are loaded together.
+#[test]
+fn test_memory_load_snapshot_with_soul_and_summaries_no_conflict() {
+    let mut mm = rockbot::memory::MemoryManager::new(
+        10000, 50, 5000, 7, 2000, 60, 0,
+    );
+
+    let room_id = "snapshot-test";
+
+    // Pre-populate soul
+    let soul = rockbot::memory::SoulMemory {
+        room_id: room_id.to_string(),
+        content: "# Soul Memory\n\n## Identity\nTestBot\n\n## Preferences\nlikes Rust".to_string(),
+        updated_at: "2026-06-10T00:00:00Z".to_string(),
+    };
+    mm.set_soul(room_id, soul);
+
+    // Pre-populate daily summaries
+    let summaries = vec![
+        rockbot::memory::DailySummary {
+            date: "2026-06-10".to_string(),
+            summary: "User asked about Rust macros".to_string(),
+            msg_count: 5,
+            char_count: 200,
+        },
+        rockbot::memory::DailySummary {
+            date: "2026-06-09".to_string(),
+            summary: "User asked about Docker".to_string(),
+            msg_count: 3,
+            char_count: 150,
+        },
+    ];
+    mm.set_daily_summaries(room_id, summaries);
+
+    // Add messages to history
+    let room = mm.get_or_create(room_id, "snaproom", "SnapRoom", false);
+    room.history.append(ChatMessage::user("alice: Hello"));
+    room.history.append(ChatMessage::assistant("Hi Alice!"));
+    mm.mark_snapshot_dirty(room_id);
+
+    // Build snapshot
+    let snap = mm.build_snapshot(room_id);
+    assert!(snap.is_some(), "Should build snapshot");
+    let snap = snap.unwrap();
+    assert_eq!(snap.messages.len(), 2, "Snapshot should have both messages");
+    assert_eq!(snap.soul.as_deref(), Some("# Soul Memory\n\n## Identity\nTestBot\n\n## Preferences\nlikes Rust"));
+    assert_eq!(snap.daily_summaries.len(), 2, "Should have both summaries");
+
+    // Verify all data is consistent (soul, summaries, history coexist)
+    let ctx = mm.build_context(room_id);
+    assert!(!ctx.is_empty(), "Context should not be empty");
+
+    // Verify soul is in context (as system message)
+    let has_soul = ctx.iter().any(|m| {
+        if let MessageContent::Text(ref t) = m.content {
+            t.contains("TestBot") && t.contains("likes Rust")
+        } else {
+            false
+        }
+    });
+    assert!(has_soul, "Context should include soul content");
+
+    // Verify summaries are in context
+    let has_summaries = ctx.iter().any(|m| {
+        if let MessageContent::Text(ref t) = m.content {
+            t.contains("Rust macros") || t.contains("Docker")
+        } else {
+            false
+        }
+    });
+    assert!(has_summaries, "Context should include daily summaries");
+}
+
+/// Tests that concurrent snapshot builds and memory mutations
+/// don't lose data. Simulates: messages arrive -> build snapshot ->
+/// messages arrive again -> build snapshot again.
+#[test]
+fn test_memory_snapshot_repeated_builds_no_data_loss() {
+    let mut mm = rockbot::memory::MemoryManager::new(
+        10000, 50, 5000, 7, 2000, 60, 0,
+    );
+
+    let room_id = "repeated-snap";
+    let _room = mm.get_or_create(room_id, "repsnap", "RepSnap", false);
+
+    // Batch 1: 3 messages
+    for (sender, text) in [("alice", "msg1"), ("bob", "msg2"), ("charlie", "msg3")] {
+        let msg = ChatMessage::user(format!("{}: {}", sender, text));
+        if let Some(room) = mm.get_mut(room_id) {
+            room.history.append(msg);
+        }
+        mm.mark_snapshot_dirty(room_id);
+    }
+
+    let snap1 = mm.build_snapshot(room_id);
+    assert!(snap1.is_some());
+    assert_eq!(snap1.as_ref().unwrap().messages.len(), 3);
+
+    // Batch 2: 2 more messages
+    for (sender, text) in &[("alice", "msg4"), ("bob", "msg5")] {
+        let msg = ChatMessage::user(format!("{}: {}", sender, text));
+        if let Some(room) = mm.get_mut(room_id) {
+            room.history.append(msg);
+        }
+        mm.mark_snapshot_dirty(room_id);
+    }
+
+    let snap2 = mm.build_snapshot(room_id);
+    assert!(snap2.is_some());
+    assert_eq!(snap2.as_ref().unwrap().messages.len(), 5, "All 5 messages should be in snapshot");
+
+    // Verify no messages lost across snapshots
+    let all_texts: Vec<String> = snap2
+        .unwrap()
+        .messages
+        .iter()
+        .map(|m| {
+            if let MessageContent::Text(ref t) = m.content {
+                t.clone()
+            } else {
+                String::new()
+            }
+        })
+        .collect();
+
+    for expected in &["msg1", "msg2", "msg3", "msg4", "msg5"] {
+        assert!(
+            all_texts.iter().any(|t| t.contains(expected)),
+            "Expected message containing '{}' not found in snapshot",
+            expected
+        );
+    }
+}
+
+/// Tests memory TTL eviction doesn't lose un-persisted messages
+// when multiple rooms are active simultaneously
+#[test]
+fn test_memory_multi_room_no_cross_contamination() {
+    let mut mm = rockbot::memory::MemoryManager::new(
+        10000, 50, 5000, 7, 2000, 60, 0,
+    );
+
+    let room1 = mm.get_or_create("r1", "channel-a", "Channel A", false);
+    room1.history.append(ChatMessage::user("alice: room1 msg1"));
+    room1.history.append(ChatMessage::assistant("bot: room1 reply"));
+
+    let room2 = mm.get_or_create("r2", "dm-bob", "DM Bob", true);
+    room2.history.append(ChatMessage::user("bob: room2 msg1"));
+
+    // Set soul in room1
+    mm.set_soul("r1", rockbot::memory::SoulMemory {
+        room_id: "r1".to_string(),
+        content: "# Soul\n\n## Identity\nRoom1Bot".to_string(),
+        updated_at: String::new(),
+    });
+
+    // Set summaries in room2
+    mm.set_daily_summaries("r2", vec![rockbot::memory::DailySummary {
+        date: "2026-06-10".to_string(),
+        summary: "Room2 daily".to_string(),
+        msg_count: 1,
+        char_count: 10,
+    }]);
+
+    // Build context for each room - should not cross-contaminate
+    let ctx1 = mm.build_context("r1");
+    let ctx2 = mm.build_context("r2");
+
+    // Room1 has soul but not room2's summary
+    let room1_has_own_soul = ctx1.iter().any(|m| {
+        if let MessageContent::Text(ref t) = m.content {
+            t.contains("Room1Bot")
+        } else { false }
+    });
+    assert!(room1_has_own_soul, "Room1 context should include its own soul");
+
+    let room1_has_room2_data = ctx1.iter().any(|m| {
+        if let MessageContent::Text(ref t) = m.content {
+            t.contains("Room2 daily")
+        } else { false }
+    });
+    assert!(!room1_has_room2_data, "Room1 context should NOT include Room2's summary");
+
+    // Room2 has summary but not room1's soul
+    let room2_has_own_summary = ctx2.iter().any(|m| {
+        if let MessageContent::Text(ref t) = m.content {
+            t.contains("Room2 daily")
+        } else { false }
+    });
+    assert!(room2_has_own_summary, "Room2 context should include its own summary");
+
+    let room2_has_room1_data = ctx2.iter().any(|m| {
+        if let MessageContent::Text(ref t) = m.content {
+            t.contains("Room1Bot")
+        } else { false }
+    });
+    assert!(!room2_has_room1_data, "Room2 context should NOT include Room1's soul");
+}

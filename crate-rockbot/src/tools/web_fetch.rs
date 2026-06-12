@@ -1,5 +1,9 @@
+use std::collections::HashMap;
+
 use async_trait::async_trait;
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde_json::Value;
+use webdav::WebDavClient;
 
 use crate::error::{Result, RockBotError};
 use crate::tool::Tool;
@@ -7,6 +11,7 @@ use crate::tool::Tool;
 pub struct WebFetchTool {
     http_client: reqwest::Client,
     exa_api_key: Option<String>,
+    webdav: Option<WebDavClient>,
 }
 
 impl WebFetchTool {
@@ -14,6 +19,7 @@ impl WebFetchTool {
         Self {
             http_client: reqwest::Client::new(),
             exa_api_key: None,
+            webdav: None,
         }
     }
 
@@ -21,6 +27,23 @@ impl WebFetchTool {
         Self {
             http_client: reqwest::Client::new(),
             exa_api_key: Some(api_key.into()),
+            webdav: None,
+        }
+    }
+
+    pub fn with_webdav(webdav: WebDavClient) -> Self {
+        Self {
+            http_client: reqwest::Client::new(),
+            exa_api_key: None,
+            webdav: Some(webdav),
+        }
+    }
+
+    pub fn with_exa_key_and_webdav(api_key: impl Into<String>, webdav: WebDavClient) -> Self {
+        Self {
+            http_client: reqwest::Client::new(),
+            exa_api_key: Some(api_key.into()),
+            webdav: Some(webdav),
         }
     }
 
@@ -28,6 +51,7 @@ impl WebFetchTool {
         Self {
             http_client: client,
             exa_api_key: api_key,
+            webdav: None,
         }
     }
 }
@@ -55,23 +79,154 @@ impl OutputFormat {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HttpMethod {
+    Get,
+    Post,
+    Put,
+    Patch,
+    Delete,
+    Head,
+    Options,
+}
+
+impl HttpMethod {
+    fn from_str(s: &str) -> Option<Self> {
+        match s.to_uppercase().as_str() {
+            "GET" => Some(Self::Get),
+            "POST" => Some(Self::Post),
+            "PUT" => Some(Self::Put),
+            "PATCH" => Some(Self::Patch),
+            "DELETE" => Some(Self::Delete),
+            "HEAD" => Some(Self::Head),
+            "OPTIONS" => Some(Self::Options),
+            _ => None,
+        }
+    }
+
+    fn as_str(&self) -> &str {
+        match self {
+            Self::Get => "GET",
+            Self::Post => "POST",
+            Self::Put => "PUT",
+            Self::Patch => "PATCH",
+            Self::Delete => "DELETE",
+            Self::Head => "HEAD",
+            Self::Options => "OPTIONS",
+        }
+    }
+}
+
+fn parse_headers(headers_val: Option<&Value>) -> Option<HeaderMap> {
+    let obj = headers_val?.as_object()?;
+    if obj.is_empty() {
+        return None;
+    }
+    let mut map = HeaderMap::new();
+    for (key, val) in obj {
+        let value_str = val.as_str().unwrap_or("");
+        if let (Ok(name), Ok(value)) = (
+            HeaderName::from_bytes(key.as_bytes()),
+            HeaderValue::from_str(value_str),
+        ) {
+            map.insert(name, value);
+        }
+    }
+    if map.is_empty() { None } else { Some(map) }
+}
+
 impl WebFetchTool {
-    async fn fetch_url(&self, url: &str, format: OutputFormat, verify: bool) -> Result<String> {
-        let response = self
-            .http_client
-            .get(url)
+    fn build_request(
+        &self,
+        url: &str,
+        method: HttpMethod,
+        headers: Option<HeaderMap>,
+        body: Option<String>,
+    ) -> reqwest::RequestBuilder {
+        let mut builder = match method {
+            HttpMethod::Get => self.http_client.get(url),
+            HttpMethod::Post => self.http_client.post(url),
+            HttpMethod::Put => self.http_client.put(url),
+            HttpMethod::Patch => self.http_client.patch(url),
+            HttpMethod::Delete => self.http_client.delete(url),
+            HttpMethod::Head => self.http_client.head(url),
+            HttpMethod::Options => self
+                .http_client
+                .request(reqwest::Method::OPTIONS, url),
+        };
+
+        builder = builder
             .header("User-Agent", "RockBot/1.0")
-            .timeout(std::time::Duration::from_secs(30))
+            .timeout(std::time::Duration::from_secs(30));
+
+        if let Some(ref h) = headers {
+            for (name, val) in h.iter() {
+                builder = builder.header(name, val);
+            }
+        }
+
+        if let Some(body_str) = body {
+            builder = builder.body(body_str);
+        }
+
+        builder
+    }
+
+    async fn fetch_url(
+        &self,
+        url: &str,
+        method: HttpMethod,
+        headers_json: Option<&Value>,
+        body_str: Option<&str>,
+        body_json: Option<&Value>,
+        file_from_webdav: Option<&str>,
+        format: OutputFormat,
+        verify: bool,
+        save_to_webdav: Option<&str>,
+    ) -> Result<String> {
+        let parsed_headers = parse_headers(headers_json);
+
+        let req_body = if let Some(path) = file_from_webdav {
+            let wd = self.webdav.as_ref().ok_or_else(|| {
+                RockBotError::ToolCallParse(
+                    "file_from_webdav requires WebDAV to be configured".into(),
+                )
+            })?;
+            let data = wd.read_file(path).await.map_err(|e| {
+                RockBotError::Provider(format!("Failed to read WebDAV file '{}': {}", path, e))
+            })?;
+            String::from_utf8(data).map_err(|e| {
+                RockBotError::Provider(format!(
+                    "WebDAV file '{}' is not valid UTF-8: {}",
+                    path, e
+                ))
+            })?
+        } else if let Some(bj) = body_json {
+            serde_json::to_string(bj).unwrap_or_default()
+        } else {
+            body_str.unwrap_or_default().to_string()
+        };
+
+        let req_body = if req_body.is_empty() { None } else { Some(req_body) };
+
+        let response = self
+            .build_request(url, method, parsed_headers, req_body)
             .send()
             .await?;
 
         let status = response.status().as_u16();
-        if !response.status().is_success() {
-            return Err(RockBotError::Provider(format!(
-                "Failed to fetch URL: HTTP {}",
-                status
-            )));
-        }
+        let mut response_ok = response.status().is_success();
+
+        let resp_headers: HashMap<String, String> = response
+            .headers()
+            .iter()
+            .map(|(k, v)| {
+                (
+                    k.as_str().to_string(),
+                    v.to_str().unwrap_or("[binary]").to_string(),
+                )
+            })
+            .collect();
 
         let content_type = response
             .headers()
@@ -80,21 +235,61 @@ impl WebFetchTool {
             .unwrap_or("unknown")
             .to_string();
 
-        // Check for binary/non-text content types
         let is_text = content_type.starts_with("text/")
             || content_type.is_empty()
             || content_type == "unknown"
             || content_type.starts_with("application/json")
             || content_type.starts_with("application/xml")
-            || content_type.starts_with("application/javascript");
-        if !is_text {
-            return Err(RockBotError::Provider(format!(
-                "Cannot parse binary/non-text content: {}. Use a different URL or format.",
-                content_type
-            )));
+            || content_type.starts_with("application/javascript")
+            || content_type.starts_with("application/x-www-form-urlencoded");
+
+        let body = if is_text {
+            response.text().await?
+        } else {
+            let bytes = response.bytes().await?;
+            if let Ok(ref body_str) = String::from_utf8(bytes.to_vec()) {
+                body_str.clone()
+            } else {
+                return Err(RockBotError::Provider(format!(
+                    "Cannot parse binary/non-text content: {}. Use a different URL or format.",
+                    content_type
+                )));
+            }
+        };
+
+        let saved_to = if let Some(save_path) = save_to_webdav {
+            let wd = self.webdav.as_ref().ok_or_else(|| {
+                RockBotError::ToolCallParse(
+                    "save_to_webdav requires WebDAV to be configured".into(),
+                )
+            })?;
+            let body_bytes: Vec<u8> = body.as_bytes().to_vec();
+            wd.write_file_with_fallback(save_path, body_bytes)
+                .await
+                .map_err(|e| {
+                    RockBotError::Provider(format!(
+                        "Failed to save response to WebDAV '{}': {}",
+                        save_path, e
+                    ))
+                })?;
+            Some(save_path.to_string())
+        } else {
+            None
+        };
+
+        if !response_ok {
+            if method == HttpMethod::Head {
+                response_ok = true;
+            }
         }
 
-        let body = response.text().await?;
+        if !response_ok {
+            let truncated = truncate(&body, 2000);
+            return Err(RockBotError::Provider(format!(
+                "Failed to fetch URL: HTTP {} - {}",
+                status, truncated
+            )));
+        }
 
         let is_html = content_type.contains("text/html");
 
@@ -122,6 +317,13 @@ impl WebFetchTool {
                     "verified": verification_performed,
                 });
 
+                if !resp_headers.is_empty() {
+                    json["response_headers"] =
+                        serde_json::to_value(&resp_headers).unwrap_or_default();
+                }
+                if let Some(ref saved) = saved_to {
+                    json["saved_to"] = serde_json::Value::String(saved.clone());
+                }
                 if let Some(sources) = related_sources {
                     json["related_sources"] = sources;
                 } else if verification_performed {
@@ -131,19 +333,26 @@ impl WebFetchTool {
                 Ok(json.to_string())
             }
             OutputFormat::Markdown => {
-                if is_html {
-                    let mut md = html_to_markdown(&body);
-                    if let Some(sources) = related_sources {
-                        md.push_str("\n\n## Related Sources\n\n");
-                        append_related_sources(&mut md, &sources);
-                    }
-                    Ok(md)
+                let mut md = if is_html {
+                    html_to_markdown(&body)
                 } else {
-                    Ok(truncate(&body, 10000))
+                    body.clone()
+                };
+                md = truncate(&md, 10000);
+                if let Some(ref saved) = saved_to {
+                    md.push_str(&format!("\n\nSaved to WebDAV: {}", saved));
                 }
+                if let Some(sources) = related_sources {
+                    md.push_str("\n\n## Related Sources\n\n");
+                    append_related_sources(&mut md, &sources);
+                }
+                Ok(md)
             }
             OutputFormat::Raw => {
                 let mut out = truncate(&body, 10000);
+                if let Some(ref saved) = saved_to {
+                    out.push_str(&format!("\n\nSaved to WebDAV: {}", saved));
+                }
                 if let Some(sources) = related_sources {
                     out.push_str("\n\n## Related Sources\n\n");
                     append_related_sources(&mut out, &sources);
@@ -449,7 +658,9 @@ impl Tool for WebFetchTool {
     }
 
     fn description(&self) -> &str {
-        "Fetch content from a URL. Supports three output formats: json (structured with metadata), \
+        "Fetch or send content from/to a URL like curl. Supports GET, POST, PUT, PATCH, DELETE, \
+         HEAD, OPTIONS with custom headers, JSON body, raw body, and file upload from WebDAV. \
+         Response can be saved to WebDAV. Three output formats: json (structured with metadata), \
          markdown (HTML converted to markdown for AI consumption), raw (unmodified response text). \
          Optionally cross-verifies content via web search when verify=true."
     }
@@ -460,14 +671,37 @@ impl Tool for WebFetchTool {
             "properties": {
                 "url": {
                     "type": "string",
-                    "description": "The URL to fetch"
+                    "description": "The URL to fetch (required)"
+                },
+                "method": {
+                    "type": "string",
+                    "enum": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
+                    "description": "HTTP method (default: GET)"
+                },
+                "headers": {
+                    "type": "object",
+                    "description": "HTTP headers as key-value pairs, e.g. {\"Authorization\": \"token xyz\", \"Content-Type\": \"application/json\"}"
+                },
+                "body": {
+                    "type": "string",
+                    "description": "Raw string body for POST/PUT/PATCH requests"
+                },
+                "body_json": {
+                    "type": "object",
+                    "description": "JSON body — serialized as request body with Content-Type: application/json"
+                },
+                "file_from_webdav": {
+                    "type": "string",
+                    "description": "WebDAV file path to read and use as request body"
+                },
+                "save_to_webdav": {
+                    "type": "string",
+                    "description": "WebDAV file path to save the response body"
                 },
                 "format": {
                     "type": "string",
                     "enum": ["json", "markdown", "raw"],
-                    "description": "Output format: json returns structured metadata, \
-                                    markdown converts HTML to markdown for AI, \
-                                    raw returns unmodified text (default: raw)"
+                    "description": "Output format: json returns structured metadata, markdown converts HTML to markdown for AI, raw returns unmodified text (default: raw)"
                 },
                 "verify": {
                     "type": "boolean",
@@ -488,6 +722,24 @@ impl Tool for WebFetchTool {
             .and_then(|u| u.as_str())
             .ok_or_else(|| RockBotError::ToolCallParse("web_fetch requires 'url' field".into()))?;
 
+        let method_str = args
+            .get("method")
+            .and_then(|m| m.as_str())
+            .unwrap_or("GET");
+
+        let method = HttpMethod::from_str(method_str).ok_or_else(|| {
+            RockBotError::ToolCallParse(format!(
+                "Invalid HTTP method '{}'. Supported: GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS",
+                method_str
+            ))
+        })?;
+
+        let headers_json = args.get("headers");
+        let body_str = args.get("body").and_then(|b| b.as_str());
+        let body_json = args.get("body_json");
+        let file_from_webdav = args.get("file_from_webdav").and_then(|v| v.as_str());
+        let save_to_webdav = args.get("save_to_webdav").and_then(|v| v.as_str());
+
         let format = args
             .get("format")
             .and_then(|f| f.as_str())
@@ -499,7 +751,18 @@ impl Tool for WebFetchTool {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        self.fetch_url(url, format, verify).await
+        self.fetch_url(
+            url,
+            method,
+            headers_json,
+            body_str,
+            body_json,
+            file_from_webdav,
+            format,
+            verify,
+            save_to_webdav,
+        )
+        .await
     }
 }
 
@@ -511,17 +774,16 @@ mod tests {
     fn test_web_fetch_tool_definition() {
         let tool = WebFetchTool::new();
         assert_eq!(tool.name(), "web_fetch");
-        assert!(tool.description().contains("Fetch content"));
+        assert!(tool.description().contains("Fetch"));
 
         let params = tool.parameters();
         assert_eq!(params["type"], "object");
-        assert!(
-            params["properties"]["format"]["enum"]
-                .as_array()
-                .unwrap()
-                .len()
-                == 3
-        );
+        let methods = params["properties"]["method"]["enum"]
+            .as_array()
+            .unwrap();
+        assert!(methods.iter().any(|m| m.as_str() == Some("POST")));
+        assert!(methods.iter().any(|m| m.as_str() == Some("GET")));
+        assert!(methods.iter().any(|m| m.as_str() == Some("DELETE")));
     }
 
     #[test]
@@ -575,6 +837,46 @@ mod tests {
     }
 
     #[test]
+    fn test_http_method_from_str() {
+        assert_eq!(HttpMethod::from_str("GET"), Some(HttpMethod::Get));
+        assert_eq!(HttpMethod::from_str("post"), Some(HttpMethod::Post));
+        assert_eq!(HttpMethod::from_str("PUT"), Some(HttpMethod::Put));
+        assert_eq!(HttpMethod::from_str("PATCH"), Some(HttpMethod::Patch));
+        assert_eq!(HttpMethod::from_str("DELETE"), Some(HttpMethod::Delete));
+        assert_eq!(HttpMethod::from_str("HEAD"), Some(HttpMethod::Head));
+        assert_eq!(HttpMethod::from_str("OPTIONS"), Some(HttpMethod::Options));
+        assert_eq!(HttpMethod::from_str("INVALID"), None);
+    }
+
+    #[test]
+    fn test_parse_headers() {
+        let json = serde_json::json!({
+            "Authorization": "Bearer abc123",
+            "Content-Type": "application/json"
+        });
+        let headers = parse_headers(Some(&json)).unwrap();
+        assert_eq!(
+            headers.get("Authorization").unwrap().to_str().unwrap(),
+            "Bearer abc123"
+        );
+        assert_eq!(
+            headers.get("Content-Type").unwrap().to_str().unwrap(),
+            "application/json"
+        );
+    }
+
+    #[test]
+    fn test_parse_headers_empty() {
+        let json = serde_json::json!({});
+        assert!(parse_headers(Some(&json)).is_none());
+    }
+
+    #[test]
+    fn test_parse_headers_none() {
+        assert!(parse_headers(None).is_none());
+    }
+
+    #[test]
     fn test_extract_page_title() {
         let html = "<html><head><title>My Page</title></head><body></body></html>";
         assert_eq!(extract_page_title(html), Some("My Page".into()));
@@ -613,6 +915,16 @@ mod tests {
         let tool = WebFetchTool::new();
         let result = tool.execute(r#"{}"#).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_execute_invalid_method() {
+        let tool = WebFetchTool::new();
+        let result = tool
+            .execute(r#"{"url": "https://x.example", "method": "INVALID"}"#)
+            .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Invalid HTTP method"));
     }
 
     #[test]
@@ -675,5 +987,42 @@ mod tests {
         let parsed2: Value = serde_json::from_str(&out2).unwrap();
         assert_eq!(parsed2["verified"], true);
         assert_eq!(parsed2["related_sources"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_build_request_get() {
+        let tool = WebFetchTool::new();
+        let req = tool.build_request("https://example.com", HttpMethod::Get, None, None);
+        let built = req.build().unwrap();
+        assert_eq!(built.method(), "GET");
+    }
+
+    #[test]
+    fn test_build_request_post_with_body() {
+        let tool = WebFetchTool::new();
+        let req = tool.build_request(
+            "https://example.com",
+            HttpMethod::Post,
+            None,
+            Some("hello body".into()),
+        );
+        let built = req.build().unwrap();
+        assert_eq!(built.method(), "POST");
+    }
+
+    #[test]
+    fn test_build_request_with_headers() {
+        let tool = WebFetchTool::new();
+        let json = serde_json::json!({"X-Custom": "test-value"});
+        let headers = parse_headers(Some(&json)).unwrap();
+        let req = tool.build_request(
+            "https://example.com",
+            HttpMethod::Get,
+            Some(headers),
+            None,
+        );
+        let built = req.build().unwrap();
+        let h = built.headers();
+        assert_eq!(h.get("X-Custom").unwrap().to_str().unwrap(), "test-value");
     }
 }
