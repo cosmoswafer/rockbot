@@ -12,12 +12,12 @@ its own subtree created proactively on first use. Room names use type prefixes
 All WebDAV operations are **automatically scoped** to the room's dedicated
 directory. The isolation is structural — no path-sanitization needed:
 
-1. The harness computes `webdav_dir` from `(room_name, is_dm)` — e.g. `r-general`
-2. `inject_room_context()` adds `webdav_dir` to tool call arguments before
-   execution — the LLM cannot override it
-3. Every tool constructs paths via `WebDavPath::room_path(webdav_dir, subpath)`
-   which produces `//{room_key}/{subpath}` — the room key slot is always the
-   harness-injected value
+1. The harness computes `webdav_dir` from `(room_name, room_fname, is_dm)` — prefixed `r-` for channels, `d-` for DMs, preferring friendly name over slug — e.g. `r-general`
+2. `inject_room_context()` adds both `room_id` and `webdav_dir` to tool call
+   arguments before execution — the LLM cannot override either
+3. Every tool constructs paths via `WebDavPath` methods (`room_path`,
+   `room_dir`, `memory_dir`, `image_path`, etc.) — all prepend the
+   `webdav_dir` key, keeping operations scoped to the room's subtree
 4. The `WebDavClient`'s `base_url` (e.g.
    `https://nc.example.com/remote.php/dav/files/user/clawspaces/`) provides
    the root; paths are joined to form the full URL

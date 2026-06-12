@@ -206,11 +206,11 @@ generated images for the reply pipeline. Entries are consumed by `take_image()`.
 
 | Function | Location | Role |
 |----------|----------|------|
-| `download_attachment_refs` | `harness.rs:494` | Downloads RocketChat attachments → `AttachmentRef` list |
-| `download_and_encode_single` | `harness.rs:523` | Single attachment → `data:` URI |
-| `inject_image_urls_from_refs` | `harness.rs:1347` | Injects image URLs from attachments + image_pool + agent URLs |
-| `cache_vision_images` | `harness.rs:570` | Parses `![name](data:...)` from tool results → `image_pool` |
-| `inject_vision_images` | `harness.rs:602` | Drains `image_pool` → `ChatMessage::user_with_images` |
+| `download_attachment_refs` | `harness.rs:495` | Downloads RocketChat attachments → `AttachmentRef` list |
+| `download_and_encode_single` | `harness.rs:524` | Single attachment → `data:` URI |
+| `inject_image_urls_from_refs` | `harness.rs:1348` | Injects image URLs from attachments + image_pool + agent URLs |
+| `cache_vision_images` | `harness.rs:571` | Parses `![name](data:...)` from tool results → `image_pool` |
+| `inject_vision_images` | `harness.rs:603` | Drains `image_pool` → `ChatMessage::user_with_images` |
 | `create_nextcloud_share_link` | `webdav/client.rs` | Creates 7-day public share for generated images |
 | `upload_data_uri` | `image_gen.rs:75` | Uploads `data:` URI to Fal CDN → returns `https://` URL |
 | `strip_markdown_image_id` | `utils.rs:96` | Removes `![desc](image_key)` from reply text |

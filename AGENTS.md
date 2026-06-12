@@ -75,6 +75,11 @@ For each DFD (ordered by the mapping table below):
 5. **Add tests** — mock external deps (see `integration_mock.rs` patterns).
 6. **Run suite** — `cargo test`, fix all failures.
 
+**DFD-driven alignment**: DFDs are the design spec. If a DFD's modification time
+is newer than its corresponding Rust source, the code is stale and must be
+updated to match the DFD. If the code was updated first (e.g., a bug fix),
+update the DFD to match the code — DFD and code must always be in sync.
+
 ### Phase 3 — Ship
 
 1. **Build release**: `cargo build --release`
