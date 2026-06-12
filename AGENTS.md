@@ -110,6 +110,7 @@ For each DFD (ordered by the mapping table below):
 | `base/knowledge.md` | `knowledge.rs` | `tools/save_knowledge.rs`, `tools/forget_knowledge.rs`, `tools/recall_knowledge.rs` |
 | `base/knowledge-priority.md` | `knowledge.rs` | `harness.rs`, `memory.rs` |
 | `context-diagram.md` | (Level 0 — system boundary, no code changes) | — |
+| `image-interception.md` | `harness.rs` | `tools/image_gen.rs`, `tools/vision.rs`, `tools/webdav.rs`, `provider/fal.rs` |
 
 ## Testing
 
