@@ -66,12 +66,37 @@ No CI, no `rustfmt.toml`, no `clippy.toml`, no `rust-toolchain` file.
 
 Data Flow Diagrams in `_dfds/` are the design spec. The development flow is defined in the [`dfd-md` skill](.agents/skills/dfd-md/SKILL.md). Key rules:
 
-- **Phase 1**: Write an integration probe (no mocking, live server) to collect actual data shapes for reference. Skip if sufficient real-world data already exists.
-- **Phase 2**: Design or revise the DFD to accurately model desired data movement. Base data structures on shapes observed in the probe when available.
-- **Phase 3**: Implement data flow validation constraints — parse-and-validate at subsystem boundaries with concrete types. Cross-DFD shared structures defined once in a canonical location, imported by both producer and consumer modules, making mismatches compile-time errors.
-- **Phase 4**: Concrete implementation — code types, core logic, and wiring described by the DFD.
-- **Phase 5**: Re-read all DFDs and confirm they match the code. If a DFD's mtime is newer than its corresponding Rust source, the code is stale and must be updated to match the DFD. If the code was updated first, update the DFD.
+- **Phase 1**: Integration probe (data collection; optional) — live-data probe against real server/API to collect actual data shapes. Skip if sufficient real-world data already exists.
+- **Phase 2**: Revise DFD — design or update the DFD to accurately model desired data movement. Base data structures (section 3) on shapes observed in the probe when available. Keep levels clean; use notation rules from the skill.
+- **Phase 3**: Implement data flow validation constraints — enforce data structure correctness through code-level constraints. Parse and validate at subsystem entry points ("parse, don't validate"). Cross-DFD shared structures defined once in a canonical location, imported by both producer and consumer modules, making mismatches compile-time errors.
+- **Phase 4**: Concrete implementation — code types, core logic, and wiring described by the DFD. Favour incremental, type-first implementation.
+- **Phase 5**: Review all DFDs — re-read every DFD and confirm it matches the code. If a DFD's `mtime` is newer than its corresponding Rust source, the code is stale and must be updated to match the DFD. If the code was updated first, update the DFD.
 - **Phase 6**: `cargo build --release` → commit → push → restart bot.
+
+### Rust type-driven design rules
+
+Every DFD data structure (section 3) becomes a Rust type. Follow these rules
+to make data flow violations compile-time errors rather than runtime surprises:
+
+- **Newtype wrapping** — primitives carrying invariants (non-empty strings,
+  bounded numbers, well-formed URLs, IDs) must be single-field structs with a
+  fallible constructor (`TryFrom` / `FromStr` / factory fn). Use
+  [`nutype`](https://crates.io/crates/nutype) for attribute-macro newtypes
+  with built-in validation, or hand-roll with a private field. Holding an
+  instance guarantees the invariant — no downstream `.is_valid()` checks.
+- **Parse at boundaries** — all external input (JSON, TOML config, CLI args)
+  is parsed into domain types once, at the subsystem entry point.  Use `serde`
+  `Deserialize` on validated types directly; never pass `serde_json::Value`
+  or raw `String` through internal layers.
+- **Cross-DFD shared types** — a type consumed by multiple DFDs lives in a
+  canonical crate or module.  Both producer and consumer import it — a field
+  rename or type change becomes a compile-time error everywhere at once.
+- **Errors via [`thiserror`](https://crates.io/crates/thiserror)** — every
+  fallible constructor and parsing step returns a specific error type. Error
+  messages name the DFD data structure and offending field.
+- **No `unwrap()` / `expect()` in production** — use `?` exclusively. Panics
+  are only for unrecoverable programmer bugs (broken invariants that indicate
+  a logic error).
 
 ### DFD-to-code mapping
 
