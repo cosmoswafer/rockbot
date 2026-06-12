@@ -322,6 +322,7 @@ impl AgentHarness {
                                     room_id,
                                     &wd,
                                     &attachment_refs,
+                                    Some(&self.image_pool),
                                 );
                                 if let Ok(mut v) =
                                     serde_json::from_str::<serde_json::Value>(&args)
@@ -1349,22 +1350,32 @@ fn inject_image_urls_from_refs(
     room_id: &str,
     webdav_dir: &str,
     refs: &[AttachmentRef],
+    image_pool: Option<&HashMap<String, Vec<CachedImage>>>,
 ) -> String {
     let mut args: serde_json::Value =
         serde_json::from_str(arguments).unwrap_or(serde_json::json!({}));
     args["room_id"] = serde_json::Value::String(room_id.to_string());
     args["webdav_dir"] = serde_json::Value::String(webdav_dir.to_string());
-    // If the agent provided image_urls (e.g. fal CDN URLs from a previous
-    // generation), keep them. Always also inject harness-tagged data URIs
-    // whose alt-text appears in the prompt.
     let mut injected: Vec<serde_json::Value> = Vec::new();
     let prompt_lower = arguments.to_lowercase();
+    // 1. User-attached images whose name appears in the prompt
     for r in refs {
         if prompt_lower.contains(&r.title.to_lowercase()) {
             injected.push(serde_json::Value::String(r.data_uri.clone()));
         }
     }
-    // Merge with any agent-provided URLs (e.g. fal CDN from previous generation)
+    // 2. Vision-fetched images from image_pool whose label appears in the prompt
+    if let Some(pool) = image_pool {
+        if let Some(images) = pool.get(room_id) {
+            for ci in images {
+                let label = format!("![{}]", ci.name);
+                if prompt_lower.contains(&ci.name.to_lowercase()) || prompt_lower.contains(&label) {
+                    injected.push(serde_json::Value::String(ci.data_uri.clone()));
+                }
+            }
+        }
+    }
+    // 3. Merge with any agent-provided URLs (e.g. fal CDN from previous generation or share_url)
     if let Some(agent_urls) = args.get("image_urls").and_then(|v| v.as_array()) {
         for url in agent_urls {
             if let Some(s) = url.as_str() {
@@ -1767,7 +1778,7 @@ chat = "mock-model"
             AttachmentRef { title: "apple.png".into(), data_uri: "data:image/png;base64,abc".into() },
             AttachmentRef { title: "banana.jpg".into(), data_uri: "data:image/jpg;base64,xyz".into() },
         ];
-        let result = inject_image_urls_from_refs(args, "general", "r-general", &refs);
+        let result = inject_image_urls_from_refs(args, "general", "r-general", &refs, None);
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["room_id"], "general");
         assert_eq!(parsed["webdav_dir"], "r-general");
@@ -1783,7 +1794,7 @@ chat = "mock-model"
         let refs = vec![
             AttachmentRef { title: "photo.png".into(), data_uri: "data:image/png;base64,abc".into() },
         ];
-        let result = inject_image_urls_from_refs(args, "general", "r-general", &refs);
+        let result = inject_image_urls_from_refs(args, "general", "r-general", &refs, None);
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         // No title match in prompt -> nothing injected
         assert!(parsed.get("image_urls").is_none());
@@ -1795,7 +1806,7 @@ chat = "mock-model"
         let refs = vec![
             AttachmentRef { title: "photo.png".into(), data_uri: "data:image/png;base64,abc".into() },
         ];
-        let result = inject_image_urls_from_refs(args, "general", "r-general", &refs);
+        let result = inject_image_urls_from_refs(args, "general", "r-general", &refs, None);
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         let urls = parsed["image_urls"].as_array().unwrap();
         // Both harness URI and agent-provided fal CDN URL should be present

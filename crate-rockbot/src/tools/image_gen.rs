@@ -274,7 +274,7 @@ impl Tool for ImageGenTool {
                 webdav_path: webdav_path.clone(),
                 image_bytes: image_bytes.clone(),
                 mime_type: mime,
-                share_url,
+                share_url: share_url.clone(),
             },
         );
 
@@ -283,12 +283,15 @@ impl Tool for ImageGenTool {
             t_start.elapsed().as_millis(),
         );
 
-        Ok(serde_json::json!({
+        let mut result = serde_json::json!({
             "ok": true,
             "webdav_path": webdav_path,
             "image_key": image_key,
-        })
-        .to_string())
+        });
+        if let Some(ref url) = share_url {
+            result["share_url"] = serde_json::json!(url);
+        }
+        Ok(result.to_string())
     }
 }
 
