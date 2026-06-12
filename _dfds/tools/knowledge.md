@@ -188,6 +188,7 @@ All data structures are shared with [Knowledge Management](../base/knowledge.md#
 | `content`    | `string` | Markdown body of the knowledge entry            |
 | `when_useful`| `string` | Situation description for retrieval             |
 | `tags`       | `string` | Comma-separated keywords                        |
+| `priority`   | `string` | Optional priority, default `"P1"` (`P0`-`P3`)  |
 | `webdav_dir` | `string` | Room WebDAV key (injected automatically)        |
 
 #### ForgetKnowledgeParams

@@ -202,7 +202,7 @@ present, the prompt becomes `"SenderName: Describe this image in detail."`.
 **Chat history preservation**: when `build_context()` builds messages for the AI
 provider, `ContentPart::ImageUrl` parts are preserved only on the most recent
 user message. Earlier user messages with images are collapsed to `[image]` text
-placeholders (see [Vision](tools/vision.md) section 2e).
+placeholders (see `memory.rs:strip_images_from_message`).
 
 ### 2f. Per-Room State Routing
 

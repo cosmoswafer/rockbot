@@ -201,8 +201,8 @@ flowchart TD
     GET_IDX -->|"parse entries"| SCORE
     CTX_MSGS -->|"text of last N messages"| EXTRACT_KW
     EXTRACT_KW -->|"tokenized keywords"| SCORE
-    SCORE -->|"keywords + priority bonus"| RELEVANT
-    SCORE -->|"no overlap + not P0"| SKIP
+    SCORE -->|"keywords overlap"| RELEVANT
+    SCORE -->|"no overlap"| SKIP
     RELEVANT -->|"filename list"| LOAD
     LOAD -->|"GET each .md"| DAV
     DAV -->|"markdown content"| CONCAT
@@ -264,22 +264,10 @@ enum KnowledgePriority {
 }
 ```
 
-**Priority effect on recall**: During `match_relevant`, priority adds a flat
-score bonus on top of keyword matching. P0 entries are always selected
-regardless of keyword overlap. Higher priority means the entry is recalled
-more frequently and surfaced earlier in the injected knowledge list.
-
-Priorities are adaptively recalculated by the [Knowledge Priority
-Algorithm](knowledge-priority.md) during daily summary review, using a single
-3-day sliding window against Layer 2 daily summaries. Degradation is
-incremental (P0→P1→P2→P3); promotion is immediate (≥1 mention→P1, 3/3→P0).
-
-| Priority | Score bonus | Always selected? |
-|----------|------------|-------------------|
-| P0       | +8         | Yes               |
-| P1       | +5         | No                |
-| P2       | +2         | No                |
-| P3       | +0         | No                |
+**Priority**: the `priority` field is stored in `.md` frontmatter for
+informational purposes but is no longer used in retrieval decisions.
+Retrieval is ordered by `keyword overlap` × `updated_at` recency — most
+recently modified matching entries appear first.
 
 ### `KnowledgeCategory`
 
@@ -373,9 +361,5 @@ During `BuildContext` assembly (`MemoryManager::build_context`):
 3. For entries scoring above threshold, `GET` the `.md` file
 4. Prepend each loaded entry as a system message:
    ```
-   [Knowledge: {display_title}] {content}
-   ```
-5. The `when_useful` field is included as a leading line:
-   ```
-   Use when: {when_useful}
+   [Knowledge: {display_title}]\n{body}
    ```

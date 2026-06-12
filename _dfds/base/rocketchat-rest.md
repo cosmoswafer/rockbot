@@ -230,7 +230,7 @@ Retrieves a single message by `_id`. Useful for verifying alias propagation.
 
 **Response**: message object with `alias` field preserved.
 
-### Rust Types (proposed)
+### Rust Types
 
 #### `RestApiClient`
 

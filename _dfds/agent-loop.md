@@ -85,7 +85,6 @@ flowchart TD
     DAV[(NextCloud WebDAV)]
     RECONNECT(ReconnectWithBackoff)
     FALLBACK(SendFallbackReply)
-    RETRY(RetryWithBackoff)
     SIGINT([SIGINT / Ctrl+C])
     SIGTERM([SIGTERM / pkill])
     SHUTDOWN(GracefulShutdown)
@@ -98,8 +97,7 @@ flowchart TD
     RECONNECT -.->|"reconnect signal"| WS
     RECONNECT -.->|"max retries exhausted"| SHUTDOWN
     AI -.->|"api error response"| FALLBACK
-    DAV -.->|"connection lost error"| RETRY
-    RETRY -.->|"retries exhausted"| FALLBACK
+    DAV -.->|"connection lost"| FALLBACK
     SIGINT -.->|"SIGINT"| SHUTDOWN
     SIGTERM -.->|"SIGTERM"| SHUTDOWN
     SHUTDOWN -->|"1. abort"| ABORT_TIMER
