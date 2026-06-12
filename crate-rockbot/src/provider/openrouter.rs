@@ -822,12 +822,16 @@ impl crate::provider::ImageProvider for OpenRouterImageProvider {
                 }
                 ImageSizeValue::Custom { width, height } => {
                     image_config.insert(
-                        "image_size".into(),
-                        serde_json::json!(format!("{}x{}", width, height)),
+                        "aspect_ratio".into(),
+                        serde_json::json!(format!("{}:{}", width, height)),
                     );
                 }
             }
         }
+        image_config.insert(
+            "image_size".into(),
+            serde_json::json!("4K"),
+        );
         if let Some(ref format) = params.output_format {
             image_config.insert("output_format".into(), serde_json::json!(format));
         }

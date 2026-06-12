@@ -31,6 +31,7 @@ password = "EDITME"
 # default_provider = "fal"
 # default_text_model = "fal-ai/flux/schnell"
 # default_edit_model = "fal-ai/nano-banana-pro/edit"
+# default_image_size = "portrait_2_3"
 
 [webdav]
 url = "https://cloud.example.com"
