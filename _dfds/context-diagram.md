@@ -13,11 +13,11 @@ touching local disk.
 ```mermaid
 flowchart LR
     RocketChat[RocketChat Server]
-    AIProvider[AI Provider]
+    AIProvider[AI Provider<br/>OpenRouter / DeepSeek]
     NextCloud[NextCloud WebDAV]
     ExaSearch[Exa Search API]
     WebPage[Web Page]
-    ImageGen[fal.ai Image Generation]
+    ImageGen[Image Generation<br/>OpenRouter / fal.ai]
     Bot(("RockBot"))
 
     RocketChat -->|"incoming message event"| Bot

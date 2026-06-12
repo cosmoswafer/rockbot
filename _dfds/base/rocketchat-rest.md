@@ -102,9 +102,9 @@ flowchart TD
 
     HARNESS -->|"resolve_name(room_id)"| REST_CLIENT
     CACHE -->|"cache hit: fname"| REST_CLIENT
-    REST_CLIENT -->|"cache miss"| RC_API
-    RC_API -->|"GET /rooms.get → [{_id, fname, name, t}]"| REST_CLIENT
-    RC_API -->|"GET /rooms.info?roomId=X → {room: {name, fname}}"| REST_CLIENT
+    REST_CLIENT -->|"cache miss → GET /rooms.info?roomId=X"| RC_API
+    RC_API -->|"200: {room: {name, fname}}"| REST_CLIENT
+    RC_API -.->|"error / timeout → fallback: GET /rooms.get"| REST_CLIENT
     REST_CLIENT -->|"store (room_id → fname)"| CACHE
     CACHE -->|"resolved fname"| HARNESS
 ```

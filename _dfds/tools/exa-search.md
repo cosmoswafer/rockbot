@@ -160,7 +160,7 @@ enables multi-step reasoning with structured outputs via `outputSchema`.
 | ---------------- | ----------------- | ---------------------------------------------------- |
 | `enabled`        | `bool`            | Set to `true` for highest-quality default excerpts   |
 | `query`          | `Option<String>`  | Custom query guiding which highlights are selected   |
-| `max_characters` | `Option<u32>`     | Cap on highlight characters per URL (max 10000)      |
+| `max_characters` | `Option<u32>`     | Cap on highlight characters per URL (max 15000)      |
 
 ### `TextOptions`
 

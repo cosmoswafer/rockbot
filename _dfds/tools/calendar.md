@@ -36,12 +36,14 @@ flowchart TD
     ADD(AddEvent)
     UPD(UpdateEvent)
     DEL(DeleteEvent)
+    LIST_TODOS(ListTodos)
 
     CALLER -->|"date range + room_id"| LIST
     CALLER -->|"event uid + room_id"| GET
     CALLER -->|"event details + room_id"| ADD
     CALLER -->|"event uid + updates + room_id"| UPD
     CALLER -->|"event uid + room_id"| DEL
+    CALLER -->|"date range + room_id"| LIST_TODOS
 
     CAL_CFG -->|"server url + credentials"| AUTO
     AUTO -->|"checks room calendar mapping"| LIST
@@ -49,23 +51,27 @@ flowchart TD
     AUTO -->|"checks room calendar mapping"| ADD
     AUTO -->|"checks room calendar mapping"| UPD
     AUTO -->|"checks room calendar mapping"| DEL
+    AUTO -->|"checks room calendar mapping"| LIST_TODOS
 
     LIST -->|"REPORT calendar-query xml"| HTTP
     GET -->|"GET .ics"| HTTP
     ADD -->|"PUT vevent ics body"| HTTP
     UPD -->|"PUT vevent ics + If-Match etag"| HTTP
     DEL -->|"DELETE .ics"| HTTP
+    LIST_TODOS -->|"REPORT calendar-query with VTODO filter"| HTTP
     HTTP -->|"dav request"| NC
     NC -->|"207 multi-status"| LIST
     NC -->|"200 .ics body"| GET
     NC -->|"201 created"| ADD
     NC -->|"204 no content"| UPD
     NC -->|"204 no content"| DEL
+    NC -->|"207 multi-status"| LIST_TODOS
     LIST -->|"event list"| CALLER
     GET -->|"event .ics"| CALLER
     ADD -->|"event uid"| CALLER
     UPD -->|"updated"| CALLER
     DEL -->|"deleted"| CALLER
+    LIST_TODOS -->|"todo list"| CALLER
 ```
 
 ### 2b. Calendar Auto-Creation Flow
@@ -109,6 +115,7 @@ flowchart TD
         EVT_ADD(PUT new .ics)
         EVT_UPD(PUT existing .ics + If-Match)
         EVT_DEL(DELETE .ics resource)
+        EVT_LIST_TODOS(REPORT calendar-query<br/>with VTODO filter)
     end
 
     EVT_LIST -->|"REPORT + calendar-query xml"| HTTP
@@ -116,6 +123,7 @@ flowchart TD
     EVT_ADD -->|"PUT vevent ics body"| HTTP
     EVT_UPD -->|"PUT vevent ics + If-Match: etag"| HTTP
     EVT_DEL -->|"DELETE .ics"| HTTP
+    EVT_LIST_TODOS -->|"REPORT + calendar-query<br/>with comp-filter VTODO"| HTTP
 
     HTTP -->|"dav request"| NC
     NC -->|"207 multi-status"| EVT_LIST
@@ -123,6 +131,18 @@ flowchart TD
     NC -->|"201 created"| EVT_ADD
     NC -->|"204 no content"| EVT_UPD
     NC -->|"204 no content"| EVT_DEL
+    NC -->|"207 multi-status"| EVT_LIST_TODOS
+
+    subgraph VTODOStructure[VTODO Content]
+        direction LR
+        TODOSUMMARY[summary: title]
+        TODODESCRIPTION[description: details]
+        TODODUE[due: datetime]
+        TODOSTATUS[status: COMPLETED/NEEDS-ACTION]
+        TODOPRIORITY[priority: 1-9]
+    end
+
+    EVT_LIST_TODOS -->|"parses time-range filtered vtodos"| VTODOStructure
 
     subgraph VEVENTStructure[VEVENT Content]
         direction LR
@@ -229,6 +249,7 @@ Per [NextCloud Calendar user guide](https://docs.nextcloud.com/server/latest/use
 | AddEvent            | `PUT`       | `{base}/calendars/{user}/{cal}/{uid}.ics` | Body = `VEVENT` iCalendar (RFC 5545)            |
 | UpdateEvent         | `PUT`       | `{base}/calendars/{user}/{cal}/{uid}.ics` | `If-Match: {etag}` header; 409 on conflict      |
 | DeleteEvent         | `DELETE`    | `{base}/calendars/{user}/{cal}/{uid}.ics` | 204 on success, 404 if not found                |
+| ListTodos           | `REPORT`    | `{base}/calendars/{user}/{cal}/`          | XML body with `calendar-query`, comp-filter `VTODO`, time-range filter |
 
 #### `MKCALENDAR` request body
 

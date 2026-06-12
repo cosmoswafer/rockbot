@@ -17,7 +17,7 @@ the system falls back to reading individual files.
 | Layer | Name | Storage | Limit | Contents |
 |-------|------|---------|-------|----------|
 | 1 | **Chat History** | In-memory only | `max_text_length` chars, `max_history_messages` msgs | Raw `Vec<ChatMessage>` — the current working window |
-| 2 | **Daily Summaries** | WebDAV `.md` files | `max_summary_chars` total, 7-day rolling window | AI-summarized daily digests of overflowed Layer 1 messages |
+| 2 | **Daily Summaries** | WebDAV `.md` files | `max_summary_chars` total, 3-day rolling window | AI-summarized daily digests of overflowed Layer 1 messages |
 | 3 | **Soul** | WebDAV `soul.md` file | `max_soul_chars` chars | Persistent core memory editable by user via chat |
 
 Archive is a single flow: messages accumulate in Layer 1. When Layer 1 exceeds
@@ -168,26 +168,12 @@ flowchart TD
     AI[AiProvider]
     TOOL[edit_soul Tool]
     DAV[(NextCloud WebDAV)]
-    READ[Read soul.md]
-    ACTION{Action?}
-    APPEND[Append Section]
-    REPLACE[Replace Section]
-    DELETE_SEC[Delete Section]
     WRITE[PUT soul.md]
     REPLY[Reply to User]
 
-    USER -->|"remember X / forget Y"| AI
-    AI -->|"tool_call: edit_soul<br/>{action, section_header, content}"| TOOL
-    TOOL -->|"GET soul.md"| DAV
-    DAV -->|"current soul content"| READ
-    READ --> ACTION
-    ACTION -->|"append"| APPEND
-    ACTION -->|"replace"| REPLACE
-    ACTION -->|"delete_section"| DELETE_SEC
-    APPEND --> WRITE
-    REPLACE --> WRITE
-    DELETE_SEC --> WRITE
-    WRITE -->|"PUT soul.md"| DAV
+    USER -->|"remember X / update identity"| AI
+    AI -->|"tool_call: edit_soul<br/>{content: full soul template}"| TOOL
+    TOOL -->|"PUT soul.md with full content"| DAV
     WRITE -->|"confirmation"| REPLY
 ```
 
@@ -416,11 +402,11 @@ Fields from `ModelConfig` in [Configuration Management](config.md):
 | ---------------------- | ------- | ------- | -------------------------------------------------- |
 | `max_text_length`      | `usize` | 50000   | Archive threshold — triggers Layer 1 → Layer 2     |
 | `max_history_size`     | `usize` | 18      | Layer 1 max messages in context                    |
-| `max_summary_chars`    | `usize` | 8000    | Layer 2 total chars across loaded summaries         |
+| `max_summary_chars`    | `usize` | 4000    | Layer 2 total chars across loaded summaries         |
 | `max_soul_chars`       | `usize` | 2000    | Layer 3 max chars for soul.md content              |
-| `summary_days`         | `u32`   | 7       | Layer 2 retention window (days)                    |
-| `memory_ttl_secs`      | `u64`   | 300     | Room idle timeout — evict from memory (after snapshot persisted) |
-| `persist_interval_secs`| `u64`   | 60      | How often the timer writes dirty snapshots to WebDAV |
+| `summary_days`         | `u32`   | 3       | Layer 2 retention window (days)                    |
+| `memory_ttl_secs`      | `u64`   | 600     | Room idle timeout — evict from memory (after snapshot persisted) |
+| `persist_interval_secs`| `u64`   | 120     | How often the timer writes dirty snapshots to WebDAV |
 
 Note: `set_daily_summaries()` (memory.rs:287) applies a hard cap of `.take(10)` summary files regardless of `max_summary_chars`.
 
@@ -441,9 +427,7 @@ Note: `set_daily_summaries()` (memory.rs:287) applies a hard cap of `.take(10)` 
 
 | Parameter       | Type     | Description                                    |
 | --------------- | -------- | ---------------------------------------------- |
-| `action`        | `string` | `"append"`, `"replace"`, or `"delete_section"` |
-| `section_header`| `string` | Target `## Section` header                     |
-| `content`       | `string` | New content (for append/replace)               |
+| `content`       | `string` | Full soul.md content using the standard template (`# Soul Memory\n\n## Identity\nName ✨\n\n## Preferences\n...\n\n## Facts\n...`) |
 
 ### Context Injection Order
 

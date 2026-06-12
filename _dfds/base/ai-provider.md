@@ -51,6 +51,8 @@ flowchart TD
     ERR_PARSE[Error: Malformed Response]
     ERR_AUTH[Error: Invalid API Key]
     AGENT[Agent Loop]
+    SANITIZE["Sanitize messages<br/>(strip reasoning_content<br/>+ fix malformed tool args)"]
+    WARN[Warn: Malformed Tool Args]
 
     HTTP -.->|"429 rate limited"| RATE
     RATE -.->|"backoff signal"| RETRY
@@ -61,7 +63,17 @@ flowchart TD
     ERR_API -->|"api error"| AGENT
     ERR_AUTH -->|"auth error"| AGENT
     ERR_PARSE -->|"parse error"| AGENT
+    SANITIZE -.->|"malformed tool args fixed"| WARN
 ```
+
+Before sending each request, messages are sanitized:
+- `reasoning_content` is stripped from all messages (response-only field that
+  some providers reject in request input)
+- All `function.arguments` fields in tool calls are validated as parseable
+  JSON; malformed arguments (e.g. truncated from length-limited responses) are
+  auto-repaired (balance braces/quotes) or reset to `{}`
+- After parsing a response, tool call arguments are also validated at the
+  parse stage to prevent malformed data from entering conversation history
 
 ### 2c. Vision Payload Deep Dive
 

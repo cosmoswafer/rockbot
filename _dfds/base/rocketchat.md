@@ -311,8 +311,7 @@ on duplicate IDs.
 
 The `sendMessage` method requires a client-generated `_id` string field inside
 the `params` message object — RocketChat validates this on the server side and
-rejects messages without it. Both the DDP method `id` and the message `_id` use
-`next_id()` for unique values.
+rejects messages without it. message `_id` uses `unique_msg_id()` (timestamp-seq format), method `id` uses `next_id()` (sequential).
 
 An optional `alias` field in `params[0]` overrides the displayed sender name for
 this message — the server substitutes the alias in place of the bot's real username.

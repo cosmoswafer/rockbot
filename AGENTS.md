@@ -14,12 +14,10 @@ example.config.toml   # template for config; real config.toml is gitignored
 
 - Use `./tmp/` for runtime temporary files (logs, state, etc.). Never use `/tmp/` or other system-wide temp directories.
 - Start the bot: `./target/release/rockbot &> ./tmp/rockbot.log &`
-- Start with debug (wipes old log): `rm -f ./tmp/rockbot.log && RUST_LOG=debug nohup ./target/release/rockbot < /dev/null > ./tmp/rockbot.log 2>&1 &`
-- Restart: covered in Phase 3 — Ship (step 4).
-- Restart with debug (wipes old log): `pkill rockbot 2>/dev/null; sleep 1; rm -f ./tmp/rockbot.log && RUST_LOG=debug nohup ./target/release/rockbot < /dev/null > ./tmp/rockbot.log 2>&1 &`
+- Restart: see Phase 3 — Ship (step 4) for the two-call pattern.
+- Restart with debug: see Phase 3 — Ship (step 5).
 - Use `pkill rockbot` (process name) — **not** `pkill -f` (full cmdline). The `-f` flag reads `/proc/*/cmdline` which can hang on systems with stuck D-state kernel threads.
-- **Bot must run in background** — all start/restart commands end with `&`. When launching via the Bash tool, run the `nohup ... &` command alone (without chaining `sleep` or `ps` after `;`), then use a separate Bash call to verify. Chaining foreground commands after `nohup ... &` can cause the tool to hang.
-- **Debug logging**: set `RUST_LOG=rocketchat=debug` to see outbound `WS>>>` DDP payloads (typing, replies, auth) and inbound `WS<<<` messages. Use `RUST_LOG=debug` for all crates — gives rockbot internals too (tool invocations, `mark_snapshot_dirty`, snapshot flushes, WebDAV PUTs).
+- **Bot must run in background** — all start/restart commands end with `&`. When using the Bash tool, run `nohup ... &` alone (never chain after `;` or `&&`), then verify with a separate call.
 
 ## Build & test
 

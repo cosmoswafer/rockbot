@@ -140,8 +140,8 @@ LLM provides `prompt` and optional `image_size`; all other fields come from conf
 | `prompt`        | LLM               | `string`                                       | **Required.** Text description of the image      |
 | `image_size`    | Config            | preset name                                   | Aspect ratio preset. Set from `[image_model] default_image_size`. Hidden from LLM. |
 | `size_tier`     | Config            | `"4K"`, `"2K"`, `"1K"`                        | Resolution tier for OpenRouter. Set from `default_image_size_tier`. Ignored by fal. |
-| `room_id`       | Harness           | `string`                                       | Room UUID for image storage (injected if omitted)|
-| `webdav_dir`    | Harness           | `string`                                       | Type-prefixed room path (injected; falls back to room_id) |
+| `room_id`       | Harness           | `string`                                       | Room UUID for image storage (injected if omitted). **Note:** injected at execute time, not stored in the Rust struct. |
+| `webdav_dir`    | Harness           | `string`                                       | Type-prefixed room path (injected; falls back to room_id). **Note:** injected at execute time, not stored in the Rust struct. |
 | `image_cache_key`| Harness          | `string`                                       | Tool call_id — used as ImageCache lookup key     |
 | `image_urls`    | Harness (auto)    | `[]string`                                     | Injected from user attachments or LLM-provided URLs |
 | `model_id`      | Config            | `string`                                       | From `default_text_model` / `default_edit_model` |

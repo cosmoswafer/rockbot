@@ -129,7 +129,7 @@ cross-referenced information for fact-checking.
 | `method`           | `String` | HTTP method: `"GET"`, `"POST"`, `"PUT"`, `"PATCH"`, `"DELETE"`, `"HEAD"`, `"OPTIONS"` (default: `"GET"`) |
 | `headers`          | `Object` | JSON object of `{ "Header-Name": "value" }` pairs          |
 | `body`             | `String` | Raw string request body                                    |
-| `body_json`        | `Object` | JSON value serialized as request body; sets `Content-Type: application/json` |
+| `body_json`        | `Object` | JSON value serialized as string; caller must add `Content-Type: application/json` header manually |
 | `file_from_webdav` | `String` | WebDAV file path to read and send as request body          |
 | `save_to_webdav`   | `String` | WebDAV file path to save the response body                 |
 | `format`           | `String` | Output format: `"json"`, `"markdown"`, or `"raw"` (default: `"raw"`) |
@@ -145,6 +145,7 @@ cross-referenced information for fact-checking.
 | `content`         | `String`          | Response body (truncated to 10,000 chars)     |
 | `verified`        | `bool`            | Whether cross-verification was performed      |
 | `related_sources` | `Vec<SearchRef>`  | Results from the Exa verification search      |
+| `response_headers`| `Option<HashMap<String, String>>` | Response headers as key-value pairs |
 | `saved_to`        | `String|null`     | WebDAV path where response was saved          |
 
 ### `SearchRef`

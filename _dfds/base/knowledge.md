@@ -250,7 +250,7 @@ Machine-readable JSON file at `{root}/{webdav_dir}/knowledge/index.json`.
 | `when_useful` | `String`           | Situation description for retrieval matching   |
 | `tags`        | `Vec<String>`      | Searchable keywords                            |
 | `priority`    | `KnowledgePriority` | P0 (highest), P1 (default for new entries), P2, P3 (stale); managed by [Knowledge Priority Algorithm](knowledge-priority.md) |
-| `last_degraded_at` | `String` (ISO 8601) | Timestamp of last degradation; enforces ≤1 degrade/day |
+| `last_degraded_at` | `Option<String>` (ISO 8601) | Timestamp of last degradation; enforces ≤1 degrade/day |
 | `created_at`  | `String`           | ISO 8601                                       |
 | `updated_at`  | `String`           | ISO 8601                                       |
 

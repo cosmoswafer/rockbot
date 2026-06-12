@@ -119,8 +119,11 @@ flowchart TD
 ### 2d. Room Directory Structure
 
 Each room (channel or DM) has three subdirectories: `memory/`, `images/`, and
-`workspace/`. A shared `config/` directory holds backups. The `calendars/`
-directory stores CalDAV events (see [Calendar](calendar.md)).
+`workspace/`. A shared `config/` directory holds backups.
+
+> **Note:** Calendars do **not** live under the WebDAV file storage root.
+> Calendar data resides in a separate CalDAV space at
+> `/remote.php/dav/calendars/{user}/{cal-name}/` (see [Calendar](calendar.md)).
 
 ```mermaid
 flowchart TD
@@ -138,13 +141,11 @@ flowchart TD
     IMG_SARU[(d-saru/images)]
     WSP_SARU[(d-saru/workspace)]
     CFG_DIR[(config/)]
-    CAL_DIR[(calendars/)]
 
     ROOT --> CH_ATOM
     ROOT --> CH_PROJ
     ROOT --> DM_SARU
     ROOT --> CFG_DIR
-    ROOT --> CAL_DIR
     CH_ATOM --> MEM_ATOM
     CH_ATOM --> IMG_ATOM
     CH_ATOM --> WSP_ATOM

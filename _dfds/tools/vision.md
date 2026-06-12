@@ -110,7 +110,7 @@ The size limit is configurable via `rocketchat.model.max_attachment_bytes`
 
 ### 2c. Image Download & Encoding
 
-Downloads the image bytes, verifies the MIME type and size limit (max 20MB),
+Downloads the image bytes, verifies the MIME type and size limit (configurable via `max_attachment_bytes`, fallback default 20MB),
 encodes as base64, and builds a markdown image tag. The URL path fragment is
 used as the image alt text.
 
