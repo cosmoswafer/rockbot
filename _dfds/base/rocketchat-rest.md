@@ -119,10 +119,9 @@ Room name precedence rules:
 
 The alias is extracted from per-room soul memory (Layer 3) at send time. The
 `self_display_name()` function parses the `soul.md` content using a single
-standard regex (`## Identity[ \t]*\n?[ \t]*(.+)`) that captures the text after
-`## Identity`, supporting both same-line (`## Identity Name`) and next-line
-(`## Identity\nName`) formats. The agent loop in `main.rs`
-orchestrates this flow inline.
+standard regex (`My name is (.+)`) that captures the display name from the
+first item of the flat enumeration list (always "My name is ..."). The agent
+loop in `main.rs` orchestrates this flow inline.
 
 ```mermaid
 flowchart TD

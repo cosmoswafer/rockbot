@@ -506,8 +506,8 @@ async fn fetch_soul_display_name(
     eprintln!("[WebDAV] soul.md loaded ({} bytes)", content.len());
 
     // Same regex as extract_identity_name in rockbot::memory:
-    //   ## Identity[ \t]*\n?[ \t]*(.+)
-    let re = regex::Regex::new(r"## Identity[ \t]*\n?[ \t]*(.+)").unwrap();
+    //   My name is (.+)
+    let re = regex::Regex::new(r"My name is (.+)").unwrap();
     let caps = re.captures(&content)?;
     let name = caps.get(1)?.as_str().trim().to_string();
     if !name.is_empty() && name.len() <= 32 {

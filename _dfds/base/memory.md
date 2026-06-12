@@ -375,9 +375,10 @@ struct SoulMemory {
 }
 ```
 
-The `content` is plain markdown with optional section headers (`## Preferences`,
-`## Identity`, `## Facts`). Sections are separated by `## ` headers for
-display and name extraction; the `edit_soul` tool overwrites the entire file.
+The `content` is a flat enumeration list — each line is a `-` bullet item.
+The first item always starts with `My name is ...`, used for display name
+extraction via regex `My name is (.+)`. The `edit_soul` tool overwrites the
+entire file.
 
 ### File Layout
 
@@ -428,7 +429,7 @@ Note: `set_daily_summaries()` (memory.rs:350) applies a hard cap of `.take(10)` 
 
 | Parameter       | Type     | Description                                    |
 | --------------- | -------- | ---------------------------------------------- |
-| `content`       | `string` | Full soul.md content using the standard template (`# Soul Memory\n\n## Identity\nName ✨\n\n## Preferences\n...\n\n## Facts\n...`) |
+| `content`       | `string` | Full soul.md content using the standard template (`# Soul Memory\n\n- My name is Name ✨\n- ...\n- ...`) |
 
 ### Context Injection Order
 

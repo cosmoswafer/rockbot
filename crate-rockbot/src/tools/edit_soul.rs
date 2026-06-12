@@ -37,17 +37,15 @@ impl Tool for EditSoulTool {
 
     fn description(&self) -> &str {
         "Overwrite the bot's permanent soul memory for this room. \
+         The soul is a flat enumeration list — each line is a \"- \" bullet item. \
          Provide the full soul.md content using this template: \
          # Soul Memory\n\
          \n\
-         ## Identity\n\
-         YourName ✨\n\
-         \n\
-         ## Preferences\n\
-         (optional)\n\
-         \n\
-         ## Facts\n\
-         (optional)"
+         - My name is YourName ✨\n\
+         - (optional preference)\n\
+         - (optional fact)\n\
+         - (optional preference)\n\
+         - (optional fact)"
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -56,7 +54,7 @@ impl Tool for EditSoulTool {
             "properties": {
                 "content": {
                     "type": "string",
-                    "description": "Full soul.md content following the template: # Soul Memory\\n\\n## Identity\\nName ✨\\n\\n## Preferences\\n...\\n\\n## Facts\\n..."
+                    "description": "Full soul.md content following the template: # Soul Memory\\n\\n- My name is Name ✨\\n- ...\\n- ...\""
                 },
                 "webdav_dir": {
                     "type": "string",

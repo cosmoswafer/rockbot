@@ -391,8 +391,7 @@ impl MemoryManager {
             return None;
         }
 
-        // Standard regex: `## Identity[ \t]*\n?[ \t]*(.+)`
-        // Supports both same-line and next-line name formats.
+        // Standard regex: `My name is (.+)` — captures from first item of flat list
         if let Some(name) = extract_identity_name(content) {
             debug!("self_display_name: regex match, room={} name={:?}", room_id, name);
             return Some(name);
@@ -658,12 +657,11 @@ pub(crate) fn strip_orphaned_tool_calls(messages: &mut Vec<ChatMessage>) {
 
 /// Extract display name from soul content using a standard regex.
 ///
-/// Regex: `## Identity[ \t]*\n?[ \t]*(.+)` — captures the text after
-/// `## Identity`, supporting both same-line (`## Identity Name`) and
-/// next-line (`## Identity\nName`) formats.
+/// Regex: `My name is (.+)` — captures the display name from the
+/// first item of the flat enumeration list (always "My name is ...").
 fn extract_identity_name(content: &str) -> Option<String> {
     static RE: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"## Identity[ \t]*\n?[ \t]*(.+)").expect("hardcoded regex")
+        Regex::new(r"My name is (.+)").expect("hardcoded regex")
     });
     let caps = RE.captures(content)?;
     let name = caps.get(1)?.as_str().trim().to_string();
@@ -927,43 +925,43 @@ mod tests {
 
     #[test]
     fn test_extract_identity_name_standard() {
-        let content = "# Soul Memory\n\n## Identity\n零夢\n\n## Preferences\nfoo";
+        let content = "# Soul Memory\n\n- My name is 零夢\n- loves coffee";
         assert_eq!(extract_identity_name(content), Some("零夢".into()));
     }
 
     #[test]
     fn test_extract_identity_name_with_emoji() {
-        let content = "# Soul Memory\n\n## Identity\n零夢 ✨\n\n## Preferences";
+        let content = "# Soul Memory\n\n- My name is 零夢 ✨\n- likes cats";
         assert_eq!(extract_identity_name(content), Some("零夢 ✨".into()));
     }
 
     #[test]
     fn test_extract_identity_name_cjk() {
-        let content = "# Soul Memory\n\n## Identity\n雪山泡芙 ✨\n\n## Preferences\nfoo";
+        let content = "# Soul Memory\n\n- My name is 雪山泡芙 ✨\n- prefers tea\n- dislikes spam";
         assert_eq!(extract_identity_name(content), Some("雪山泡芙 ✨".into()));
     }
 
     #[test]
-    fn test_extract_identity_name_same_line() {
-        let content = "# Soul Memory\n\n## Identity 零夢 ✨\n\n## Preferences\nfoo";
-        assert_eq!(extract_identity_name(content), Some("零夢 ✨".into()));
+    fn test_extract_identity_name_multiline() {
+        let content = "# Soul Memory\n\n- My name is 零夢 ✨ test\n- more items";
+        assert_eq!(extract_identity_name(content), Some("零夢 ✨ test".into()));
     }
 
     #[test]
     fn test_extract_identity_name_no_match() {
-        let content = "# Soul Memory\n\n## Preferences\nlikes cats\n\n## Facts\nborn 2024";
+        let content = "# Soul Memory\n\n- likes cats\n- born 2024";
         assert_eq!(extract_identity_name(content), None);
     }
 
     #[test]
     fn test_extract_identity_name_too_long() {
-        let content = "# Soul Memory\n\n## Identity\nA very very long name over 32 characters\n\n## Preferences";
+        let content = "# Soul Memory\n\n- My name is A very very long name over 32 characters\n- other";
         assert_eq!(extract_identity_name(content), None);
     }
 
     #[test]
-    fn test_extract_identity_name_not_a_header() {
-        let content = "Just some random text\nwithout Identity header";
+    fn test_extract_identity_name_not_matching() {
+        let content = "Just some random text\nwith no name prefix at all";
         assert_eq!(extract_identity_name(content), None);
     }
 
@@ -977,7 +975,7 @@ mod tests {
         let mut mm = MemoryManager::new(1000, 12, 8000, 7, 2000, 60, 30_000_000);
         let soul = SoulMemory {
             room_id: "r-test".into(),
-            content: "# Soul Memory\n\n## Identity\n香菜 🌿\n\n## Preferences\nfoo".into(),
+            content: "# Soul Memory\n\n- My name is 香菜 🌿\n- foo".into(),
             updated_at: String::new(),
         };
         mm.set_soul("r-test", soul);
@@ -985,15 +983,15 @@ mod tests {
     }
 
     #[test]
-    fn test_self_display_name_legacy_fallback() {
+    fn test_self_display_name_no_myname() {
         let mut mm = MemoryManager::new(1000, 12, 8000, 7, 2000, 60, 30_000_000);
         let soul = SoulMemory {
             room_id: "r-test".into(),
-            content: "零夢\n\n## Preferences\nfoo".into(),
+            content: "零夢\n\n- foo".into(),
             updated_at: String::new(),
         };
         mm.set_soul("r-test", soul);
-        // No ## Identity header — returns None
+        // No "My name is" pattern — returns None
         assert_eq!(mm.self_display_name("r-test"), None);
     }
 

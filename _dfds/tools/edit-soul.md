@@ -11,18 +11,18 @@ The LLM MUST use this exact template when calling edit_soul:
 ```markdown
 # Soul Memory
 
-## Identity
-YourName ✨
-
-## Preferences
-(optional)
-
-## Facts
-(optional)
+- My name is YourName ✨
+- (optional preference)
+- (optional fact)
+- (optional preference)
+- (optional fact)
 ```
 
-The display name (extracted by regex `## Identity[ \t]*\n?[ \t]*(.+)`) must
-appear immediately after `## Identity`. Keep it under 32 characters.
+The soul is a **flat enumeration list** — each line is a `-` bullet item. The
+**first item always** starts with `My name is ...`. The display name is
+extracted by regex `My name is (.+)` from that first item. Keep it under 32
+characters. Additional items follow the same flat list format with no
+sub-headings.
 
 - Upstream: [Configuration Management](../base/config.md) provides WebDAV
   credentials for file access
@@ -84,19 +84,18 @@ flowchart TD
 
 #### Soul File Format
 
-Stored at `/{root}/{webdav_dir}/memory/soul.md`:
+Stored at `/{root}/{webdav_dir}/memory/soul.md`. The soul is a flat enumeration
+list. The first item always starts with `My name is ...` — the display name is
+extracted from that item by regex `My name is (.+)`.
 
 ```markdown
 # Soul Memory
 
-## Identity
-YourName ✨
-
-## Preferences
-(optional preferences content)
-
-## Facts
-(optional facts content)
+- My name is YourName ✨
+- (optional preference)
+- (optional fact)
+- (optional preference)
+- (optional fact)
 ```
 
 #### Soul Operations

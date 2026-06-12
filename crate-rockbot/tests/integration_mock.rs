@@ -1974,7 +1974,7 @@ fn test_memory_load_snapshot_with_soul_and_summaries_no_conflict() {
     // Pre-populate soul
     let soul = rockbot::memory::SoulMemory {
         room_id: room_id.to_string(),
-        content: "# Soul Memory\n\n## Identity\nTestBot\n\n## Preferences\nlikes Rust".to_string(),
+        content: "# Soul Memory\n\n- My name is TestBot\n- likes Rust".to_string(),
         updated_at: "2026-06-10T00:00:00Z".to_string(),
     };
     mm.set_soul(room_id, soul);
@@ -2007,7 +2007,7 @@ fn test_memory_load_snapshot_with_soul_and_summaries_no_conflict() {
     assert!(snap.is_some(), "Should build snapshot");
     let snap = snap.unwrap();
     assert_eq!(snap.messages.len(), 2, "Snapshot should have both messages");
-    assert_eq!(snap.soul.as_deref(), Some("# Soul Memory\n\n## Identity\nTestBot\n\n## Preferences\nlikes Rust"));
+    assert_eq!(snap.soul.as_deref(), Some("# Soul Memory\n\n- My name is TestBot\n- likes Rust"));
     assert_eq!(snap.daily_summaries.len(), 2, "Should have both summaries");
 
     // Verify all data is consistent (soul, summaries, history coexist)
@@ -2102,7 +2102,7 @@ fn test_memory_multi_room_no_cross_contamination() {
     // Set soul in room1
     mm.set_soul("r1", rockbot::memory::SoulMemory {
         room_id: "r1".to_string(),
-        content: "# Soul\n\n## Identity\nRoom1Bot".to_string(),
+        content: "# Soul Memory\n\n- My name is Room1Bot".to_string(),
         updated_at: String::new(),
     });
 
