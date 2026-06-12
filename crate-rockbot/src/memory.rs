@@ -588,7 +588,7 @@ pub(crate) fn strip_images_from_message(msg: ChatMessage) -> ChatMessage {
     stripped
 }
 
-fn strip_orphaned_tool_calls(messages: &mut Vec<ChatMessage>) {
+pub(crate) fn strip_orphaned_tool_calls(messages: &mut Vec<ChatMessage>) {
     // Phase 1: remove orphaned tool messages that lack a preceding
     // assistant with tool_calls. This happens when history truncation
     // cuts off the assistant but leaves its tool results behind.
@@ -995,5 +995,99 @@ mod tests {
         mm.set_soul("r-test", soul);
         // No ## Identity header — returns None
         assert_eq!(mm.self_display_name("r-test"), None);
+    }
+
+    #[test]
+    fn test_truncate_message_content_text_under_limit() {
+        let mut msg = ChatMessage::user("Hello world");
+        truncate_message_content(&mut msg, 100);
+        assert_eq!(msg.text_content(), Some("Hello world"));
+    }
+
+    #[test]
+    fn test_truncate_message_content_text_over_limit() {
+        let mut msg = ChatMessage::user("a".repeat(300_000));
+        truncate_message_content(&mut msg, 200_000);
+        let content = msg.text_content().unwrap();
+        assert!(content.len() < 300_000);
+        assert!(content.contains("[...truncated]"));
+        assert!(content.starts_with(&"a".repeat(1000)));
+    }
+
+    #[test]
+    fn test_truncate_message_content_multipart_text_under_limit() {
+        let mut msg = crate::types::ChatMessage {
+            role: crate::types::Role::User,
+            content: crate::types::MessageContent::Multipart(vec![
+                crate::types::ContentPart::Text { text: "short text".into() },
+                crate::types::ContentPart::ImageUrl {
+                    image_url: crate::types::ImageUrlPayload {
+                        url: "http://example.com/img.png".into(),
+                        detail: None,
+                    },
+                },
+            ]),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+            reasoning_content: None,
+        };
+        truncate_message_content(&mut msg, 100);
+        // Should be unchanged
+        match &msg.content {
+            crate::types::MessageContent::Multipart(parts) => {
+                assert_eq!(parts.len(), 2);
+                if let crate::types::ContentPart::Text { text } = &parts[0] {
+                    assert_eq!(text, "short text");
+                } else {
+                    panic!("expected text part");
+                }
+            }
+            _ => panic!("expected multipart"),
+        }
+    }
+
+    #[test]
+    fn test_truncate_message_content_multipart_text_over_limit() {
+        let mut msg = crate::types::ChatMessage {
+            role: crate::types::Role::User,
+            content: crate::types::MessageContent::Multipart(vec![
+                crate::types::ContentPart::Text { text: "b".repeat(300_000) },
+                crate::types::ContentPart::ImageUrl {
+                    image_url: crate::types::ImageUrlPayload {
+                        url: "http://example.com/img.png".into(),
+                        detail: None,
+                    },
+                },
+            ]),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+            reasoning_content: None,
+        };
+        truncate_message_content(&mut msg, 200_000);
+        match &msg.content {
+            crate::types::MessageContent::Multipart(parts) => {
+                assert_eq!(parts.len(), 2);
+                // Image part preserved
+                assert!(matches!(parts[1], crate::types::ContentPart::ImageUrl { .. }));
+                // Text part truncated
+                if let crate::types::ContentPart::Text { text } = &parts[0] {
+                    assert!(text.len() < 300_000);
+                    assert!(text.contains("[...truncated]"));
+                } else {
+                    panic!("expected text part");
+                }
+            }
+            _ => panic!("expected multipart"),
+        }
+    }
+
+    #[test]
+    fn test_truncate_message_content_preserves_role() {
+        let mut msg = ChatMessage::assistant("x".repeat(300_000));
+        assert_eq!(msg.role, crate::types::Role::Assistant);
+        truncate_message_content(&mut msg, 100_000);
+        assert_eq!(msg.role, crate::types::Role::Assistant);
     }
 }

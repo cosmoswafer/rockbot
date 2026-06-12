@@ -21,6 +21,21 @@ pub struct ImageDim {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageUrl {
+    pub url: String,
+    pub meta: Option<serde_json::Value>,
+    pub headers: Option<UrlHeaders>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UrlHeaders {
+    #[serde(rename = "contentLength")]
+    pub content_length: Option<String>,
+    #[serde(rename = "contentType")]
+    pub content_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AttachmentInfo {
     pub title: Option<String>,
     #[serde(rename = "title_link")]
@@ -58,6 +73,7 @@ pub struct IncomingMessage {
     pub file: Option<FileInfo>,
     pub files: Vec<FileInfo>,
     pub attachments: Vec<AttachmentInfo>,
+    pub urls: Vec<MessageUrl>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -156,9 +172,19 @@ impl<'a> MessageFilter<'a> {
             })
             .unwrap_or_default();
 
+        let urls: Vec<MessageUrl> = first_arg
+            .get("urls")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| serde_json::from_value(v.clone()).ok())
+                    .collect()
+            })
+            .unwrap_or_default();
+
         Some(IncomingMessage {
             msg_id, room_id, room_name, room_fname, sender_name, text, is_dm, timestamp, sender_id, alias,
-            file, files, attachments,
+            file, files, attachments, urls,
         })
     }
 
@@ -398,6 +424,7 @@ mod tests {
             file: None,
             files: vec![],
             attachments: vec![],
+            urls: vec![],
         };
         let registered_rooms = HashMap::new();
         assert!(MessageFilter::is_dm_or_mention(
@@ -421,6 +448,7 @@ mod tests {
             file: None,
             files: vec![],
             attachments: vec![],
+            urls: vec![],
         };
         let registered_rooms = HashMap::new();
         assert!(!MessageFilter::is_dm_or_mention(
@@ -444,6 +472,7 @@ mod tests {
             file: None,
             files: vec![],
             attachments: vec![],
+            urls: vec![],
         };
         let msg_no_match = IncomingMessage {
             msg_id: None,
@@ -459,6 +488,7 @@ mod tests {
             file: None,
             files: vec![],
             attachments: vec![],
+            urls: vec![],
         };
         let registered_rooms = HashMap::new();
         assert!(MessageFilter::is_dm_or_mention(
@@ -467,5 +497,143 @@ mod tests {
         assert!(!MessageFilter::is_dm_or_mention(
             &msg_no_match, "somebot", &registered_rooms, None
         ));
+    }
+
+    #[test]
+    fn test_parse_message_with_urls_image_png() {
+        let event = serde_json::json!({
+            "msg": "changed", "fields": {
+                "eventName": "room1",
+                "args": [
+                    {
+                        "_id": "m1", "rid": "r1", "msg": "check this image",
+                        "u": {"_id": "u1", "username": "user1"},
+                        "ts": {"$date": 1000i64},
+                        "urls": [
+                            {
+                                "url": "https://nc.example.com/s/abc123/download",
+                                "meta": {},
+                                "headers": {
+                                    "contentLength": "9671441",
+                                    "contentType": "image/png"
+                                }
+                            }
+                        ]
+                    },
+                    {"roomName": "general"}
+                ]
+            }
+        });
+        let msg = MessageFilter::new("bot").filter(&event).unwrap();
+        assert_eq!(msg.urls.len(), 1);
+        assert_eq!(msg.urls[0].url, "https://nc.example.com/s/abc123/download");
+        let headers = msg.urls[0].headers.as_ref().unwrap();
+        assert_eq!(headers.content_type.as_deref(), Some("image/png"));
+        assert_eq!(headers.content_length.as_deref(), Some("9671441"));
+    }
+
+    #[test]
+    fn test_parse_message_with_urls_non_image() {
+        let event = serde_json::json!({
+            "msg": "changed", "fields": {
+                "eventName": "room1",
+                "args": [
+                    {
+                        "_id": "m1", "rid": "r1", "msg": "check this link",
+                        "u": {"_id": "u1", "username": "user1"},
+                        "ts": {"$date": 1000i64},
+                        "urls": [
+                            {
+                                "url": "https://example.com/article",
+                                "meta": {"title": "Some article"},
+                                "headers": {
+                                    "contentLength": "42000",
+                                    "contentType": "text/html"
+                                }
+                            }
+                        ]
+                    },
+                    {"roomName": "general"}
+                ]
+            }
+        });
+        let msg = MessageFilter::new("bot").filter(&event).unwrap();
+        assert_eq!(msg.urls.len(), 1);
+        assert_eq!(msg.urls[0].url, "https://example.com/article");
+        let headers = msg.urls[0].headers.as_ref().unwrap();
+        assert_eq!(headers.content_type.as_deref(), Some("text/html"));
+    }
+
+    #[test]
+    fn test_parse_message_without_urls_field() {
+        let event = serde_json::json!({
+            "msg": "changed", "fields": {
+                "eventName": "room1",
+                "args": [
+                    {
+                        "_id": "m1", "rid": "r1", "msg": "hello",
+                        "u": {"_id": "u1", "username": "user1"},
+                        "ts": {"$date": 1000i64}
+                    },
+                    {"roomName": "general"}
+                ]
+            }
+        });
+        let msg = MessageFilter::new("bot").filter(&event).unwrap();
+        assert!(msg.urls.is_empty());
+    }
+
+    #[test]
+    fn test_parse_message_with_multiple_urls() {
+        let event = serde_json::json!({
+            "msg": "changed", "fields": {
+                "eventName": "room1",
+                "args": [
+                    {
+                        "_id": "m1", "rid": "r1", "msg": "two images",
+                        "u": {"_id": "u1", "username": "user1"},
+                        "ts": {"$date": 1000i64},
+                        "urls": [
+                            {
+                                "url": "https://nc.example.com/s/img1/download",
+                                "headers": {"contentType": "image/png", "contentLength": "1000"}
+                            },
+                            {
+                                "url": "https://nc.example.com/s/img2/download",
+                                "headers": {"contentType": "image/jpeg", "contentLength": "2000"}
+                            }
+                        ]
+                    },
+                    {"roomName": "general"}
+                ]
+            }
+        });
+        let msg = MessageFilter::new("bot").filter(&event).unwrap();
+        assert_eq!(msg.urls.len(), 2);
+        assert_eq!(msg.urls[0].url, "https://nc.example.com/s/img1/download");
+        assert_eq!(msg.urls[1].url, "https://nc.example.com/s/img2/download");
+    }
+
+    #[test]
+    fn test_message_url_missing_headers() {
+        let event = serde_json::json!({
+            "msg": "changed", "fields": {
+                "eventName": "room1",
+                "args": [
+                    {
+                        "_id": "m1", "rid": "r1", "msg": "a url",
+                        "u": {"_id": "u1", "username": "user1"},
+                        "ts": {"$date": 1000i64},
+                        "urls": [
+                            {"url": "https://example.com", "meta": {}}
+                        ]
+                    },
+                    {"roomName": "general"}
+                ]
+            }
+        });
+        let msg = MessageFilter::new("bot").filter(&event).unwrap();
+        assert_eq!(msg.urls.len(), 1);
+        assert!(msg.urls[0].headers.is_none());
     }
 }

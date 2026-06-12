@@ -427,6 +427,7 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                                 &msg.sender_name,
                                 &text,
                                 &msg.attachments,
+                                &msg.urls,
                             )
                             .await
                         {

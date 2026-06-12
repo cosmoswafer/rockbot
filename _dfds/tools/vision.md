@@ -8,10 +8,19 @@ it directly in the user's `ChatMessage` as `ContentPart::ImageUrl` parts — no
 tool call needed.
 
 The **vision tool** exists for the cases where the image is NOT already
-attached to the incoming message:
+attached to the incoming message and NOT available as a message URL with a
+known image content type:
 
 - **Public URL**: fetch any image on the public web (HTTP/HTTPS URL)
 - **WebDAV file**: fetch an image stored in the room's WebDAV directory
+- **Describe/analyze an image**: when the user explicitly asks what's in an image
+
+> **Important**: when a user shares an image URL with `image/*` content type
+> (e.g. NextCloud share links), the harness auto-injects those URLs into
+> `image_gen` calls. The LLM should **not** call the vision tool in this case
+> — call `image_gen` directly with the edit prompt. The harness provides the
+> image URL automatically as the `image_urls` parameter. Vision should only be
+> used when the user needs image analysis/description, not for editing.
 
 The vision tool downloads the image, base64-encodes it, and returns a **markdown
 image tag** as a standard tool result: `![name](data:mime/type;base64,...)`.

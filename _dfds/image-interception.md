@@ -4,7 +4,7 @@
 
 The harness transparently intercepts image data at multiple points in the agent
 loop, bridging the gap between text-only tool results and multimodal AI
-providers. Four interception points enable the LLM to see, generate, edit, and
+providers. Five interception points enable the LLM to see, generate, edit, and
 share images without handling raw bytes directly.
 
 - Upstream: [Configuration Management](base/config.md) provides RocketChat
@@ -35,6 +35,7 @@ flowchart TD
         VISION["Vision Tool Result<br/>![name](data:...)"]
         WEBDAV_READ["WebDAV Read<br/>(image files)"]
         PREV_GEN["Previous image_gen Result<br/>(share_url in ImageCache)"]
+        MSG_URLS["Message Image URLs<br/>IncomingMessage.urls<br/>filtered: content_type image/*"]
     end
 
     subgraph "Interception Layer"
@@ -60,6 +61,7 @@ flowchart TD
     REFS -->|"match title in prompt"| INJECT_URLS
     POOL -->|"match name in prompt"| INJECT_URLS
     PREV_GEN -->|"LLM passes share_url"| INJECT_URLS
+    MSG_URLS -->|"auto-inject (no matching)"| INJECT_URLS
     INJECT_URLS -->|"args['image_urls']"| IMG_GEN
     IMG_GEN -->|"GeneratedImage"| REPLY
 ```
@@ -116,7 +118,7 @@ tool-execution iteration.
 ### 2d. Image Editing — inject_image_urls_from_refs
 
 When the LLM calls `image_gen` with an edit prompt, the harness intercepts the
-arguments and injects real image data from three converging sources:
+arguments and injects real image data from four converging sources:
 
 ```mermaid
 flowchart TD
@@ -124,6 +126,7 @@ flowchart TD
     ATTACH_REF[AttachmentRef<br/>{title: 'apple.png', data_uri: 'data:...'}]
     IMG_POOL[(ImagePool<br/>CachedImage {name: 'photo1.png', data_uri: 'data:...'})]
     AGENT_URL["LLM-provided URLs<br/>(share_url, https://...)"]
+    MSG_URLS["Message Image URLs<br/>current_image_urls<br/>(from DDP urls,<br/>content_type image/*)"]
 
     INJECT[inject_image_urls_from_refs]
     DEDUP[Deduplicate by URL string]
@@ -134,6 +137,7 @@ flowchart TD
     AGENT_URL -->|"explicit image_urls"| INJECT
     ATTACH_REF -->|"match → inject data URI"| INJECT
     IMG_POOL -->|"match → inject data URI"| INJECT
+    MSG_URLS -->|"auto-inject (unconditional)"| INJECT
     INJECT --> DEDUP
     DEDUP --> OUT
 ```
@@ -143,6 +147,10 @@ matches against:
 1. `AttachmentRef.title` — original user attachment filenames
 2. `CachedImage.name` and `![name]` label — vision/webdav-fetched images
 3. Explicit `image_urls` from the LLM (deduplicated against injected URIs)
+4. `current_image_urls` — image URLs from the DDP message `urls` field (filtered
+   by `content_type: image/*`). These are **always injected unconditionally**
+   — no prompt matching required — because the harness knows the user shared them
+   for editing.
 
 **After injection**: `image_gen` receives the `image_urls` array. `data:` URIs
 are uploaded to the provider's CDN (Fal) via `upload_data_uri` → returns an

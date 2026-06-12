@@ -458,6 +458,7 @@ fn test_incoming_message_dm_detection() {
         file: None,
         files: vec![],
         attachments: vec![],
+        urls: vec![],
     };
 
     let rooms: HashMap<String, bool> = HashMap::new();
@@ -479,6 +480,7 @@ fn test_incoming_message_dm_detection() {
         file: None,
         files: vec![],
         attachments: vec![],
+        urls: vec![],
     };
     assert!(!MessageFilter::is_dm_or_mention(&msg2, bot_name, &rooms, None));
 
@@ -496,6 +498,7 @@ fn test_incoming_message_dm_detection() {
         file: None,
         files: vec![],
         attachments: vec![],
+        urls: vec![],
     };
     assert!(MessageFilter::is_dm_or_mention(&msg3, bot_name, &rooms, None));
 }
@@ -519,6 +522,7 @@ fn test_registered_room_dispatch() {
         file: None,
         files: vec![],
         attachments: vec![],
+        urls: vec![],
     };
 
     assert!(MessageFilter::is_dm_or_mention(&msg, "@rockbot", &rooms, None));

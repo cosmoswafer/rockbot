@@ -129,6 +129,7 @@ flowchart TD
     EXTRACT_MSG(ExtractMessageText)
     EXTRACT_FILE(ExtractFileMetadata)
     EXTRACT_ATTACH(ExtractAttachments)
+    EXTRACT_URLS(ExtractUrls)
     BUILD_MESSAGE(BuildIncomingMessage)
     DISPATCH(DispatchToAgent)
 
@@ -138,9 +139,11 @@ flowchart TD
     ROUTE -->|"args[0] message object"| EXTRACT_MSG
     ROUTE -->|"args[0] message object"| EXTRACT_FILE
     ROUTE -->|"args[0] message object"| EXTRACT_ATTACH
+    ROUTE -->|"args[0] message object"| EXTRACT_URLS
     EXTRACT_MSG -->|"text, sender, room"| BUILD_MESSAGE
     EXTRACT_FILE -->|"file metadata"| BUILD_MESSAGE
     EXTRACT_ATTACH -->|"attachment list"| BUILD_MESSAGE
+    EXTRACT_URLS -->|"urls list"| BUILD_MESSAGE
     BUILD_MESSAGE -->|"IncomingMessage with images"| DISPATCH
 ```
 
@@ -174,6 +177,16 @@ flowchart TD
 `{server_base_url}{image_url}` for the thumbnail. `title_link` and `image_url`
 are URL-encoded relative paths — they must be joined with the server base URL
 scheme/host before use.
+
+**URL preview metadata** (`args[0]["urls"]` array):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `url` | `String` | The URL shared in the message |
+| `meta` | `Option<Value>` | RocketChat server JSON metadata for the URL |
+| `headers` | `Option<UrlHeaders>` | HTTP response headers (`contentType`, `contentLength`) |
+
+Images are detected by `headers.contentType` starting with `"image/"` — the harness uses this to auto-inject image URLs into `image_gen` calls without requiring vision.
 
 ### 2d. Ping/Pong Keepalive Deep Dive
 
@@ -414,6 +427,7 @@ definition and how it is populated.
 | `file`        | `Option<FileInfo>` | `args[0]["file"]` — primary file metadata (present when message has an attachment) |
 | `files`       | `Vec<FileInfo>`   | `args[0]["files"]` — all file variants (original + thumbnails) |
 | `attachments` | `Vec<AttachmentInfo>` | `args[0]["attachments"]` — attachment objects with download URLs |
+| `urls`        | `Vec<MessageUrl>`    | `args[0]["urls"]` — URL preview metadata (content type, content length). Used by harness to detect image URLs for auto-injection into image_gen. |
 
 Room name precedence:
 - **Matching/registration**: use `room_name` (slug) — always ASCII, deterministic
@@ -483,6 +497,23 @@ with the `"msg"` field extracted via helper functions: `msg_field()`, `is_ping()
 | `file_id`         | `Option<String>`    | Back-reference to original `file._id`        |
 
 To construct the full download URL: join `{server_config.host()}{attachment.title_link}`. The `image_url` field points to a thumbnail variant — use `title_link` for the original, full-quality image.
+
+#### `MessageUrl`
+
+| Field     | Type                | Source                              |
+|-----------|---------------------|-------------------------------------|
+| `url`     | `String`            | The URL string                      |
+| `meta`    | `Option<Value>`     | RocketChat server metadata (JSON)   |
+| `headers` | `Option<UrlHeaders>`| HTTP response headers for the URL   |
+
+#### `UrlHeaders`
+
+| Field             | Type            | Source                         |
+|-------------------|-----------------|--------------------------------|
+| `content_length`  | `Option<String>`| `contentLength` header value   |
+| `content_type`    | `Option<String>`| `contentType` header value     |
+
+Image URLs are detected by `headers.contentType` matching `image/*` — the harness populates `current_image_urls` from these and auto-injects them into `image_gen` calls, bypassing vision for text-only models.
 
 #### `MessageFilter`
 

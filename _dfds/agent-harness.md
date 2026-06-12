@@ -278,7 +278,7 @@ iteration before the next LLM call.
 ### 2g2. Image Interception for Editing — inject_image_urls_from_refs
 
 When the LLM calls `image_gen` for editing, the harness intercepts the arguments
-and injects real image data from **three sources** into `image_urls`:
+and injects real image data from **four sources** into `image_urls`:
 
 1. **User attachments** — downloaded from RocketChat as `data:` URIs, matched by
    filename substring in the LLM prompt (e.g. "edit apple.png")
@@ -286,12 +286,16 @@ and injects real image data from **three sources** into `image_urls`:
    `CachedImage { data_uri, name }`, matched by name or `![name]` label in prompt
 3. **Agent-provided URLs** — any `share_url` or `https://` URL the LLM explicitly
    includes in `image_urls` (e.g. from a previous `image_gen` result)
+4. **Message image URLs** — from `IncomingMessage.urls` (filtered by
+   `content_type: image/*`). Auto-injected unconditionally — no prompt matching
+   required — so text-only models can edit images without vision.
 
 ```mermaid
 flowchart TD
     ATTACH["1. User Attachments<br/>download_attachment_refs"]
     VISION["2. Vision/WebDAV Fetch<br/>cache_vision_images"]
     AGENT_URL["3. Agent-Provided URLs<br/>share_url from prev result"]
+    MSG_URL["4. Message Image URLs<br/>current_image_urls<br/>(from DDP urls field,<br/>filtered content_type image/*)"]
     POOL[(ImagePool<br/>room_id → Vec<CachedImage>)]
     INJECT[inject_image_urls_from_refs]
 
@@ -299,20 +303,22 @@ flowchart TD
     VISION -->|"parse ![name](data:...)"| POOL
     POOL -->|"match by name"| INJECT
     AGENT_URL -->|"https:// or data: URLs"| INJECT
+    MSG_URL -->|"auto-inject (unconditional)"| INJECT
     INJECT -->|"args['image_urls']"| IMG_GEN[image_gen Tool]
 ```
 
-All three sources converge in `inject_image_urls_from_refs()` — it matches image
-names from the LLM prompt against `AttachmentRef` titles and `image_pool` entries,
-merges with any explicit `image_urls` the LLM provided, and injects the combined
-list. The `image_gen` tool then uploads `data:` URIs to the provider's CDN (Fal)
-or passes `https://` URLs directly. Deduplication is by URL string equality.
+All four sources converge in the `image_gen` argument injection: attachment data
+URIs and image_pool entries matched by prompt text, agent-provided URLs merged
+with deduplication, and message image URLs auto-injected unconditionally. The
+`image_gen` tool then uploads `data:` URIs to the provider's CDN (Fal) or passes
+`https://` URLs directly. Deduplication is by URL string equality.
 
-This covers all four image sources for editing:
+This covers all five image sources for editing:
 - Previous `image_gen` results (via agent-provided `share_url` in `image_urls`)
 - User-attached images (via `AttachmentRef` title match)
 - Vision-fetched images from public URLs (via `image_pool` name match)
 - WebDAV-read images (via `image_pool` name match, same pipeline as vision)
+- DDP message URLs with image content types (via `current_image_urls` — auto-injected without prompt matching)
 
 ### 2h. Daily Summary Review — Knowledge Retrieval Ordering
 

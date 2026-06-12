@@ -11,7 +11,7 @@ use crate::error::Result;
 use crate::error::RockBotError;
 use crate::image_cache::ImageCache;
 use crate::knowledge::KnowledgeManager;
-use crate::memory::{DailySummary, MemoryManager, SoulMemory, strip_images_from_message, truncate_message_content};
+use crate::memory::{DailySummary, MemoryManager, SoulMemory, strip_images_from_message, strip_orphaned_tool_calls, truncate_message_content};
 use crate::provider::AiProvider;
 use crate::tool::ToolRegistry;
 use crate::types::{ChatMessage, ChatRequest, Role};
@@ -27,7 +27,10 @@ per task — plan your tool calls efficiently. \
 When you need the current date or time, use the datetime tool. \
 When you need information from the web, use the web_search tool. \
 When you need to fetch a URL, use web_fetch. \
-When you need to fetch an image from a WebDAV path or public URL, use the vision tool. \
+When you need to describe or analyze an image, use the vision tool. \
+Do NOT use vision just to identify an image before editing — when a user \
+shares an image URL and asks to modify/edit/transform it, call image_gen directly. \
+The harness will automatically provide the image URL as the image_urls parameter. \
 When you need to read, write, list, or manage files on remote storage, use the webdav tool. \
 When you need to manage calendar events or todo tasks, use the calendar tool. \
 When you need to generate an image, use the image_gen tool. \
@@ -35,7 +38,8 @@ When a user sends an image and asks to edit, modify, transform, or use it \
 as a basis for image generation, use the image_gen tool — user-attached images \
 appear as markdown ![image_name](image_name) in the conversation. Reference the \
 image by its image_name in your prompt (e.g. \"edit image1.png to add a hat\"). \
-The harness will automatically resolve image_name references to the actual images. \
+The harness will automatically resolve image_name references and image URLs \
+to the actual images. \
 If the user asks to edit a previously generated image (no new attachment), \
 you MUST include the image CDN URL from the previous result in the \
 image_urls parameter yourself. \
@@ -70,6 +74,7 @@ pub struct AgentHarness {
     image_pool: HashMap<String, Vec<CachedImage>>,
     image_cache: Arc<ImageCache>,
     last_image_ids: Vec<String>,
+    current_image_urls: Vec<String>,
 }
 
 impl AgentHarness {
@@ -101,6 +106,7 @@ impl AgentHarness {
             image_pool: HashMap::new(),
             image_cache,
             last_image_ids: Vec::new(),
+            current_image_urls: Vec::new(),
         }
     }
 
@@ -111,6 +117,11 @@ impl AgentHarness {
 
     pub fn register_tool(&mut self, tool: Box<dyn crate::tool::Tool>) {
         self.tools.register(tool);
+    }
+
+    #[cfg(test)]
+    pub fn current_image_urls(&self) -> &[String] {
+        &self.current_image_urls
     }
 
     pub fn provider(&self) -> &dyn AiProvider {
@@ -166,8 +177,19 @@ impl AgentHarness {
         sender_name: &str,
         text: &str,
         attachments: &[rocketchat::AttachmentInfo],
+        msg_urls: &[rocketchat::MessageUrl],
     ) -> Result<Option<String>> {
         let msg_start = std::time::Instant::now();
+
+        // Collect image URLs from the message's url field for automatic
+        // injection into image_gen calls (bypasses vision for text-only models)
+        self.current_image_urls = msg_urls
+            .iter()
+            .filter(|u| u.headers.as_ref().and_then(|h| h.content_type.as_deref())
+                .map_or(false, |ct| ct.starts_with("image/")))
+            .map(|u| u.url.clone())
+            .collect();
+
         let clean_text = if !is_dm && !text.is_empty() {
             text.trim_start().to_string()
         } else {
@@ -234,6 +256,7 @@ impl AgentHarness {
         // Inline context overflow: summarize if approaching byte limit
         let max_ctx = self.config.rocketchat.model.max_context_bytes as u64;
         messages = self.truncate_and_summarize(room_id, messages, max_ctx).await;
+        strip_orphaned_tool_calls(&mut messages);
         debug!(
             "Built context for room {}: {} messages (model={}, have_tools={})",
             room_id,
@@ -336,6 +359,36 @@ impl AgentHarness {
                                                 tool_call.id.clone(),
                                             ),
                                         );
+                                        // Auto-inject image URLs from the current message
+                                        // (e.g. NextCloud share links) so text-only
+                                        // models can edit images without needing vision.
+                                        if !self.current_image_urls.is_empty() {
+                                            let existing = obj
+                                                .get("image_urls")
+                                                .and_then(|v| v.as_array())
+                                                .map(|arr| {
+                                                    arr.iter()
+                                                        .filter_map(|v| v.as_str().map(String::from))
+                                                        .collect::<Vec<_>>()
+                                                })
+                                                .unwrap_or_default();
+                                            let mut urls: Vec<serde_json::Value> = existing
+                                                .iter()
+                                                .map(|s| serde_json::Value::String(s.clone()))
+                                                .collect();
+                                            for url in &self.current_image_urls {
+                                                let s = serde_json::Value::String(url.clone());
+                                                if !urls.contains(&s) {
+                                                    urls.push(s);
+                                                }
+                                            }
+                                            if !urls.is_empty() {
+                                                obj.insert(
+                                                    "image_urls".to_string(),
+                                                    serde_json::Value::Array(urls),
+                                                );
+                                            }
+                                        }
                                     }
                                     args = serde_json::to_string(&v).unwrap_or(args);
                                 }
@@ -412,6 +465,7 @@ impl AgentHarness {
                         self.inject_vision_images(room_id, &mut messages);
                         let max_ctx = self.config.rocketchat.model.max_context_bytes as u64;
                         messages = self.truncate_and_summarize(room_id, messages, max_ctx).await;
+                        strip_orphaned_tool_calls(&mut messages);
                         continue;
                     }
 
@@ -481,6 +535,7 @@ impl AgentHarness {
                             for msg in messages.iter_mut().skip(system_end) {
                                 truncate_message_content(msg, 200_000);
                             }
+                            strip_orphaned_tool_calls(&mut messages);
                             debug!(
                                 "Context length retry for room {}: hard-truncated to {} messages",
                                 room_id, messages.len()
@@ -1596,7 +1651,7 @@ chat = "mock-model"
 
         let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
         let result = harness
-            .process_message("room1", "general", "", false, "user", "Hi", &[])
+            .process_message("room1", "general", "", false, "user", "Hi", &[], &[])
             .await;
 
         assert!(result.is_ok());
@@ -1618,7 +1673,7 @@ chat = "mock-model"
 
         let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
         let result = harness
-            .process_message("dm-alice", "", "", true, "alice", "Hello bot", &[])
+            .process_message("dm-alice", "", "", true, "alice", "Hello bot", &[], &[])
             .await;
 
         assert!(result.is_ok());
@@ -1632,7 +1687,7 @@ chat = "mock-model"
 
         let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
         let result = harness
-            .process_message("room1", "general", "", false, "user", "Hi", &[])
+            .process_message("room1", "general", "", false, "user", "Hi", &[], &[])
             .await;
 
         assert!(result.is_ok());
@@ -1680,7 +1735,7 @@ chat = "mock-model"
         let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
 
         let result = harness
-            .process_message("room1", "general", "", false, "user", "search something", &[])
+            .process_message("room1", "general", "", false, "user", "search something", &[], &[])
             .await;
 
         assert!(result.is_ok());
@@ -2260,7 +2315,7 @@ chat = "mock-model"
 
         let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
         harness
-            .process_message("room1", "general", "", false, "user", "Hi", &[])
+            .process_message("room1", "general", "", false, "user", "Hi", &[], &[])
             .await
             .unwrap();
 
@@ -2285,7 +2340,7 @@ chat = "mock-model"
 
         let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
         harness
-            .process_message("room1", "general", "", false, "user", "Hi", &[])
+            .process_message("room1", "general", "", false, "user", "Hi", &[], &[])
             .await
             .unwrap();
 
@@ -2301,5 +2356,95 @@ chat = "mock-model"
             "History should contain an Assistant message, got: {:?}",
             roles
         );
+    }
+
+    #[tokio::test]
+    async fn test_process_message_extracts_image_urls() {
+        let config = make_test_config();
+        let provider = Box::new(MockProvider::new(vec![CompletionResult {
+            text: Some("Got it!".into()),
+            tool_calls: vec![],
+            finish: FinishReason::Stop,
+            reasoning_content: None,
+            usage: None,
+        }]));
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
+
+        let msg_urls = vec![
+            rocketchat::MessageUrl {
+                url: "https://nc.example.com/s/img1/download".into(),
+                meta: None,
+                headers: Some(rocketchat::UrlHeaders {
+                    content_length: Some("1000".into()),
+                    content_type: Some("image/png".into()),
+                }),
+            },
+            rocketchat::MessageUrl {
+                url: "https://example.com/article".into(),
+                meta: None,
+                headers: Some(rocketchat::UrlHeaders {
+                    content_length: Some("42000".into()),
+                    content_type: Some("text/html".into()),
+                }),
+            },
+        ];
+
+        harness
+            .process_message("room1", "general", "", false, "user", "edit this", &[], &msg_urls)
+            .await
+            .unwrap();
+
+        // Only the image/png URL should be extracted, not text/html
+        let urls = harness.current_image_urls();
+        assert_eq!(urls.len(), 1);
+        assert_eq!(urls[0], "https://nc.example.com/s/img1/download");
+    }
+
+    #[tokio::test]
+    async fn test_process_message_no_image_urls_without_headers() {
+        let config = make_test_config();
+        let provider = Box::new(MockProvider::new(vec![CompletionResult {
+            text: Some("OK".into()),
+            tool_calls: vec![],
+            finish: FinishReason::Stop,
+            reasoning_content: None,
+            usage: None,
+        }]));
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
+
+        let msg_urls = vec![
+            rocketchat::MessageUrl {
+                url: "https://example.com/some-link".into(),
+                meta: None,
+                headers: None, // no headers = not identified as image
+            },
+        ];
+
+        harness
+            .process_message("room1", "general", "", false, "user", "Hi", &[], &msg_urls)
+            .await
+            .unwrap();
+
+        assert!(harness.current_image_urls().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_process_message_empty_urls_still_works() {
+        let config = make_test_config();
+        let provider = Box::new(MockProvider::new(vec![CompletionResult {
+            text: Some("Hello!".into()),
+            tool_calls: vec![],
+            finish: FinishReason::Stop,
+            reasoning_content: None,
+            usage: None,
+        }]));
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
+
+        let result = harness
+            .process_message("room1", "general", "", false, "user", "Hi", &[], &[])
+            .await;
+
+        assert!(result.is_ok());
+        assert!(harness.current_image_urls().is_empty());
     }
 }
