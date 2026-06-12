@@ -544,7 +544,7 @@ pub fn date_to_days(date: &str) -> Option<i64> {
     Some((era as i64) * 146097 + doe as i64 - 719468)
 }
 
-fn strip_images_from_message(msg: ChatMessage) -> ChatMessage {
+pub(crate) fn strip_images_from_message(msg: ChatMessage) -> ChatMessage {
     let crate::types::MessageContent::Multipart(ref parts) = msg.content else {
         return msg;
     };

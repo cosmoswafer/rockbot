@@ -35,6 +35,9 @@ pub enum RockBotError {
     #[error("Invalid request format (400): {0}")]
     InvalidRequest(String),
 
+    #[error("Context length exceeded model limit: {0}")]
+    ContextLengthExceeded(String),
+
     #[error("Missing API key for provider '{0}'")]
     MissingApiKey(String),
 

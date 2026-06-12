@@ -169,6 +169,12 @@ impl OpenRouterProvider {
             })
             .unwrap_or_else(|| body.to_string());
 
+        // Detect context-length exceeded errors at HTTP 400 level:
+        // "This model's maximum context length is X tokens. However, you requested Y tokens..."
+        if status == 400 && is_context_length_error(&msg) {
+            return RockBotError::ContextLengthExceeded(msg);
+        }
+
         match status {
             401 => RockBotError::AuthFailed(msg),
             429 => RockBotError::RateLimited { retry_after: None },
@@ -331,6 +337,17 @@ impl AiProvider for OpenRouterProvider {
     fn model_name(&self) -> &str {
         &self.model
     }
+}
+
+/// Detect provider context-length exceeded errors from HTTP 400 error messages.
+///
+/// Matches patterns like:
+/// "This model's maximum context length is 1048565 tokens. However, you requested 8618440 tokens..."
+///
+/// The check is: 400 status AND message contains "context length" (case-insensitive).
+fn is_context_length_error(msg: &str) -> bool {
+    let lower = msg.to_lowercase();
+    lower.contains("context length") || lower.contains("maximum context")
 }
 
 #[cfg(test)]
@@ -606,6 +623,38 @@ mod tests {
         match err {
             RockBotError::ServerError { status, .. } => assert_eq!(status, 500),
             _ => panic!("Expected ServerError"),
+        }
+    }
+
+    #[test]
+    fn test_is_context_length_error_true() {
+        let msg = "This model's maximum context length is 1048565 tokens. However, you requested 8618440 tokens (8614344 in the messages, 4096 in the completion). Please reduce the length of the messages or completion.";
+        assert!(is_context_length_error(msg));
+    }
+
+    #[test]
+    fn test_is_context_length_error_case_insensitive() {
+        let msg = "CONTEXT LENGTH exceeded: model limit is X tokens";
+        assert!(is_context_length_error(msg));
+    }
+
+    #[test]
+    fn test_is_context_length_error_false() {
+        assert!(!is_context_length_error("Invalid model name"));
+        assert!(!is_context_length_error("Bad request: missing required field"));
+    }
+
+    #[test]
+    fn test_map_http_error_context_length_exceeded() {
+        let err = OpenRouterProvider::map_http_error(
+            400,
+            r#"{"error": {"message": "This model's maximum context length is 1048565 tokens. However, you requested 8618440 tokens."}}"#,
+        );
+        match err {
+            RockBotError::ContextLengthExceeded(msg) => {
+                assert!(msg.contains("maximum context length"));
+            }
+            other => panic!("Expected ContextLengthExceeded, got: {:?}", other),
         }
     }
 

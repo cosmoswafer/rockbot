@@ -78,9 +78,18 @@ flowchart TD
     LOOP_LIMIT(CheckMaxIterations)
     APPEND(AppendToolResult)
     FALLBACK(SendFallbackReply)
+    COMPRESS{ContextLength<br/>Exceeded?}
+    STRIP(CompressHistoryForRetry<br/>strip all images)
+    REBUILD(RebuildContext<br/>÷4 byte limit)
+    RETRY(Retry LLM Call)
     REPLY[BotReply]
 
-    AI -.->|"api error response"| FALLBACK
+    AI -.->|"api error response"| COMPRESS
+    COMPRESS -.->|"yes (first time)"| STRIP
+    COMPRESS -.->|"no (other error)"| FALLBACK
+    STRIP -.->|"rebuilt messages"| REBUILD
+    REBUILD -.->|"retry"| RETRY
+    RETRY -.-> AI
     TOOL_EXEC -.->|"tool execution error"| APPEND
     LOOP_LIMIT -.->|"max iterations exceeded"| FALLBACK
     FALLBACK -->|"error reply text"| REPLY
@@ -101,6 +110,9 @@ flowchart TD
     APPEND(AppendToolResult)
     LIMIT(CheckIterationLimit)
     TRUNC(TruncateAndSummarize)
+    CTX_ERR{ContextLength<br/>Exceeded?}
+    STRIP_COMPRESS(CompressHistoryForRetry<br/>strip all images)
+    REBUILD(RebuildContext<br/>÷4 byte limit)
     REPLY_OUT[BotReply]
 
     CTX -->|"chat request"| AI
@@ -113,7 +125,11 @@ flowchart TD
     LIMIT -.->|"exceeds max_context_bytes"| TRUNC
     TRUNC -->|"summarized messages"| CTX
     EXEC -.->|"tool execution error"| APPEND
-    AI -.->|"api error"| REPLY_OUT
+    AI -.->|"api error"| CTX_ERR
+    CTX_ERR -.->|"yes (first time)"| STRIP_COMPRESS
+    CTX_ERR -.->|"no (other error)"| REPLY_OUT
+    STRIP_COMPRESS -.->|"stripped history"| REBUILD
+    REBUILD -.->|"retry request"| CTX
 ```
 
 ### 2d. Tool Execution Deep Dive
@@ -348,6 +364,49 @@ flowchart TD
 **Fallback**: if the AI summarization fails, falls back to plain text
 `"N earlier messages (truncated due to context limit)"`. At least the
 last 2 messages plus the system prompt are always preserved.
+
+### 2i2. Context-Length-Exceeded Retry — Provider-Triggered Compression
+
+When the AI provider returns a `ContextLengthExceeded` error (HTTP 400 with
+"context length" or "maximum context" in the error message), the harness
+performs aggressive memory compression and retries the request once. This
+is a provider-initiated recovery path that complements the proactive
+`truncate_and_summarize` byte-check.
+
+```mermaid
+flowchart TD
+    AI[AiProvider]
+    CHECK{ContextLengthExceeded?}
+    COMPRESS["CompressHistoryForRetry<br/>(strip all images from history)"]
+    REBUILD["RebuildContext<br/>(with stricter byte limit ÷4)"]
+    RETRY["Retry LLM Call"]
+    FALLBACK["SendErrorFallback<br/>(already compressed once)"]
+    REPLY[BotReply]
+
+    AI -->|"error response"| CHECK
+    CHECK -->|"yes (first time)"| COMPRESS
+    CHECK -->|"yes (already compressed)"| FALLBACK
+    CHECK -->|"no (other error)"| FALLBACK
+    COMPRESS -->|"stripped history"| REBUILD
+    REBUILD -->|"rebuilt messages"| RETRY
+    RETRY --> AI
+    FALLBACK --> REPLY
+```
+
+**Aggressive compression** (`compress_history_for_retry`): strips all
+`ContentPart::ImageUrl` parts from every message in the room's conversation
+history, converting them to `[image]` text placeholders. This includes the
+most recent user message — unlike the normal context assembly which preserves
+images on the last user message.
+
+**Retry limit**: compression is attempted at most once per call. If the
+provider still returns `ContextLengthExceeded` after compression, the
+harness falls back to the standard error reply. The `context_compressed`
+flag is per-`process_message` call, not per-room.
+
+This recovery path handles token-limit breaches that the byte-based
+`max_context_bytes` check cannot catch (e.g., base64-encoded images that
+are small in bytes but consume many tokens).
 
 ### 2j. Generated Image Sharing via NextCloud Share Links
 

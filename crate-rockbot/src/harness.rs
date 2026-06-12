@@ -8,9 +8,10 @@ use rocketchat::RestApiClient;
 
 use crate::AppConfig;
 use crate::error::Result;
+use crate::error::RockBotError;
 use crate::image_cache::ImageCache;
 use crate::knowledge::KnowledgeManager;
-use crate::memory::{DailySummary, MemoryManager, SoulMemory};
+use crate::memory::{DailySummary, MemoryManager, SoulMemory, strip_images_from_message};
 use crate::provider::AiProvider;
 use crate::tool::ToolRegistry;
 use crate::types::{ChatMessage, ChatRequest, Role};
@@ -243,6 +244,7 @@ impl AgentHarness {
 
         let mut iterations: u32 = 0;
         let mut image_ids_this_turn: Vec<String> = Vec::new();
+        let mut context_compressed = false;
 
         loop {
             iterations += 1;
@@ -446,6 +448,29 @@ impl AgentHarness {
                     return Ok(Some(fallback.to_string()));
                 }
                 Err(e) => {
+                    if matches!(e, RockBotError::ContextLengthExceeded(_)) {
+                        if !context_compressed {
+                            warn!(
+                                "Context length exceeded for room {}, compressing memory and retrying",
+                                room_id
+                            );
+                            self.compress_history_for_retry(room_id);
+                            context_compressed = true;
+                            messages = self
+                                .memory
+                                .build_context(room_id, &system_prompt, None, None);
+                            self.inject_vision_images(room_id, &mut messages);
+                            // Use a much stricter byte limit for the retry
+                            let max_ctx =
+                                (self.config.rocketchat.model.max_context_bytes as u64) / 4;
+                            messages = self.truncate_and_summarize(room_id, messages, max_ctx).await;
+                            continue;
+                        }
+                        warn!(
+                            "Context length exceeded again after compression for room {}, giving up",
+                            room_id
+                        );
+                    }
                     error!("AI provider error: {}", e);
                     let fallback = format!("I encountered an error: {}. Please try again.", e);
                     let assistant_msg = ChatMessage::assistant(&fallback);
@@ -463,6 +488,22 @@ impl AgentHarness {
     fn append_to_history(&mut self, room_id: &str, msg: ChatMessage) {
         if let Some(room) = self.memory.get_mut(room_id) {
             room.history.append(msg);
+        }
+    }
+
+    /// Aggressively compress conversation history for a room by stripping all
+    /// images from every message. Called when the provider returns a
+    /// ContextLengthExceeded error to make space before retrying.
+    fn compress_history_for_retry(&mut self, room_id: &str) {
+        if let Some(room) = self.memory.get_mut(room_id) {
+            let before = room.history.messages.len();
+            for msg in &mut room.history.messages {
+                *msg = strip_images_from_message(msg.clone());
+            }
+            debug!(
+                "compress_history_for_retry room={}: stripped images from {} messages",
+                room_id, before
+            );
         }
     }
 

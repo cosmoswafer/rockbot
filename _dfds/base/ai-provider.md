@@ -47,6 +47,8 @@ flowchart TD
     PARSE(ParseResponse)
     RATE(RateLimitBackoff)
     RETRY(RetryWithBackoff)
+    CTX_ERR{ContextLength<br/>Exceeded?}
+    CTX_RET(ContextLengthExceeded<br/>returned to harness)
     ERR_API[Error: API Unreachable]
     ERR_PARSE[Error: Malformed Response]
     ERR_AUTH[Error: Invalid API Key]
@@ -58,13 +60,23 @@ flowchart TD
     RATE -.->|"backoff signal"| RETRY
     HTTP -.->|"5xx server error"| RETRY
     RETRY -.->|"retries exhausted"| ERR_API
+    HTTP -->|"400 context length"| CTX_ERR
+    CTX_ERR -->|"yes"| CTX_RET
+    CTX_ERR -->|"no (other 400)"| AGENT
     HTTP -->|"401 unauthorized"| ERR_AUTH
     PARSE -->|"invalid json error"| ERR_PARSE
     ERR_API -->|"api error"| AGENT
     ERR_AUTH -->|"auth error"| AGENT
     ERR_PARSE -->|"parse error"| AGENT
+    CTX_RET -->|"context length exceeded"| AGENT
     SANITIZE -.->|"malformed tool args fixed"| WARN
 ```
+
+**Context-length detection**: HTTP 400 responses whose error message contains
+"context length" or "maximum context" (case-insensitive) are mapped to
+`RockBotError::ContextLengthExceeded` instead of `InvalidRequest`. The harness
+uses this to trigger aggressive memory compression and a one-time retry. This
+applies to both OpenRouter and DeepSeek providers.
 
 Before sending each request, messages are sanitized:
 - `reasoning_content` is stripped from all messages (response-only field that
