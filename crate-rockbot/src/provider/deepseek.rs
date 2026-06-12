@@ -602,4 +602,44 @@ mod tests {
         let body = provider.build_request_body(&request);
         assert_eq!(body["thinking"]["type"], "disabled");
     }
+
+    #[test]
+    fn test_strip_message_images_preserves_text_only() {
+        let msg = ChatMessage::user("Hello");
+        let result = DeepSeekProvider::strip_message_images(msg);
+        assert_eq!(result.content, MessageContent::Text("Hello".into()));
+    }
+
+    #[test]
+    fn test_strip_message_images_strips_image_url_parts() {
+        let msg = ChatMessage::user_with_image("Look at this", "data:image/png;base64,abc");
+        let result = DeepSeekProvider::strip_message_images(msg);
+        assert_eq!(
+            result.content,
+            MessageContent::Text("Look at this [image]".into())
+        );
+    }
+
+    #[test]
+    fn test_strip_message_images_strips_multiple_images() {
+        let msg = ChatMessage::user_with_images(
+            "Here are images:",
+            vec!["data:image/png;base64,a".into(), "data:image/png;base64,b".into()],
+        );
+        let result = DeepSeekProvider::strip_message_images(msg);
+        assert_eq!(
+            result.content,
+            MessageContent::Text("Here are images: [image] [image]".into())
+        );
+    }
+
+    #[test]
+    fn test_strip_message_images_only_text_parts_unchanged() {
+        let msg = ChatMessage::assistant("I can help with that.");
+        let result = DeepSeekProvider::strip_message_images(msg);
+        assert_eq!(
+            result.content,
+            MessageContent::Text("I can help with that.".into())
+        );
+    }
 }
