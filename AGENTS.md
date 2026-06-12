@@ -14,8 +14,8 @@ example.config.toml   # template for config; real config.toml is gitignored
 
 - Use `./tmp/` for runtime temporary files (logs, state, etc.). Never use `/tmp/` or other system-wide temp directories.
 - Start the bot: `./target/release/rockbot &> ./tmp/rockbot.log &`
-- Restart: see Phase 3 — Ship (step 4) for the two-call pattern.
-- Restart with debug: see Phase 3 — Ship (step 5).
+- Restart: see Phase 6 — Ship (step 4) for the two-call pattern.
+- Restart with debug: see Phase 6 — Ship (step 5).
 - Use `pkill rockbot` (process name) — **not** `pkill -f` (full cmdline). The `-f` flag reads `/proc/*/cmdline` which can hang on systems with stuck D-state kernel threads.
 - **Bot must run in background** — all start/restart commands end with `&`. When using the Bash tool, run `nohup ... &` alone (never chain after `;` or `&&`), then verify with a separate call.
 
@@ -41,6 +41,10 @@ No CI, no `rustfmt.toml`, no `clippy.toml`, no `rust-toolchain` file.
 - **Use async Rust everywhere.** The only exception is `crate-rocketchat/src/main.rs` (debug binary) which uses a sync `fn main` with `block_on`.
 - **Edition 2024**, MSRV **1.85**. Use modern Rust (`impl Trait` in return position allowed).
 - Prefer `tokio` as the async runtime. All I/O (HTTP, WebSocket, file, subprocess) must be async.
+- **"Parse, don't validate"** — make invalid states unrepresentable through types. Parse at boundaries (config loading, JSON deserialization, CLI args) into domain types once; the rest of the system works with infallible, type-safe data. Validate at the edge, use strong types internally.
+- **High cohesion, low coupling** — each module/crate has a single well-defined responsibility. Modules communicate through narrow, explicit interfaces (traits, public functions returning typed data). Avoid implicit or hidden dependencies across crate boundaries.
+- **Errors via `thiserror` + `?`** — use `thiserror` for error types, propagate with `?`. Avoid `unwrap()` and `expect()` in production code; reserve panics for truly unrecoverable states.
+- **Ownership-first** — prefer `&T`/`&str` for transient data, `Arc<str>` or `String` where ownership is required. Avoid unnecessary cloning.
 
 ## Key facts
 
@@ -57,30 +61,50 @@ No CI, no `rustfmt.toml`, no `clippy.toml`, no `rust-toolchain` file.
 
 ## DFD-driven implementation
 
-Data Flow Diagrams in `_dfds/` define the system's architecture. The full development flow follows these phases in order:
+Data Flow Diagrams in `_dfds/` define the system's architecture. The full
+development flow follows the DFD Dev Flow defined in the
+[`dfd-md` skill](.opencode/skills/dfd-md/SKILL.md):
 
-### Phase 1 — DFD design
+### Phase 1 — Revise DFD
 
-Design DFDs and write throwaway verification tests (`#[ignore]` or scripts
-in `./tmp/`) against real dependencies to validate data shapes and edge cases.
-No production code until DFDs are finalized.
+Design or update the DFD so it accurately models the desired data movement.
+Follow the "multiple small happy flows + Level 2 detail diagrams" composition
+pattern. Use data-structure coupling for cross-DFD links.
 
-### Phase 2 — Iterative DFD review & implementation
+### Phase 2 — Real integration test (data collection)
 
-For each DFD (ordered by the mapping table below):
-1. **Read DFD** — understand flows, processes, decision nodes.
-2. **Review implementation** — identify gaps against the DFD.
-3. **Implement** — types/config → core logic → wiring.
-4. **Deep review** — re-read DFD, re-check code. Repeat 2–4 until aligned.
-5. **Add tests** — mock external deps (see `integration_mock.rs` patterns).
-6. **Run suite** — `cargo test`, fix all failures.
+Write a real integration test (no mocking; targets a live server, API, or
+resource) and run it to collect actual data shapes. This verifies the DFD
+flows work end-to-end against reality and provides reference data for the
+implementation phase.
+
+### Phase 3 — Concrete implementation
+
+Code the types, core logic, and wiring described by the DFD. Follow
+"parse, don't validate" and high-cohesion low-coupling principles. Prefer
+incremental, type-first implementation.
+
+### Phase 4 — Comprehensive test suite
+
+Build and run the three test layers until every test passes:
+
+| Layer | Name | Description |
+| ----- | ---- | ----------- |
+| **Core** | Core test suite | Per-DFD, fine-grained tests against a single diagram's processes and data structures — analogous to unit tests. Each DFD gets its own core tests. |
+| **User** | User test suite | Tests driven by a user story, exceptional event, or end-to-end scenario — analogous to system/integration tests. Verifies multiple DFDs work together to satisfy a real usage narrative. |
+| **Real** | Real test suite | Real integration tests against live resources or servers (no mocking). Usually `#[ignore]`-ed and run only on explicit request. Used to collect real-world data for reference during development or debugging. |
+
+### Phase 5 — Review all DFDs
+
+Once the implementation and test suite are stable, re-read every DFD in the
+project and confirm it still matches the code. Update any DFD that has drifted.
 
 **DFD-driven alignment**: DFDs are the design spec. If a DFD's modification time
 is newer than its corresponding Rust source, the code is stale and must be
 updated to match the DFD. If the code was updated first (e.g., a bug fix),
 update the DFD to match the code — DFD and code must always be in sync.
 
-### Phase 3 — Ship
+### Phase 6 — Ship
 
 1. **Build release**: `cargo build --release`
 2. **Commit**: `git add -A` and `git commit` with a descriptive message.
