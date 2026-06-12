@@ -434,3 +434,110 @@ impl ImageGenParams {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_dimensions_preset_passes() {
+        let p = ImageGenParams {
+            prompt: "t".into(), quality: None,
+            image_size: Some(ImageSizeValue::Preset("16:9".into())),
+            size_tier: None, output_format: None, num_images: None,
+            model_id: None, image_urls: None,
+        };
+        assert!(p.validate_dimensions().is_ok(), "Preset should bypass pixel validation");
+    }
+
+    #[test]
+    fn test_validate_dimensions_custom_valid() {
+        let p = ImageGenParams {
+            prompt: "t".into(), quality: None,
+            image_size: Some(ImageSizeValue::Custom { width: 1920, height: 1088 }),
+            size_tier: None, output_format: None, num_images: None,
+            model_id: None, image_urls: None,
+        };
+        assert!(p.validate_dimensions().is_ok());
+    }
+
+    #[test]
+    fn test_validate_dimensions_none_passes() {
+        let p = ImageGenParams::new("t");
+        assert!(p.validate_dimensions().is_ok());
+    }
+
+    #[test]
+    fn test_validate_dimensions_max_edge_exceeded() {
+        let p = ImageGenParams {
+            prompt: "t".into(), quality: None,
+            image_size: Some(ImageSizeValue::Custom { width: 4000, height: 2000 }),
+            size_tier: None, output_format: None, num_images: None,
+            model_id: None, image_urls: None,
+        };
+        let err = p.validate_dimensions().unwrap_err();
+        assert!(err.to_string().contains("max edge"));
+        assert!(err.to_string().contains("3840"));
+    }
+
+    #[test]
+    fn test_validate_dimensions_aspect_ratio_exceeded() {
+        let p = ImageGenParams {
+            prompt: "t".into(), quality: None,
+            image_size: Some(ImageSizeValue::Custom { width: 3500, height: 1000 }),
+            size_tier: None, output_format: None, num_images: None,
+            model_id: None, image_urls: None,
+        };
+        let err = p.validate_dimensions().unwrap_err();
+        assert!(err.to_string().contains("aspect ratio"));
+    }
+
+    #[test]
+    fn test_validate_dimensions_pixel_count_too_low() {
+        let p = ImageGenParams {
+            prompt: "t".into(), quality: None,
+            image_size: Some(ImageSizeValue::Custom { width: 800, height: 800 }),
+            size_tier: None, output_format: None, num_images: None,
+            model_id: None, image_urls: None,
+        };
+        let err = p.validate_dimensions().unwrap_err();
+        assert!(err.to_string().contains("pixel count"));
+    }
+
+    #[test]
+    fn test_validate_dimensions_pixel_count_too_high() {
+        let p = ImageGenParams {
+            prompt: "t".into(), quality: None,
+            image_size: Some(ImageSizeValue::Custom { width: 3840, height: 3840 }),
+            size_tier: None, output_format: None, num_images: None,
+            model_id: None, image_urls: None,
+        };
+        let err = p.validate_dimensions().unwrap_err();
+        assert!(err.to_string().contains("pixel count"));
+    }
+
+    #[test]
+    fn test_validate_dimensions_not_multiple_of_16() {
+        let p = ImageGenParams {
+            prompt: "t".into(), quality: None,
+            image_size: Some(ImageSizeValue::Custom { width: 1920, height: 1081 }),
+            size_tier: None, output_format: None, num_images: None,
+            model_id: None, image_urls: None,
+        };
+        let err = p.validate_dimensions().unwrap_err();
+        assert!(err.to_string().contains("multiples of 16"));
+    }
+
+    #[test]
+    fn test_validate_dimensions_zero_edge() {
+        let p = ImageGenParams {
+            prompt: "t".into(), quality: None,
+            image_size: Some(ImageSizeValue::Custom { width: 0, height: 1080 }),
+            size_tier: None, output_format: None, num_images: None,
+            model_id: None, image_urls: None,
+        };
+        // Zero width gives pixel count 0 which is below minimum
+        let err = p.validate_dimensions().unwrap_err();
+        assert!(err.to_string().contains("pixel count"));
+    }
+}

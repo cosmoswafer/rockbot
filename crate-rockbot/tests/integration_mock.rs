@@ -1755,6 +1755,92 @@ async fn test_fal_submit_request() {
 }
 
 #[tokio::test]
+async fn test_fal_submit_body_includes_image_size_when_aspect_ratio_preset() {
+    let mock_server = MockServer::start().await;
+    let base = mock_server.uri();
+
+    Mock::given(method("POST"))
+        .and(path("/fal-ai/flux/schnell"))
+        .and(header("Authorization", "Key fal-test-key"))
+        .and(body_string_contains("\"image_size\""))
+        .and(body_string_contains("\"width\":3840"))
+        .and(body_string_contains("\"height\":2160"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "request_id": "req-ar-16x9",
+            "status_url": format!("{base}/fal-ai/flux/schnell/requests/req-ar-16x9/status"),
+            "response_url": format!("{base}/fal-ai/flux/schnell/requests/req-ar-16x9"),
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/fal-ai/flux/schnell/requests/req-ar-16x9/status"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "status": "COMPLETED"
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/fal-ai/flux/schnell/requests/req-ar-16x9"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "images": [{"url": "https://fal.media/ar-16x9.png", "width": 3840, "height": 2160}]
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let config = make_fal_config(&base);
+    let provider = FalAiProvider::new(&config, "fal-ai/flux/schnell").unwrap();
+    let mut params = ImageGenParams::new("a sunset");
+    params.image_size = Some(rockbot::types::ImageSizeValue::Preset("16:9".into()));
+    let url = provider.generate_image_url(&params).await.unwrap();
+    assert_eq!(url, "https://fal.media/ar-16x9.png");
+}
+
+#[tokio::test]
+async fn test_fal_submit_body_omits_image_size_when_none() {
+    let mock_server = MockServer::start().await;
+    let base = mock_server.uri();
+
+    Mock::given(method("POST"))
+        .and(path("/fal-ai/flux/schnell"))
+        .and(header("Authorization", "Key fal-test-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "request_id": "req-no-size",
+            "status_url": format!("{base}/fal-ai/flux/schnell/requests/req-no-size/status"),
+            "response_url": format!("{base}/fal-ai/flux/schnell/requests/req-no-size"),
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/fal-ai/flux/schnell/requests/req-no-size/status"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "status": "COMPLETED"
+        })))
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/fal-ai/flux/schnell/requests/req-no-size"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "images": [{"url": "https://fal.media/no-size.png", "width": 1024, "height": 1024}]
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let config = make_fal_config(&base);
+    let provider = FalAiProvider::new(&config, "fal-ai/flux/schnell").unwrap();
+    // No image_size set — params default to None
+    let url = provider.generate_image_url(&ImageGenParams::new("a sunset")).await.unwrap();
+    assert_eq!(url, "https://fal.media/no-size.png");
+}
+
+#[tokio::test]
 async fn test_fal_submit_unauthorized() {
     let mock_server = MockServer::start().await;
 

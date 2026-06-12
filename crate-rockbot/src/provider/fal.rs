@@ -589,4 +589,95 @@ mod tests {
         assert_eq!(r["width"], 2880);
         assert_eq!(r["height"], 2880);
     }
+
+    #[test]
+    fn test_resolve_image_size_portrait_16_9() {
+        let p = ImageGenParams {
+            prompt: "t".into(), quality: None,
+            image_size: Some(ImageSizeValue::Preset("portrait_16_9".into())),
+            size_tier: None,
+            output_format: None, num_images: None, model_id: None, image_urls: None,
+        };
+        let r = p.resolve_image_size().unwrap();
+        assert_eq!(r["width"], 2160);
+        assert_eq!(r["height"], 3840);
+    }
+
+    #[test]
+    fn test_resolve_image_size_9_16() {
+        let p = ImageGenParams {
+            prompt: "t".into(), quality: None,
+            image_size: Some(ImageSizeValue::Preset("9:16".into())),
+            size_tier: None,
+            output_format: None, num_images: None, model_id: None, image_urls: None,
+        };
+        let r = p.resolve_image_size().unwrap();
+        assert_eq!(r["width"], 2160);
+        assert_eq!(r["height"], 3840);
+    }
+
+    #[test]
+    fn test_resolve_image_size_portrait_4_3() {
+        let p = ImageGenParams {
+            prompt: "t".into(), quality: None,
+            image_size: Some(ImageSizeValue::Preset("portrait_4_3".into())),
+            size_tier: None,
+            output_format: None, num_images: None, model_id: None, image_urls: None,
+        };
+        let r = p.resolve_image_size().unwrap();
+        assert_eq!(r["width"], 2480);
+        assert_eq!(r["height"], 3312);
+    }
+
+    #[test]
+    fn test_resolve_image_size_3_4() {
+        let p = ImageGenParams {
+            prompt: "t".into(), quality: None,
+            image_size: Some(ImageSizeValue::Preset("3:4".into())),
+            size_tier: None,
+            output_format: None, num_images: None, model_id: None, image_urls: None,
+        };
+        let r = p.resolve_image_size().unwrap();
+        assert_eq!(r["width"], 2480);
+        assert_eq!(r["height"], 3312);
+    }
+
+    #[test]
+    fn test_resolve_image_size_landscape_3_2() {
+        let p = ImageGenParams {
+            prompt: "t".into(), quality: None,
+            image_size: Some(ImageSizeValue::Preset("landscape_3_2".into())),
+            size_tier: None,
+            output_format: None, num_images: None, model_id: None, image_urls: None,
+        };
+        let r = p.resolve_image_size().unwrap();
+        assert_eq!(r["width"], 3504);
+        assert_eq!(r["height"], 2336);
+    }
+
+    #[test]
+    fn test_resolve_image_size_3_2() {
+        let p = ImageGenParams {
+            prompt: "t".into(), quality: None,
+            image_size: Some(ImageSizeValue::Preset("3:2".into())),
+            size_tier: None,
+            output_format: None, num_images: None, model_id: None, image_urls: None,
+        };
+        let r = p.resolve_image_size().unwrap();
+        assert_eq!(r["width"], 3504);
+        assert_eq!(r["height"], 2336);
+    }
+
+    #[test]
+    fn test_resolve_image_size_square() {
+        let p = ImageGenParams {
+            prompt: "t".into(), quality: None,
+            image_size: Some(ImageSizeValue::Preset("square".into())),
+            size_tier: None,
+            output_format: None, num_images: None, model_id: None, image_urls: None,
+        };
+        let r = p.resolve_image_size().unwrap();
+        assert_eq!(r["width"], 512);
+        assert_eq!(r["height"], 512);
+    }
 }

@@ -39,30 +39,25 @@ DFD must be:
 
 ## DFD-Driven Development Workflow ("DFD Dev Flow")
 
-The DFD development process is complemented by a **comprehensive three-part test
-suite**. Together they form the following iterative workflow:
-
 1. **Revise DFD** — design or update the DFD so it accurately models the
    desired data movement. Keep it at the correct level; use the notation and
    structure rules above.
-2. **Real integration test (data collection)** — write a real integration test
-   (no mocking; targets a live server, API, or resource) and run it to collect
-   actual data shapes and verify the DFD flows work end-to-end against reality.
-   Use this data as reference for the implementation phase.
+2. **Integration probe (data collection)** — write a live-data probe (no
+   mocking; targets a live server, API, or resource) and run it to collect
+   actual data shapes. Use this data as reference for the implementation phase.
 3. **Concrete implementation** — code the types, core logic, and wiring
    described by the DFD. Favour incremental, type-first implementation.
-4. **Comprehensive test suite** — build and run the three test layers until
-   every test passes:
-
-   | Layer | Name | Description |
-   | ----- | ---- | ----------- |
-   | **Core** | Core test suite | Per-DFD, fine-grained tests against a single diagram's processes and data structures — analogous to unit tests. Each DFD gets its own core tests. |
-   | **User** | User test suite | Tests driven by a user story, exceptional event, or end-to-end scenario — analogous to system/integration tests. Verifies multiple DFDs work together to satisfy a real usage narrative. |
-   | **Real** | Real test suite | Real integration tests against live resources or servers (no mocking). Usually `#[ignore]`-ed and run only on explicit request. Used to collect real-world data for reference during development or debugging. |
-
-5. **Review all DFDs** — once the implementation and test suite are stable,
-   re-read every DFD in the project and confirm it still matches the code.
-   Update any DFD that has drifted.
+4. **Review all DFDs** — once the implementation is stable, re-read every DFD
+   in the project and confirm it still matches the code. Update any DFD that
+   has drifted.
+5. **Implement data flow validation constraints** — enforce data structure
+   correctness through code-level constraints.  Every data flow crossing DFD
+   boundaries must carry a concrete type/struct; parse and validate at
+   subsystem entry points ("parse, don't validate").  Cross-DFD shared
+   structures must be defined once in a canonical location and imported by both
+   producer and consumer crates — this makes mismatches a compile-time error.
+   Where runtime validation is unavoidable, fail fast with a clear error naming
+   the expected DFD data structure and the offending field.
 
 ## Notation
 

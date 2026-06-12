@@ -158,3 +158,38 @@ The submit response includes `status_url` and `response_url`. Use them **as-is**
 3. Submits edit with image reference
 4. Polls every 2 s until COMPLETED
 5. Asserts result is an HTTPS URL
+
+## Aspect Ratio Handling
+
+The `image_gen` tool accepts an `aspect_ratio` parameter from the LLM as `W:H` string (e.g. `"16:9"`, `"2:3"`, `"1:1"`). The flow:
+
+```
+LLM tool call args { "aspect_ratio": "16:9" }
+  → image_gen.rs:189-195   parsed from args, falls back to config default_image_size if absent
+  → types.rs:386-397       lookup_preset() maps W:H string to (width, height) pixel pair
+  → fal.rs:94-96           resolve_image_size() → sent as {"image_size": {"width": N, "height": M}}
+```
+
+### Preset dimensions (`types.rs:386-397`)
+
+| Aspect ratio | Width | Height | Pixels |
+|---|---|---|---|
+| `square_hd` / `1:1` | 2880 | 2880 | 8,294,400 |
+| `landscape_16_9` / `16:9` | 3840 | 2160 | 8,294,400 |
+| `portrait_16_9` / `9:16` | 2160 | 3840 | 8,294,400 |
+| `landscape_4_3` / `4:3` | 3312 | 2480 | 8,213,760 |
+| `portrait_4_3` / `3:4` | 2480 | 3312 | 8,213,760 |
+| `landscape_3_2` / `3:2` | 3504 | 2336 | 8,185,344 |
+| `portrait_2_3` / `2:3` | 2336 | 3504 | 8,185,344 |
+
+All satisfy: multiples of 16, max edge ≤ 3840px, aspect ratio ≤ 3:1, pixel count within 655,360–8,294,400.
+
+Unknown aspect ratio strings (not in the table above) pass through as raw strings in `image_size` — fal.ai may or may not handle them.
+
+### `size_tier`
+
+`default_image_size_tier` in `[rocketchat.model]` config is a rockbot concept — fal.ai does **not** have a `size_tier`/`image_size_tier` API parameter. The config field is set on `ImageGenParams` but never sent to fal.ai (intentional — fal determines output resolution from `image_size` dimensions alone).
+
+### Debugging
+
+To see the actual `image_size` sent to fal.ai, enable debug logging (`RUST_LOG=debug`). The debug line at `image_gen.rs:234` prints the resolved params, including `image_size`.
