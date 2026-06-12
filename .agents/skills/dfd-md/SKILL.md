@@ -91,9 +91,9 @@ language:
 - **Fallible construction** — all constructors that can reject invalid input
   return a result or throw a specific error naming the DFD data structure and
   the offending field.  Errors are self-documenting.
-- **No bare `unwrap()`/panics in production** — use structured error types or
-  checked exceptions.  Panics only for truly unrecoverable programmer bugs
-  (invariant violations indicating a logic error).
+- **No bare panics in production** — use structured error types or checked
+   exceptions.  Panics/asserts only for truly unrecoverable programmer bugs
+   (invariant violations indicating a logic error).
 
 ## Notation
 
