@@ -90,24 +90,28 @@ flowchart TD
 
 ### 2b. Error Handling & Fallbacks
 
+All non-success HTTP responses produce a single generic error:
+`"Failed to download image: HTTP {status}"`. Network errors
+(connection refused, DNS failure, timeout) bubble up as `reqwest::Error`.
+The 30-second timeout is set on the HTTP client but not distinguished
+from other network failures in the error message.
+
 ```mermaid
 flowchart TD
     DL(DownloadImage)
     WEB[(Remote Server)]
     ENCODE(Base64Encode)
     ERR_STATUS[Error: HTTP Non-200]
-    ERR_TIMEOUT[Error: Request Timeout]
-    ERR_NET[Error: Network Unreachable]
+    ERR_NET[Error: Network / Timeout]
     ERR_SIZE[Error: Image Too Large]
     AGENT[Agent Loop]
 
     DL -.->|"!200 status"| ERR_STATUS
-    DL -.->|"30s timeout"| ERR_TIMEOUT
-    DL -.->|"connection refused / dns failure"| ERR_NET
+    DL -.->|"network error / timeout"| ERR_NET
     ENCODE -.->|"image > max_attachment_bytes"| ERR_SIZE
     ERR_STATUS -->|"error string"| AGENT
-    ERR_TIMEOUT -->|"error string"| AGENT
     ERR_NET -->|"error string"| AGENT
+    ERR_SIZE -->|"error string"| AGENT
     ERR_SIZE -->|"error string"| AGENT
 ```
 
@@ -198,10 +202,12 @@ HashMap<room_id, Vec<CachedImage { data_uri, name }>>
 
 #### `VisionParams`
 
+> **Note:** No dedicated Rust struct — parsed ad-hoc from `serde_json::Value`.
+
 | Field    | Type     | Notes                                                  |
 | -------- | -------- | ------------------------------------------------------ |
 | `url`    | `string` | URL of the image to download (public or WebDAV)        |
-| `prompt` | `string` | Optional prompt for the LLM to use when analyzing       |
+| `prompt` | `string` | Optional prompt declared in tool schema but **not consumed** by execution — reserved for future LLM image-analysis context |
 
 #### Tool Result (markdown string)
 

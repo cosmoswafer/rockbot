@@ -226,7 +226,7 @@ generated images for the reply pipeline. Entries are consumed by `take_image()`.
 | `download_attachment_refs` | `harness.rs` | Downloads RocketChat attachments → `AttachmentRef` list |
 | `download_and_encode_single` | `harness.rs` | Single attachment → `data:` URI |
 | `inject_image_urls_from_refs` | `harness.rs` | Injects image URLs from attachments + image_pool + agent URLs |
-| `current_image_urls injection` | `harness.rs` | Auto-injects message image URLs into image_gen args (no prompt matching) |
+| `current_image_urls injection` | `harness.rs` (inline in `process_message`) | Auto-injects message image URLs into image_gen args (no prompt matching) |
 | `cache_vision_images` | `harness.rs` | Parses `![name](data:...)` from tool results → `image_pool` |
 | `inject_vision_images` | `harness.rs` | Drains `image_pool` → `ChatMessage::user_with_images` |
 | `create_nextcloud_share_link` | `crate-webdav/src/client.rs` | Creates 7-day public share for generated images |

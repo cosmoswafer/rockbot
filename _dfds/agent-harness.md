@@ -331,7 +331,9 @@ This covers all five image sources for editing:
 ### 2h. Daily Summary Review — Knowledge Retrieval Ordering
 
 After each daily summary write (archive) and during periodic maintenance, the
-harness calls `review_knowledge_priorities()` which is currently a no-op.
+harness calls `review_knowledge_priorities()` which iterates over all rooms
+but delegates to `KnowledgeManager::review_priorities()` — currently a no-op
+that returns `Ok(false)`.
 Knowledge retrieval uses `match_relevant()` which scores entries by keyword
 overlap against `when_useful`, `tags`, and filename-derived title. Priority-based
 scoring was removed when the knowledge index was simplified.
@@ -377,7 +379,9 @@ flowchart TD
 
 **Fallback**: if the AI summarization fails, falls back to plain text
 `"N earlier messages (truncated due to context limit)"`. At least the
-last 2 messages plus the system prompt are always preserved.
+last 2 messages plus the system prompt are always preserved. If the total
+message count is ≤ system prefix + 4, summarization is skipped entirely
+regardless of byte limit.
 
 ### 2i2. Context-Length-Exceeded Retry — Provider-Triggered Compression
 
@@ -457,12 +461,12 @@ flowchart TD
     IMG_IDS --> TAKE
     TAKE -->|"lookup by call_id"| CACHE
     CACHE -->|"GeneratedImage"| SHARE
+    STRIP -->|"remove ![](image_key)"| PICK
     SHARE -->|"yes (preferred)"| MARKDOWN
     SHARE -->|"no (fallback)"| FALLBACK
-    MARKDOWN --> STRIP
+    MARKDOWN -->|"append ![Generated image](share_url)"| PICK
     FALLBACK --> SEND
-    STRIP --> PICK
-    PICK -->|"small reply text"| SEND
+    PICK -->|"final_reply"| SEND
     SEND -->|"chat.sendMessage"| RC
 ```
 

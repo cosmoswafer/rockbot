@@ -1,10 +1,19 @@
 use async_trait::async_trait;
-use serde_json::Value;
+use serde::Deserialize;
 use tracing::debug;
 use webdav::{WebDavClient, WebDavPath};
 
 use crate::error::{Result, RockBotError};
 use crate::tool::Tool;
+
+#[derive(Debug, Deserialize)]
+pub struct EditSoulParams {
+    pub content: String,
+    #[serde(default)]
+    pub webdav_dir: Option<String>,
+    #[serde(default)]
+    pub room_id: Option<String>,
+}
 
 pub struct EditSoulTool {
     webdav: WebDavClient,
@@ -67,24 +76,17 @@ impl Tool for EditSoulTool {
 
     async fn execute(&self, arguments: &str) -> Result<String> {
         debug!("edit_soul execute: {}", arguments);
-        let args: Value = serde_json::from_str(arguments).map_err(|e| {
+        let params: EditSoulParams = serde_json::from_str(arguments).map_err(|e| {
             RockBotError::ToolCallParse(format!("Failed to parse edit_soul arguments: {e}"))
         })?;
 
-        let content = args
-            .get("content")
-            .and_then(|c| c.as_str())
-            .ok_or_else(|| {
-                RockBotError::ToolCallParse("edit_soul requires 'content' field".into())
-            })?;
-
-        let webdav_dir = args
-            .get("webdav_dir")
-            .and_then(|d| d.as_str())
-            .or_else(|| args.get("room_id").and_then(|r| r.as_str()))
+        let webdav_dir = params
+            .webdav_dir
+            .as_deref()
+            .or(params.room_id.as_deref())
             .unwrap_or("unknown");
 
-        self.do_replace(webdav_dir, content).await
+        self.do_replace(webdav_dir, &params.content).await
     }
 }
 

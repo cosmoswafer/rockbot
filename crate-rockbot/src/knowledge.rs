@@ -91,6 +91,38 @@ pub struct KnowledgeEntry {
     pub updated_at: String,
 }
 
+/// Parsed tool arguments for save_knowledge — typed boundary for "parse, don't validate".
+#[derive(Debug, Clone, Deserialize)]
+pub struct SaveKnowledgeParams {
+    pub category: KnowledgeCategory,
+    pub topic: String,
+    pub content: String,
+    pub when_useful: String,
+    #[serde(default)]
+    pub priority: KnowledgePriority,
+    #[serde(default)]
+    pub tags: Option<String>,
+    #[serde(default)]
+    pub webdav_dir: Option<String>,
+}
+
+/// Parsed tool arguments for forget_knowledge.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ForgetKnowledgeParams {
+    pub topic: String,
+    #[serde(default)]
+    pub webdav_dir: Option<String>,
+}
+
+/// Parsed tool arguments for recall_knowledge.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RecallKnowledgeParams {
+    #[serde(default)]
+    pub query: Option<String>,
+    #[serde(default)]
+    pub webdav_dir: Option<String>,
+}
+
 pub struct KnowledgeManager;
 
 impl KnowledgeManager {

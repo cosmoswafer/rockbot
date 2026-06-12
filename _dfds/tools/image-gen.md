@@ -178,14 +178,14 @@ LLM provides `prompt` and optional `aspect_ratio`; all other fields come from co
 | Field           | Source            | Type                                           | Description                                      |
 | --------------- | ----------------- | ---------------------------------------------- | ------------------------------------------------ |
 | `prompt`        | LLM               | `string`                                       | **Required.** Text description of the image      |
-| `aspect_ratio`  | LLM (optional)   | `string`                                      | Aspect ratio as `W:H` (e.g. `"16:9"`, `"2:3"`, `"1:1"`). If omitted, falls back to `default_image_size` from config. |
+| `aspect_ratio`  | LLM (optional)   | `string`                                      | Aspect ratio as `W:H` (e.g. `"16:9"`, `"2:3"`, `"1:1"`). Parsed at execute time and stored directly as `image_size: Preset(ratio_string)` — not a separate field on the Rust struct. If omitted, falls back to `default_image_size` from config. |
 | `image_size`    | Tool (resolved)  | preset name → pixels                         | Resolved from LLM's `aspect_ratio` (or config default) per-provider. Hidden from LLM. |
 | `size_tier`     | Config            | `"4K"`, `"2K"`, `"1K"`                        | Resolution tier for OpenRouter. Set from `default_image_size_tier`. Ignored by fal. |
 | `room_id`       | Harness           | `string`                                       | Room UUID for image storage (injected if omitted). **Note:** injected at execute time, not stored in the Rust struct. |
-| `webdav_dir`    | Harness           | `string`                                       | Type-prefixed room path (injected; falls back to room_id). **Note:** injected at execute time, not stored in the Rust struct. |
-| `image_cache_key`| Harness          | `string`                                       | Tool call_id — used as ImageCache lookup key     |
+| `webdav_dir`    | Harness           | `string`                                       | Type-prefixed room path (injected; falls back to room_id). **Note:** injected at execute time, not stored in the Rust struct; also absent from the LLM-facing tool schema. |
+| `image_cache_key`| Harness          | `string`                                       | Tool call_id — used as ImageCache lookup key. **Note:** injected at execute time, not in LLM-facing schema. |
 | `image_urls`    | Harness (auto)    | `[]string`                                     | Injected from 4 converging sources (see §2d): user attachments, vision/WebDAV pool, agent-provided URLs, and message image URLs (auto-injected unconditionally) |
-| `model_id`      | Config            | `string`                                       | From `default_text_model` / `default_edit_model` |
+| `model_id`      | Provider (runtime)| `string`                                       | Selected at provider call time via `provider.model_id()`. The struct field exists but is not populated from config by the tool. |
 | `quality`       | Config            | `string`                                       | From `default_quality`                           |
 | `output_format` | Config            | `string`                                       | From `default_output_format`                     |
 | `num_images`    | Config            | `integer`                                      | From `default_num_images`                        |
@@ -195,8 +195,10 @@ LLM provides `prompt` and optional `aspect_ratio`; all other fields come from co
 The tool returns minimal JSON — no base64. The actual image bytes are in `ImageCache` keyed by `image_key`.
 
 ```json
-{"ok": true, "webdav_path": "...", "image_key": "call_abc123def4567890"}
+{"ok": true, "webdav_path": "...", "image_key": "call_abc123def4567890", "share_url": "https://..."}
 ```
+
+The `share_url` field is conditionally present — included only when a NextCloud share link was successfully created for the generated image. It is absent when share generation failed (fallback to DDP attachment path).
 
 #### `ImageCache` Entry (GeneratedImage)
 

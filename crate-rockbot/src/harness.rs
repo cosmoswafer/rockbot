@@ -1398,10 +1398,9 @@ impl AgentHarness {
     }
 
     async fn review_knowledge_priorities(&mut self) {
-        if self.webdav.is_none() {
+        let Some(webdav) = self.webdav.as_ref() else {
             return;
-        }
-        let webdav = self.webdav.as_ref().unwrap();
+        };
         let room_ids = self.memory.room_ids();
         for rid in room_ids {
             let summaries = self.memory.get_daily_summaries(&rid);

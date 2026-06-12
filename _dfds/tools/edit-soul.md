@@ -58,6 +58,10 @@ flowchart TD
 
 ### 2b. Error Handling & Fallbacks
 
+On write failure, the tool relies on the underlying `write_file_with_fallback`
+(AutoMkcol → mkcol parents → retry PUT). The tool does not implement its own
+retry loop — errors bubble up directly via `?`.
+
 ```mermaid
 flowchart TD
     SOUL(EditSoulTool)
@@ -65,11 +69,9 @@ flowchart TD
     HTTP(HttpClient)
     DAV[(NextCloud WebDAV)]
     ERR_WRITE[Error: WebDAV Write Failed]
-    RETRY(RetryWrite)
     AGENT[Agent Harness]
 
-    PUT -.->|"write failure"| RETRY
-    RETRY -.->|"still fails"| ERR_WRITE
+    PUT -.->|"write failure (after write_file_with_fallback exhausted)"| ERR_WRITE
     ERR_WRITE -->|"error string"| AGENT
 ```
 
@@ -77,10 +79,12 @@ flowchart TD
 
 #### `EditSoulParams`
 
+> **Note:** No dedicated Rust struct — parsed ad-hoc from `serde_json::Value`.
+
 | Field        | Type     | Notes                                              |
 | ------------ | -------- | -------------------------------------------------- |
 | `content`    | `string` | Full soul.md content using the standard template   |
-| `webdav_dir` | `string` | Room WebDAV directory key (injected automatically) |
+| `webdav_dir` | `string` | Room WebDAV directory key (injected automatically). Falls back to `room_id` if absent. |
 
 #### Soul File Format
 

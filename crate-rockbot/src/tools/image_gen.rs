@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use base64::Engine;
-use serde_json::Value;
+use serde::Deserialize;
 use tracing::{debug, info, warn};
 use webdav::{WebDavClient, WebDavPath};
 
@@ -9,6 +9,21 @@ use crate::image_cache::{GeneratedImage, ImageCache};
 use crate::provider::ImageProvider;
 use crate::tool::Tool;
 use crate::types::{ImageGenParams, ImageSizeValue};
+
+#[derive(Debug, Deserialize)]
+struct ImageGenArgs {
+    prompt: String,
+    #[serde(default)]
+    aspect_ratio: Option<String>,
+    #[serde(default)]
+    image_urls: Option<Vec<String>>,
+    #[serde(default)]
+    room_id: Option<String>,
+    #[serde(default)]
+    webdav_dir: Option<String>,
+    #[serde(default)]
+    image_cache_key: Option<String>,
+}
 
 use std::sync::Arc;
 
@@ -163,44 +178,30 @@ impl Tool for ImageGenTool {
 
     async fn execute(&self, arguments: &str) -> Result<String> {
         let t_start = std::time::Instant::now();
-        let args: Value = serde_json::from_str(arguments).map_err(|e| {
+        let args: ImageGenArgs = serde_json::from_str(arguments).map_err(|e| {
             RockBotError::ToolCallParse(format!("Failed to parse image_gen arguments: {e}"))
         })?;
 
-        let prompt = args.get("prompt").and_then(|p| p.as_str()).ok_or_else(|| {
-            RockBotError::ToolCallParse("image_gen requires 'prompt' field".into())
-        })?;
-
-        let room_id = args
-            .get("room_id")
-            .and_then(|r| r.as_str())
-            .unwrap_or("unknown");
-
-        let webdav_dir = args
-            .get("webdav_dir")
-            .and_then(|d| d.as_str())
-            .unwrap_or(room_id);
+        let prompt = &args.prompt;
+        let room_id = args.room_id.as_deref().unwrap_or("unknown");
+        let webdav_dir = args.webdav_dir.as_deref().unwrap_or(room_id);
 
         let mut params = ImageGenParams::new(prompt);
         params.quality = Some(self.default_quality.clone());
         params.output_format = Some(self.default_output_format.clone());
         params.num_images = Some(self.default_num_images);
 
-        let aspect_ratio = args
-            .get("aspect_ratio")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty());
+        let aspect_ratio = args.aspect_ratio.as_deref().filter(|s| !s.is_empty());
         params.image_size = Some(ImageSizeValue::Preset(
             aspect_ratio.unwrap_or(&self.default_image_size).to_string(),
         ));
         params.size_tier = Some(self.default_image_size_tier.clone());
 
-        if let Some(image_urls) = args.get("image_urls").and_then(|v| v.as_array()) {
+        if let Some(image_urls) = &args.image_urls {
             let mut urls: Vec<String> = Vec::with_capacity(image_urls.len());
-            for v in image_urls {
-                let raw = v.as_str().map(String::from);
-                match raw.as_deref() {
-                    Some(uri) if uri.starts_with("data:") => {
+            for raw in image_urls {
+                match raw.as_str() {
+                    uri if uri.starts_with("data:") => {
                         if let Ok(uploaded_url) = self.upload_data_uri(uri).await {
                             debug!("Uploaded image to provider storage: {}", uploaded_url);
                             urls.push(uploaded_url);
@@ -208,13 +209,12 @@ impl Tool for ImageGenTool {
                             warn!("Failed to upload data URI to provider storage, skipping it");
                         }
                     }
-                    Some(s) if s.starts_with("http://") || s.starts_with("https://") => {
+                    s if s.starts_with("http://") || s.starts_with("https://") => {
                         urls.push(s.to_string());
                     }
-                    Some(_) => {
+                    _ => {
                         debug!("Skipping non-URL image_urls entry");
                     }
-                    None => {}
                 }
             }
             if !urls.is_empty() {
@@ -273,11 +273,7 @@ impl Tool for ImageGenTool {
             ext.replace("jpg", "jpeg")
         );
 
-        let image_key = args
-            .get("image_cache_key")
-            .and_then(|k| k.as_str())
-            .map(String::from)
-            .unwrap_or_else(uuid_string);
+        let image_key = args.image_cache_key.clone().unwrap_or_else(uuid_string);
 
         self.image_cache.store(
             &image_key,

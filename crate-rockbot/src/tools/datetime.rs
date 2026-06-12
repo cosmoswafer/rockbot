@@ -1,8 +1,20 @@
 use async_trait::async_trait;
-use serde_json::Value;
+use serde::Deserialize;
 
 use crate::error::{Result, RockBotError};
 use crate::tool::Tool;
+
+#[derive(Debug, Deserialize)]
+struct DateTimeParams {
+    #[serde(default = "default_format")]
+    format: String,
+    #[serde(default)]
+    week_offset: i64,
+}
+
+fn default_format() -> String {
+    "full".to_string()
+}
 
 pub struct DateTimeTool;
 
@@ -238,30 +250,20 @@ impl Tool for DateTimeTool {
     }
 
     async fn execute(&self, arguments: &str) -> Result<String> {
-        let args: Value = if arguments.is_empty() {
-            serde_json::json!({})
+        let params: DateTimeParams = if arguments.is_empty() {
+            DateTimeParams { format: "full".to_string(), week_offset: 0 }
         } else {
             serde_json::from_str(arguments).map_err(|e| {
                 RockBotError::ToolCallParse(format!("Failed to parse datetime arguments: {e}"))
             })?
         };
 
-        let format = args
-            .get("format")
-            .and_then(|f| f.as_str())
-            .unwrap_or("full");
-
-        let week_offset = args
-            .get("week_offset")
-            .and_then(|v| v.as_i64())
-            .unwrap_or(0);
-
-        match format {
+        match params.format.as_str() {
             "iso" => Ok(now_iso()),
             "human" => Ok(now_human()),
             "unix" => Ok(now_unix_secs().to_string()),
-            "calendar" => Ok(now_calendar(week_offset)),
-            "weekdays" => Ok(now_weekdays(week_offset)),
+            "calendar" => Ok(now_calendar(params.week_offset)),
+            "weekdays" => Ok(now_weekdays(params.week_offset)),
             "week_number" => Ok(now_week_number()),
             _ => {
                 let iso = now_iso();

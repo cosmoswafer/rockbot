@@ -177,15 +177,21 @@ enables multi-step reasoning with structured outputs via `outputSchema`.
 | ---------------- | --------------------- | ------------------------------------------- |
 | `title`          | `String`              | Page title                                  |
 | `url`            | `String`              | Page URL                                    |
-| `id`             | `String`              | Document ID (same as URL)                   |
+| `id`             | `String`              | Document ID (same as URL; omitted from formatted output) |
 | `published_date` | `Option<String>`      | Estimated publication date (YYYY-MM-DD)     |
-| `author`         | `Option<String>`      | Author if available                         |
+| `author`         | `Option<String>`      | Author if available (omitted from formatted output) |
 | `highlights`     | `Vec<String>`         | Key excerpts (if requested)                 |
-| `highlight_scores` | `Vec<f64>`          | Cosine similarity score per highlight       |
+| `highlight_scores` | `Vec<f64>`          | Cosine similarity score per highlight (omitted from formatted output) |
 | `text`           | `Option<String>`      | Full page markdown text (if requested)      |
 | `summary`        | `Option<String>`      | LLM-generated summary (if requested)        |
 
-Note: The following SearchRequest fields are defined but not yet wired to the tool: `category`, `include_domains`, `exclude_domains`, `start_published_date`, `end_published_date`, `user_location`, `output_schema`. All three content modes (highlights, text, deep) are now supported.
+> **Implementation note:** None of the data structures below exist as Rust structs
+> — all request/response processing uses ad-hoc `serde_json::Value`. The following
+> SearchRequest fields are documented but not yet wired to the tool's LLM-facing
+> parameter schema: `category`, `include_domains`, `exclude_domains`,
+> `start_published_date`, `end_published_date`, `user_location`, `output_schema`.
+> The tool currently exposes only `query`, `type`, `contents_mode`, and
+> `num_results` to the LLM.
 
 ### `SearchResponse`
 

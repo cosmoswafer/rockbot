@@ -77,17 +77,19 @@ flowchart TD
     IDX_UPDATE[Update Index Entry]
     IDX_SER[Serialize index.json]
     DAV[(NextCloud WebDAV)]
+    CTX_REFRESH[refresh_knowledge_context<br/>reload matching entries]
 
     USER -->|"!remember / !note / !save / natural chat"| AI
     AI -->|"tool_call: save_knowledge"| TOOL
     TOOL -->|"category + topic + content + when_useful"| CATEGORIZE
-    CATEGORIZE -->|"markdown body"| MD
-    MD -->|"PUT .md file"| DAV
     CATEGORIZE -->|"index metadata"| IDX_PARSE
     DAV -->|"existing index.json"| IDX_PARSE
     IDX_PARSE -->|"parsed index"| IDX_UPDATE
     IDX_UPDATE -->|"updated entries"| IDX_SER
-    IDX_SER -->|"PUT index.json"| DAV
+    IDX_SER -->|"PUT index.json (committed first)"| DAV
+    CATEGORIZE -->|"markdown body"| MD
+    MD -->|"PUT .md file (after index committed)"| DAV
+    TOOL -->|"triggers context refresh"| CTX_REFRESH[refresh_knowledge_context]
 ```
 
 ### 2b. Happy Flow — Load
@@ -139,6 +141,8 @@ flowchart TD
 
 ### 2d. Write Deep Dive — save_knowledge Tool
 
+The `save_knowledge` tool writes the index first, then the `.md` file after the index is committed. This ensures the index is always authoritative — a missing `.md` file (partial write) won't corrupt the catalog. Existence checks are performed against the in-memory index, not the WebDAV filesystem.
+
 ```mermaid
 flowchart TD
     CALL[ToolCall: save_knowledge]
@@ -161,17 +165,13 @@ flowchart TD
     CATEGORY -->|"skill | secret | note"| SLUG
     SLUG -->|"{category}_{slug}.md"| FORMAT
     FORMAT -->|"frontmatter + body"| MD_BODY
-    MD_BODY --> EXISTING
-    EXISTING -->|"yes (by filename)"| OVERWRITE
-    EXISTING -->|"no"| NEW_FILE
-    OVERWRITE --> PUT_MD
-    NEW_FILE --> PUT_MD
-    PUT_MD -->|"PUT knowledge/{file}"| DAV
-    EXISTING --> READ_IDX
+    MD_BODY --> READ_IDX
     DAV -->|"GET knowledge/index.json"| READ_IDX
     READ_IDX -->|"parsed IndexEntry list"| UPSERT
-    UPSERT -->|"add or replace entry"| PUT_IDX
+    UPSERT -->|"upsert in-memory index (add or replace filename)"| PUT_IDX
     PUT_IDX -->|"PUT knowledge/index.json"| DAV
+    PUT_IDX -->|"index committed"| PUT_MD
+    PUT_MD -->|"PUT knowledge/{file}"| DAV
 ```
 
 ### 2e. Retrieval Deep Dive — Matching When Useful

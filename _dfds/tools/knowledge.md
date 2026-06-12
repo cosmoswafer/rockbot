@@ -88,6 +88,11 @@ flowchart TD
 
 ### 2c. Happy Flow — recall_knowledge
 
+When `query` is non-empty, entries are matched by keyword overlap against
+`when_useful`, `tags`, and topic. When `query` is empty, all entries in the
+index are returned without filtering — the MATCH step is bypassed. Result
+format: `[Knowledge: {display_title}]\n{body}`.
+
 ```mermaid
 flowchart TD
     AGENT[Agent Harness]
@@ -111,7 +116,7 @@ flowchart TD
     HTTP -->|"http request"| DAV
     DAV -->|"200 .md bodies"| GET_MD
     GET_MD -->|"entry contents"| FORMAT_CONTENT
-    FORMAT_CONTENT -->|"[Knowledge: {display_title}]\n{body}\nUse when: {when_useful}"| RECALL
+    FORMAT_CONTENT -->|"[Knowledge: {display_title}]\n{body}"| RECALL
     RECALL -->|"formatted result"| AGENT
     AGENT -->|"context"| AI
 ```

@@ -1,9 +1,17 @@
 use async_trait::async_trait;
 use base64::Engine;
-use serde_json::Value;
+use serde::Deserialize;
 
 use crate::error::{Result, RockBotError};
 use crate::tool::Tool;
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct VisionParams {
+    url: String,
+    #[serde(default)]
+    prompt: Option<String>,
+}
 
 const DEFAULT_MAX_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
 
@@ -138,16 +146,11 @@ impl Tool for VisionTool {
     }
 
     async fn execute(&self, arguments: &str) -> Result<String> {
-        let args: Value = serde_json::from_str(arguments).map_err(|e| {
+        let params: VisionParams = serde_json::from_str(arguments).map_err(|e| {
             RockBotError::ToolCallParse(format!("Failed to parse vision arguments: {}", e))
         })?;
 
-        let url = args
-            .get("url")
-            .and_then(|u| u.as_str())
-            .ok_or_else(|| RockBotError::ToolCallParse("vision requires 'url' field".into()))?;
-
-        self.fetch_image(url).await
+        self.fetch_image(&params.url).await
     }
 }
 

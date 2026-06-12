@@ -229,6 +229,23 @@ Retrieves a single message by `_id`. Useful for verifying alias propagation.
 
 **Response**: message object with `alias` field preserved.
 
+#### `POST /api/v1/users.setAvatar`
+
+Sets the bot's avatar from a URL. Local file paths are never used.
+
+**Request body**:
+```json
+{
+    "avatarUrl": "https://example.com/avatar.png"
+}
+```
+
+#### `POST /api/v1/rooms.upload`
+
+Uploads a file to a RocketChat room. Used for sending attachments (e.g. generated images via DDP fallback with `data:` URIs).
+
+**Request**: multipart form with `file`, `room_id`, and optional `msg`, `description`.
+
 ### Rust Types
 
 #### `RestApiClient`

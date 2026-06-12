@@ -1,11 +1,27 @@
 use async_trait::async_trait;
 use base64::Engine;
-use serde_json::Value;
+use serde::Deserialize;
 use tracing::debug;
 use webdav::{WebDavClient, WebDavPath};
 
 use crate::error::{Result, RockBotError};
 use crate::tool::Tool;
+
+#[derive(Debug, Deserialize)]
+struct WebDavParams {
+    action: String,
+    path: String,
+    #[serde(default)]
+    room_id: Option<String>,
+    #[serde(default)]
+    webdav_dir: Option<String>,
+    #[serde(default)]
+    content: Option<String>,
+    #[serde(default, rename = "oldString")]
+    old_string: Option<String>,
+    #[serde(default, rename = "newString")]
+    new_string: Option<String>,
+}
 
 pub struct WebDavTool {
     client: WebDavClient,
@@ -240,64 +256,34 @@ impl Tool for WebDavTool {
     }
 
     async fn execute(&self, arguments: &str) -> Result<String> {
-        let args: Value = serde_json::from_str(arguments).map_err(|e| {
-            RockBotError::ToolCallParse(format!("Failed to parse webdav arguments: {e}"))
+        let params: WebDavParams = serde_json::from_str(arguments).map_err(|e| {
+            RockBotError::ToolCallParse(format!("Failed to parse webdav arguments: {}", e))
         })?;
 
-        let action = args
-            .get("action")
-            .and_then(|a| a.as_str())
-            .ok_or_else(|| RockBotError::ToolCallParse("webdav requires 'action' field".into()))?;
+        let room_id = params.room_id.as_deref().unwrap_or("unknown");
+        let webdav_dir = params.webdav_dir.as_deref().unwrap_or(room_id);
 
-        let room_id = args
-            .get("room_id")
-            .and_then(|r| r.as_str())
-            .unwrap_or("unknown");
-
-        let webdav_dir = args
-            .get("webdav_dir")
-            .and_then(|d| d.as_str())
-            .unwrap_or(room_id);
-
-        let path = args
-            .get("path")
-            .and_then(|p| p.as_str())
-            .ok_or_else(|| RockBotError::ToolCallParse("webdav requires 'path' field".into()))?;
-
-        match action {
-            "read" => self.do_read(webdav_dir, path).await,
+        match params.action.as_str() {
+            "read" => self.do_read(webdav_dir, &params.path).await,
             "write" => {
-                let content = args
-                    .get("content")
-                    .and_then(|c| c.as_str())
-                    .ok_or_else(|| {
-                        RockBotError::ToolCallParse("webdav write requires 'content' field".into())
-                    })?;
-                self.do_write(webdav_dir, path, content).await
+                let content = params.content.as_deref().ok_or_else(|| {
+                    RockBotError::ToolCallParse("webdav write requires 'content' field".into())
+                })?;
+                self.do_write(webdav_dir, &params.path, content).await
             }
             "edit" => {
-                let old_string = args
-                    .get("oldString")
-                    .and_then(|s| s.as_str())
-                    .ok_or_else(|| {
-                        RockBotError::ToolCallParse(
-                            "webdav edit requires 'oldString' field".into(),
-                        )
-                    })?;
-                let new_string = args
-                    .get("newString")
-                    .and_then(|s| s.as_str())
-                    .ok_or_else(|| {
-                        RockBotError::ToolCallParse(
-                            "webdav edit requires 'newString' field".into(),
-                        )
-                    })?;
-                self.do_edit(webdav_dir, path, old_string, new_string).await
+                let old_string = params.old_string.as_deref().ok_or_else(|| {
+                    RockBotError::ToolCallParse("webdav edit requires 'oldString' field".into())
+                })?;
+                let new_string = params.new_string.as_deref().ok_or_else(|| {
+                    RockBotError::ToolCallParse("webdav edit requires 'newString' field".into())
+                })?;
+                self.do_edit(webdav_dir, &params.path, old_string, new_string).await
             }
-            "list" => self.do_list(webdav_dir, path).await,
-            "mkdir" => self.do_mkdir(webdav_dir, path).await,
-            "delete" => self.do_delete(webdav_dir, path).await,
-            "exists" => self.do_exists(webdav_dir, path).await,
+            "list" => self.do_list(webdav_dir, &params.path).await,
+            "mkdir" => self.do_mkdir(webdav_dir, &params.path).await,
+            "delete" => self.do_delete(webdav_dir, &params.path).await,
+            "exists" => self.do_exists(webdav_dir, &params.path).await,
             other => Err(RockBotError::ToolCallParse(format!(
                 "Unknown webdav action: {other}. Valid: read, write, list, mkdir, delete, exists"
             ))),

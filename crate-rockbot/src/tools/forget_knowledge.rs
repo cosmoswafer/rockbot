@@ -1,10 +1,9 @@
 use async_trait::async_trait;
-use serde_json::Value;
 use tracing::debug;
 use webdav::WebDavClient;
 
 use crate::error::{Result, RockBotError};
-use crate::knowledge::KnowledgeManager;
+use crate::knowledge::{ForgetKnowledgeParams, KnowledgeManager};
 use crate::tool::Tool;
 
 pub struct ForgetKnowledgeTool {
@@ -44,22 +43,15 @@ impl Tool for ForgetKnowledgeTool {
 
     async fn execute(&self, arguments: &str) -> Result<String> {
         debug!("forget_knowledge execute: {}", arguments);
-        let args: Value = serde_json::from_str(arguments).map_err(|e| {
+        let params: ForgetKnowledgeParams = serde_json::from_str(arguments).map_err(|e| {
             RockBotError::ToolCallParse(format!("Failed to parse forget_knowledge arguments: {e}"))
         })?;
 
-        let topic = args.get("topic").and_then(|t| t.as_str()).ok_or_else(|| {
-            RockBotError::ToolCallParse("forget_knowledge requires 'topic' field".into())
-        })?;
+        let webdav_dir = params.webdav_dir.as_deref().unwrap_or("unknown");
 
-        let webdav_dir = args
-            .get("webdav_dir")
-            .and_then(|d| d.as_str())
-            .unwrap_or("unknown");
+        KnowledgeManager::delete_entry(&self.webdav, webdav_dir, &params.topic).await?;
 
-        KnowledgeManager::delete_entry(&self.webdav, webdav_dir, topic).await?;
-
-        Ok(format!("Knowledge entry '{}' deleted.", topic))
+        Ok(format!("Knowledge entry '{}' deleted.", params.topic))
     }
 }
 

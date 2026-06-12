@@ -1,9 +1,47 @@
 use async_trait::async_trait;
+use serde::Deserialize;
 use serde_json::Value;
 use tracing::warn;
 
 use crate::error::{Result, RockBotError};
 use crate::tool::Tool;
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum SearchType {
+    Auto,
+    Fast,
+    Deep,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum ContentsMode {
+    Highlights,
+    Text,
+    Deep,
+}
+
+#[derive(Debug, Deserialize)]
+struct WebSearchParams {
+    query: String,
+    #[serde(rename = "type", default = "default_search_type")]
+    search_type: SearchType,
+    #[serde(default = "default_num_results")]
+    num_results: u32,
+    #[serde(default = "default_contents_mode")]
+    contents_mode: ContentsMode,
+}
+
+fn default_search_type() -> SearchType {
+    SearchType::Auto
+}
+fn default_num_results() -> u32 {
+    5
+}
+fn default_contents_mode() -> ContentsMode {
+    ContentsMode::Highlights
+}
 
 pub struct WebSearchTool {
     api_key: Option<String>,
@@ -220,24 +258,22 @@ impl Tool for WebSearchTool {
     }
 
     async fn execute(&self, arguments: &str) -> Result<String> {
-        let args: Value = serde_json::from_str(arguments).map_err(|e| {
+        let params: WebSearchParams = serde_json::from_str(arguments).map_err(|e| {
             RockBotError::ToolCallParse(format!("Failed to parse web_search arguments: {}", e))
         })?;
 
-        let query = args.get("query").and_then(|q| q.as_str()).ok_or_else(|| {
-            RockBotError::ToolCallParse("web_search requires 'query' field".into())
-        })?;
+        let search_type = match params.search_type {
+            SearchType::Auto => "auto",
+            SearchType::Fast => "fast",
+            SearchType::Deep => "deep",
+        };
+        let contents_mode = match params.contents_mode {
+            ContentsMode::Highlights => "highlights",
+            ContentsMode::Text => "text",
+            ContentsMode::Deep => "deep",
+        };
 
-        let search_type = args.get("type").and_then(|t| t.as_str()).unwrap_or("auto");
-
-        let num_results = args
-            .get("num_results")
-            .and_then(|n| n.as_u64())
-            .unwrap_or(5) as u32;
-
-        let contents_mode = args.get("contents_mode").and_then(|c| c.as_str()).unwrap_or("highlights");
-
-        self.search_exa(query, search_type, num_results, contents_mode).await
+        self.search_exa(&params.query, search_type, params.num_results, contents_mode).await
     }
 }
 

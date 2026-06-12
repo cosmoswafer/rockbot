@@ -236,7 +236,7 @@ All six message types are handled. The event loop waits for `"ready"` after
 subscription and re-subscribes on `"nosub"`.
 
 > **Note**: `"connected"`, `"result"`, and `"ready"` are consumed during connection
-> setup (via `expect_msg()` in `client.rs:127,134,143`), **not** in the runtime
+> setup (via `expect_msg()` in `client.rs:183,190,200`), **not** in the runtime
 > event loop. The event loop (`client.rs:151-207`) only handles `"ping"`,
 > `"changed"`, and `"nosub"`.
 
@@ -290,7 +290,7 @@ for a bot that only needs new incoming messages.
 ### 2f. Authentication Deep Dive
 
 The login flow uses DDP method calls over the WebSocket (`ddp::login_message()`
-in `crate-rocketchat/src/ddp.rs:21`). The Rocket.Chat `login` method requires
+in `crate-rocketchat/src/ddp.rs:36`). The Rocket.Chat `login` method requires
 the password to be pre-hashed with **SHA-256**, sent as a lowercase hex digest
 alongside the algorithm name. The Rust implementation uses `sha2::Digest` to
 hash the password before constructing the payload.

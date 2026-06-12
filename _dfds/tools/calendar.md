@@ -13,6 +13,10 @@ e.g. `r-General`, `d-bob`), stored under the configured user's CalDAV
 calendar home (`/remote.php/dav/calendars/{username}/`). Events from
 different rooms are fully isolated.
 
+> **Note:** `list_todos` currently does **not** accept a date range — it
+> fetches todos without time-range filtering. The DFD diagrams show date
+> range for todos as aspirational/planned behavior.
+
 - Upstream: [Configuration Management](../base/config.md) provides `WebDavConfig`
   (server URL, credentials)
 - Downstream: [Agent Harness](../agent-harness.md) injects `room_id` + `webdav_dir`

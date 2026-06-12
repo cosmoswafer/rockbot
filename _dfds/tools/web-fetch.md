@@ -123,19 +123,23 @@ cross-referenced information for fact-checking.
 
 ### `FetchParams`
 
+> **Note:** At implementation level, parameters are parsed ad-hoc from `serde_json::Value` — no dedicated Rust struct exists. The table below documents the semantic interface.
+
 | Field              | Type     | Notes                                                      |
 | ------------------ | -------- | ---------------------------------------------------------- |
 | `url`              | `String` | The URL to fetch (required)                                |
 | `method`           | `String` | HTTP method: `"GET"`, `"POST"`, `"PUT"`, `"PATCH"`, `"DELETE"`, `"HEAD"`, `"OPTIONS"` (default: `"GET"`) |
 | `headers`          | `Object` | JSON object of `{ "Header-Name": "value" }` pairs          |
 | `body`             | `String` | Raw string request body                                    |
-| `body_json`        | `Object` | JSON value serialized as string; caller must add `Content-Type: application/json` header manually |
+| `body_json`        | `Object` | JSON value serialized as request body string. The caller must add `Content-Type: application/json` header manually; the tool does not inject headers automatically. |
 | `file_from_webdav` | `String` | WebDAV file path to read and send as request body          |
 | `save_to_webdav`   | `String` | WebDAV file path to save the response body                 |
 | `format`           | `String` | Output format: `"json"`, `"markdown"`, or `"raw"` (default: `"raw"`) |
 | `verify`           | `bool`   | Trigger a parallel Exa search for cross-referencing (default: `false`) |
 
 ### `FetchJsonOutput` (format=`"json"`)
+
+> **Note:** No Rust struct exists — constructed ad-hoc. The table below documents the semantic output interface.
 
 | Field             | Type              | Notes                                         |
 | ----------------- | ----------------- | --------------------------------------------- |
@@ -145,16 +149,18 @@ cross-referenced information for fact-checking.
 | `content`         | `String`          | Response body (truncated to 10,000 chars)     |
 | `verified`        | `bool`            | Whether cross-verification was performed      |
 | `related_sources` | `Vec<SearchRef>`  | Results from the Exa verification search      |
-| `response_headers`| `Option<HashMap<String, String>>` | Response headers as key-value pairs |
+| `response_headers`| `Option<HashMap<String, String>>` | Response headers. Omitted from output when empty (not `null`). |
 | `saved_to`        | `String|null`     | WebDAV path where response was saved          |
 
 ### `SearchRef`
+
+> **Note:** No Rust struct exists — constructed ad-hoc.
 
 | Field    | Type     | Notes              |
 | -------- | -------- | ------------------ |
 | `title`  | `String` | Page title         |
 | `url`    | `String` | Page URL           |
-| `snippet`| `String` | Search snippet     |
+| `snippet`| `String` | Search snippet (populated from Exa's `text` field first, falling back to `snippet`) |
 
 ### Example: Creating a Gitea Issue via API
 

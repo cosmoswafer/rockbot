@@ -2,12 +2,44 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
-use serde_json::Value;
+use serde::Deserialize;
 use tracing::{debug, warn};
 use webdav::{CaldavEvent, CaldavTodo, Reminder, WebDavClient, WebDavConfig, build_vevent_ics, quick_uid};
 
 use crate::error::{Result, RockBotError};
 use crate::tool::Tool;
+
+#[derive(Debug, Deserialize)]
+struct CalendarParams {
+    action: String,
+    #[serde(default)]
+    room_id: Option<String>,
+    #[serde(default)]
+    webdav_dir: Option<String>,
+    #[serde(default = "default_cal_start")]
+    start: String,
+    #[serde(default = "default_cal_end")]
+    end: String,
+    #[serde(default)]
+    uid: Option<String>,
+    #[serde(default)]
+    summary: Option<String>,
+    #[serde(default)]
+    dtstart: Option<String>,
+    #[serde(default)]
+    dtend: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    location: Option<String>,
+    #[serde(default)]
+    rrule: Option<String>,
+    #[serde(default)]
+    reminder_minutes: Option<i64>,
+}
+
+fn default_cal_start() -> String { "20250101T000000Z".to_string() }
+fn default_cal_end() -> String { "20990101T000000Z".to_string() }
 
 pub struct CalendarTool {
     client: WebDavClient,
@@ -123,14 +155,26 @@ impl CalendarTool {
 
 }
 
-fn build_ics_for_event(args: &serde_json::Value, uid: &str) -> Result<String> {
-    let summary = required_str(args, "summary")?;
-    let dtstart = required_str(args, "dtstart")?;
-    let dtend = required_str(args, "dtend")?;
-    let description = args.get("description").and_then(|d| d.as_str());
-    let location = args.get("location").and_then(|l| l.as_str());
-    let rrule = args.get("rrule").and_then(|r| r.as_str());
-    let reminders = parse_reminders(args);
+fn build_ics_for_event(params: &CalendarParams, uid: &str) -> Result<String> {
+    let summary = params.summary.as_deref().ok_or_else(|| {
+        RockBotError::ToolCallParse("calendar requires 'summary' field".into())
+    })?;
+    let dtstart = params.dtstart.as_deref().ok_or_else(|| {
+        RockBotError::ToolCallParse("calendar requires 'dtstart' field".into())
+    })?;
+    let dtend = params.dtend.as_deref().ok_or_else(|| {
+        RockBotError::ToolCallParse("calendar requires 'dtend' field".into())
+    })?;
+    let description = params.description.as_deref();
+    let location = params.location.as_deref();
+    let rrule = params.rrule.as_deref();
+    let reminders = params
+        .reminder_minutes
+        .map(|mins| vec![Reminder {
+            action: "DISPLAY".into(),
+            trigger: format!("-PT{}M", mins),
+        }])
+        .unwrap_or_default();
 
     Ok(build_vevent_ics(
         uid,
@@ -144,34 +188,19 @@ fn build_ics_for_event(args: &serde_json::Value, uid: &str) -> Result<String> {
     ))
 }
 
-fn build_ics_for_update(args: &serde_json::Value, uid: &str, existing: &CaldavEvent) -> Result<String> {
-    let summary = args
-        .get("summary")
-        .and_then(|s| s.as_str())
-        .unwrap_or(&existing.summary);
-    let dtstart = args
-        .get("dtstart")
-        .and_then(|s| s.as_str())
-        .unwrap_or(&existing.dtstart);
-    let dtend = args
-        .get("dtend")
-        .and_then(|s| s.as_str())
-        .unwrap_or(&existing.dtend);
-    let description = args
-        .get("description")
-        .and_then(|d| d.as_str())
-        .or(existing.description.as_deref());
-    let location = args
-        .get("location")
-        .and_then(|l| l.as_str())
-        .or(existing.location.as_deref());
-    let rrule = args
-        .get("rrule")
-        .and_then(|r| r.as_str())
-        .or(existing.rrule.as_deref());
+fn build_ics_for_update(params: &CalendarParams, uid: &str, existing: &CaldavEvent) -> Result<String> {
+    let summary = params.summary.as_deref().unwrap_or(&existing.summary);
+    let dtstart = params.dtstart.as_deref().unwrap_or(&existing.dtstart);
+    let dtend = params.dtend.as_deref().unwrap_or(&existing.dtend);
+    let description = params.description.as_deref().or(existing.description.as_deref());
+    let location = params.location.as_deref().or(existing.location.as_deref());
+    let rrule = params.rrule.as_deref().or(existing.rrule.as_deref());
 
-    let reminders = if args.get("reminder_minutes").is_some() {
-        parse_reminders(args)
+    let reminders = if params.reminder_minutes.is_some() {
+        params.reminder_minutes.map(|mins| vec![Reminder {
+            action: "DISPLAY".into(),
+            trigger: format!("-PT{}M", mins),
+        }]).unwrap_or_default()
     } else {
         existing.reminders.clone()
     };
@@ -186,28 +215,6 @@ fn build_ics_for_update(args: &serde_json::Value, uid: &str, existing: &CaldavEv
         rrule,
         (!reminders.is_empty()).then_some(reminders.as_slice()),
     ))
-}
-
-fn required_str<'a>(args: &'a serde_json::Value, field: &str) -> Result<&'a str> {
-    args.get(field)
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| {
-            RockBotError::ToolCallParse(
-                format!("calendar requires '{field}' field")
-            )
-        })
-}
-
-fn parse_reminders(args: &serde_json::Value) -> Vec<Reminder> {
-    args.get("reminder_minutes")
-        .and_then(|m| m.as_i64())
-        .map(|mins| {
-            vec![Reminder {
-                action: "DISPLAY".into(),
-                trigger: format!("-PT{}M", mins),
-            }]
-        })
-        .unwrap_or_default()
 }
 
 #[async_trait]
@@ -288,58 +295,35 @@ impl Tool for CalendarTool {
     }
 
     async fn execute(&self, arguments: &str) -> Result<String> {
-        let args: Value = serde_json::from_str(arguments).map_err(|e| {
+        let params: CalendarParams = serde_json::from_str(arguments).map_err(|e| {
             RockBotError::ToolCallParse(format!("Failed to parse calendar arguments: {e}"))
         })?;
 
-        let room_id = args
-            .get("room_id")
-            .and_then(|r| r.as_str())
-            .unwrap_or("global");
-
-        let webdav_dir = args
-            .get("webdav_dir")
-            .and_then(|d| d.as_str())
-            .unwrap_or(room_id);
+        let room_id = params.room_id.as_deref().unwrap_or("global");
+        let webdav_dir = params.webdav_dir.as_deref().unwrap_or(room_id);
 
         let caldav_url = self
             .ensure_room_calendar(room_id, webdav_dir)
             .await
             .unwrap_or_else(|| self.build_caldav_url(webdav_dir));
 
-        let action = args
-            .get("action")
-            .and_then(|a| a.as_str())
-            .ok_or_else(|| {
-                RockBotError::ToolCallParse("calendar requires 'action' field".into())
-            })?;
-
-        match action {
+        match params.action.as_str() {
             "list_events" => {
-                let start = args
-                    .get("start")
-                    .and_then(|s| s.as_str())
-                    .unwrap_or("20250101T000000Z");
-                let end = args
-                    .get("end")
-                    .and_then(|s| s.as_str())
-                    .unwrap_or("20990101T000000Z");
-
-                debug!("calendar list_events: {} to {} (room={})", start, end, room_id);
+                debug!("calendar list_events: {} to {} (room={})", params.start, params.end, room_id);
                 let events = self
                     .client
-                    .list_events_by_date_range(&caldav_url, start, end)
+                    .list_events_by_date_range(&caldav_url, &params.start, &params.end)
                     .await
                     .map_err(|e| RockBotError::Provider(format!("Calendar list failed: {e}")))?;
 
                 if events.is_empty() {
-                    Ok(format!("No events found between {} and {}.", start, end))
+                    Ok(format!("No events found between {} and {}.", params.start, params.end))
                 } else {
                     let mut out = format!(
                         "{} event(s) between {} and {}:\n\n",
                         events.len(),
-                        start,
-                        end
+                        params.start,
+                        params.end
                     );
                     for event in &events {
                         out.push_str(&Self::format_event(event));
@@ -349,14 +333,9 @@ impl Tool for CalendarTool {
                 }
             }
             "get_event" => {
-                let uid = args
-                    .get("uid")
-                    .and_then(|u| u.as_str())
-                    .ok_or_else(|| {
-                        RockBotError::ToolCallParse(
-                            "calendar get_event requires 'uid' field".into(),
-                        )
-                    })?;
+                let uid = params.uid.as_deref().ok_or_else(|| {
+                    RockBotError::ToolCallParse("calendar get_event requires 'uid' field".into())
+                })?;
                 let event = self
                     .client
                     .get_event(&caldav_url, uid)
@@ -366,11 +345,11 @@ impl Tool for CalendarTool {
             }
             "add_event" => {
                 let uid = quick_uid();
-                let ics = build_ics_for_event(&args, &uid)?;
+                let ics = build_ics_for_event(&params, &uid)?;
                 debug!(
                     "calendar add_event: uid={} summary={:?} (room={})",
                     uid,
-                    args.get("summary"),
+                    params.summary,
                     room_id,
                 );
                 self.client
@@ -380,50 +359,31 @@ impl Tool for CalendarTool {
                 Ok(format!("Event created with UID: {}", uid))
             }
             "update_event" => {
-                let uid = args
-                    .get("uid")
-                    .and_then(|u| u.as_str())
-                    .ok_or_else(|| {
-                        RockBotError::ToolCallParse(
-                            "calendar update_event requires 'uid' field".into(),
-                        )
-                    })?;
-
+                let uid = params.uid.as_deref().ok_or_else(|| {
+                    RockBotError::ToolCallParse("calendar update_event requires 'uid' field".into())
+                })?;
                 let existing = self
                     .client
                     .fetch_event_by_uid(&caldav_url, uid)
                     .await
-                    .map_err(|e| {
-                        RockBotError::Provider(format!("Calendar fetch failed: {e}"))
-                    })?;
-
+                    .map_err(|e| RockBotError::Provider(format!("Calendar fetch failed: {e}")))?;
                 let existing =
                     existing.ok_or_else(|| RockBotError::Provider(format!("Event not found: {uid}")))?;
-
-                let ics = build_ics_for_update(&args, uid, &existing)?;
+                let ics = build_ics_for_update(&params, uid, &existing)?;
                 self.client
                     .update_event(&caldav_url, uid, &ics, &existing.etag)
                     .await
-                    .map_err(|e| {
-                        RockBotError::Provider(format!("Calendar update failed: {e}"))
-                    })?;
+                    .map_err(|e| RockBotError::Provider(format!("Calendar update failed: {e}")))?;
                 Ok(format!("Event updated: {}", uid))
             }
             "delete_event" => {
-                let uid = args
-                    .get("uid")
-                    .and_then(|u| u.as_str())
-                    .ok_or_else(|| {
-                        RockBotError::ToolCallParse(
-                            "calendar delete_event requires 'uid' field".into(),
-                        )
-                    })?;
+                let uid = params.uid.as_deref().ok_or_else(|| {
+                    RockBotError::ToolCallParse("calendar delete_event requires 'uid' field".into())
+                })?;
                 self.client
                     .delete_event(&caldav_url, uid)
                     .await
-                    .map_err(|e| {
-                        RockBotError::Provider(format!("Calendar delete failed: {e}"))
-                    })?;
+                    .map_err(|e| RockBotError::Provider(format!("Calendar delete failed: {e}")))?;
                 Ok(format!("Event deleted: {}", uid))
             }
             "list_todos" => {

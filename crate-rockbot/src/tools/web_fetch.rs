@@ -2,11 +2,41 @@ use std::collections::HashMap;
 
 use async_trait::async_trait;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use serde::Deserialize;
 use serde_json::Value;
 use webdav::WebDavClient;
 
 use crate::error::{Result, RockBotError};
 use crate::tool::Tool;
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct WebFetchParams {
+    url: String,
+    #[serde(default = "default_method")]
+    method: String,
+    #[serde(default)]
+    headers: Option<Value>,
+    #[serde(default)]
+    body: Option<String>,
+    #[serde(default)]
+    body_json: Option<Value>,
+    #[serde(default)]
+    file_from_webdav: Option<String>,
+    #[serde(default)]
+    save_to_webdav: Option<String>,
+    #[serde(default = "default_format")]
+    format: String,
+    #[serde(default)]
+    verify: bool,
+    #[serde(default)]
+    webdav_dir: Option<String>,
+    #[serde(default)]
+    room_id: Option<String>,
+}
+
+fn default_method() -> String { "GET".to_string() }
+fn default_format() -> String { "raw".to_string() }
 
 pub struct WebFetchTool {
     http_client: reqwest::Client,
@@ -584,7 +614,9 @@ fn convert_links(html: &str) -> String {
                 continue;
             }
         }
-        let ch = html[i..].chars().next().unwrap();
+        let Some(ch) = html[i..].chars().next() else {
+            break;
+        };
         result.push(ch);
         i += ch.len_utf8();
     }
@@ -701,54 +733,29 @@ impl Tool for WebFetchTool {
     }
 
     async fn execute(&self, arguments: &str) -> Result<String> {
-        let args: Value = serde_json::from_str(arguments).map_err(|e| {
+        let params: WebFetchParams = serde_json::from_str(arguments).map_err(|e| {
             RockBotError::ToolCallParse(format!("Failed to parse web_fetch arguments: {}", e))
         })?;
 
-        let url = args
-            .get("url")
-            .and_then(|u| u.as_str())
-            .ok_or_else(|| RockBotError::ToolCallParse("web_fetch requires 'url' field".into()))?;
-
-        let method_str = args
-            .get("method")
-            .and_then(|m| m.as_str())
-            .unwrap_or("GET");
-
-        let method = HttpMethod::from_str(method_str).ok_or_else(|| {
+        let method = HttpMethod::from_str(&params.method).ok_or_else(|| {
             RockBotError::ToolCallParse(format!(
                 "Invalid HTTP method '{}'. Supported: GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS",
-                method_str
+                params.method
             ))
         })?;
 
-        let headers_json = args.get("headers");
-        let body_str = args.get("body").and_then(|b| b.as_str());
-        let body_json = args.get("body_json");
-        let file_from_webdav = args.get("file_from_webdav").and_then(|v| v.as_str());
-        let save_to_webdav = args.get("save_to_webdav").and_then(|v| v.as_str());
-
-        let format = args
-            .get("format")
-            .and_then(|f| f.as_str())
-            .map(OutputFormat::from_str)
-            .unwrap_or(OutputFormat::Raw);
-
-        let verify = args
-            .get("verify")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
+        let format = OutputFormat::from_str(&params.format);
 
         self.fetch_url(
-            url,
+            &params.url,
             method,
-            headers_json,
-            body_str,
-            body_json,
-            file_from_webdav,
+            params.headers.as_ref(),
+            params.body.as_deref(),
+            params.body_json.as_ref(),
+            params.file_from_webdav.as_deref(),
             format,
-            verify,
-            save_to_webdav,
+            params.verify,
+            params.save_to_webdav.as_deref(),
         )
         .await
     }

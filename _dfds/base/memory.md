@@ -409,6 +409,7 @@ Fields from `ModelConfig` in [Configuration Management](config.md):
 | `summary_days`         | `u32`   | 3       | Layer 2 retention window (days)                    |
 | `memory_ttl_secs`      | `u64`   | 300     | Room idle timeout — evict from memory (after snapshot persisted) |
 | `persist_interval_secs`| `u64`   | 60      | How often the timer writes dirty snapshots to WebDAV |
+| `max_context_bytes`    | `usize` | 4_000_000 | Max byte size for context (triggers proactive inline summarization and image-stripping when exceeded) |
 
 Note: `set_daily_summaries()` (memory.rs:350) applies a hard cap of `.take(10)` summary files regardless of `max_summary_chars`.
 
@@ -419,8 +420,9 @@ Note: `set_daily_summaries()` (memory.rs:350) applies a hard cap of `.take(10)` 
 | Trigger             | Method                        | Frequency                      | Condition                                                    | Action                                        |
 | ------------------- | ----------------------------- | ------------------------------ | ------------------------------------------------------------ | --------------------------------------------- |
 | **Timer persist**   | `maintenance_tick()` (Phase 1) | Every `persist_interval_secs`  | `dirty_snapshots` is non-empty                               | Build full snapshot (L1+L2+L3), PUT `snapshot.json`, clear dirty flag |
-| **Timer evict**     | `maintenance_tick()` (Phase 2) | Every `persist_interval_secs`  | Room has ≥ 1 message AND `now - last_activity > memory_ttl_secs` | Persist snapshot if dirty, then remove room from `HashMap` |
-| **Archive**         | `archive_room_if_needed()`    | After every message response   | `char_count > max_text_length` AND `messages.len() > 4`      | AI-summarize oldest half → daily `.md`, prune L1, mark snapshot dirty |
+| **Knowledge review**| `maintenance_tick()` (Phase 1.5)| Every `persist_interval_secs`  | After snapshot flush, before eviction                        | Call `review_knowledge_priorities()` per room (currently a no-op in KnowledgeManager) |
+| **Timer evict**     | `maintenance_tick()` (Phase 2) | Every `persist_interval_secs`  | Room has ≥ 1 message AND `last_activity > 0` AND `now - last_activity > memory_ttl_secs` | Persist snapshot if dirty, then remove room from `HashMap` |
+| **Archive**         | `archive_room_if_needed()`    | After every message response   | `char_count > max_text_length` AND `messages.len() > 4`      | AI-summarize oldest half → daily `.md`, prune L1, mark snapshot dirty, then call `review_knowledge_priorities_for_room()` |
 | **Room init**       | `restore_history()`           | Once per room, on first message| Room not in memory (fresh or evicted)                        | Load snapshot (cache-first), fall back to individual files |
 | **Soul edit**       | `edit_soul()` tool            | On user request                | LLM invokes `edit_soul` tool                                 | Write `soul.md`, update in-memory soul, mark snapshot dirty |
 | **Touch activity**  | `process_message()`           | On every incoming message      | Room exists in memory                                        | Update `last_activity` timestamp to prevent eviction |
@@ -453,9 +455,10 @@ Knowledge entries are injected between soul and summaries (see
 | Timer evict        | `maintenance_tick()` (Phase 2)     | Called every `persist_interval_secs`; persists snapshot then removes stale rooms |
 | Archive check      | `memory.check_and_archive()`       | Returns oldest half if Layer 1 overflowed           |
 | AI summarize       | `summarize_for_archive()`          | Calls AI provider with oldest messages              |
-| Merge daily        | `upsert_daily_summary()`           | Reads today's `.md`, merges summaries into single `##` section, writes back; marks snapshot dirty |
+| Merge daily        | `upsert_daily_summary()`           | Reads today's `.md`, merges summaries into single `##` section, writes back. Caller (`archive_room_if_needed`) marks snapshot dirty after successful merge. |
 | Prune Layer 1      | `memory.prune_archived()`          | Removes archived messages from buffer               |
 | Age out summaries  | `delete_old_summaries()`           | Deletes `.md` older than `summary_days`             |
+| Knowledge review   | `review_knowledge_priorities_for_room()`| Called by `archive_room_if_needed()` after age-out (currently a no-op in KnowledgeManager) |
 | Room init          | `restore_history()`                | Cache-first: reads snapshot.json, falls back to individual files |
 | Soul edit          | `edit_soul()` tool                 | Writes soul.md, updates in-memory, marks snapshot dirty |
 | Touch activity     | `process_message()`                | Updates `last_activity` on every incoming message   |

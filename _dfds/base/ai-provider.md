@@ -135,7 +135,7 @@ through as-is — any model-specific vision support is handled by OpenRouter's A
 | Field              | Type                    | Notes                              |
 | ------------------ | ----------------------- | ---------------------------------- |
 | `messages`         | `Vec<ChatMessage>`      | Conversation history               |
-| `tools`            | `Vec<ToolDef>`          | Available tool/function definitions|
+| `tools`            | `Option<Vec<ToolDef>>`  | Available tool/function definitions (`None` = none; conditionally omitted from serialization) |
 | `stream`           | `bool`                  | Enable streaming response          |
 | `model`            | `String`                | Model identifier                   |
 | `temperature`      | `Option<f32>`           | Sampling temperature               |
@@ -143,6 +143,12 @@ through as-is — any model-specific vision support is handled by OpenRouter's A
 | `thinking`         | `Option<ThinkingConfig>`| Thinking mode config               |
 | `reasoning_effort` | `Option<String>`        | Reasoning effort level             |
 | `tool_choice`      | `Option<Value>`         | Tool choice override               |
+
+#### `ThinkingConfig`
+
+| Field            | Type     | Notes                              |
+| -----------------| -------- | ---------------------------------- |
+| `thinking_type`  | `String` | Always `"enabled"` (serialized as `"type"`) |
 
 #### `ChatMessage`
 
@@ -167,7 +173,7 @@ through as-is — any model-specific vision support is handled by OpenRouter's A
 | Variant    | Fields                          | Notes                         |
 | ---------- | ------------------------------- | ----------------------------- |
 | `Text`     | `String`                        | Text segment                  |
-| `ImageUrl` | `{ url: String, detail: Option<String> }` | Remote or `data:` base64 URL |
+| `ImageUrl` | `ImageUrlPayload { url: String, detail: Option<String> }` | Remote or `data:` base64 URL. Nested `image_url` wrapper matches OpenAI API format `{"type": "image_url", "image_url": {"url": "...", "detail": "..."}}` |
 
 #### `CompletionResult`
 
