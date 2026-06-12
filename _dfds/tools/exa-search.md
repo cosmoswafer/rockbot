@@ -129,7 +129,7 @@ enables multi-step reasoning with structured outputs via `outputSchema`.
 
 | Field                | Type                    | Notes                                             |
 | -------------------- | ----------------------- | ------------------------------------------------- |
-| `query`              | `String`                | Natural-language search query                     |
+| `query`              | `NonEmptyString`        | Natural-language search query. Validated at LLM boundary (empty query fails at parse boundary). |
 | `type`               | `String`                | `auto` (default), `fast`, `deep` |
 | `num_results`        | `u32`                   | Results to return (1-20, default 5)              |
 | `category`           | `Option<String>`        | `company`, `people`, `research paper`, `news`, `personal site`, `financial report` |

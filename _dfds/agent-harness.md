@@ -509,8 +509,8 @@ chat message lifetimes.
 
 | Field      | Type     | Notes                                      |
 | ---------- | -------- | ------------------------------------------ |
-| `call_id`  | `String` | Matches `ToolCall.id`                      |
-| `name`     | `String` | Tool name                                  |
+| `call_id`  | `NonEmptyString` | Matches `ToolCall.id`; validated in factory methods |
+| `name`     | `NonEmptyString` | Tool name                                  |
 | `content`  | `String` | Result text (returned to LLM as tool msg)  |
 | `is_error` | `bool`   | True if tool execution failed              |
 
@@ -542,9 +542,9 @@ Stored in `Arc<Mutex<HashMap<String, GeneratedImage>>>` keyed by tool call_id.
 
 | Field          | Type           | Description                                   |
 | -------------- | -------------- | --------------------------------------------- |
-| `webdav_path`  | `string`       | WebDAV path where the image was persisted     |
-| `image_bytes`  | `Vec<u8>`      | Raw image bytes for fallback data URI         |
-| `mime_type`    | `string`       | MIME type, e.g. `image/png`                  |
+| `webdav_path`  | `NonEmptyString` | WebDAV path where the image was persisted; validated at construction |
+| `image_bytes`  | `Vec<u8>`       | Raw image bytes for fallback data URI         |
+| `mime_type`    | `NonEmptyString` | MIME type, e.g. `image/png`; validated at construction |
 | `share_url`    | `Option<string>`| NextCloud public share link (7-day expiry)    |
 
 #### Registered Tools

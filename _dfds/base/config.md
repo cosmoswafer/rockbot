@@ -95,28 +95,28 @@ flowchart TD
 
 #### `ModelConfig`
 
-| Field                  | Type    | Notes                                                         |
-| ---------------------- | ------- | ------------------------------------------------------------- |
-| `default_provider`     | `String`| Must match a `[[chat_providers]].name`                        |
-| `default_model`        | `String`| Model alias key in provider's models map                      |
-| `max_history_size`     | `usize` | Max conversation turns (default 18)                           |
-| `max_text_length`      | `usize` | Layer 1 overflow threshold chars (default 50000)              |
-| `max_iterations`       | `u32`   | Max agent loop iterations (default 28)                         |
-| `max_summary_chars`    | `usize` | Layer 2 max chars across loaded summaries (default 8000)      |
-| `max_soul_chars`       | `usize` | Layer 3 max chars for soul.md content (default 2000)          |
-| `summary_days`         | `u32`   | Layer 2 retention window in days (default 3)                  |
-| `memory_ttl_secs`      | `u64`   | Room idle timeout — snapshot to WebDAV then evict (default 300)|
-| `persist_interval_secs`| `u64`   | Snapshot persist timer interval (default 60)                  |
-| `max_context_bytes`    | `usize` | Max byte size for context (default 4MB ≈ 1M tokens). Triggers proactive inline summarization and image-stripping when exceeded. |
-| `max_attachment_bytes` | `u64`   | Max size of a single attachment in bytes (default 25_000_000) |
+| Field                  | Type           | Notes                                                         |
+| ---------------------- | -------------- | ------------------------------------------------------------- |
+| `default_provider`     | `ProviderName` | Must match a `[[chat_providers]].name`; non-empty validated newtype |
+| `default_model`        | `String`       | Model alias key in provider's models map                      |
+| `max_history_size`     | `BoundedUsize` | Max conversation turns (default 18); validated 1..=100_000_000 |
+| `max_text_length`      | `BoundedUsize` | Layer 1 overflow threshold chars (default 50000); validated 1..=100_000_000 |
+| `max_iterations`       | `u32`          | Max agent loop iterations (default 28)                         |
+| `max_summary_chars`    | `BoundedUsize` | Layer 2 max chars across loaded summaries (default 8000); validated 1..=100_000_000 |
+| `max_soul_chars`       | `BoundedUsize` | Layer 3 max chars for soul.md content (default 2000); validated 1..=100_000_000 |
+| `summary_days`         | `u32`          | Layer 2 retention window in days (default 3)                  |
+| `memory_ttl_secs`      | `u64`          | Room idle timeout — snapshot to WebDAV then evict (default 300)|
+| `persist_interval_secs`| `u64`          | Snapshot persist timer interval (default 60)                  |
+| `max_context_bytes`    | `BoundedUsize` | Max byte size for context (default 4MB ≈ 1M tokens). Triggers proactive inline summarization and image-stripping when exceeded. Validated 1..=100_000_000 |
+| `max_attachment_bytes` | `u64`          | Max size of a single attachment in bytes (default 25_000_000) |
 
 #### `ProviderConfig`
 
 | Field        | Type                     | Notes                                                             |
 | ------------ | ------------------------ | ----------------------------------------------------------------- |
-| `name`       | `String`                 | Provider identifier ("openrouter", etc.)                          |
+| `name`       | `ProviderName`           | Provider identifier ("openrouter", etc.); non-empty validated newtype |
 | `api_key`    | `String`                 | Provider API key (`""` in defaults, filled in user config)        |
-| `base_url`   | `String`                 | API endpoint base URL                                             |
+| `base_url`   | `ConfigUrl`              | API endpoint base URL; non-empty validated newtype                |
 | `basecf_url` | `Option<String>`         | Cloudflare worker proxy override; used by Fal as storage/CDN upload URL |
 | `chat_path`  | `Option<String>`         | Chat completions path (Default: `/chat/completions`)             |
 | `draw_path`  | `Option<String>`         | Image generation path (opt.)                                      |
@@ -134,7 +134,7 @@ flowchart TD
 
 | Field                   | Type     | Notes                                                     |
 | ----------------------- | -------- | --------------------------------------------------------- |
-| `default_provider`      | `String` | Must match an `[[image_providers]].name`                   |
+| `default_provider`      | `ProviderName` | Must match an `[[image_providers]].name`; non-empty validated newtype |
 | `default_text_model`    | `String` | Model alias for text-to-image generation                  |
 | `default_edit_model`    | `String` | Model alias for image editing                             |
 | `default_quality`       | `String` | Image quality level (default `"medium"`)                  |
@@ -147,12 +147,20 @@ flowchart TD
 
 | Field      | Type     | Notes                                   |
 | ---------- | -------- | --------------------------------------- |
-| `url`      | `String` | NextCloud WebDAV endpoint URL           |
-| `username` | `String` | NextCloud username                      |
-| `password` | `String` | NextCloud app password                  |
-| `root`     | `String` | Base directory for bot data             |
+| `url`      | `DavUrl`  | NextCloud WebDAV endpoint URL; non-empty validated newtype |
+| `username` | `String`  | NextCloud username                      |
+| `password` | `String`  | NextCloud app password                  |
+| `root`     | `DavRoot` | Base directory for bot data; non-empty validated newtype |
 | `calendar_name` | `Option<String>` | CalDAV calendar name (enables calendar tool if set) |
 | `dav_path`      | `String`         | WebDAV/NextCloud API path prefix (default `"/remote.php/dav"`) |
+
+> **Validated newtypes.** `ProviderName`, `ConfigUrl`, `DavUrl`, `DavRoot`, and `BoundedUsize`
+> are `nutype`-based validated wrappers that enforce invariants at deserialization time
+> (config boundary). `ProviderName`, `ConfigUrl`, `DavUrl`, and `DavRoot` require
+> non-empty strings. `BoundedUsize` enforces the range `1..=100_000_000`. Holding
+> an instance of any of these types guarantees the invariant — no downstream runtime
+> checks needed. Defined in `crate-rockbot/src/validated.rs` (rockbot types) and
+> `crate-webdav/src/config.rs` (WebDAV types).
 
 ## 4. Config Files
 

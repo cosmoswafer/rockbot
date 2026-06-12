@@ -79,12 +79,10 @@ flowchart TD
 
 #### `EditSoulParams`
 
-> **Note:** No dedicated Rust struct — parsed ad-hoc from `serde_json::Value`.
-
-| Field        | Type     | Notes                                              |
-| ------------ | -------- | -------------------------------------------------- |
-| `content`    | `string` | Full soul.md content using the standard template   |
-| `webdav_dir` | `string` | Room WebDAV directory key (injected automatically). Falls back to `room_id` if absent. |
+| Field        | Type              | Notes                                              |
+| ------------ | ----------------- | -------------------------------------------------- |
+| `content`    | `NonEmptyString`  | Full soul.md content using the standard template. Validated non-empty at deserialization. |
+| `webdav_dir` | `string`          | Room WebDAV directory key (injected automatically). Falls back to `room_id` if absent. |
 
 #### Soul File Format
 

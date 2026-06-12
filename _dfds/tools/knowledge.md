@@ -186,29 +186,29 @@ All data structures are shared with [Knowledge Management](../base/knowledge.md#
 
 #### SaveKnowledgeParams
 
-| Field        | Type     | Notes                                           |
-| ------------ | -------- | ----------------------------------------------- |
-| `category`   | `string` | `"skill"`, `"secret"`, or `"note"`              |
-| `topic`      | `string` | Short title for the entry                       |
-| `content`    | `string` | Markdown body of the knowledge entry            |
-| `when_useful`| `string` | Situation description for retrieval             |
-| `tags`       | `string` | Comma-separated keywords                        |
-| `priority`   | `string` | Optional priority, default `"P1"` (`P0`-`P3`)  |
-| `webdav_dir` | `string` | Room WebDAV key (injected automatically)        |
+| Field        | Type                    | Notes                                           |
+| ------------ | ----------------------- | ----------------------------------------------- |
+| `category`   | `KnowledgeCategory`     | Enum: `skill`, `secret`, or `note`              |
+| `topic`      | `NonEmptyString`        | Short title for the entry. Validated newtype.   |
+| `content`    | `NonEmptyString`        | Markdown body of the knowledge entry. Validated newtype. |
+| `when_useful`| `String`                | Situation description for retrieval             |
+| `tags`       | `Option<String>`        | Comma-separated keywords. Serde default: `None`. |
+| `priority`   | `KnowledgePriority`     | Enum: `P0`, `P1`, `P2`, `P3`. Default `P1`.    |
+| `webdav_dir` | `Option<String>`        | Room WebDAV key. Serde default: `None` (injected by harness). |
 
 #### ForgetKnowledgeParams
 
-| Field        | Type     | Notes                                    |
-| ------------ | -------- | ---------------------------------------- |
-| `topic`      | `string` | Title or slug of the entry to delete     |
-| `webdav_dir` | `string` | Room WebDAV key (injected automatically) |
+| Field        | Type               | Notes                                    |
+| ------------ | ------------------ | ---------------------------------------- |
+| `topic`      | `NonEmptyString`   | Title or slug of the entry to delete. Validated newtype. |
+| `webdav_dir` | `Option<String>`   | Room WebDAV key. Serde default: `None` (injected by harness). |
 
 #### RecallKnowledgeParams
 
-| Field        | Type     | Notes                                           |
-| ------------ | -------- | ----------------------------------------------- |
-| `query`      | `string` | Keyword or topic to search (empty = all)        |
-| `webdav_dir` | `string` | Room WebDAV key (injected automatically)        |
+| Field        | Type               | Notes                                           |
+| ------------ | ------------------ | ----------------------------------------------- |
+| `query`      | `Option<String>`   | Keyword or topic to search. `None` = return all entries. Serde default: `None`. |
+| `webdav_dir` | `Option<String>`   | Room WebDAV key. Serde default: `None` (injected by harness). |
 
 #### File Layout
 

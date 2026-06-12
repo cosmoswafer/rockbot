@@ -212,8 +212,22 @@ Stored as `{uid}.ics` within the calendar collection.
 
 | Field    | Type     | Notes                                         |
 | -------- | -------- | --------------------------------------------- |
-| `action` | `String` | `DISPLAY` or `EMAIL`                          |
-| `trigger`| `String` | Duration before event (`-PT15M`) or absolute   |
+| `action` | `ReminderAction` | Validated newtype: non-empty, max 64 chars. `DISPLAY` or `EMAIL` |
+| `trigger`| `ReminderTrigger`| Validated non-empty newtype. Duration before event (`-PT15M`) or absolute |
+
+#### `CaldavTodo`
+
+| Field         | Type              | Notes                               |
+| ------------- | ----------------- | ----------------------------------- |
+| `uid`         | `NonEmptyString`  | Globally unique identifier          |
+| `href`        | `String`          | Full CalDAV href                    |
+| `summary`     | `NonEmptyString`  | Todo title                          |
+| `description` | `Option<String>`  | Details                             |
+| `priority`    | `Option<u8>`      | 1-9 priority                        |
+| `status`      | `String`          | `COMPLETED` / `NEEDS-ACTION` / `CANCELLED` |
+| `due`         | `Option<String>`  | Due datetime                        |
+| `completed`   | `Option<String>`  | Completion datetime                 |
+| `created`     | `String`          | Creation timestamp                  |
 
 #### Room Calendar Mapping
 

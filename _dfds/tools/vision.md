@@ -202,12 +202,10 @@ HashMap<room_id, Vec<CachedImage { data_uri, name }>>
 
 #### `VisionParams`
 
-> **Note:** No dedicated Rust struct — parsed ad-hoc from `serde_json::Value`.
-
-| Field    | Type     | Notes                                                  |
-| -------- | -------- | ------------------------------------------------------ |
-| `url`    | `string` | URL of the image to download (public or WebDAV)        |
-| `prompt` | `string` | Optional prompt declared in tool schema but **not consumed** by execution — reserved for future LLM image-analysis context |
+| Field    | Type              | Notes                                                  |
+| -------- | ----------------- | ------------------------------------------------------ |
+| `url`    | `NonEmptyString`  | URL of the image to download (public or WebDAV). Validated non-empty at deserialization (LLM tool call boundary). |
+| `prompt` | `string`          | Optional prompt declared in tool schema but **not consumed** by execution — reserved for future LLM image-analysis context |
 
 #### Tool Result (markdown string)
 

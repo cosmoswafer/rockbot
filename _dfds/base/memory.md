@@ -301,8 +301,8 @@ One file per room. Caches all three layers for single-read restore.
 
 | Field              | Type                    | Notes                                                  |
 | ------------------ | ----------------------- | ------------------------------------------------------ |
-| `schema`           | `String`                | `"rockbot-snapshot/1"` version marker                  |
-| `room_id`          | `String`                | RocketChat room UUID                                   |
+| `schema`           | `NonEmptyString`        | `"rockbot-snapshot/1"` version marker (validated at JSON boundary) |
+| `room_id`          | `NonEmptyString`        | RocketChat room UUID                                   |
 | `messages`         | `Vec<ChatMessage>`      | Raw Layer 1 messages (in-memory buffer)                |
 | `char_count`       | `usize`                 | Running Layer 1 character count                        |
 | `archive_seq`      | `u64`                   | Next archive sequence number                           |
@@ -358,7 +358,7 @@ A single `.md` file stored at `{root}/{webdav_dir}/memory/summaries/{YYYY-MM-DD}
 
 | Field      | Type     | Notes                                  |
 | ---------- | -------- | -------------------------------------- |
-| `date`     | `String` | `"YYYY-MM-DD"` — file key             |
+| `date`     | `NonEmptyString` | `"YYYY-MM-DD"` ISO 8601 date (validated) |
 | `summary`  | `String` | AI-generated digest of that day's chat |
 | `msg_count`| `usize`  | Number of messages summarized          |
 | `char_count`| `usize` | Chars of the summary text             |
@@ -369,7 +369,7 @@ A single file stored at `{root}/{webdav_dir}/memory/soul.md`.
 
 ```rust
 struct SoulMemory {
-    room_id: String,
+    room_id: NonEmptyString,
     content: String,      // Full markdown content of soul.md
     updated_at: String,   // ISO 8601
 }

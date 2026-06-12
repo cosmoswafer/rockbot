@@ -234,18 +234,18 @@ Machine-readable JSON file at `{root}/{webdav_dir}/knowledge/index.json`.
 
 | Field     | Type              | Notes                         |
 | --------- | ----------------- | ----------------------------- |
-| `version` | `String`          | `"rockbot-knowledge/1"`       |
-| `room_id` | `String`          | WebDAV directory key          |
-| `entries` | `Vec<IndexEntry>` | One descriptor per `.md` file |
+| `version` | `String`          | `"rockbot-knowledge/1"`. Validates `min_length = 1` via `serde_valid`. |
+| `room_id` | `String`          | WebDAV directory key. Validates `min_length = 1` via `serde_valid`. |
+| `entries` | `Vec<IndexEntry>` | One descriptor per `.md` file. Validates via `serde_valid` (recursive validation of each `IndexEntry`). |
 | `updated` | `String`          | ISO 8601 last modification    |
 
 ### `IndexEntry`
 
 | Field         | Type               | Notes                                          |
 | ------------- | ------------------ | ---------------------------------------------- |
-| `filename`    | `String`           | `{category}_{slug}.md` — unique key and display identifier |
-| `when_useful` | `String`           | Situation description (retrieval trigger)      |
-| `tags`        | `Vec<String>`      | Searchable keywords                            |
+| `filename`    | `String`           | `{category}_{slug}.md` — unique key and display identifier. Validates `min_length = 1` via `serde_valid`. |
+| `when_useful` | `String`           | Situation description (retrieval trigger). Defaults to `""` (serde default). |
+| `tags`        | `Vec<String>`      | Searchable keywords. Defaults to `[]` (serde default). |
 
 The `filename` doubles as the display key — `display_title()` strips the `.md`
 suffix. Knowledge context is formatted as `[Knowledge: {display_title}]\n{body}`

@@ -123,11 +123,11 @@ cross-referenced information for fact-checking.
 
 ### `FetchParams`
 
-> **Note:** At implementation level, parameters are parsed ad-hoc from `serde_json::Value` — no dedicated Rust struct exists. The table below documents the semantic interface.
+The table below documents the semantic interface of the `WebFetchParams` struct.
 
 | Field              | Type     | Notes                                                      |
 | ------------------ | -------- | ---------------------------------------------------------- |
-| `url`              | `String` | The URL to fetch (required)                                |
+| `url`              | `NonEmptyString` | The URL to fetch. Validated at LLM boundary (empty URL fails at parse boundary). |
 | `method`           | `String` | HTTP method: `"GET"`, `"POST"`, `"PUT"`, `"PATCH"`, `"DELETE"`, `"HEAD"`, `"OPTIONS"` (default: `"GET"`) |
 | `headers`          | `Object` | JSON object of `{ "Header-Name": "value" }` pairs          |
 | `body`             | `String` | Raw string request body                                    |

@@ -177,7 +177,7 @@ LLM provides `prompt` and optional `aspect_ratio`; all other fields come from co
 
 | Field           | Source            | Type                                           | Description                                      |
 | --------------- | ----------------- | ---------------------------------------------- | ------------------------------------------------ |
-| `prompt`        | LLM               | `string`                                       | **Required.** Text description of the image      |
+| `prompt`        | LLM               | `NonEmptyString`                               | **Required.** Validated at JSON deserialization — empty prompt fails at parse boundary. |
 | `aspect_ratio`  | LLM (optional)   | `string`                                      | Aspect ratio as `W:H` (e.g. `"16:9"`, `"2:3"`, `"1:1"`). Parsed at execute time and stored directly as `image_size: Preset(ratio_string)` — not a separate field on the Rust struct. If omitted, falls back to `default_image_size` from config. |
 | `image_size`    | Tool (resolved)  | preset name → pixels                         | Resolved from LLM's `aspect_ratio` (or config default) per-provider. Hidden from LLM. |
 | `size_tier`     | Config            | `"4K"`, `"2K"`, `"1K"`                        | Resolution tier for OpenRouter. Set from `default_image_size_tier`. Ignored by fal. |
@@ -206,9 +206,9 @@ Stored in `Arc<Mutex<HashMap<String, GeneratedImage>>>` keyed by call_id.
 
 | Field          | Type           | Description                                   |
 | -------------- | -------------- | --------------------------------------------- |
-| `webdav_path`  | `string`       | WebDAV path where the image was persisted     |
-| `image_bytes`  | `Vec<u8>`      | Raw image bytes (fallback for data URI)       |
-| `mime_type`    | `string`       | MIME type, e.g. `image/png`                  |
+| `webdav_path`  | `NonEmptyString` | WebDAV path where the image was persisted     |
+| `image_bytes`  | `Vec<u8>`        | Raw image bytes (fallback for data URI)       |
+| `mime_type`    | `NonEmptyString` | MIME type, e.g. `image/png`                  |
 | `share_url`    | `Option<string>`| NextCloud public share link (7-day expiry)    |
 
 After WebDAV upload, the tool calls `create_nextcloud_share_link()` on the
