@@ -2,13 +2,13 @@
 
 Tests connecting to live servers and APIs with real credentials. All `#[ignore]`-annotated — not run by default. Use for data collection during development and final integration verification.
 
-**Total: 23 tests across 7 files (3 crates) — 22 true real tests + 1 flaky unit test**
+**Total: 23 tests across 7 test targets (3 crates) — 22 true real tests + 1 flaky unit test**
 
 *Excludes 1 test in `rocketchat/src/ddp.rs` ignored for flaky `AtomicU64` global state race (not a real integration test).*
 
 ---
 
-## rocketchat crate — 10 tests
+## rocketchat crate — 11 tests (10 real + 1 flaky unit)
 
 ### `tests/integration_real.rs` — 7 tests
 **Services:** RocketChat DDP, RocketChat REST, NextCloud WebDAV
@@ -39,6 +39,9 @@ Tests connecting to live servers and APIs with real credentials. All `#[ignore]`
 | 3 | `test_message_alias_roundtrip` | A sends message with `alias: "TotallyRealHuman"` via DDP. Checks if accepted (requires `message-impersonate`). If accepted, B verifies alias. Falls back to plain roundtrip if rejected. | DDP |
 
 **Helpers:** `config_path()`, `next_local_id()`, `send_json()`, `expect_msg()`, `raw_connect()`, `subscribe_my_messages()`, `subscribe_notify()`, `create_dm()`, `send_message()`, `uuid_v4_simple()`
+
+### `src/ddp.rs` — 1 test (flaky, not real)
+`test_next_id_increments` — ignored due to `AtomicU64` global state race across tests. Counted in the grand total but not a real integration test.
 
 ---
 

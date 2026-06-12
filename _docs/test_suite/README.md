@@ -1,33 +1,33 @@
 # Test Suite Summary
 
-Total: **569 tests** across 3 crates (384 core + 161 user + 24 real)
+Total: **588 tests** across 3 crates (391 core + 174 user + 23 real)
 
 ## Test Layers
 
 | Layer | Description | Count | Docs |
 |-------|-------------|-------|------|
-| **Core** | Fine-grained unit tests (inline `#[cfg(test)]` in `src/`) | 384 | [core.md](core.md) |
-| **User** | Integration/scenario tests in `tests/` (wiremock + in-memory) | 161 | [user.md](user.md) |
-| **Real** | Live server tests (`#[ignore]`) requiring credentials | 24 | [real.md](real.md) |
+| **Core** | Fine-grained unit tests (inline `#[cfg(test)]` in `src/`) | 391 | [core.md](core.md) |
+| **User** | Integration/scenario tests in `tests/` (wiremock + in-memory) | 174 | [user.md](user.md) |
+| **Real** | Live server tests (`#[ignore]`) requiring credentials | 23 | [real.md](real.md) |
 
 ## By Crate
 
 | Crate | Core | User | Real | Total |
 |-------|------|------|------|-------|
 | rocketchat | 39 | 39 | 11 | **89** |
-| rockbot | 307 | 105 | 6 | **418** |
-| webdav | 38 | 17 | 7 | **62** |
-| **Total** | **384** | **161** | **24** | **569** |
+| rockbot | 314 | 111 | 5 | **430** |
+| webdav | 38 | 24 | 7 | **69** |
+| **Total** | **391** | **174** | **23** | **588** |
 
 ## Test Characteristics
 
 | Feature | Count |
 |---------|-------|
-| Async (`#[tokio::test]`) | ~120 |
-| Ignored (`#[ignore]`) | 24 |
-| Mock-based (wiremock) | 62 |
-| Mock-based (inline MockProvider/MockTool) | 47 |
-| In-memory / no I/O | ~375 |
+| Async (`#[tokio::test]`) | ~170 |
+| Ignored (`#[ignore]`) | 23 |
+| Mock-based (wiremock) | 63 |
+| Mock-based (inline MockProvider/MockTool) | 49 |
+| In-memory / no I/O | ~395 |
 
 ## Running
 

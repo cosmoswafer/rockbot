@@ -2,17 +2,17 @@
 
 Tests driven by user stories and end-to-end scenarios, verifying multiple DFDs work together. Tests in `tests/` directories using wiremock-mocked HTTP or in-memory data structures. No live servers needed.
 
-**Total: 161 tests across 7 files (3 crates)**
+**Total: 174 tests across 7 files (3 crates)**
 
 | Crate | File | Tests | Mocked | Non-mock |
 |-------|------|-------|--------|----------|
 | rocketchat | `tests/integration.rs` | 30 | — | 30 |
 | rocketchat | `tests/integration_rest.rs` | 9 | 9 | — |
-| rockbot | `tests/integration_mock.rs` | 58 | 53 | 5 |
+| rockbot | `tests/integration_mock.rs` | 59 | 54 | 5 |
 | rockbot | `tests/provider_tests.rs` | 46 | — | 46 |
+| rockbot | `tests/knowledge_real.rs` | 1 | — | 1 |
 | webdav | `tests/integration.rs` | 10 | — | 10 |
 | webdav | `tests/config_tests.rs` | 7 | — | 7 |
-| rockbot | `tests/knowledge_real.rs` | 1 | — | 1 |
 
 ---
 
@@ -51,7 +51,7 @@ Tests driven by user stories and end-to-end scenarios, verifying multiple DFDs w
 
 ## rockbot crate
 
-### `tests/integration_mock.rs` — 58 tests (53 wiremock + 5 in-memory)
+### `tests/integration_mock.rs` — 59 tests (54 wiremock + 5 in-memory)
 **DFDs exercised:** `agent-harness.md`, `tools/webdav.md`, `base/ai-provider.md`, `base/memory.md`, `tools/image-gen.md`
 
 #### DeepSeekProvider.complete() — 12 tests (wiremock)
@@ -72,7 +72,7 @@ Creates new dir, silently ignores already-exists, full first-time-in-room flow.
 #### WebDavTool edit — 3 tests (wiremock)
 Successful replace (1 occurrence), oldString not found error, multiple matches error.
 
-#### OpenRouterImageProvider — 6 tests (wiremock)
+#### OpenRouterImageProvider — 7 tests (wiremock)
 Successful generation, img2img with image_url, 401 unauthorized, missing images field, with aspect_ratio+quality+num_images, upload_file data URI.
 
 #### FalAiProvider.generate_image_url() — 7 tests (wiremock)
@@ -120,8 +120,8 @@ WebDavConfig TOML deserialization (minimal, trailing slash URL, root with slashe
 
 | Type | Count | Files |
 |------|-------|-------|
-| Wiremock-mocked HTTP | 62 | `integration_rest.rs` (9), `integration_mock.rs` (53) |
-| In-memory / no I/O | 99 | `integration.rs` (30), `provider_tests.rs` (46), `integration_mock.rs` (5), `knowledge_real.rs` (1), `integration.rs` webdav (10), `config_tests.rs` (7) |
+| Wiremock-mocked HTTP | 63 | `integration_rest.rs` (9), `integration_mock.rs` (54) |
+| In-memory / no I/O | 111 | `integration.rs` rocketchat (30), `provider_tests.rs` (46), `integration_mock.rs` (5), `knowledge_real.rs` (1), `integration.rs` webdav (10), `config_tests.rs` (7) |
 
 ## DFD Coverage Map
 
