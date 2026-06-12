@@ -19,6 +19,7 @@ pub struct ImageGenTool {
     default_output_format: String,
     default_num_images: u32,
     default_image_size: String,
+    default_image_size_tier: String,
     webdav: WebDavClient,
     image_cache: Arc<ImageCache>,
 }
@@ -30,6 +31,7 @@ impl ImageGenTool {
         default_output_format: String,
         default_num_images: u32,
         default_image_size: String,
+        default_image_size_tier: String,
         webdav: WebDavClient,
         image_cache: Arc<ImageCache>,
     ) -> Self {
@@ -40,6 +42,7 @@ impl ImageGenTool {
             default_output_format,
             default_num_images,
             default_image_size,
+            default_image_size_tier,
             webdav,
             image_cache,
         }
@@ -52,6 +55,7 @@ impl ImageGenTool {
         default_output_format: String,
         default_num_images: u32,
         default_image_size: String,
+        default_image_size_tier: String,
         webdav: WebDavClient,
         image_cache: Arc<ImageCache>,
     ) -> Self {
@@ -62,6 +66,7 @@ impl ImageGenTool {
             default_output_format,
             default_num_images,
             default_image_size,
+            default_image_size_tier,
             webdav,
             image_cache,
         }
@@ -177,6 +182,7 @@ impl Tool for ImageGenTool {
         params.image_size = Some(ImageSizeValue::Preset(
             self.default_image_size.clone(),
         ));
+        params.size_tier = Some(self.default_image_size_tier.clone());
 
         if let Some(image_urls) = args.get("image_urls").and_then(|v| v.as_array()) {
             let mut urls: Vec<String> = Vec::with_capacity(image_urls.len());
@@ -320,7 +326,7 @@ mod tests {
 
     #[test]
     fn test_image_gen_tool_definition() {
-        let tool = ImageGenTool::new(make_fal_provider(), "medium".into(), "png".into(), 1, "portrait_2_3".into(), make_webdav(), make_image_cache());
+        let tool = ImageGenTool::new(make_fal_provider(), "medium".into(), "png".into(), 1, "portrait_2_3".into(), "4K".into(), make_webdav(), make_image_cache());
 
         assert_eq!(tool.name(), "image_gen");
         assert!(tool.description().contains("Generate or edit an image"));
@@ -338,14 +344,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_missing_prompt() {
-        let tool = ImageGenTool::new(make_fal_provider(), "medium".into(), "png".into(), 1, "portrait_2_3".into(), make_webdav(), make_image_cache());
+        let tool = ImageGenTool::new(make_fal_provider(), "medium".into(), "png".into(), 1, "portrait_2_3".into(), "4K".into(), make_webdav(), make_image_cache());
         let result = tool.execute(r#"{}"#).await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn test_execute_invalid_json() {
-        let tool = ImageGenTool::new(make_fal_provider(), "medium".into(), "png".into(), 1, "portrait_2_3".into(), make_webdav(), make_image_cache());
+        let tool = ImageGenTool::new(make_fal_provider(), "medium".into(), "png".into(), 1, "portrait_2_3".into(), "4K".into(), make_webdav(), make_image_cache());
         let result = tool.execute("not json").await;
         assert!(result.is_err());
     }

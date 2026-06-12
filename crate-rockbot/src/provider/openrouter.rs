@@ -830,7 +830,7 @@ impl crate::provider::ImageProvider for OpenRouterImageProvider {
         }
         image_config.insert(
             "image_size".into(),
-            serde_json::json!("4K"),
+            serde_json::json!(params.size_tier.as_deref().unwrap_or("4K")),
         );
         if let Some(ref format) = params.output_format {
             image_config.insert("output_format".into(), serde_json::json!(format));

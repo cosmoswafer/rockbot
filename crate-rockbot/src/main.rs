@@ -156,7 +156,7 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
             debug!("Calendar tool not registered — WebDAV config missing calendar settings");
         }
 
-        let (image_provider_name, t2i_model_name, edit_model_name, default_quality, default_output_format, default_num_images, default_image_size) = {
+        let (image_provider_name, t2i_model_name, edit_model_name, default_quality, default_output_format, default_num_images, default_image_size, default_image_size_tier) = {
             let im = &harness.config().image_model;
             (
                 im.default_provider.as_str(),
@@ -166,6 +166,7 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                 im.default_output_format.as_str(),
                 im.default_num_images,
                 im.default_image_size.as_str(),
+                im.default_image_size_tier.as_str(),
             )
         };
 
@@ -239,6 +240,7 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                         default_output_format.to_string(),
                         default_num_images,
                         default_image_size.to_string(),
+                        default_image_size_tier.to_string(),
                         webdav_client.clone(),
                         image_cache.clone(),
                     )));

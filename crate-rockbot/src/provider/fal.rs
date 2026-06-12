@@ -463,6 +463,7 @@ mod tests {
             prompt: "test".into(),
             quality: Some("medium".into()),
             image_size: Some(ImageSizeValue::Preset("landscape_16_9".into())),
+            size_tier: None,
             output_format: Some("png".into()),
             num_images: Some(2),
             model_id: Some("openai/gpt-image-2".into()),
@@ -478,6 +479,7 @@ mod tests {
             prompt: "test".into(),
             quality: None,
             image_size: Some(ImageSizeValue::Preset("landscape_16_9".into())),
+            size_tier: None,
             output_format: None,
             num_images: None,
             model_id: None,
@@ -494,6 +496,7 @@ mod tests {
             prompt: "test".into(),
             quality: None,
             image_size: Some(ImageSizeValue::Custom { width: 1920, height: 1080 }),
+            size_tier: None,
             output_format: None,
             num_images: None,
             model_id: None,
@@ -515,6 +518,7 @@ mod tests {
         let p = ImageGenParams {
             prompt: "t".into(), quality: None,
             image_size: Some(ImageSizeValue::Preset("square_hd".into())),
+            size_tier: None,
             output_format: None, num_images: None, model_id: None, image_urls: None,
         };
         let r = p.resolve_image_size().unwrap();
@@ -527,6 +531,7 @@ mod tests {
         let p = ImageGenParams {
             prompt: "t".into(), quality: None,
             image_size: Some(ImageSizeValue::Preset("landscape_4_3".into())),
+            size_tier: None,
             output_format: None, num_images: None, model_id: None, image_urls: None,
         };
         let r = p.resolve_image_size().unwrap();
@@ -539,6 +544,7 @@ mod tests {
         let p = ImageGenParams {
             prompt: "t".into(), quality: None,
             image_size: Some(ImageSizeValue::Preset("auto".into())),
+            size_tier: None,
             output_format: None, num_images: None, model_id: None, image_urls: None,
         };
         let r = p.resolve_image_size().unwrap();

@@ -76,6 +76,8 @@ pub struct ImageModelConfig {
     pub default_num_images: u32,
     #[serde(default = "default_image_size")]
     pub default_image_size: String,
+    #[serde(default = "default_image_size_tier")]
+    pub default_image_size_tier: String,
 }
 
 fn default_image_provider() -> String {
@@ -103,6 +105,10 @@ fn default_image_size() -> String {
     "portrait_2_3".into()
 }
 
+fn default_image_size_tier() -> String {
+    "4K".into()
+}
+
 impl Default for ImageModelConfig {
     fn default() -> Self {
         Self {
@@ -113,6 +119,7 @@ impl Default for ImageModelConfig {
             default_output_format: default_image_output_format(),
             default_num_images: default_image_num_images(),
             default_image_size: default_image_size(),
+            default_image_size_tier: default_image_size_tier(),
         }
     }
 }
