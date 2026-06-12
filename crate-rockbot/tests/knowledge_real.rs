@@ -41,7 +41,7 @@ fn get_webdav_client() -> Option<WebDavClient> {
     let root = wd.get("root").and_then(|r| r.as_str()).unwrap_or("rockbot-test");
 
     let full_url = format!("{url}/{root}");
-    WebDavClient::new(full_url, &username, &password).ok()
+    WebDavClient::new(full_url, username, password).ok()
 }
 
 /// Verify the full save → index read → retrieve cycle with the new

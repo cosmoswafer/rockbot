@@ -240,7 +240,7 @@ impl RocketChatClient {
             } else if ddp::is_changed(&value) {
                 let filter = MessageFilter::new(user_id.as_str());
                 if let Some(msg) = filter.filter(&value) {
-                    let display_match = self.display_name.as_ref().map_or(false, |dn| {
+                    let display_match = self.display_name.as_ref().is_some_and(|dn| {
                         let stripped = crate::types::strip_emoji(dn);
                         !stripped.is_empty() && msg.text.to_lowercase().contains(&stripped.to_lowercase())
                     });
@@ -265,13 +265,12 @@ impl RocketChatClient {
                         });
                     }
                 }
-            } else if ddp::is_nosub(&value) {
-                if ddp::subs_list(&value).iter().any(|s| s == SUBSCRIPTION_ID) {
+            } else if ddp::is_nosub(&value)
+                && ddp::subs_list(&value).iter().any(|s| s == SUBSCRIPTION_ID) {
                     warn!("Received nosub for stream-room-messages, re-subscribing");
                     let sub_msg = ddp::subscribe_message(SUBSCRIPTION_ID);
                     writer.lock().await.send(&sub_msg).await?;
                 }
-            }
         }
 
         Ok(())

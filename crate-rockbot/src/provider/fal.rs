@@ -550,4 +550,43 @@ mod tests {
         let r = p.resolve_image_size().unwrap();
         assert_eq!(r, serde_json::json!("auto"));
     }
+
+    #[test]
+    fn test_resolve_image_size_aspect_ratio_string() {
+        let p = ImageGenParams {
+            prompt: "t".into(), quality: None,
+            image_size: Some(ImageSizeValue::Preset("16:9".into())),
+            size_tier: None,
+            output_format: None, num_images: None, model_id: None, image_urls: None,
+        };
+        let r = p.resolve_image_size().unwrap();
+        assert_eq!(r["width"], 3840);
+        assert_eq!(r["height"], 2160);
+    }
+
+    #[test]
+    fn test_resolve_image_size_aspect_ratio_portrait() {
+        let p = ImageGenParams {
+            prompt: "t".into(), quality: None,
+            image_size: Some(ImageSizeValue::Preset("2:3".into())),
+            size_tier: None,
+            output_format: None, num_images: None, model_id: None, image_urls: None,
+        };
+        let r = p.resolve_image_size().unwrap();
+        assert_eq!(r["width"], 2336);
+        assert_eq!(r["height"], 3504);
+    }
+
+    #[test]
+    fn test_resolve_image_size_aspect_ratio_1_1() {
+        let p = ImageGenParams {
+            prompt: "t".into(), quality: None,
+            image_size: Some(ImageSizeValue::Preset("1:1".into())),
+            size_tier: None,
+            output_format: None, num_images: None, model_id: None, image_urls: None,
+        };
+        let r = p.resolve_image_size().unwrap();
+        assert_eq!(r["width"], 2880);
+        assert_eq!(r["height"], 2880);
+    }
 }

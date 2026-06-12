@@ -88,7 +88,7 @@ fn load_webdav_config() -> Option<WebDavClient> {
     let root = wd.get("root").and_then(|r| r.as_str()).unwrap_or("rockbot");
 
     let full_url = format!("{url}/{root}");
-    WebDavClient::new(full_url, &username, &password).ok()
+    WebDavClient::new(full_url, username, password).ok()
 }
 
 // ---------------------------------------------------------------------------
@@ -359,8 +359,7 @@ async fn test_image_gen_real_data_uri_handling() {
 
             // Collect data shapes
             eprintln!("\n--- Data Shape Collection ---");
-            eprintln!("Data URI handled successfully by image_gen. {}",
-                "The tool uploaded the data URI to the provider CDN first, then used the resulting HTTPS URL for image editing.");
+            eprintln!("Data URI handled successfully by image_gen. The tool uploaded the data URI to the provider CDN first, then used the resulting HTTPS URL for image editing.");
         }
         Err(e) => {
             eprintln!("image_gen with data URI failed: {e}");

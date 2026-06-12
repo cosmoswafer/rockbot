@@ -281,7 +281,7 @@ api_key = "vis-key-456"
     assert!(vision.is_some());
     assert_eq!(vision.unwrap().api_key, "vis-key-456");
 
-    assert!(config.tools.get("nonexistent").is_none());
+    assert!(!config.tools.contains_key("nonexistent"));
 }
 
 #[test]

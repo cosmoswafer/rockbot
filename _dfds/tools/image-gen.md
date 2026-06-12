@@ -34,8 +34,8 @@ flowchart TD
     CACHE[(ImageCache)]
     FORMAT(FormatResult)
 
-    AGENT -->|"prompt + image_urls (LLM), room_id + webdav_dir + image_cache_key + image_size (harness injects)"| PARSE
-    PARSE -->|"merged with config defaults (quality, output_format, num_images) + uploaded image_urls"| RESOLVE
+    AGENT -->|"prompt + image_urls (LLM), aspect_ratio (LLM optional), room_id + webdav_dir + image_cache_key (harness injects)"| PARSE
+    PARSE -->|"merged with config defaults (quality, output_format, num_images, size_tier) + uploaded image_urls + resolved image_size"| RESOLVE
     RESOLVE -->|"t2i or edit provider + ImageGenParams"| PROVIDER
     PROVIDER --> GEN
     GEN -->|"raw image bytes (Vec<u8>)"| DAV_UPLOAD
@@ -99,7 +99,44 @@ flowchart TD
 
 The `ImageProvider` trait abstracts both — the tool and harness never branch on provider type.
 
-### 2d. Image URL Injection for Editing
+### 2d. Aspect Ratio Resolution
+
+The LLM supplies `aspect_ratio` as a `W:H` string (e.g. `"16:9"`, `"2:3"`,
+`"1:1"`). If the LLM omits it, the tool falls back to `default_image_size` from
+config. The tool stores the value as `ImageSizeValue::Preset(ratio_string)` and
+each provider resolves it to its required format:
+
+```mermaid
+flowchart TD
+    LLM["LLM provides<br/>aspect_ratio: '16:9'<br/>(optional)"]
+    TOOL["ImageGenTool.execute<br/>stores as Preset('16:9')"]
+    FAL["FalAiProvider<br/>resolve_image_size()"]
+    OR["OpenRouterImageProvider<br/>preset_to_aspect_ratio()"]
+    FAL_OUT["{'width': 3840, 'height': 2160}<br/>pixel dimensions"]
+    OR_OUT["'16:9'<br/>ratio string passthrough"]
+
+    LLM -->|"aspect_ratio arg"| TOOL
+    TOOL -->|"ImageGenParams.image_size"| FAL
+    TOOL -->|"ImageGenParams.image_size"| OR
+    FAL --> FAL_OUT
+    OR --> OR_OUT
+```
+
+| Ratio string | Fal `resolve_image_size()` output | OpenRouter `preset_to_aspect_ratio()` output |
+|---|---|---|
+| `"16:9"` | `{"width": 3840, "height": 2160}` | `"16:9"` |
+| `"2:3"` | `{"width": 2336, "height": 3504}` | `"2:3"` |
+| `"1:1"` | `{"width": 2880, "height": 2880}` | `"1:1"` |
+| `"4:3"` | `{"width": 3312, "height": 2480}` | `"4:3"` |
+| `"3:4"` | `{"width": 2480, "height": 3312}` | `"3:4"` |
+| `"3:2"` | `{"width": 3504, "height": 2336}` | `"3:2"` |
+| `"auto"` | `"auto"` (passthrough) | `"auto"` (passthrough) |
+
+Fal requires pixel dimensions in the `image_size` body field; OpenRouter accepts
+the ratio string directly in the `image_config.aspect_ratio` field. Unknown
+strings (e.g. `"auto"`) pass through unchanged to both providers.
+
+### 2e. Image URL Injection for Editing
 
 When the LLM calls `image_gen` for editing (with `image_urls` in the
 arguments), the harness intercepts the call at `inject_image_urls_from_refs()`
@@ -136,12 +173,13 @@ subsequent provider dispatch.
 
 #### `ImageGenParams`
 
-LLM provides `prompt` and optional `image_size`; all other fields come from config.
+LLM provides `prompt` and optional `aspect_ratio`; all other fields come from config.
 
 | Field           | Source            | Type                                           | Description                                      |
 | --------------- | ----------------- | ---------------------------------------------- | ------------------------------------------------ |
 | `prompt`        | LLM               | `string`                                       | **Required.** Text description of the image      |
-| `image_size`    | Config            | preset name                                   | Aspect ratio preset. Set from `[image_model] default_image_size`. Hidden from LLM. |
+| `aspect_ratio`  | LLM (optional)   | `string`                                      | Aspect ratio as `W:H` (e.g. `"16:9"`, `"2:3"`, `"1:1"`). If omitted, falls back to `default_image_size` from config. |
+| `image_size`    | Tool (resolved)  | preset name → pixels                         | Resolved from LLM's `aspect_ratio` (or config default) per-provider. Hidden from LLM. |
 | `size_tier`     | Config            | `"4K"`, `"2K"`, `"1K"`                        | Resolution tier for OpenRouter. Set from `default_image_size_tier`. Ignored by fal. |
 | `room_id`       | Harness           | `string`                                       | Room UUID for image storage (injected if omitted). **Note:** injected at execute time, not stored in the Rust struct. |
 | `webdav_dir`    | Harness           | `string`                                       | Type-prefixed room path (injected; falls back to room_id). **Note:** injected at execute time, not stored in the Rust struct. |

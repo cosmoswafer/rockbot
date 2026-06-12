@@ -169,6 +169,7 @@ impl AgentHarness {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn process_message(
         &mut self,
         room_id: &str,
@@ -187,7 +188,7 @@ impl AgentHarness {
         self.current_image_urls = msg_urls
             .iter()
             .filter(|u| u.headers.as_ref().and_then(|h| h.content_type.as_deref())
-                .map_or(false, |ct| ct.starts_with("image/")))
+                .is_some_and(|ct| ct.starts_with("image/")))
             .map(|u| u.url.clone())
             .collect();
 
@@ -842,7 +843,7 @@ impl AgentHarness {
         };
 
         let mut result = prefix;
-        result.push(ChatMessage::system(&format!(
+        result.push(ChatMessage::system(format!(
             "[Earlier conversation summarized: {}]",
             summary_text
         )));
@@ -940,9 +941,7 @@ impl AgentHarness {
                 // Merge into a single ## section for today
                 let old_summary = extract_latest_summary(&existing);
                 let (old_msg, old_chars) = parse_summary_header(&existing);
-                let merged = if old_summary.is_empty() {
-                    new_summary.to_string()
-                } else if old_summary == new_summary {
+                let merged = if old_summary.is_empty() || old_summary == new_summary {
                     new_summary.to_string()
                 } else {
                     format!("{}\n\n{}", old_summary, new_summary)
@@ -1596,9 +1595,6 @@ mod tests {
             }
         }
 
-        fn call_count(&self) -> usize {
-            self.call_count.load(std::sync::atomic::Ordering::SeqCst)
-        }
     }
 
     #[async_trait]
@@ -2168,7 +2164,7 @@ chat = "mock-model"
         harness.inject_vision_images("room1", &mut messages);
 
         // Pool should be drained
-        assert!(harness.image_pool.get("room1").is_none());
+        assert!(!harness.image_pool.contains_key("room1"));
     }
 
     #[test]
@@ -2329,13 +2325,11 @@ chat = "mock-model"
 
         let result_texts: Vec<_> = result.iter().filter_map(|m| m.text_content()).collect();
         assert!(
-            result_texts.iter().any(|t| *t == "LAST user message to keep"),
+            result_texts.contains(&"LAST user message to keep"),
             "Last user message should be preserved in result"
         );
         assert!(
-            result_texts
-                .iter()
-                .any(|t| *t == "LAST assistant message to keep"),
+            result_texts.contains(&"LAST assistant message to keep"),
             "Last assistant message should be preserved in result"
         );
     }

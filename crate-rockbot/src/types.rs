@@ -385,13 +385,13 @@ impl ImageGenParams {
 
     fn lookup_preset(name: &str) -> Option<(u32, u32)> {
         match name {
-            "square_hd" => Some((2880, 2880)),
-            "landscape_16_9" => Some((3840, 2160)),
-            "portrait_16_9" => Some((2160, 3840)),
-            "landscape_4_3" => Some((3312, 2480)),
-            "portrait_4_3" => Some((2480, 3312)),
-            "landscape_3_2" => Some((3504, 2336)),
-            "portrait_2_3" => Some((2336, 3504)),
+            "square_hd" | "1:1" => Some((2880, 2880)),
+            "landscape_16_9" | "16:9" => Some((3840, 2160)),
+            "portrait_16_9" | "9:16" => Some((2160, 3840)),
+            "landscape_4_3" | "4:3" => Some((3312, 2480)),
+            "portrait_4_3" | "3:4" => Some((2480, 3312)),
+            "landscape_3_2" | "3:2" => Some((3504, 2336)),
+            "portrait_2_3" | "2:3" => Some((2336, 3504)),
             "square" => Some((512, 512)),
             _ => None,
         }
@@ -417,7 +417,7 @@ impl ImageGenParams {
                 )));
             }
 
-            if pixels < 655_360 || pixels > 8_294_400 {
+            if !(655_360..=8_294_400).contains(&pixels) {
                 return Err(RockBotError::Provider(format!(
                     "image_size pixel count must be 655,360–8,294,400 (got {} from {}×{}).",
                     pixels, width, height

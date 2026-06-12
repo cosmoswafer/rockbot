@@ -30,6 +30,12 @@ pub struct ImageCache {
     entries: Mutex<HashMap<String, GeneratedImage>>,
 }
 
+impl Default for ImageCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ImageCache {
     pub fn new() -> Self {
         Self {

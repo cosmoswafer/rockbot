@@ -28,10 +28,12 @@ impl std::fmt::Display for KnowledgeCategory {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Default)]
 pub enum KnowledgePriority {
     #[serde(rename = "P0")]
     P0,
     #[serde(rename = "P1")]
+    #[default]
     P1,
     #[serde(rename = "P2")]
     P2,
@@ -50,11 +52,6 @@ impl std::fmt::Display for KnowledgePriority {
     }
 }
 
-impl Default for KnowledgePriority {
-    fn default() -> Self {
-        KnowledgePriority::P1
-    }
-}
 
 impl KnowledgePriority {}
 
@@ -151,6 +148,7 @@ impl KnowledgeManager {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn save_entry(
         webdav: &WebDavClient,
         webdav_dir: &str,
@@ -308,7 +306,7 @@ impl KnowledgeManager {
             })
             .collect();
 
-        scored.sort_by(|a, b| b.0.cmp(&a.0));
+        scored.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
         scored.into_iter().map(|(_, e)| e).collect()
     }
 
@@ -338,7 +336,7 @@ impl KnowledgeManager {
             if content_parts.is_empty() {
                 return Ok(Some("No knowledge entries found for this room.".into()));
             }
-            return Ok(Some(content_parts.join("\n---\n")));
+            Ok(Some(content_parts.join("\n---\n")))
         } else {
             // Use keyword scoring to find all matching entries
             let recent = &[query];
@@ -357,7 +355,7 @@ impl KnowledgeManager {
                     ));
                 }
             }
-            return Ok(Some(content_parts.join("\n---\n")));
+            Ok(Some(content_parts.join("\n---\n")))
         }
     }
 

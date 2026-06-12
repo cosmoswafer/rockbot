@@ -160,6 +160,7 @@ impl WebFetchTool {
         builder
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn fetch_url(
         &self,
         url: &str,
@@ -265,11 +266,10 @@ impl WebFetchTool {
             None
         };
 
-        if !response_ok {
-            if method == HttpMethod::Head {
+        if !response_ok
+            && method == HttpMethod::Head {
                 response_ok = true;
             }
-        }
 
         if !response_ok {
             let truncated = truncate(&body, 2000);

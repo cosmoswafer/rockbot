@@ -25,6 +25,7 @@ pub struct ImageGenTool {
 }
 
 impl ImageGenTool {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         provider: Box<dyn ImageProvider>,
         default_quality: String,
@@ -48,6 +49,7 @@ impl ImageGenTool {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn with_img2img(
         text2img: Box<dyn ImageProvider>,
         img2img: Box<dyn ImageProvider>,
@@ -141,6 +143,10 @@ impl Tool for ImageGenTool {
                     "type": "string",
                     "description": "Text description of the image to generate"
                 },
+                "aspect_ratio": {
+                    "type": "string",
+                    "description": "Aspect ratio for the generated image as W:H (e.g. '16:9', '2:3', '1:1'). If omitted, the server default aspect ratio is used."
+                },
                 "room_id": {
                     "type": "string",
                     "description": "Room ID for image storage (injected automatically if omitted)"
@@ -179,8 +185,13 @@ impl Tool for ImageGenTool {
         params.quality = Some(self.default_quality.clone());
         params.output_format = Some(self.default_output_format.clone());
         params.num_images = Some(self.default_num_images);
+
+        let aspect_ratio = args
+            .get("aspect_ratio")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty());
         params.image_size = Some(ImageSizeValue::Preset(
-            self.default_image_size.clone(),
+            aspect_ratio.unwrap_or(&self.default_image_size).to_string(),
         ));
         params.size_tier = Some(self.default_image_size_tier.clone());
 
@@ -341,7 +352,7 @@ mod tests {
                 .unwrap()
                 .contains(&serde_json::json!("prompt"))
         );
-        assert!(params["properties"].get("image_size").is_none(), "image_size hidden from LLM — set via config");
+        assert!(params["properties"].get("aspect_ratio").is_some(), "aspect_ratio visible to LLM — set via tool arg");
         assert!(params["properties"].get("image_urls").is_some());
     }
 
@@ -357,6 +368,44 @@ mod tests {
         let tool = ImageGenTool::new(make_fal_provider(), "medium".into(), "png".into(), 1, "portrait_2_3".into(), "4K".into(), make_webdav(), make_image_cache());
         let result = tool.execute("not json").await;
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_aspect_ratio_from_llm_overrides_config_default() {
+        // Simulate execute() arg parsing when LLM provides aspect_ratio
+        let args: Value = serde_json::from_str(r#"{"prompt":"a cat","aspect_ratio":"16:9"}"#).unwrap();
+        let default_image_size = "portrait_2_3";
+        let aspect_ratio = args
+            .get("aspect_ratio")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty());
+        let used_size = aspect_ratio.unwrap_or(default_image_size);
+        assert_eq!(used_size, "16:9", "LLM aspect_ratio should override config default");
+    }
+
+    #[test]
+    fn test_aspect_ratio_missing_falls_back_to_config_default() {
+        // Simulate execute() arg parsing when LLM does NOT provide aspect_ratio
+        let args: Value = serde_json::from_str(r#"{"prompt":"a cat"}"#).unwrap();
+        let default_image_size = "portrait_2_3";
+        let aspect_ratio = args
+            .get("aspect_ratio")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty());
+        let used_size = aspect_ratio.unwrap_or(default_image_size);
+        assert_eq!(used_size, "portrait_2_3", "Without LLM aspect_ratio, config default should be used");
+    }
+
+    #[test]
+    fn test_aspect_ratio_empty_string_falls_back_to_config() {
+        let args: Value = serde_json::from_str(r#"{"prompt":"a cat","aspect_ratio":""}"#).unwrap();
+        let default_image_size = "portrait_2_3";
+        let aspect_ratio = args
+            .get("aspect_ratio")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty());
+        let used_size = aspect_ratio.unwrap_or(default_image_size);
+        assert_eq!(used_size, "portrait_2_3", "Empty aspect_ratio should fall back to config default");
     }
 
     #[test]

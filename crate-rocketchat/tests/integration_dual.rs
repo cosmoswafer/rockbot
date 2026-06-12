@@ -229,7 +229,7 @@ async fn test_typing_indicator_roundtrip() {
             let args = v.get("fields").and_then(|f| f.get("args")).and_then(|a| a.as_array());
             if let Some(args_arr) = args {
                 if args_arr.len() >= 2
-                    && args_arr[1].as_array().map_or(false, |a| a.iter().any(|v| v.as_str() == Some("user-typing")))
+                    && args_arr[1].as_array().is_some_and(|a| a.iter().any(|v| v.as_str() == Some("user-typing")))
                 {
                     eprintln!("typing ON roundtrip OK");
                     found_typing = true;
@@ -260,7 +260,7 @@ async fn test_typing_indicator_roundtrip() {
             if en != Some(&format!("{}/user-activity", rid)) { continue; }
             let args = v.get("fields").and_then(|f| f.get("args")).and_then(|a| a.as_array());
             if let Some(args_arr) = args {
-                if args_arr.len() >= 2 && args_arr[1].as_array().map_or(false, |a| a.is_empty()) {
+                if args_arr.len() >= 2 && args_arr[1].as_array().is_some_and(|a| a.is_empty()) {
                     eprintln!("typing OFF roundtrip OK");
                     found_stopped = true;
                     break;

@@ -49,7 +49,7 @@ fn get_client() -> Option<WebDavClient> {
         .unwrap_or("rockbot-test");
 
     let full_url = format!("{url}/{root}");
-    WebDavClient::new(full_url, &username, &password).ok()
+    WebDavClient::new(full_url, username, password).ok()
 }
 
 /// Generate a unique test directory name to avoid 423 FileLocked errors

@@ -66,9 +66,9 @@ impl DeepSeekProvider {
         }
         let text = parts
             .iter()
-            .filter_map(|p| match p {
-                ContentPart::Text { text } => Some(text.as_str()),
-                ContentPart::ImageUrl { .. } => Some("[image]"),
+            .map(|p| match p {
+                ContentPart::Text { text } => text.as_str(),
+                ContentPart::ImageUrl { .. } => "[image]",
             })
             .collect::<Vec<_>>()
             .join(" ");

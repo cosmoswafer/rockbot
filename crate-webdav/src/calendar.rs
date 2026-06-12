@@ -201,6 +201,7 @@ fn unescape_ical(s: &str) -> String {
         .replace("\\N", "\n")
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn build_vevent_ics(
     uid: &str,
     summary: &str,

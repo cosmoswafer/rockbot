@@ -65,7 +65,7 @@ fn weekday_name(days: i64) -> &'static str {
         "Thursday", "Friday", "Saturday",
         "Sunday", "Monday", "Tuesday", "Wednesday",
     ];
-    let idx = ((days % 7) + 7) % 7;
+    let idx = days.rem_euclid(7);
     WEEKDAYS[idx as usize]
 }
 
@@ -158,13 +158,13 @@ fn now_calendar(week_offset: i64) -> String {
     }
 
     for d in 1..=days_in_month {
-        let is_today = cal_year == year && cal_month == month && d as i64 == today_day as i64;
+        let is_today = cal_year == year && cal_month == month && d == today_day as i64;
         if is_today {
             out.push_str(&format!("\x1b[7m{:>2}\x1b[0m", d));
         } else {
             out.push_str(&format!("{:>2}", d));
         }
-        let col = (first_wday + d as i64 - 1) % 7;
+        let col = (first_wday + d - 1) % 7;
         if col == 6 {
             out.push('\n');
         } else {
@@ -425,7 +425,7 @@ mod tests {
         let tool = DateTimeTool::new();
         let result = tool.execute(r#"{"format":"week_number"}"#).await.unwrap();
         let wn: u32 = result.trim().parse().unwrap();
-        assert!(wn >= 1 && wn <= 53);
+        assert!((1..=53).contains(&wn));
     }
 
     #[tokio::test]

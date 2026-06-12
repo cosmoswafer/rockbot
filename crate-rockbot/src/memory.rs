@@ -317,6 +317,7 @@ impl MemoryManager {
                 // Walk from oldest to newest, stripping images until under limit.
                 // The last user message is preserved (the current request).
                 let last_user_idx = messages.iter().rposition(|m| m.role == crate::types::Role::User);
+                #[allow(clippy::needless_range_loop)]
                 for i in 0..messages.len() {
                     if total <= self.max_context_bytes {
                         break;
@@ -531,7 +532,7 @@ pub fn date_to_days(date: &str) -> Option<i64> {
     let y: i64 = parts[0].parse().ok()?;
     let m: i64 = parts[1].parse().ok()?;
     let d: i64 = parts[2].parse().ok()?;
-    if m < 1 || m > 12 || d < 1 || d > 31 {
+    if !(1..=12).contains(&m) || !(1..=31).contains(&d) {
         return None;
     }
     let m = if m <= 2 { m + 12 } else { m };
@@ -540,7 +541,7 @@ pub fn date_to_days(date: &str) -> Option<i64> {
     let yoe = (y - era * 400) as u64;
     let doy = (153 * (m as u64 - 3) + 2) / 5 + d as u64 - 1;
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    Some((era as i64) * 146097 + doe as i64 - 719468)
+    Some(era * 146097 + doe as i64 - 719468)
 }
 
 pub(crate) fn truncate_message_content(msg: &mut ChatMessage, max_chars: usize) {
@@ -576,9 +577,9 @@ pub(crate) fn strip_images_from_message(msg: ChatMessage) -> ChatMessage {
     }
     let text = parts
         .iter()
-        .filter_map(|p| match p {
-            crate::types::ContentPart::Text { text } => Some(text.as_str()),
-            crate::types::ContentPart::ImageUrl { .. } => Some("[image]"),
+        .map(|p| match p {
+            crate::types::ContentPart::Text { text } => text.as_str(),
+            crate::types::ContentPart::ImageUrl { .. } => "[image]",
         })
         .collect::<Vec<_>>()
         .join(" ");
