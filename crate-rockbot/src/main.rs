@@ -462,14 +462,21 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                                     }
                                 }
 
+                                let has_images = !image_ids.is_empty();
                                 let has_attachments = !attachments.is_empty();
+                                let final_reply = if has_images {
+                                    &reply_text
+                                } else {
+                                    &reply
+                                };
+
                                 if has_attachments {
                                     let alias = h
                                         .memory()
                                         .self_display_name(&msg.room_id);
                                     if let Err(e) = sender
                                         .reply_with_attachments(
-                                            &reply_text,
+                                            final_reply,
                                             &attachments,
                                             alias.as_deref(),
                                         )
@@ -494,7 +501,7 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                                             },
                                         };
                                         let rest = sender.rest_client(&rc_config);
-                                        match rest.send_message(&msg.room_id, &reply, Some(alias_name)).await {
+                                        match rest.send_message(&msg.room_id, final_reply, Some(alias_name)).await {
                                             Ok(msg_id) => {
                                                 debug!("REST send_message ok, msg_id={} alias={:?}", msg_id, alias_name);
                                                 true
@@ -510,7 +517,7 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                                     };
 
                                     if !rest_ok {
-                                        if let Err(e) = sender.reply(&reply).await {
+                                        if let Err(e) = sender.reply(final_reply).await {
                                             error!("Failed to send reply: {}", e);
                                         }
                                     }
