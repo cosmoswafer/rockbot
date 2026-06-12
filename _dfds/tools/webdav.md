@@ -7,6 +7,25 @@ read/write/list/mkdir/delete with per-room directory isolation. Each room gets
 its own subtree created proactively on first use. Room names use type prefixes
 (`r-` for channels, `d-` for DMs) to prevent collisions.
 
+### 1a. Transparent Path Isolation
+
+All WebDAV operations are **automatically scoped** to the room's dedicated
+directory. The isolation is structural — no path-sanitization needed:
+
+1. The harness computes `webdav_dir` from `(room_name, is_dm)` — e.g. `r-general`
+2. `inject_room_context()` adds `webdav_dir` to tool call arguments before
+   execution — the LLM cannot override it
+3. Every tool constructs paths via `WebDavPath::room_path(webdav_dir, subpath)`
+   which produces `//{room_key}/{subpath}` — the room key slot is always the
+   harness-injected value
+4. The `WebDavClient`'s `base_url` (e.g.
+   `https://nc.example.com/remote.php/dav/files/user/clawspaces/`) provides
+   the root; paths are joined to form the full URL
+
+**This DFD serves as the canonical documentation for the webdav crate and tool.
+Other tool DFDs that use WebDAV (edit_soul, save_knowledge, calendar,
+image_gen, web_fetch) reference this layer instead of repeating it.**
+
 - Upstream: [Configuration Management](../base/config.md) provides `WebDavConfig`
 - Downstream: [Agent Harness](../agent-harness.md) exposes `WebDavTool` to
   the AI agent
@@ -15,7 +34,6 @@ its own subtree created proactively on first use. Room names use type prefixes
 - Related: [Vision Tool](vision.md) — webdav tool's `read` action detects
   image files by extension and returns base64 markdown tags (`![name](data:...)`),
   which the harness intercepts via the same vision image injection pipeline.
-  operations for JSON archive persistence
 
 ## 2. Diagram
 
