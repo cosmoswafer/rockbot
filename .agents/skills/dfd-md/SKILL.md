@@ -35,20 +35,23 @@ DFD must be:
 
 ## DFD-Driven Development Workflow ("DFD Dev Flow")
 
-1. **Revise DFD** — design or update the DFD so it accurately models the
-   desired data movement. Keep it at the correct level; use the notation and
-   structure rules above.
-2. **Integration probe (data collection)** — write a live-data probe (no
-   mocking; targets a live server, API, or resource) and run it to collect
-   actual data shapes. Use this data as reference for the implementation phase.
+1. **Integration probe (data collection; optional)** — write a live-data probe
+   (no mocking; targets a live server, API, or resource) and run it to collect
+   actual data shapes.  Skip if the project already has sufficient real-world
+   data to reference.  Use collected data as reference for the DFD revision and
+   implementation phases.
+2. **Revise DFD** — design or update the DFD so it accurately models the
+   desired data movement.  Base the data structures (section 3) on the shapes
+   observed in the integration probe (step 1) when available.  Keep at the
+   correct level; use the notation and structure rules above.
 3. **Implement data flow validation constraints** — enforce data structure
    correctness through code-level constraints (see
    [Type-Driven Design & Validation Implementation](#type-driven-design--validation-implementation)
    below).  Parse and validate at subsystem entry points ("parse, don't
    validate"); cross-DFD shared structures defined once in a canonical location
-   and imported by both producer and consumer crates for compile-time
-   enforcement.  Where runtime validation is unavoidable, fail fast naming the
-   expected DFD data structure and offending field.
+   and imported by both producer and consumer modules for compile-time (or
+   static-analysis) enforcement.  Where runtime validation is unavoidable, fail
+   fast naming the expected DFD data structure and offending field.
 4. **Concrete implementation** — code the types, core logic, and wiring
    described by the DFD. Favour incremental, type-first implementation.
 5. **Review all DFDs** — once the implementation is stable, re-read every DFD

@@ -66,9 +66,9 @@ No CI, no `rustfmt.toml`, no `clippy.toml`, no `rust-toolchain` file.
 
 Data Flow Diagrams in `_dfds/` are the design spec. The development flow is defined in the [`dfd-md` skill](.agents/skills/dfd-md/SKILL.md). Key rules:
 
-- **Phase 1**: Design or revise the DFD to accurately model desired data movement.
-- **Phase 2**: Write an integration probe (no mocking, live server) to collect actual data shapes for reference.
-- **Phase 3**: Implement data flow validation constraints — parse-and-validate at subsystem boundaries with concrete types. Cross-DFD shared structures defined once in a canonical location, imported by both producer and consumer crates, making mismatches compile-time errors.
+- **Phase 1**: Write an integration probe (no mocking, live server) to collect actual data shapes for reference. Skip if sufficient real-world data already exists.
+- **Phase 2**: Design or revise the DFD to accurately model desired data movement. Base data structures on shapes observed in the probe when available.
+- **Phase 3**: Implement data flow validation constraints — parse-and-validate at subsystem boundaries with concrete types. Cross-DFD shared structures defined once in a canonical location, imported by both producer and consumer modules, making mismatches compile-time errors.
 - **Phase 4**: Concrete implementation — code types, core logic, and wiring described by the DFD.
 - **Phase 5**: Re-read all DFDs and confirm they match the code. If a DFD's mtime is newer than its corresponding Rust source, the code is stale and must be updated to match the DFD. If the code was updated first, update the DFD.
 - **Phase 6**: `cargo build --release` → commit → push → restart bot.
