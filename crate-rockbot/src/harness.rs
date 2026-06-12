@@ -62,6 +62,7 @@ pub struct AgentHarness {
     max_iterations: u32,
     max_attachment_bytes: u64,
     image_pool: HashMap<String, Vec<CachedImage>>,
+    pending_images: HashMap<String, String>,
 }
 
 impl AgentHarness {
@@ -90,6 +91,7 @@ impl AgentHarness {
             max_iterations,
             max_attachment_bytes,
             image_pool: HashMap::new(),
+            pending_images: HashMap::new(),
         }
     }
 
@@ -149,6 +151,7 @@ impl AgentHarness {
         attachments: &[rocketchat::AttachmentInfo],
     ) -> Result<Option<String>> {
         let msg_start = std::time::Instant::now();
+        self.pending_images.clear();
         let clean_text = if !is_dm && !text.is_empty() {
             text.trim_start().to_string()
         } else {
@@ -233,6 +236,7 @@ impl AgentHarness {
                     self.max_iterations, room_id
                 );
                 let fallback = "I'm sorry, I got stuck in a loop. Could you rephrase your request?";
+                self.pending_images.clear();
                 let assistant_msg = ChatMessage::assistant(fallback);
                 self.append_to_history(room_id, assistant_msg);
                 debug!(
@@ -341,7 +345,39 @@ impl AgentHarness {
                                 self.cache_vision_images(room_id, &tool_result.content);
                             }
 
-                            let tool_msg = ChatMessage::tool(&tool_call.id, &tool_result.content);
+                            let tool_content = if tool_call.function.name == "image_gen"
+                                && !tool_result.is_error
+                            {
+                                if let Ok(mut v) =
+                                    serde_json::from_str::<serde_json::Value>(&tool_result.content)
+                                {
+                                    if let Some(image_url) =
+                                        v.get("image_url").and_then(|u| u.as_str())
+                                    {
+                                        let key =
+                                            format!("__IMG__{}__", tool_call.id);
+                                        self.pending_images
+                                            .insert(key.clone(), image_url.to_string());
+                                        if let Some(obj) = v.as_object_mut() {
+                                            obj.insert(
+                                                "image_url".to_string(),
+                                                serde_json::Value::String(key.clone()),
+                                            );
+                                        }
+                                        serde_json::to_string(&v).unwrap_or_else(|_| {
+                                            tool_result.content.clone()
+                                        })
+                                    } else {
+                                        tool_result.content.clone()
+                                    }
+                                } else {
+                                    tool_result.content.clone()
+                                }
+                            } else {
+                                tool_result.content.clone()
+                            };
+
+                            let tool_msg = ChatMessage::tool(&tool_call.id, &tool_content);
                             self.append_to_history(room_id, tool_msg);
                         }
 
@@ -383,7 +419,20 @@ impl AgentHarness {
                         let reply = if clean.is_empty() {
                             "I processed your request but received an empty response.".to_string()
                         } else {
-                            clean
+                            let mut reply = clean;
+                            let pending: HashMap<String, String> =
+                                std::mem::take(&mut self.pending_images);
+                            for (key, url) in &pending {
+                                if reply.contains(key.as_str()) {
+                                    reply = reply.replace(key.as_str(), url);
+                                } else {
+                                    reply.push_str(&format!(
+                                        "\n\n![Generated image]({})",
+                                        url
+                                    ));
+                                }
+                            }
+                            reply
                         };
                         debug!(
                             "process_message done: total_elapsed_ms={} iterations={}",
@@ -394,6 +443,7 @@ impl AgentHarness {
                     }
 
                     let fallback = "I received a response but it was empty. Please try again.";
+                    self.pending_images.clear();
                     let assistant_msg = ChatMessage::assistant(fallback);
                     self.append_to_history(room_id, assistant_msg);
                     debug!(
@@ -404,6 +454,7 @@ impl AgentHarness {
                 }
                 Err(e) => {
                     error!("AI provider error: {}", e);
+                    self.pending_images.clear();
                     let fallback = format!("I encountered an error: {}. Please try again.", e);
                     let assistant_msg = ChatMessage::assistant(&fallback);
                     self.append_to_history(room_id, assistant_msg);
