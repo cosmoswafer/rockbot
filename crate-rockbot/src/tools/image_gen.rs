@@ -5,9 +5,12 @@ use tracing::{debug, info, warn};
 use webdav::{WebDavClient, WebDavPath};
 
 use crate::error::{Result, RockBotError};
+use crate::image_cache::{GeneratedImage, ImageCache};
 use crate::provider::ImageProvider;
 use crate::tool::Tool;
 use crate::types::{ImageGenParams, ImageSizeValue};
+
+use std::sync::Arc;
 
 pub struct ImageGenTool {
     provider: Box<dyn ImageProvider>,
@@ -16,6 +19,7 @@ pub struct ImageGenTool {
     default_output_format: String,
     default_num_images: u32,
     webdav: WebDavClient,
+    image_cache: Arc<ImageCache>,
 }
 
 impl ImageGenTool {
@@ -25,6 +29,7 @@ impl ImageGenTool {
         default_output_format: String,
         default_num_images: u32,
         webdav: WebDavClient,
+        image_cache: Arc<ImageCache>,
     ) -> Self {
         Self {
             provider,
@@ -33,6 +38,7 @@ impl ImageGenTool {
             default_output_format,
             default_num_images,
             webdav,
+            image_cache,
         }
     }
 
@@ -43,6 +49,7 @@ impl ImageGenTool {
         default_output_format: String,
         default_num_images: u32,
         webdav: WebDavClient,
+        image_cache: Arc<ImageCache>,
     ) -> Self {
         Self {
             provider: text2img,
@@ -51,6 +58,7 @@ impl ImageGenTool {
             default_output_format,
             default_num_images,
             webdav,
+            image_cache,
         }
     }
 
@@ -109,9 +117,9 @@ impl Tool for ImageGenTool {
          and optional image_size. To edit or transform an image, the user's \
          attachments are automatically provided as image_urls — just describe \
          what to do in the prompt. \
-         Returns a JSON object: {\"ok\": true, \"image_url\": \"...\", \"webdav_path\": \"...\"}. \
-         Always share the image_url with the user in markdown image format \
-         as `![{description}]({image_url})` so they can view the image inline. \
+         Returns a JSON object: {\"ok\": true, \"image_key\": \"...\", \"webdav_path\": \"...\"}. \
+         Always share the image with the user in markdown image format \
+         as `![{description}]({image_key})` so they can view the image inline. \
          After a successful image_gen call, respond to the user — do not call image_gen again."
     }
 
@@ -253,6 +261,20 @@ impl Tool for ImageGenTool {
             base64::engine::general_purpose::STANDARD.encode(&image_bytes)
         );
 
+        let image_key = args
+            .get("image_cache_key")
+            .and_then(|k| k.as_str())
+            .map(String::from)
+            .unwrap_or_else(uuid_string);
+
+        self.image_cache.store(
+            &image_key,
+            GeneratedImage {
+                webdav_path: webdav_path.clone(),
+                data_uri: image_url,
+            },
+        );
+
         info!(
             "image_gen total elapsed_ms={}",
             t_start.elapsed().as_millis(),
@@ -261,7 +283,7 @@ impl Tool for ImageGenTool {
         Ok(serde_json::json!({
             "ok": true,
             "webdav_path": webdav_path,
-            "image_url": image_url,
+            "image_key": image_key,
         })
         .to_string())
     }
@@ -295,9 +317,13 @@ mod tests {
         webdav::WebDavClient::new("https://example.com", "user", "pass").unwrap()
     }
 
+    fn make_image_cache() -> Arc<ImageCache> {
+        Arc::new(ImageCache::new())
+    }
+
     #[test]
     fn test_image_gen_tool_definition() {
-        let tool = ImageGenTool::new(make_fal_provider(), "medium".into(), "png".into(), 1, make_webdav());
+        let tool = ImageGenTool::new(make_fal_provider(), "medium".into(), "png".into(), 1, make_webdav(), make_image_cache());
 
         assert_eq!(tool.name(), "image_gen");
         assert!(tool.description().contains("Generate or edit an image"));
@@ -315,14 +341,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_missing_prompt() {
-        let tool = ImageGenTool::new(make_fal_provider(), "medium".into(), "png".into(), 1, make_webdav());
+        let tool = ImageGenTool::new(make_fal_provider(), "medium".into(), "png".into(), 1, make_webdav(), make_image_cache());
         let result = tool.execute(r#"{}"#).await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn test_execute_invalid_json() {
-        let tool = ImageGenTool::new(make_fal_provider(), "medium".into(), "png".into(), 1, make_webdav());
+        let tool = ImageGenTool::new(make_fal_provider(), "medium".into(), "png".into(), 1, make_webdav(), make_image_cache());
         let result = tool.execute("not json").await;
         assert!(result.is_err());
     }

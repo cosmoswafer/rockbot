@@ -1,6 +1,7 @@
 pub mod config;
 pub mod error;
 pub mod harness;
+pub mod image_cache;
 pub mod knowledge;
 pub mod memory;
 pub mod provider;
@@ -12,6 +13,7 @@ pub mod utils;
 pub use config::{merge_toml, AppConfig, ProviderConfig};
 pub use error::{Result, RockBotError};
 pub use harness::AgentHarness;
+pub use image_cache::{GeneratedImage, ImageCache, image_markdown};
 pub use memory::{ConversationHistory, MemoryManager, RoomState};
 pub use provider::{AiProvider, DeepSeekProvider, FalAiProvider, ImageProvider, OpenRouterProvider};
 pub use tool::{Tool, ToolRegistry, ToolResult};

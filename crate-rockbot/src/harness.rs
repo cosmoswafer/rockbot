@@ -8,6 +8,7 @@ use rocketchat::RestApiClient;
 
 use crate::AppConfig;
 use crate::error::Result;
+use crate::image_cache::{ImageCache, image_markdown};
 use crate::knowledge::KnowledgeManager;
 use crate::memory::{DailySummary, MemoryManager, SoulMemory};
 use crate::provider::AiProvider;
@@ -33,9 +34,9 @@ The harness will automatically resolve image_name references to the actual image
 If the user asks to edit a previously generated image (no new attachment), \
 you MUST include the image CDN URL from the previous result in the \
 image_urls parameter yourself. \
-The image_gen tool returns both a WebDAV path and an image URL — \
-always share the image URL with the user in markdown image format \
-as `![{description}]({image_url})` so they can view the image inline. \
+The image_gen tool returns a WebDAV path and an image_key — \
+always share the image with the user in markdown image format \
+as `![{description}]({image_key})` so they can view the image inline. \
 When a user says !soul or asks to save or update preferences, identity, or facts, use the edit_soul tool. \
 When a user asks you to remember something, shares notes, or says !remember, !note, !save or shares important \
 information worth persisting, use the save_knowledge tool. \
@@ -62,7 +63,7 @@ pub struct AgentHarness {
     max_iterations: u32,
     max_attachment_bytes: u64,
     image_pool: HashMap<String, Vec<CachedImage>>,
-    pending_images: HashMap<String, String>,
+    image_cache: Arc<ImageCache>,
 }
 
 impl AgentHarness {
@@ -70,6 +71,7 @@ impl AgentHarness {
         config: AppConfig,
         provider: Box<dyn AiProvider>,
         webdav: Option<WebDavClient>,
+        image_cache: Arc<ImageCache>,
     ) -> Self {
         let max_chars = config.rocketchat.model.max_text_length;
         let max_history = config.rocketchat.model.max_history_size;
@@ -91,7 +93,7 @@ impl AgentHarness {
             max_iterations,
             max_attachment_bytes,
             image_pool: HashMap::new(),
-            pending_images: HashMap::new(),
+            image_cache,
         }
     }
 
@@ -151,7 +153,6 @@ impl AgentHarness {
         attachments: &[rocketchat::AttachmentInfo],
     ) -> Result<Option<String>> {
         let msg_start = std::time::Instant::now();
-        self.pending_images.clear();
         let clean_text = if !is_dm && !text.is_empty() {
             text.trim_start().to_string()
         } else {
@@ -227,6 +228,7 @@ impl AgentHarness {
         );
 
         let mut iterations: u32 = 0;
+        let mut image_ids_this_turn: Vec<String> = Vec::new();
 
         loop {
             iterations += 1;
@@ -236,7 +238,6 @@ impl AgentHarness {
                     self.max_iterations, room_id
                 );
                 let fallback = "I'm sorry, I got stuck in a loop. Could you rephrase your request?";
-                self.pending_images.clear();
                 let assistant_msg = ChatMessage::assistant(fallback);
                 self.append_to_history(room_id, assistant_msg);
                 debug!(
@@ -302,12 +303,26 @@ impl AgentHarness {
 
                             let arguments = if tool_call.function.name == "image_gen" {
                                 let wd = compute_webdav_dir(room_name, room_fname, is_dm);
-                                inject_image_urls_from_refs(
+                                let mut args = inject_image_urls_from_refs(
                                     &tool_call.function.arguments,
                                     room_id,
                                     &wd,
                                     &attachment_refs,
-                                )
+                                );
+                                if let Ok(mut v) =
+                                    serde_json::from_str::<serde_json::Value>(&args)
+                                {
+                                    if let Some(obj) = v.as_object_mut() {
+                                        obj.insert(
+                                            "image_cache_key".to_string(),
+                                            serde_json::Value::String(
+                                                tool_call.id.clone(),
+                                            ),
+                                        );
+                                    }
+                                    args = serde_json::to_string(&v).unwrap_or(args);
+                                }
+                                args
                             } else if tool_call.function.name == "webdav"
                                 || tool_call.function.name == "edit_soul"
                                 || tool_call.function.name == "save_knowledge"
@@ -345,39 +360,11 @@ impl AgentHarness {
                                 self.cache_vision_images(room_id, &tool_result.content);
                             }
 
-                            let tool_content = if tool_call.function.name == "image_gen"
-                                && !tool_result.is_error
-                            {
-                                if let Ok(mut v) =
-                                    serde_json::from_str::<serde_json::Value>(&tool_result.content)
-                                {
-                                    if let Some(image_url) =
-                                        v.get("image_url").and_then(|u| u.as_str())
-                                    {
-                                        let key =
-                                            format!("__IMG__{}__", tool_call.id);
-                                        self.pending_images
-                                            .insert(key.clone(), image_url.to_string());
-                                        if let Some(obj) = v.as_object_mut() {
-                                            obj.insert(
-                                                "image_url".to_string(),
-                                                serde_json::Value::String(key.clone()),
-                                            );
-                                        }
-                                        serde_json::to_string(&v).unwrap_or_else(|_| {
-                                            tool_result.content.clone()
-                                        })
-                                    } else {
-                                        tool_result.content.clone()
-                                    }
-                                } else {
-                                    tool_result.content.clone()
-                                }
-                            } else {
-                                tool_result.content.clone()
-                            };
+                            if tool_call.function.name == "image_gen" && !tool_result.is_error {
+                                image_ids_this_turn.push(tool_call.id.clone());
+                            }
 
-                            let tool_msg = ChatMessage::tool(&tool_call.id, &tool_content);
+                            let tool_msg = ChatMessage::tool(&tool_call.id, &tool_result.content);
                             self.append_to_history(room_id, tool_msg);
                         }
 
@@ -420,16 +407,25 @@ impl AgentHarness {
                             "I processed your request but received an empty response.".to_string()
                         } else {
                             let mut reply = clean;
-                            let pending: HashMap<String, String> =
-                                std::mem::take(&mut self.pending_images);
-                            for (key, url) in &pending {
-                                if reply.contains(key.as_str()) {
-                                    reply = reply.replace(key.as_str(), url);
-                                } else {
-                                    reply.push_str(&format!(
-                                        "\n\n![Generated image]({})",
-                                        url
-                                    ));
+                            for image_id in &image_ids_this_turn {
+                                if let Some(img) =
+                                    self.image_cache.take(image_id)
+                                {
+                                    let markdown = image_markdown(
+                                        "Generated image",
+                                        &img.data_uri,
+                                    );
+                                    if reply.contains(image_id.as_str()) {
+                                        reply = reply.replace(
+                                            image_id.as_str(),
+                                            &img.data_uri,
+                                        );
+                                    } else {
+                                        reply.push_str(&format!(
+                                            "\n\n{}",
+                                            markdown
+                                        ));
+                                    }
                                 }
                             }
                             reply
@@ -443,7 +439,6 @@ impl AgentHarness {
                     }
 
                     let fallback = "I received a response but it was empty. Please try again.";
-                    self.pending_images.clear();
                     let assistant_msg = ChatMessage::assistant(fallback);
                     self.append_to_history(room_id, assistant_msg);
                     debug!(
@@ -454,7 +449,6 @@ impl AgentHarness {
                 }
                 Err(e) => {
                     error!("AI provider error: {}", e);
-                    self.pending_images.clear();
                     let fallback = format!("I encountered an error: {}. Please try again.", e);
                     let assistant_msg = ChatMessage::assistant(&fallback);
                     self.append_to_history(room_id, assistant_msg);
@@ -1497,7 +1491,7 @@ chat = "mock-model"
             usage: None,
         }]));
 
-        let mut harness = AgentHarness::new(config, provider, None);
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
         let result = harness
             .process_message("room1", "general", "", false, "user", "Hi", &[])
             .await;
@@ -1519,7 +1513,7 @@ chat = "mock-model"
             usage: None,
         }]));
 
-        let mut harness = AgentHarness::new(config, provider, None);
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
         let result = harness
             .process_message("dm-alice", "", "", true, "alice", "Hello bot", &[])
             .await;
@@ -1533,7 +1527,7 @@ chat = "mock-model"
         let config = make_test_config();
         let provider = Box::new(MockProvider::new(vec![]));
 
-        let mut harness = AgentHarness::new(config, provider, None);
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
         let result = harness
             .process_message("room1", "general", "", false, "user", "Hi", &[])
             .await;
@@ -1580,7 +1574,7 @@ chat = "mock-model"
 
         let provider = Box::new(MockProvider::new(vec![tool_result.clone(), tool_result]));
 
-        let mut harness = AgentHarness::new(config, provider, None);
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
 
         let result = harness
             .process_message("room1", "general", "", false, "user", "search something", &[])
@@ -1601,7 +1595,7 @@ chat = "mock-model"
     fn test_harness_construction() {
         let config = make_test_config();
         let provider = Box::new(MockProvider::new(vec![]));
-        let harness = AgentHarness::new(config, provider, None);
+        let harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
         assert_eq!(harness.memory().room_count(), 0);
         assert_eq!(harness.tools().len(), 0);
     }
@@ -1610,7 +1604,7 @@ chat = "mock-model"
     fn test_resolve_model() {
         let config = make_test_config();
         let provider = Box::new(MockProvider::new(vec![]));
-        let harness = AgentHarness::new(config, provider, None);
+        let harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
         let model = harness.resolve_model();
         assert_eq!(model, "mock-model");
     }
@@ -1619,7 +1613,7 @@ chat = "mock-model"
     async fn test_archive_room_if_needed_no_webdav() {
         let config = make_test_config();
         let provider = Box::new(MockProvider::new(vec![]));
-        let mut harness = AgentHarness::new(config, provider, None);
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
 
         let room = harness
             .memory_mut()
@@ -1654,7 +1648,7 @@ chat = "mock-model"
     async fn test_summarize_for_archive() {
         let config = make_test_config();
         let provider = Box::new(MockProvider::new(vec![]));
-        let harness = AgentHarness::new(config, provider, None);
+        let harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
 
         let msgs = vec![
             ChatMessage::user("Hello, I need help with something"),
@@ -1785,7 +1779,7 @@ chat = "mock-model"
     fn test_cache_vision_images_single() {
         let config = make_test_config();
         let provider = Box::new(MockProvider::new(vec![]));
-        let mut harness = AgentHarness::new(config, provider, None);
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
 
         let result = "![photo.png](data:image/png;base64,iVBORw0KGgo)";
         harness.cache_vision_images("room1", result);
@@ -1800,7 +1794,7 @@ chat = "mock-model"
     fn test_cache_vision_images_multiple() {
         let config = make_test_config();
         let provider = Box::new(MockProvider::new(vec![]));
-        let mut harness = AgentHarness::new(config, provider, None);
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
 
         let result = "![photo1.png](data:image/png;base64,AAA) ![photo2.jpg](data:image/jpeg;base64,BBB)";
         harness.cache_vision_images("room1", result);
@@ -1817,7 +1811,7 @@ chat = "mock-model"
     fn test_cache_vision_images_skips_non_data_uri() {
         let config = make_test_config();
         let provider = Box::new(MockProvider::new(vec![]));
-        let mut harness = AgentHarness::new(config, provider, None);
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
 
         // Only data: URIs are cached; https URLs are ignored
         let result = "![img](https://example.com/img.png)";
@@ -1831,7 +1825,7 @@ chat = "mock-model"
     fn test_cache_vision_images_malformed_markdown() {
         let config = make_test_config();
         let provider = Box::new(MockProvider::new(vec![]));
-        let mut harness = AgentHarness::new(config, provider, None);
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
 
         harness.cache_vision_images("room1", "not a markdown tag at all");
         harness.cache_vision_images("room1", "![no closing paren(data:image/png;base64,AAA");
@@ -1848,7 +1842,7 @@ chat = "mock-model"
     fn test_inject_vision_images_injects_message() {
         let config = make_test_config();
         let provider = Box::new(MockProvider::new(vec![]));
-        let mut harness = AgentHarness::new(config, provider, None);
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
 
         // Pre-populate the pool
         harness.image_pool.insert(
@@ -1884,7 +1878,7 @@ chat = "mock-model"
     fn test_inject_vision_images_drains_pool() {
         let config = make_test_config();
         let provider = Box::new(MockProvider::new(vec![]));
-        let mut harness = AgentHarness::new(config, provider, None);
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
 
         harness.image_pool.insert(
             "room1".into(),
@@ -1905,7 +1899,7 @@ chat = "mock-model"
     fn test_inject_vision_images_empty_pool_noop() {
         let config = make_test_config();
         let provider = Box::new(MockProvider::new(vec![]));
-        let mut harness = AgentHarness::new(config, provider, None);
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
 
         let mut messages: Vec<ChatMessage> = vec![ChatMessage::user("hello")];
         harness.inject_vision_images("room1", &mut messages);
@@ -1919,7 +1913,7 @@ chat = "mock-model"
     fn test_inject_vision_images_numbered_labels() {
         let config = make_test_config();
         let provider = Box::new(MockProvider::new(vec![]));
-        let mut harness = AgentHarness::new(config, provider, None);
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
 
         harness.image_pool.insert(
             "room1".into(),
@@ -1950,7 +1944,7 @@ chat = "mock-model"
     async fn test_truncate_and_summarize_below_limit() {
         let config = make_test_config();
         let provider = Box::new(MockProvider::new(vec![]));
-        let harness = AgentHarness::new(config, provider, None);
+        let harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
 
         let messages = vec![
             ChatMessage::system("You are a helpful assistant."),
@@ -1979,7 +1973,7 @@ chat = "mock-model"
             reasoning_content: None,
             usage: None,
         }]));
-        let harness = AgentHarness::new(config, provider, None);
+        let harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
 
         let messages: Vec<ChatMessage> = (0..10)
             .map(|i| {
@@ -2013,7 +2007,7 @@ chat = "mock-model"
             reasoning_content: None,
             usage: None,
         }]));
-        let harness = AgentHarness::new(config, provider, None);
+        let harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
 
         let system_msg = ChatMessage::system("You are a helpful assistant.");
         let mut messages: Vec<ChatMessage> = vec![system_msg.clone()];
@@ -2042,7 +2036,7 @@ chat = "mock-model"
             reasoning_content: None,
             usage: None,
         }]));
-        let harness = AgentHarness::new(config, provider, None);
+        let harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
 
         let last_user = ChatMessage::user("LAST user message to keep");
         let last_assistant = ChatMessage::assistant("LAST assistant message to keep");
@@ -2081,7 +2075,7 @@ chat = "mock-model"
             usage: None,
         }]));
 
-        let mut harness = AgentHarness::new(config, provider, None);
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
         harness
             .process_message("room1", "general", "", false, "user", "Hi", &[])
             .await
@@ -2106,7 +2100,7 @@ chat = "mock-model"
             usage: None,
         }]));
 
-        let mut harness = AgentHarness::new(config, provider, None);
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
         harness
             .process_message("room1", "general", "", false, "user", "Hi", &[])
             .await

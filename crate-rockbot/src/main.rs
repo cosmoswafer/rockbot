@@ -8,6 +8,7 @@ use tracing_subscriber::EnvFilter;
 
 use rockbot::config::AppConfig;
 use rockbot::harness::AgentHarness;
+use rockbot::image_cache::ImageCache;
 use rockbot::provider::{AiProvider, DeepSeekProvider, FalAiProvider, ImageProvider, OpenRouterImageProvider, OpenRouterProvider};
 use rockbot::tool::ToolRegistry;
 use rockbot::tools::{
@@ -111,7 +112,8 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
         .map(|t| t.api_key.clone())
         .unwrap_or_default();
 
-    let mut harness = AgentHarness::new(config, provider, webdav.clone());
+    let image_cache = Arc::new(ImageCache::new());
+    let mut harness = AgentHarness::new(config, provider, webdav.clone(), image_cache.clone());
 
     let mut tool_registry = ToolRegistry::new();
     let has_exa = !exa_key.is_empty();
@@ -235,6 +237,7 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                         default_output_format.to_string(),
                         default_num_images,
                         webdav_client.clone(),
+                        image_cache.clone(),
                     )));
                 } else {
                     warn!("image_gen tool not registered — failed to create edit provider for '{}'", resolved_edit);
