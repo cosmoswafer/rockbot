@@ -75,10 +75,29 @@ impl WebDavClient {
     }
 
     pub async fn create_nextcloud_share_link(&self, file_path: &str) -> Option<String> {
+        let server_root = match url::Url::parse(&self.base_url) {
+            Ok(parsed) => format!("{}://{}", parsed.scheme(), parsed.host_str()?),
+            Err(_) => {
+                // Fallback: extract scheme+host from string
+                if let Some(pos) = self.base_url.find("://") {
+                    let after_scheme = &self.base_url[pos + 3..];
+                    if let Some(host_end) = after_scheme.find('/') {
+                        format!("{}://{}", &self.base_url[..pos], &after_scheme[..host_end])
+                    } else {
+                        tracing::warn!("Cannot parse base_url for OCS endpoint");
+                        return None;
+                    }
+                } else {
+                    tracing::warn!("Cannot parse base_url for OCS endpoint");
+                    return None;
+                }
+            }
+        };
         let share_url = format!(
-            "{}ocs/v2.php/apps/files_sharing/api/v1/shares",
-            self.base_url.trim_end_matches('/')
+            "{}/ocs/v2.php/apps/files_sharing/api/v1/shares",
+            server_root.trim_end_matches('/')
         );
+        let ocs_path = file_path.trim_start_matches('/');
         let expire_date = {
             let now = time::OffsetDateTime::now_utc();
             let seven_days = now + time::Duration::days(7);
@@ -90,7 +109,7 @@ impl WebDavClient {
         let body = format!(
             "path={}&shareType=3&permissions=1&expireDate={}",
             percent_encoding::percent_encode(
-                file_path.as_bytes(),
+                ocs_path.as_bytes(),
                 percent_encoding::NON_ALPHANUMERIC
             ),
             expire_date
