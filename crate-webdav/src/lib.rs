@@ -11,4 +11,4 @@ pub use client::WebDavClient;
 pub use config::WebDavConfig;
 pub use error::{Result, WebDavError};
 pub use path::WebDavPath;
-pub use types::{CaldavEvent, CaldavTodo, Reminder, WebDavEntry};
+pub use types::{CaldavEvent, CaldavTodo, NonEmptyString, Reminder, ReminderAction, ReminderTrigger, WebDavEntry};

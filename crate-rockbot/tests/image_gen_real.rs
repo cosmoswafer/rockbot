@@ -214,10 +214,10 @@ async fn test_image_gen_real_text_to_image() {
             let cached = image_cache.take("test-call-id-001");
             assert!(cached.is_some(), "Image should be in ImageCache for key test-call-id-001");
             let cached = cached.unwrap();
-            assert_eq!(cached.webdav_path, webdav_path);
+            assert_eq!(cached.webdav_path.as_str(), webdav_path);
             assert!(!cached.image_bytes.is_empty(), "Cached image bytes should not be empty");
             eprintln!("  cached bytes: {}", cached.image_bytes.len());
-            eprintln!("  cached mime:  {}", cached.mime_type);
+            eprintln!("  cached mime:  {}", cached.mime_type.as_str());
 
             // 8. Verify the image exists on WebDAV
             let exists = webdav
@@ -244,7 +244,7 @@ async fn test_image_gen_real_text_to_image() {
             eprintln!("image_key format (verify DFD):        {}", parsed["image_key"]);
             eprintln!("Share URL presence (verify DFD §2j):  {}", parsed.get("share_url").is_some());
             eprintln!("Image bytes size (cached):            {} bytes", cached.image_bytes.len());
-            eprintln!("MIME type (cached):                   {}", cached.mime_type);
+            eprintln!("MIME type (cached):                   {}", cached.mime_type.as_str());
             eprintln!("Total elapsed:                        {:.2?}", elapsed);
         }
         Err(e) => {

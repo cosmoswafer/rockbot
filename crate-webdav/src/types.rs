@@ -1,4 +1,17 @@
+use nutype::nutype;
 use serde::{Deserialize, Deserializer};
+
+#[nutype(
+    validate(predicate = |s| !s.is_empty() && s.len() <= 64),
+    derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Deref)
+)]
+pub struct ReminderAction(String);
+
+#[nutype(
+    validate(not_empty),
+    derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Deref)
+)]
+pub struct ReminderTrigger(String);
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct WebDavEntry {
@@ -112,15 +125,15 @@ pub struct CaldavEvent {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Reminder {
-    pub action: String,
-    pub trigger: String,
+    pub action: ReminderAction,
+    pub trigger: ReminderTrigger,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CaldavTodo {
-    pub uid: String,
+    pub uid: NonEmptyString,
     pub href: String,
-    pub summary: String,
+    pub summary: NonEmptyString,
     pub description: Option<String>,
     pub priority: Option<u8>,
     pub status: String,
@@ -128,3 +141,9 @@ pub struct CaldavTodo {
     pub completed: Option<String>,
     pub created: String,
 }
+
+#[nutype(
+    validate(not_empty),
+    derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Deref)
+)]
+pub struct NonEmptyString(String);

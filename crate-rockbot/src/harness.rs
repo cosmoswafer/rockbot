@@ -1568,6 +1568,7 @@ mod tests {
     use super::*;
     use crate::error::RockBotError;
     use crate::image_cache::GeneratedImage;
+    use crate::validated::NonEmptyString;
     use crate::provider::AiProvider;
     use crate::types::{CompletionResult, ContentPart, FinishReason, MessageContent, ToolCall};
     use async_trait::async_trait;
@@ -1820,16 +1821,16 @@ chat = "mock-model"
         let provider = Box::new(MockProvider::new(vec![]));
         let cache = Arc::new(ImageCache::new());
         cache.store("call_test", GeneratedImage {
-            webdav_path: "/r-test/images/img.png".into(),
+            webdav_path: NonEmptyString::try_new("/r-test/images/img.png".to_string()).unwrap(),
             image_bytes: vec![1, 2, 3],
-            mime_type: "image/png".into(),
+            mime_type: NonEmptyString::try_new("image/png".to_string()).unwrap(),
             share_url: Some("https://example.com/s/abc/download".into()),
         });
         let harness = AgentHarness::new(config, provider, None, cache.clone());
         let img = harness.take_image("call_test");
         assert!(img.is_some());
         let img = img.unwrap();
-        assert_eq!(img.webdav_path, "/r-test/images/img.png");
+        assert_eq!(img.webdav_path.as_str(), "/r-test/images/img.png");
         assert_eq!(img.share_url.unwrap(), "https://example.com/s/abc/download");
         // Should be consumed
         assert!(harness.take_image("call_test").is_none());
@@ -1842,9 +1843,9 @@ chat = "mock-model"
         let cache = Arc::new(ImageCache::new());
         // Image with no share_url (simulating failed share creation)
         cache.store("call_no_share", GeneratedImage {
-            webdav_path: "/r-test/img.png".into(),
+            webdav_path: NonEmptyString::try_new("/r-test/img.png".to_string()).unwrap(),
             image_bytes: vec![1, 2, 3],
-            mime_type: "image/png".into(),
+            mime_type: NonEmptyString::try_new("image/png".to_string()).unwrap(),
             share_url: None,
         });
         let harness = AgentHarness::new(config, provider, None, cache);

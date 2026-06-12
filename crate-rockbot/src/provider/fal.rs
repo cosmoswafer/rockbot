@@ -3,11 +3,12 @@ use crate::config::ProviderConfig;
 use crate::error::{Result, RockBotError};
 #[allow(unused_imports)]
 use crate::types::{ImageGenParams, ImageSizeValue};
+use crate::validated::NonEmptyString;
 
 struct SubmittedRequest {
-    request_id: String,
-    status_url: String,
-    response_url: String,
+    request_id: NonEmptyString,
+    status_url: NonEmptyString,
+    response_url: NonEmptyString,
 }
 
 pub struct FalAiProvider {
@@ -157,9 +158,9 @@ impl FalAiProvider {
 
         debug!("fal.ai request submitted: request_id={} status_url={}", request_id, status_url);
         Ok(SubmittedRequest {
-            request_id,
-            status_url,
-            response_url,
+            request_id: NonEmptyString::try_new(request_id).expect("request_id must be non-empty"),
+            status_url: NonEmptyString::try_new(status_url).expect("status_url must be non-empty"),
+            response_url: NonEmptyString::try_new(response_url).expect("response_url must be non-empty"),
         })
     }
 
@@ -171,7 +172,7 @@ impl FalAiProvider {
         for attempt in 0..max_attempts {
             let response = self
                 .http_client
-                .get(&req.status_url)
+                .get(req.status_url.as_str())
                 .header("Authorization", format!("Key {}", self.api_key))
                 .send()
                 .await?;
@@ -186,7 +187,7 @@ impl FalAiProvider {
                     .unwrap_or("Unknown error");
                 warn!(
                     "fal.ai poll HTTP {}: request_id={} detail={}",
-                    http_status.as_u16(), req.request_id, detail
+                    http_status.as_u16(), req.request_id.as_str(), detail
                 );
                 return Err(RockBotError::Provider(format!(
                     "fal.ai poll failed (HTTP {}): {}",
@@ -202,7 +203,7 @@ impl FalAiProvider {
             if attempt % 5 == 0 {
                 debug!(
                     "fal.ai poll progress: request_id={} attempt={}/{} status={}",
-                    req.request_id, attempt, max_attempts, status
+                    req.request_id.as_str(), attempt, max_attempts, status
                 );
             }
 
@@ -210,7 +211,7 @@ impl FalAiProvider {
                 "COMPLETED" => {
                     info!(
                         "fal.ai request completed: request_id={} attempts={} elapsed_ms={}",
-                        req.request_id,
+                        req.request_id.as_str(),
                         attempt + 1,
                         poll_start.elapsed().as_millis(),
                     );
@@ -221,7 +222,7 @@ impl FalAiProvider {
                         .get("error")
                         .and_then(|e| e.as_str())
                         .unwrap_or("Unknown error");
-                    warn!("fal.ai request failed: request_id={} error={}", req.request_id, error);
+                    warn!("fal.ai request failed: request_id={} error={}", req.request_id.as_str(), error);
                     return Err(RockBotError::Provider(format!(
                         "fal.ai request failed: {}",
                         error
@@ -233,15 +234,15 @@ impl FalAiProvider {
             }
         }
 
-        warn!("fal.ai request timed out: request_id={}", req.request_id);
+        warn!("fal.ai request timed out: request_id={}", req.request_id.as_str());
         Err(RockBotError::Provider("fal.ai request timed out".into()))
     }
 
     async fn fetch_result(&self, req: &SubmittedRequest) -> Result<String> {
-        debug!("fal.ai fetch_result: request_id={} url={}", req.request_id, req.response_url);
+        debug!("fal.ai fetch_result: request_id={} url={}", req.request_id.as_str(), req.response_url.as_str());
         let response = self
             .http_client
-            .get(&req.response_url)
+                .get(req.response_url.as_str())
             .header("Authorization", format!("Key {}", self.api_key))
             .send()
             .await?;
@@ -256,7 +257,7 @@ impl FalAiProvider {
                 .unwrap_or("Unknown error");
             warn!(
                 "fal.ai fetch_result failed (HTTP {}): request_id={} detail={}",
-                http_status.as_u16(), req.request_id, detail
+                http_status.as_u16(), req.request_id.as_str(), detail
             );
             return Err(RockBotError::Provider(format!(
                 "fal.ai fetch result failed (HTTP {}): {}",

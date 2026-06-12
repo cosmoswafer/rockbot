@@ -3,17 +3,19 @@ use std::sync::Mutex;
 
 use base64::Engine;
 
+use crate::validated::NonEmptyString;
+
 pub struct GeneratedImage {
-    pub webdav_path: String,
+    pub webdav_path: NonEmptyString,
     pub image_bytes: Vec<u8>,
-    pub mime_type: String,
+    pub mime_type: NonEmptyString,
     pub share_url: Option<String>,
 }
 
 impl GeneratedImage {
     pub fn data_uri(&self) -> String {
         let b64 = base64::engine::general_purpose::STANDARD.encode(&self.image_bytes);
-        format!("data:{};base64,{}", self.mime_type, b64)
+        format!("data:{};base64,{}", self.mime_type.as_str(), b64)
     }
 
     pub fn file_extension(&self) -> &str {

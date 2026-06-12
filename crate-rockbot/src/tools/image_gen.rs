@@ -279,9 +279,9 @@ impl Tool for ImageGenTool {
         self.image_cache.store(
             &image_key,
             GeneratedImage {
-                webdav_path: webdav_path.clone(),
+                webdav_path: NonEmptyString::try_new(webdav_path.clone()).expect("non-empty webdav_path"),
                 image_bytes: image_bytes.clone(),
-                mime_type: mime,
+                mime_type: NonEmptyString::try_new(mime).expect("non-empty mime_type"),
                 share_url: share_url.clone(),
             },
         );

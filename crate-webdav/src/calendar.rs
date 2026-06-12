@@ -1,4 +1,4 @@
-use crate::types::{CaldavEvent, CaldavTodo, Reminder};
+use crate::types::{CaldavEvent, CaldavTodo, NonEmptyString, Reminder, ReminderAction, ReminderTrigger};
 
 pub(crate) const CALENDAR_QUERY_EVENT_XML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <C:calendar-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
@@ -129,7 +129,10 @@ fn parse_single_vevent(lines: &[&str], href: &str, etag: &str) -> Option<CaldavE
             let action = ical_value(alarm, "ACTION").unwrap_or_else(|| "DISPLAY".into());
             let trigger = ical_value(alarm, "TRIGGER").unwrap_or_default();
             if !trigger.is_empty() {
-                reminders.push(Reminder { action, trigger });
+                reminders.push(Reminder {
+                    action: ReminderAction::try_new(action).unwrap_or_else(|_| ReminderAction::try_new("DISPLAY".to_string()).unwrap()),
+                    trigger: ReminderTrigger::try_new(trigger).unwrap_or_else(|_| ReminderTrigger::try_new("-PT0M".to_string()).unwrap()),
+                });
             }
             i += end + 1;
         } else {
@@ -165,9 +168,9 @@ fn parse_single_vtodo(lines: &[&str], href: &str) -> Option<CaldavTodo> {
     let created = ical_value(lines, "CREATED").unwrap_or_default();
 
     Some(CaldavTodo {
-        uid,
+        uid: NonEmptyString::try_new(uid).unwrap_or_else(|_| NonEmptyString::try_new("unknown".to_string()).unwrap()),
         href: href.to_string(),
-        summary,
+        summary: NonEmptyString::try_new(summary).unwrap_or_else(|_| NonEmptyString::try_new("Untitled".to_string()).unwrap()),
         description,
         priority,
         status,
@@ -302,8 +305,8 @@ mod tests {
         let events = parse_vevents(ics, "/cal/remind-1.ics", "");
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].reminders.len(), 1);
-        assert_eq!(events[0].reminders[0].action, "DISPLAY");
-        assert_eq!(events[0].reminders[0].trigger, "-PT15M");
+        assert_eq!(events[0].reminders[0].action, ReminderAction::try_new("DISPLAY".to_string()).unwrap());
+        assert_eq!(events[0].reminders[0].trigger, ReminderTrigger::try_new("-PT15M".to_string()).unwrap());
     }
 
     #[test]
@@ -311,8 +314,8 @@ mod tests {
         let ics = "BEGIN:VCALENDAR\r\nBEGIN:VTODO\r\nUID:todo-1\r\nSUMMARY:Buy groceries\r\nPRIORITY:5\r\nSTATUS:NEEDS-ACTION\r\nDUE:20260620T120000Z\r\nEND:VTODO\r\nEND:VCALENDAR\r\n";
         let todos = parse_vtodos(ics, "/cal/todo-1.ics");
         assert_eq!(todos.len(), 1);
-        assert_eq!(todos[0].uid, "todo-1");
-        assert_eq!(todos[0].summary, "Buy groceries");
+        assert_eq!(todos[0].uid, NonEmptyString::try_new("todo-1".to_string()).unwrap());
+        assert_eq!(todos[0].summary, NonEmptyString::try_new("Buy groceries".to_string()).unwrap());
         assert_eq!(todos[0].priority, Some(5));
         assert_eq!(todos[0].status, "NEEDS-ACTION");
     }
@@ -338,8 +341,8 @@ mod tests {
     #[test]
     fn test_build_vevent_ics_with_reminder() {
         let reminders = vec![Reminder {
-            action: "DISPLAY".into(),
-            trigger: "-PT15M".into(),
+            action: ReminderAction::try_new("DISPLAY".to_string()).unwrap(),
+            trigger: ReminderTrigger::try_new("-PT15M".to_string()).unwrap(),
         }];
         let ics = build_vevent_ics(
             "evt-2",

@@ -4,7 +4,7 @@ use std::sync::Mutex;
 use async_trait::async_trait;
 use serde::Deserialize;
 use tracing::{debug, warn};
-use webdav::{CaldavEvent, CaldavTodo, Reminder, WebDavClient, WebDavConfig, build_vevent_ics, quick_uid};
+use webdav::{CaldavEvent, CaldavTodo, Reminder, ReminderAction, ReminderTrigger, WebDavClient, WebDavConfig, build_vevent_ics, quick_uid};
 
 use crate::error::{Result, RockBotError};
 use crate::tool::Tool;
@@ -127,7 +127,7 @@ impl CalendarTool {
         for r in &event.reminders {
             out.push_str(&format!(
                 "  Reminder: {} {}\n",
-                r.action, r.trigger
+                r.action.as_str(), r.trigger.as_str()
             ));
         }
         out
@@ -136,7 +136,7 @@ impl CalendarTool {
     fn format_todo(todo: &CaldavTodo) -> String {
         let mut out = format!(
             "Todo: {}\n  UID: {}\n  Status: {}\n",
-            todo.summary, todo.uid, todo.status
+            todo.summary.as_str(), todo.uid.as_str(), todo.status
         );
         if let Some(ref desc) = todo.description {
             if !desc.is_empty() {
@@ -172,8 +172,8 @@ fn build_ics_for_event(params: &CalendarParams, uid: &str) -> Result<String> {
     let reminders = params
         .reminder_minutes
         .map(|mins| vec![Reminder {
-            action: "DISPLAY".into(),
-            trigger: format!("-PT{}M", mins),
+            action: ReminderAction::try_new("DISPLAY".to_string()).expect("DISPLAY is a valid reminder action"),
+            trigger: ReminderTrigger::try_new(format!("-PT{}M", mins)).expect("reminder trigger format is valid"),
         }])
         .unwrap_or_default();
 
@@ -199,8 +199,8 @@ fn build_ics_for_update(params: &CalendarParams, uid: &str, existing: &CaldavEve
 
     let reminders = if params.reminder_minutes.is_some() {
         params.reminder_minutes.map(|mins| vec![Reminder {
-            action: "DISPLAY".into(),
-            trigger: format!("-PT{}M", mins),
+            action: ReminderAction::try_new("DISPLAY".to_string()).expect("DISPLAY is a valid reminder action"),
+            trigger: ReminderTrigger::try_new(format!("-PT{}M", mins)).expect("reminder trigger format is valid"),
         }]).unwrap_or_default()
     } else {
         existing.reminders.clone()
