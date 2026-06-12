@@ -103,18 +103,6 @@ impl HttpMethod {
             _ => None,
         }
     }
-
-    fn as_str(&self) -> &str {
-        match self {
-            Self::Get => "GET",
-            Self::Post => "POST",
-            Self::Put => "PUT",
-            Self::Patch => "PATCH",
-            Self::Delete => "DELETE",
-            Self::Head => "HEAD",
-            Self::Options => "OPTIONS",
-        }
-    }
 }
 
 fn parse_headers(headers_val: Option<&Value>) -> Option<HeaderMap> {

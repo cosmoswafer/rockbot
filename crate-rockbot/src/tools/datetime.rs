@@ -65,7 +65,8 @@ fn weekday_name(days: i64) -> &'static str {
         "Thursday", "Friday", "Saturday",
         "Sunday", "Monday", "Tuesday", "Wednesday",
     ];
-    WEEKDAYS[((days + 4) % 7) as usize]
+    let idx = ((days % 7) + 7) % 7;
+    WEEKDAYS[idx as usize]
 }
 
 fn weekday_index(days: i64) -> i64 {

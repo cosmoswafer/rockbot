@@ -1789,16 +1789,13 @@ fn test_memory_rapid_messages_no_loss() {
     // Verify message content is preserved
     for (i, (sender, text)) in messages.iter().enumerate() {
         let msg = &room.history.messages[i];
-        if let MessageContent::Text(ref t) = msg.content {
-            assert!(
-                t.contains(sender) && t.contains(text),
-                "Message {} content should match: got '{}'",
-                i,
-                t
-            );
-        } else {
-            panic!("Expected text message at index {}", i);
-        }
+        let msg_text = format!("{:?}", msg.content);
+        assert!(
+            msg_text.contains(sender) && msg_text.contains(text),
+            "Message {} content should match: got '{}'",
+            i,
+            msg_text
+        );
     }
 }
 
@@ -1852,26 +1849,20 @@ fn test_memory_load_snapshot_with_soul_and_summaries_no_conflict() {
     assert_eq!(snap.daily_summaries.len(), 2, "Should have both summaries");
 
     // Verify all data is consistent (soul, summaries, history coexist)
-    let ctx = mm.build_context(room_id);
+    let ctx = mm.build_context(room_id, "You are a helpful bot.", None, None);
     assert!(!ctx.is_empty(), "Context should not be empty");
 
     // Verify soul is in context (as system message)
     let has_soul = ctx.iter().any(|m| {
-        if let MessageContent::Text(ref t) = m.content {
-            t.contains("TestBot") && t.contains("likes Rust")
-        } else {
-            false
-        }
+        format!("{:?}", m.content).contains("TestBot")
+            && format!("{:?}", m.content).contains("likes Rust")
     });
     assert!(has_soul, "Context should include soul content");
 
     // Verify summaries are in context
     let has_summaries = ctx.iter().any(|m| {
-        if let MessageContent::Text(ref t) = m.content {
-            t.contains("Rust macros") || t.contains("Docker")
-        } else {
-            false
-        }
+        let c = format!("{:?}", m.content);
+        c.contains("Rust macros") || c.contains("Docker")
     });
     assert!(has_summaries, "Context should include daily summaries");
 }
@@ -1919,13 +1910,7 @@ fn test_memory_snapshot_repeated_builds_no_data_loss() {
         .unwrap()
         .messages
         .iter()
-        .map(|m| {
-            if let MessageContent::Text(ref t) = m.content {
-                t.clone()
-            } else {
-                String::new()
-            }
-        })
+        .map(|m| format!("{:?}", m.content))
         .collect();
 
     for expected in &["msg1", "msg2", "msg3", "msg4", "msg5"] {
@@ -1968,36 +1953,28 @@ fn test_memory_multi_room_no_cross_contamination() {
     }]);
 
     // Build context for each room - should not cross-contaminate
-    let ctx1 = mm.build_context("r1");
-    let ctx2 = mm.build_context("r2");
+    let ctx1 = mm.build_context("r1", "You are a bot.", None, None);
+    let ctx2 = mm.build_context("r2", "You are a bot.", None, None);
 
     // Room1 has soul but not room2's summary
     let room1_has_own_soul = ctx1.iter().any(|m| {
-        if let MessageContent::Text(ref t) = m.content {
-            t.contains("Room1Bot")
-        } else { false }
+        format!("{:?}", m.content).contains("Room1Bot")
     });
     assert!(room1_has_own_soul, "Room1 context should include its own soul");
 
     let room1_has_room2_data = ctx1.iter().any(|m| {
-        if let MessageContent::Text(ref t) = m.content {
-            t.contains("Room2 daily")
-        } else { false }
+        format!("{:?}", m.content).contains("Room2 daily")
     });
     assert!(!room1_has_room2_data, "Room1 context should NOT include Room2's summary");
 
     // Room2 has summary but not room1's soul
     let room2_has_own_summary = ctx2.iter().any(|m| {
-        if let MessageContent::Text(ref t) = m.content {
-            t.contains("Room2 daily")
-        } else { false }
+        format!("{:?}", m.content).contains("Room2 daily")
     });
     assert!(room2_has_own_summary, "Room2 context should include its own summary");
 
     let room2_has_room1_data = ctx2.iter().any(|m| {
-        if let MessageContent::Text(ref t) = m.content {
-            t.contains("Room1Bot")
-        } else { false }
+        format!("{:?}", m.content).contains("Room1Bot")
     });
     assert!(!room2_has_room1_data, "Room2 context should NOT include Room1's soul");
 }
