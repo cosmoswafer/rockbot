@@ -69,7 +69,9 @@ development flow follows the DFD Dev Flow defined in the
 
 Design or update the DFD so it accurately models the desired data movement.
 Follow the "multiple small happy flows + Level 2 detail diagrams" composition
-pattern. Use data-structure coupling for cross-DFD links.
+pattern. Use data-structure coupling for cross-DFD links. DFDs must document
+all testable details — regex patterns, type constraints, format templates,
+and error conditions — so Phase 4 can verify every assertion.
 
 ### Phase 2 — Real integration test (data collection)
 
@@ -86,13 +88,19 @@ incremental, type-first implementation.
 
 ### Phase 4 — Comprehensive test suite
 
-Build and run the three test layers until every test passes:
+Build and run the three test layers until every test passes. **Every DFD's
+processes, data structures, regex patterns, type constraints, and cross-DFD
+links must have explicit test coverage.** No DFD detail should be left untested.
 
 | Layer | Name | Description |
 | ----- | ---- | ----------- |
-| **Core** | Core test suite | Per-DFD, fine-grained tests against a single diagram's processes and data structures — analogous to unit tests. Each DFD gets its own core tests. |
-| **User** | User test suite | Tests driven by a user story, exceptional event, or end-to-end scenario — analogous to system/integration tests. Verifies multiple DFDs work together to satisfy a real usage narrative. |
-| **Real** | Real test suite | Real integration tests against live resources or servers (no mocking). Usually `#[ignore]`-ed and run only on explicit request. Used to collect real-world data for reference during development or debugging. |
+| **Core** | Core test suite | Per-DFD, fine-grained tests against a single diagram's processes, data structures, regexes, format templates, and edge cases. Every DFD gets its own core tests covering: happy path, error/fallback, boundary conditions, "parse-don't-validate" type parsing, and known regex patterns. These are analogous to unit tests. |
+| **User** | User test suite | Tests driven by a user story, exceptional event, or end-to-end scenario — analogous to system/integration tests. Verifies multiple DFDs work together to satisfy a real usage narrative. Must cover cross-DFD couplings (e.g. edit_soul → memory → rocketchat-rest). |
+| **Real** | Real test suite | Real integration tests against live resources or servers (no mocking). Usually `#[ignore]`-ed and run only on explicit request. Used to collect real-world data for reference during development or debugging. Regex patterns, format strings, and data shapes in these tests MUST match the production code exactly. |
+
+After all three layers pass, perform a **coverage gap analysis**: compare each
+DFD's documented structures, regexes, and formats against the test suite. Add
+missing tests before proceeding to Phase 5.
 
 ### Phase 5 — Review all DFDs
 

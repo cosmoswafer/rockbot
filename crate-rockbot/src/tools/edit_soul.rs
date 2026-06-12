@@ -97,7 +97,11 @@ mod tests {
         let webdav = webdav::WebDavClient::new("https://example.com", "user", "pass").unwrap();
         let tool = EditSoulTool::new(webdav);
         assert_eq!(tool.name(), "edit_soul");
-        assert!(tool.description().contains("soul memory"));
+        let desc = tool.description();
+        assert!(desc.contains("soul memory"));
+        assert!(desc.contains("flat enumeration list"));
+        assert!(desc.contains("- My name is"));
+        assert!(!desc.contains("## Identity"), "Description must not reference old format");
 
         let params = tool.parameters();
         assert_eq!(params["type"], "object");

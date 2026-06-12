@@ -1760,6 +1760,30 @@ chat = "mock-model"
     }
 
     #[test]
+    fn test_system_prompt_contains_soul_template() {
+        let config = make_test_config();
+        let provider = Box::new(MockProvider::new(vec![]));
+        let harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
+        let prompt = harness.build_system_prompt();
+        assert!(
+            prompt.contains("flat enumeration list"),
+            "Prompt must describe flat enumeration list format"
+        );
+        assert!(
+            prompt.contains("- My name is"),
+            "Prompt must contain the flat bullet template"
+        );
+        assert!(
+            prompt.contains(r"My name is (.+)"),
+            "Prompt must document the name extraction regex"
+        );
+        assert!(
+            !prompt.contains("## Identity"),
+            "Prompt must not reference old ## Identity format"
+        );
+    }
+
+    #[test]
     fn test_last_image_ids_empty_by_default() {
         let config = make_test_config();
         let provider = Box::new(MockProvider::new(vec![]));
