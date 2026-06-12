@@ -27,14 +27,32 @@ DFD must be:
   repeat the same data structure or flow in multiple DFDs; reference the
   original document instead
 
-## DFD-Driven Development Workflow
+## DFD-Driven Development Workflow ("DFD Dev Flow")
 
-1. **DFD + verification tests** — design the DFD, then write throwaway tests
-   (`#[ignore]` or scripts in `./tmp/`) against real dependencies to capture
-   actual data shapes and edge cases. Don't touch production code yet.
-2. **Implement per DFD** — for each DFD: read → review implementation against
-   it → code in order (types → core → wiring) → deep review → add tests →
-   `cargo test`. Finish one before starting the next.
+The DFD development process is complemented by a **comprehensive three-part test
+suite**. Together they form the following iterative workflow:
+
+1. **Revise DFD** — design or update the DFD so it accurately models the
+   desired data movement. Keep it at the correct level; use the notation and
+   structure rules above.
+2. **Real integration test (data collection)** — write a real integration test
+   (no mocking; targets a live server, API, or resource) and run it to collect
+   actual data shapes and verify the DFD flows work end-to-end against reality.
+   Use this data as reference for the implementation phase.
+3. **Concrete implementation** — code the types, core logic, and wiring
+   described by the DFD. Favour incremental, type-first implementation.
+4. **Comprehensive test suite** — build and run the three test layers until
+   every test passes:
+
+   | Layer | Name | Description |
+   | ----- | ---- | ----------- |
+   | **Core** | Core test suite | Per-DFD, fine-grained tests against a single diagram's processes and data structures — analogous to unit tests. Each DFD gets its own core tests. |
+   | **User** | User test suite | Tests driven by a user story, exceptional event, or end-to-end scenario — analogous to system/integration tests. Verifies multiple DFDs work together to satisfy a real usage narrative. |
+   | **Real** | Real test suite | Real integration tests against live resources or servers (no mocking). Usually `#[ignore]`-ed and run only on explicit request. Used to collect real-world data for reference during development or debugging. |
+
+5. **Review all DFDs** — once the implementation and test suite are stable,
+   re-read every DFD in the project and confirm it still matches the code.
+   Update any DFD that has drifted.
 
 ## Notation
 
