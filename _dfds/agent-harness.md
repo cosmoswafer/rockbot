@@ -111,8 +111,8 @@ flowchart TD
     LIMIT(CheckIterationLimit)
     TRUNC(TruncateAndSummarize)
     CTX_ERR{ContextLength<br/>Exceeded?}
-    STRIP_COMPRESS(CompressHistoryForRetry<br/>strip all images)
-    REBUILD(RebuildContext<br/>÷4 byte limit)
+    STRIP_COMPRESS(CompressHistoryForRetry<br/>strip images + prune to 6 msgs)
+    REBUILD(HardTruncate<br/>keep system prefix + last 2 msgs)
     REPLY_OUT[BotReply]
 
     CTX -->|"chat request"| AI
@@ -378,7 +378,7 @@ flowchart TD
     AI[AiProvider]
     CHECK{ContextLengthExceeded?}
     COMPRESS["CompressHistoryForRetry<br/>(strip images + prune to 6 msgs)"]
-    REBUILD["RebuildContext<br/>(last 4 msgs + ÷16 byte limit)"]
+    REBUILD["HardTruncate<br/>(keep system prefix + last 2 msgs)"]
     RETRY["Retry LLM Call"]
     FALLBACK["SendErrorFallback<br/>(already compressed once)"]
     REPLY[BotReply]
@@ -394,17 +394,14 @@ flowchart TD
 ```
 
 **Aggressive compression** (`compress_history_for_retry`): 
-1. Strips all `ContentPart::ImageUrl` parts from every message in the room's
-   conversation history, converting them to `[image]` text placeholders
+1. Strips all `ContentPart::ImageUrl` parts from every message except the last
+   one, converting them to `[image]` text placeholders
 2. Prunes chat history to the last 6 messages to reduce text token load
 
-Then rebuilds context with `max_history: Some(4)` (4 most recent messages
-plus system prompt) and runs `truncate_and_summarize` with
-`max_context_bytes / 16` byte limit for an extra safety margin.
-
-This covers both the image-stripping and text-pruning dimensions —
-prior versions that only stripped images failed when the overflow was
-caused by excessive text messages (no images to strip).
+Then rebuilds context with `max_history: Some(4)` and applies **hard truncation**
+(no LLM summarization — that call would also exceed context if it included the
+oversized text): keep system/front-matter messages at the front, and only the
+last 2 conversation messages at the end to guarantee token fit.
 
 **Retry limit**: compression is attempted at most once per call. If the
 provider still returns `ContextLengthExceeded` after compression, the

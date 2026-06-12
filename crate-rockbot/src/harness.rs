@@ -456,15 +456,29 @@ impl AgentHarness {
                             );
                             self.compress_history_for_retry(room_id);
                             context_compressed = true;
-                            // Rebuild with minimal history (last 4 messages only)
-                            // and aggressive byte limit to ensure token fit.
+                            // Rebuild with minimal history then hard-truncate
+                            // (no LLM summarization — that call would also hit
+                            // the context limit if we include the oversized text).
                             messages = self
                                 .memory
                                 .build_context(room_id, &system_prompt, Some(4), None);
                             self.inject_vision_images(room_id, &mut messages);
-                            let max_ctx =
-                                (self.config.rocketchat.model.max_context_bytes as u64) / 16;
-                            messages = self.truncate_and_summarize(room_id, messages, max_ctx).await;
+                            // Hard truncation: keep system/front-matter messages
+                            // at the start, and only the last 2 conversation
+                            // messages at the end to guarantee token fit.
+                            let system_end = messages
+                                .iter()
+                                .position(|m| m.role != Role::System)
+                                .unwrap_or(1);
+                            let keep_last = 2usize;
+                            if messages.len() > system_end + keep_last {
+                                let drop = messages.len() - system_end - keep_last;
+                                messages.drain(system_end..system_end + drop);
+                            }
+                            debug!(
+                                "Context length retry for room {}: hard-truncated to {} messages",
+                                room_id, messages.len()
+                            );
                             continue;
                         }
                         warn!(
