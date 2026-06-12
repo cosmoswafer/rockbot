@@ -53,7 +53,7 @@ impl CalendarTool {
     pub fn from_config(client: WebDavClient, config: &WebDavConfig) -> Self {
         Self {
             client,
-            server_url: config.url.clone(),
+            server_url: config.url.to_string(),
             dav_path: config.dav_path.clone(),
             username: config.username.clone(),
             room_calendars: Mutex::new(HashMap::new()),

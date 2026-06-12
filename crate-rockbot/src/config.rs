@@ -1,6 +1,9 @@
 use serde::Deserialize;
+use serde_valid::Validate;
 use std::collections::HashMap;
 use webdav::WebDavConfig;
+
+use crate::validated::{BoundedUsize, ConfigUrl, ProviderName};
 
 const DEFAULT_CONFIG_PATH: &str = "default.config.toml";
 
@@ -36,26 +39,26 @@ pub struct ServerConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ModelConfig {
-    pub default_provider: String,
+    pub default_provider: ProviderName,
     pub default_model: String,
     #[serde(default = "default_max_history_size")]
-    pub max_history_size: usize,
+    pub max_history_size: BoundedUsize,
     #[serde(default = "default_max_text_length")]
-    pub max_text_length: usize,
+    pub max_text_length: BoundedUsize,
     #[serde(default = "default_max_iterations")]
     pub max_iterations: u32,
     #[serde(default = "default_summary_days")]
     pub summary_days: u32,
     #[serde(default = "default_max_summary_chars")]
-    pub max_summary_chars: usize,
+    pub max_summary_chars: BoundedUsize,
     #[serde(default = "default_max_soul_chars")]
-    pub max_soul_chars: usize,
+    pub max_soul_chars: BoundedUsize,
     #[serde(default = "default_persist_interval_secs")]
     pub persist_interval_secs: u64,
     #[serde(default = "default_memory_ttl_secs")]
     pub memory_ttl_secs: u64,
     #[serde(default = "default_max_context_bytes")]
-    pub max_context_bytes: usize,
+    pub max_context_bytes: BoundedUsize,
     #[serde(default = "default_max_attachment_bytes")]
     pub max_attachment_bytes: u64,
 }
@@ -63,7 +66,7 @@ pub struct ModelConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ImageModelConfig {
     #[serde(default = "default_image_provider")]
-    pub default_provider: String,
+    pub default_provider: ProviderName,
     #[serde(default = "default_image_text_model")]
     pub default_text_model: String,
     #[serde(default = "default_image_edit_model")]
@@ -80,8 +83,8 @@ pub struct ImageModelConfig {
     pub default_image_size_tier: String,
 }
 
-fn default_image_provider() -> String {
-    "fal".into()
+fn default_image_provider() -> ProviderName {
+    ProviderName::try_new("fal".to_string()).expect("hardcoded default")
 }
 fn default_image_text_model() -> String {
     "seedream".into()
@@ -128,24 +131,24 @@ fn default_max_iterations() -> u32 {
     28
 }
 
-fn default_max_history_size() -> usize {
-    18
+fn default_max_history_size() -> BoundedUsize {
+    BoundedUsize::try_new(18).expect("hardcoded default")
 }
 
-fn default_max_text_length() -> usize {
-    50000
+fn default_max_text_length() -> BoundedUsize {
+    BoundedUsize::try_new(50000).expect("hardcoded default")
 }
 
 fn default_summary_days() -> u32 {
     3
 }
 
-fn default_max_summary_chars() -> usize {
-    8000
+fn default_max_summary_chars() -> BoundedUsize {
+    BoundedUsize::try_new(8000).expect("hardcoded default")
 }
 
-fn default_max_soul_chars() -> usize {
-    2000
+fn default_max_soul_chars() -> BoundedUsize {
+    BoundedUsize::try_new(2000).expect("hardcoded default")
 }
 
 fn default_persist_interval_secs() -> u64 {
@@ -156,24 +159,25 @@ fn default_memory_ttl_secs() -> u64 {
     300
 }
 
-fn default_max_context_bytes() -> usize {
-    4_000_000
+fn default_max_context_bytes() -> BoundedUsize {
+    BoundedUsize::try_new(4_000_000).expect("hardcoded default")
 }
 
 fn default_max_attachment_bytes() -> u64 {
     25_000_000
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Validate)]
 pub struct ToolServiceConfig {
+    #[validate(min_length = 1)]
     pub api_key: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ProviderConfig {
-    pub name: String,
+    pub name: ProviderName,
     pub api_key: String,
-    pub base_url: String,
+    pub base_url: ConfigUrl,
     #[serde(default)]
     pub basecf_url: Option<String>,
     #[serde(default)]
@@ -222,24 +226,24 @@ impl AppConfig {
     }
 
     pub fn validate(&self) -> crate::error::Result<()> {
-        let provider_name = &self.rocketchat.model.default_provider;
+        let provider_name: &str = &self.rocketchat.model.default_provider;
         self.find_chat_provider(provider_name)
-            .ok_or_else(|| crate::error::RockBotError::ProviderNotFound(provider_name.clone()))?;
+            .ok_or_else(|| crate::error::RockBotError::ProviderNotFound(provider_name.to_string()))?;
 
-        let image_provider = &self.image_model.default_provider;
+        let image_provider: &str = &self.image_model.default_provider;
         if !self.image_providers.is_empty() {
             self.find_image_provider(image_provider)
-                .ok_or_else(|| crate::error::RockBotError::ProviderNotFound(image_provider.clone()))?;
+                .ok_or_else(|| crate::error::RockBotError::ProviderNotFound(image_provider.to_string()))?;
         }
         Ok(())
     }
 
     pub fn find_chat_provider(&self, name: &str) -> Option<&ProviderConfig> {
-        self.chat_providers.iter().find(|p| p.name == name)
+        self.chat_providers.iter().find(|p| p.name.as_str() == name)
     }
 
     pub fn find_image_provider(&self, name: &str) -> Option<&ProviderConfig> {
-        self.image_providers.iter().find(|p| p.name == name)
+        self.image_providers.iter().find(|p| p.name.as_str() == name)
     }
 
     pub fn resolve_chat_model(&self, provider_name: &str, model_alias: &str) -> Option<String> {
@@ -300,14 +304,14 @@ fn merge_named_arrays(default: Vec<toml::Value>, user: Vec<toml::Value>) -> toml
 
 impl ProviderConfig {
     pub fn chat_url(&self) -> String {
-        let base = self.base_url.trim_end_matches('/');
+        let base = self.base_url.as_str().trim_end_matches('/');
         let path = self.chat_path.as_deref().unwrap_or("/chat/completions");
         format!("{}{}", base, path)
     }
 
     pub fn validate_api_key(&self) -> crate::error::Result<()> {
         if self.api_key.is_empty() || self.api_key == "EDITME" {
-            return Err(crate::error::RockBotError::MissingApiKey(self.name.clone()));
+            return Err(crate::error::RockBotError::MissingApiKey(self.name.to_string()));
         }
         Ok(())
     }

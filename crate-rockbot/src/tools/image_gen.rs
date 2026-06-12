@@ -306,14 +306,15 @@ impl Tool for ImageGenTool {
 mod tests {
     use super::*;
     use crate::config::ProviderConfig;
+    use crate::validated::{ConfigUrl, ProviderName};
     use serde_json::Value;
     use std::collections::HashMap;
 
     fn make_fal_config() -> ProviderConfig {
         ProviderConfig {
-            name: "fal".into(),
+            name: ProviderName::try_new("fal".to_string()).unwrap(),
             api_key: "test-key".into(),
-            base_url: "https://queue.fal.run".into(),
+            base_url: ConfigUrl::try_new("https://queue.fal.run".to_string()).unwrap(),
             basecf_url: None,
             chat_path: None,
             draw_path: None,

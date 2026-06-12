@@ -21,6 +21,8 @@ webdav = { path = "../crate-webdav" }
 rocketchat = { path = "../crate-rocketchat" }
 base64 = "0.22"
 regex = "1"
+nutype = { version = "0.6", features = ["serde"] }
+serde_valid = "0.18"
 
 [dev-dependencies]
 tokio-test = "0.4"

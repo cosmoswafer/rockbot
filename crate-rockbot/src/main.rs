@@ -67,7 +67,7 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
 
         let provider_config = config
             .find_chat_provider(provider_name)
-            .ok_or_else(|| format!("Provider '{}' not found in config", provider_name))?;
+            .ok_or_else(|| format!("Provider '{}' not found in config", provider_name.as_str()))?;
 
         let resolved_model = config
             .resolve_chat_model(provider_name, model_alias)
@@ -75,7 +75,7 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
 
         info!(
             "Using provider '{}' with model '{}'",
-            provider_name, resolved_model
+            provider_name.as_str(), resolved_model
         );
 
         match provider_name.as_str() {

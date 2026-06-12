@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use rockbot::image_cache::ImageCache;
 use rockbot::tools::ImageGenTool;
+use rockbot::validated::{ConfigUrl, ProviderName};
 use rockbot::ProviderConfig;
 use rockbot::Tool;
 use webdav::WebDavClient;
@@ -54,9 +55,9 @@ fn load_image_provider(name: &str) -> Option<ProviderConfig> {
             }
 
             return Some(ProviderConfig {
-                name: name.into(),
+                name: ProviderName::try_new(name.to_string()).unwrap(),
                 api_key: provider.get("api_key")?.as_str()?.into(),
-                base_url: base_url.into(),
+                base_url: ConfigUrl::try_new(base_url.to_string()).unwrap(),
                 basecf_url: None,
                 chat_path: None,
                 draw_path: None,

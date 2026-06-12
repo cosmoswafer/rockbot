@@ -20,6 +20,8 @@ percent-encoding = "2"
 tracing = "0.1"
 bytes = "1"
 toml = "1.1"
+nutype = { version = "0.6", features = ["serde"] }
+serde_valid = "0.18"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt"] }

@@ -85,14 +85,14 @@ impl AgentHarness {
         webdav: Option<WebDavClient>,
         image_cache: Arc<ImageCache>,
     ) -> Self {
-        let max_chars = config.rocketchat.model.max_text_length;
-        let max_history = config.rocketchat.model.max_history_size;
+        let max_chars = *config.rocketchat.model.max_text_length;
+        let max_history = *config.rocketchat.model.max_history_size;
         let max_iterations = config.rocketchat.model.max_iterations;
-        let max_summary_chars = config.rocketchat.model.max_summary_chars;
+        let max_summary_chars = *config.rocketchat.model.max_summary_chars;
         let summary_days = config.rocketchat.model.summary_days;
-        let max_soul_chars = config.rocketchat.model.max_soul_chars;
+        let max_soul_chars = *config.rocketchat.model.max_soul_chars;
         let persist_interval = config.rocketchat.model.persist_interval_secs;
-        let max_context_bytes = config.rocketchat.model.max_context_bytes;
+        let max_context_bytes = *config.rocketchat.model.max_context_bytes;
         let max_attachment_bytes = config.rocketchat.model.max_attachment_bytes;
         let config = Arc::new(config);
         Self {
@@ -256,7 +256,7 @@ impl AgentHarness {
             .build_context(room_id, &system_prompt, None, None);
         self.inject_vision_images(room_id, &mut messages);
         // Inline context overflow: summarize if approaching byte limit
-        let max_ctx = self.config.rocketchat.model.max_context_bytes as u64;
+        let max_ctx = *self.config.rocketchat.model.max_context_bytes as u64;
         messages = self.truncate_and_summarize(room_id, messages, max_ctx).await;
         strip_orphaned_tool_calls(&mut messages);
         debug!(
@@ -465,7 +465,7 @@ impl AgentHarness {
                             .memory
                             .build_context(room_id, &system_prompt, None, None);
                         self.inject_vision_images(room_id, &mut messages);
-                        let max_ctx = self.config.rocketchat.model.max_context_bytes as u64;
+                        let max_ctx = *self.config.rocketchat.model.max_context_bytes as u64;
                         messages = self.truncate_and_summarize(room_id, messages, max_ctx).await;
                         strip_orphaned_tool_calls(&mut messages);
                         continue;
@@ -597,7 +597,7 @@ impl AgentHarness {
 
     fn build_system_prompt(&self) -> String {
         let name = &self.config.rocketchat.server.username;
-        let max_ctx = self.config.rocketchat.model.max_context_bytes as f64 / 1_000_000.0;
+        let max_ctx = *self.config.rocketchat.model.max_context_bytes as f64 / 1_000_000.0;
         let max_iter = self.config.rocketchat.model.max_iterations;
         DEFAULT_SYSTEM_PROMPT
             .replace("{name}", name)
@@ -608,14 +608,14 @@ impl AgentHarness {
     fn resolve_model(&self) -> String {
         self.config
             .resolve_chat_model(
-                &self.config.rocketchat.model.default_provider,
-                &self.config.rocketchat.model.default_model,
+            self.config.rocketchat.model.default_provider.as_str(),
+            &self.config.rocketchat.model.default_model,
             )
             .unwrap_or_else(|| {
                 warn!(
                     "Model alias '{}' not found for provider '{}', using raw model name",
                     self.config.rocketchat.model.default_model,
-                    self.config.rocketchat.model.default_provider
+                    self.config.rocketchat.model.default_provider.as_str()
                 );
                 self.config.rocketchat.model.default_model.clone()
             })

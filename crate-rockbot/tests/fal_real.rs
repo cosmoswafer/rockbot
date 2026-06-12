@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use rockbot::config::ProviderConfig;
 use rockbot::provider::fal::FalAiProvider;
 use rockbot::types::{ImageGenParams, ImageSizeValue};
+use rockbot::validated::{ConfigUrl, ProviderName};
 
 /// Find the workspace root by walking up from CARGO_MANIFEST_DIR.
 fn workspace_root() -> PathBuf {
@@ -37,9 +38,9 @@ fn load_fal_config() -> ProviderConfig {
                 }
             }
             return ProviderConfig {
-                name: "fal".into(),
+                name: ProviderName::try_new("fal".to_string()).unwrap(),
                 api_key: provider["api_key"].as_str().unwrap_or("").into(),
-                base_url: base_url.into(),
+                base_url: ConfigUrl::try_new(base_url.to_string()).unwrap(),
                 basecf_url: None,
                 chat_path: None,
                 draw_path: None,
@@ -61,7 +62,7 @@ async fn test_fal_image_edit_with_p1() {
         .cloned()
         .unwrap_or_else(|| "openai/gpt-image-2/edit".to_string());
 
-    eprintln!("FAL base_url: {}", fal_cfg.base_url);
+    eprintln!("FAL base_url: {}", fal_cfg.base_url.as_str());
     eprintln!("FAL edit model: {}", edit_model);
     eprintln!("FAL api_key: {}...", &fal_cfg.api_key[..8]);
 

@@ -385,6 +385,7 @@ fn is_context_length_error(msg: &str) -> bool {
 mod tests {
     use super::*;
     use crate::types::{ChatMessage, ThinkingConfig, ToolDef};
+    use crate::validated::{ConfigUrl, ProviderName};
 
     #[test]
     fn test_build_request_body_minimal() {
@@ -613,9 +614,9 @@ mod tests {
     #[test]
     fn test_new_missing_api_key() {
         let config = ProviderConfig {
-            name: "deepseek".into(),
+            name: ProviderName::try_new("deepseek".to_string()).unwrap(),
             api_key: "EDITME".into(),
-            base_url: "https://api.deepseek.com/v1".into(),
+            base_url: ConfigUrl::try_new("https://api.deepseek.com/v1".to_string()).unwrap(),
             basecf_url: None,
             chat_path: None,
             draw_path: None,
@@ -628,9 +629,9 @@ mod tests {
     #[test]
     fn test_new_empty_api_key() {
         let config = ProviderConfig {
-            name: "deepseek".into(),
+            name: ProviderName::try_new("deepseek".to_string()).unwrap(),
             api_key: "".into(),
-            base_url: "https://api.deepseek.com/v1".into(),
+            base_url: ConfigUrl::try_new("https://api.deepseek.com/v1".to_string()).unwrap(),
             basecf_url: None,
             chat_path: None,
             draw_path: None,
@@ -643,9 +644,9 @@ mod tests {
     #[test]
     fn test_chat_url_default() {
         let config = ProviderConfig {
-            name: "deepseek".into(),
+            name: ProviderName::try_new("deepseek".to_string()).unwrap(),
             api_key: "sk-valid".into(),
-            base_url: "https://api.deepseek.com/v1".into(),
+            base_url: ConfigUrl::try_new("https://api.deepseek.com/v1".to_string()).unwrap(),
             basecf_url: None,
             chat_path: None,
             draw_path: None,
@@ -661,9 +662,9 @@ mod tests {
     #[test]
     fn test_chat_url_custom_path() {
         let config = ProviderConfig {
-            name: "custom".into(),
+            name: ProviderName::try_new("custom".to_string()).unwrap(),
             api_key: "sk-valid".into(),
-            base_url: "https://custom.api.com".into(),
+            base_url: ConfigUrl::try_new("https://custom.api.com".to_string()).unwrap(),
             basecf_url: None,
             chat_path: Some("/v2/chat".into()),
             draw_path: None,
@@ -676,9 +677,9 @@ mod tests {
     #[test]
     fn test_provider_name_and_model() {
         let config = ProviderConfig {
-            name: "deepseek".into(),
+            name: ProviderName::try_new("deepseek".to_string()).unwrap(),
             api_key: "sk-valid".into(),
-            base_url: "https://api.deepseek.com/v1".into(),
+            base_url: ConfigUrl::try_new("https://api.deepseek.com/v1".to_string()).unwrap(),
             basecf_url: None,
             chat_path: None,
             draw_path: None,

@@ -4,6 +4,7 @@ pub mod ddp;
 pub mod error;
 pub mod rest;
 pub mod types;
+pub mod validated;
 
 pub use client::{MessageSender, RocketChatClient};
 pub use config::{RocketChatConfig, ServerConfig};

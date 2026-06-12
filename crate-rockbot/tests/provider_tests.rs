@@ -8,6 +8,8 @@ use rockbot::types::{
 
 use std::collections::HashMap;
 
+use rockbot::validated::{ConfigUrl, ProviderName};
+
 // ─── Config Tests ────────────────────────────────────────────────────────────
 
 #[test]
@@ -46,17 +48,17 @@ reasoner = "deepseek-reasoner"
 "#;
     let config = AppConfig::from_toml(toml_content).unwrap();
 
-    assert_eq!(config.rocketchat.model.default_provider, "openrouter");
+    assert_eq!(config.rocketchat.model.default_provider.as_str(), "openrouter");
     assert_eq!(config.rocketchat.model.default_model, "deepseek");
-    assert_eq!(config.rocketchat.model.max_history_size, 12);
-    assert_eq!(config.rocketchat.model.max_text_length, 50000);
+    assert_eq!(*config.rocketchat.model.max_history_size, 12);
+    assert_eq!(*config.rocketchat.model.max_text_length, 50000);
     assert_eq!(config.rocketchat.model.max_iterations, 28); // default
 
     assert_eq!(config.chat_providers.len(), 2);
 
     let openrouter = &config.chat_providers[0];
-    assert_eq!(openrouter.name, "openrouter");
-    assert_eq!(openrouter.base_url, "https://openrouter.ai/api/v1");
+    assert_eq!(openrouter.name.as_str(), "openrouter");
+    assert_eq!(openrouter.base_url.as_str(), "https://openrouter.ai/api/v1");
     assert_eq!(openrouter.chat_path.as_deref(), Some("/chat/completions"));
     assert_eq!(
         openrouter.models.get("deepseek").unwrap(),
@@ -64,8 +66,8 @@ reasoner = "deepseek-reasoner"
     );
 
     let deepseek = &config.chat_providers[1];
-    assert_eq!(deepseek.name, "deepseek");
-    assert_eq!(deepseek.base_url, "https://api.deepseek.com/v1");
+    assert_eq!(deepseek.name.as_str(), "deepseek");
+    assert_eq!(deepseek.base_url.as_str(), "https://api.deepseek.com/v1");
     assert_eq!(deepseek.models.get("chat").unwrap(), "deepseek-chat");
     assert_eq!(
         deepseek.models.get("reasoner").unwrap(),
@@ -351,7 +353,7 @@ max_iterations = 100
     let _ = std::fs::remove_dir_all(&dir);
 
     assert_eq!(config.rocketchat.model.max_iterations, 100);
-    assert_eq!(config.rocketchat.model.default_provider, "p1");
+    assert_eq!(config.rocketchat.model.default_provider.as_str(), "p1");
 }
 
 #[test]
@@ -412,9 +414,9 @@ base_url = "https://user.ai/v1"
 #[test]
 fn test_provider_chat_url_default() {
     let config = ProviderConfig {
-        name: "test".into(),
+        name: ProviderName::try_new("test".to_string()).unwrap(),
         api_key: "sk-test".into(),
-        base_url: "https://api.example.com".into(),
+        base_url: ConfigUrl::try_new("https://api.example.com".to_string()).unwrap(),
         basecf_url: None,
         chat_path: None,
         draw_path: None,
@@ -429,9 +431,9 @@ fn test_provider_chat_url_default() {
 #[test]
 fn test_provider_chat_url_custom() {
     let config = ProviderConfig {
-        name: "test".into(),
+        name: ProviderName::try_new("test".to_string()).unwrap(),
         api_key: "sk-test".into(),
-        base_url: "https://api.example.com/v1".into(),
+        base_url: ConfigUrl::try_new("https://api.example.com/v1".to_string()).unwrap(),
         basecf_url: None,
         chat_path: Some("/v2/chat".into()),
         draw_path: None,
@@ -443,9 +445,9 @@ fn test_provider_chat_url_custom() {
 #[test]
 fn test_provider_chat_url_trailing_slash() {
     let config = ProviderConfig {
-        name: "test".into(),
+        name: ProviderName::try_new("test".to_string()).unwrap(),
         api_key: "sk-test".into(),
-        base_url: "https://api.example.com/".into(),
+        base_url: ConfigUrl::try_new("https://api.example.com/".to_string()).unwrap(),
         basecf_url: None,
         chat_path: None,
         draw_path: None,
@@ -772,9 +774,9 @@ fn test_deepseek_provider_new_success() {
     models.insert("chat".into(), "deepseek-chat".into());
 
     let config = ProviderConfig {
-        name: "deepseek".into(),
+        name: ProviderName::try_new("deepseek".to_string()).unwrap(),
         api_key: "sk-real-key-123".into(),
-        base_url: "https://api.deepseek.com/v1".into(),
+        base_url: ConfigUrl::try_new("https://api.deepseek.com/v1".to_string()).unwrap(),
         basecf_url: None,
         chat_path: None,
         draw_path: None,
@@ -788,9 +790,9 @@ fn test_deepseek_provider_new_success() {
 #[test]
 fn test_deepseek_provider_with_client() {
     let config = ProviderConfig {
-        name: "deepseek".into(),
+        name: ProviderName::try_new("deepseek".to_string()).unwrap(),
         api_key: "sk-key".into(),
-        base_url: "https://api.deepseek.com/v1".into(),
+        base_url: ConfigUrl::try_new("https://api.deepseek.com/v1".to_string()).unwrap(),
         basecf_url: None,
         chat_path: None,
         draw_path: None,
@@ -804,9 +806,9 @@ fn test_deepseek_provider_with_client() {
 #[test]
 fn test_openrouter_provider_new_success() {
     let config = ProviderConfig {
-        name: "openrouter".into(),
+        name: ProviderName::try_new("openrouter".to_string()).unwrap(),
         api_key: "sk-or-v1-real".into(),
-        base_url: "https://openrouter.ai/api/v1".into(),
+        base_url: ConfigUrl::try_new("https://openrouter.ai/api/v1".to_string()).unwrap(),
         basecf_url: None,
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
@@ -820,9 +822,9 @@ fn test_openrouter_provider_new_success() {
 #[test]
 fn test_deepseek_new_rejects_editme_key() {
     let config = ProviderConfig {
-        name: "deepseek".into(),
+        name: ProviderName::try_new("deepseek".to_string()).unwrap(),
         api_key: "EDITME".into(),
-        base_url: "https://api.deepseek.com/v1".into(),
+        base_url: ConfigUrl::try_new("https://api.deepseek.com/v1".to_string()).unwrap(),
         basecf_url: None,
         chat_path: None,
         draw_path: None,
@@ -839,9 +841,9 @@ fn test_deepseek_new_rejects_editme_key() {
 #[test]
 fn test_openrouter_new_rejects_empty_key() {
     let config = ProviderConfig {
-        name: "openrouter".into(),
+        name: ProviderName::try_new("openrouter".to_string()).unwrap(),
         api_key: "".into(),
-        base_url: "https://openrouter.ai/api/v1".into(),
+        base_url: ConfigUrl::try_new("https://openrouter.ai/api/v1".to_string()).unwrap(),
         basecf_url: None,
         chat_path: None,
         draw_path: None,
@@ -860,9 +862,9 @@ fn test_openrouter_new_rejects_empty_key() {
 #[test]
 fn test_ai_provider_is_object_safe() {
     let config = ProviderConfig {
-        name: "deepseek".into(),
+        name: ProviderName::try_new("deepseek".to_string()).unwrap(),
         api_key: "sk-key".into(),
-        base_url: "https://api.deepseek.com/v1".into(),
+        base_url: ConfigUrl::try_new("https://api.deepseek.com/v1".to_string()).unwrap(),
         basecf_url: None,
         chat_path: None,
         draw_path: None,
@@ -878,9 +880,9 @@ fn test_ai_provider_is_object_safe() {
 #[test]
 fn test_image_provider_is_object_safe() {
     let config = ProviderConfig {
-        name: "fal".into(),
+        name: ProviderName::try_new("fal".to_string()).unwrap(),
         api_key: "fal-key".into(),
-        base_url: "https://queue.fal.run".into(),
+        base_url: ConfigUrl::try_new("https://queue.fal.run".to_string()).unwrap(),
         basecf_url: None,
         chat_path: None,
         draw_path: None,

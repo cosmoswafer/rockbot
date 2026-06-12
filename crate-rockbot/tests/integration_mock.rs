@@ -1,5 +1,6 @@
 use rockbot::config::ProviderConfig;
 use rockbot::error::RockBotError;
+use rockbot::validated::{ConfigUrl, ProviderName};
 use rockbot::provider::{AiProvider, DeepSeekProvider, FalAiProvider, ImageProvider, OpenRouterImageProvider, OpenRouterProvider};
 use rockbot::tool::Tool;
 use rockbot::types::{ChatMessage, ChatRequest, FinishReason, ImageGenParams, ThinkingConfig, ToolDef};
@@ -37,9 +38,9 @@ async fn test_complete_simple_response() {
         .await;
 
     let config = ProviderConfig {
-        name: "deepseek".into(),
+        name: ProviderName::try_new("deepseek".to_string()).unwrap(),
         api_key: "sk-test-key".into(),
-        base_url: mock_server.uri(),
+        base_url: ConfigUrl::try_new(mock_server.uri()).unwrap(),
         basecf_url: None,
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
@@ -93,9 +94,9 @@ async fn test_complete_with_tool_calls() {
         .await;
 
     let config = ProviderConfig {
-        name: "deepseek".into(),
+        name: ProviderName::try_new("deepseek".to_string()).unwrap(),
         api_key: "sk-key".into(),
-        base_url: mock_server.uri(),
+        base_url: ConfigUrl::try_new(mock_server.uri()).unwrap(),
         basecf_url: None,
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
@@ -152,9 +153,9 @@ async fn test_complete_with_reasoning() {
         .await;
 
     let config = ProviderConfig {
-        name: "deepseek".into(),
+        name: ProviderName::try_new("deepseek".to_string()).unwrap(),
         api_key: "sk-key".into(),
-        base_url: mock_server.uri(),
+        base_url: ConfigUrl::try_new(mock_server.uri()).unwrap(),
         basecf_url: None,
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
@@ -196,9 +197,9 @@ async fn test_complete_401_unauthorized() {
         .await;
 
     let config = ProviderConfig {
-        name: "deepseek".into(),
+        name: ProviderName::try_new("deepseek".to_string()).unwrap(),
         api_key: "sk-bad-key".into(),
-        base_url: mock_server.uri(),
+        base_url: ConfigUrl::try_new(mock_server.uri()).unwrap(),
         basecf_url: None,
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
@@ -236,9 +237,9 @@ async fn test_complete_429_rate_limit() {
         .await;
 
     let config = ProviderConfig {
-        name: "deepseek".into(),
+        name: ProviderName::try_new("deepseek".to_string()).unwrap(),
         api_key: "sk-key".into(),
-        base_url: mock_server.uri(),
+        base_url: ConfigUrl::try_new(mock_server.uri()).unwrap(),
         basecf_url: None,
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
@@ -273,9 +274,9 @@ async fn test_complete_500_server_error() {
         .await;
 
     let config = ProviderConfig {
-        name: "deepseek".into(),
+        name: ProviderName::try_new("deepseek".to_string()).unwrap(),
         api_key: "sk-key".into(),
-        base_url: mock_server.uri(),
+        base_url: ConfigUrl::try_new(mock_server.uri()).unwrap(),
         basecf_url: None,
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
@@ -313,9 +314,9 @@ async fn test_complete_503_overloaded() {
         .await;
 
     let config = ProviderConfig {
-        name: "deepseek".into(),
+        name: ProviderName::try_new("deepseek".to_string()).unwrap(),
         api_key: "sk-key".into(),
-        base_url: mock_server.uri(),
+        base_url: ConfigUrl::try_new(mock_server.uri()).unwrap(),
         basecf_url: None,
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
@@ -356,9 +357,9 @@ async fn test_complete_402_insufficient_balance() {
         .await;
 
     let config = ProviderConfig {
-        name: "deepseek".into(),
+        name: ProviderName::try_new("deepseek".to_string()).unwrap(),
         api_key: "sk-key".into(),
-        base_url: mock_server.uri(),
+        base_url: ConfigUrl::try_new(mock_server.uri()).unwrap(),
         basecf_url: None,
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
@@ -403,9 +404,9 @@ async fn test_complete_with_thinking_and_tools() {
         .await;
 
     let config = ProviderConfig {
-        name: "deepseek".into(),
+        name: ProviderName::try_new("deepseek".to_string()).unwrap(),
         api_key: "sk-key".into(),
-        base_url: mock_server.uri(),
+        base_url: ConfigUrl::try_new(mock_server.uri()).unwrap(),
         basecf_url: None,
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
@@ -454,9 +455,9 @@ async fn test_complete_custom_chat_path() {
         .await;
 
     let config = ProviderConfig {
-        name: "deepseek".into(),
+        name: ProviderName::try_new("deepseek".to_string()).unwrap(),
         api_key: "sk-key".into(),
-        base_url: mock_server.uri(),
+        base_url: ConfigUrl::try_new(mock_server.uri()).unwrap(),
         basecf_url: None,
         chat_path: Some("/v1/chat/completions".into()),
         draw_path: None,
@@ -502,9 +503,9 @@ async fn test_complete_multi_turn_conversation() {
         .await;
 
     let config = ProviderConfig {
-        name: "deepseek".into(),
+        name: ProviderName::try_new("deepseek".to_string()).unwrap(),
         api_key: "sk-key".into(),
-        base_url: mock_server.uri(),
+        base_url: ConfigUrl::try_new(mock_server.uri()).unwrap(),
         basecf_url: None,
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
@@ -549,9 +550,9 @@ async fn test_complete_422_invalid_params() {
         .await;
 
     let config = ProviderConfig {
-        name: "deepseek".into(),
+        name: ProviderName::try_new("deepseek".to_string()).unwrap(),
         api_key: "sk-key".into(),
-        base_url: mock_server.uri(),
+        base_url: ConfigUrl::try_new(mock_server.uri()).unwrap(),
         basecf_url: None,
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
@@ -604,9 +605,9 @@ async fn test_openrouter_complete_simple_response() {
         .await;
 
     let config = ProviderConfig {
-        name: "openrouter".into(),
+        name: ProviderName::try_new("openrouter".to_string()).unwrap(),
         api_key: "sk-or-test".into(),
-        base_url: mock_server.uri(),
+        base_url: ConfigUrl::try_new(mock_server.uri()).unwrap(),
         basecf_url: None,
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
@@ -659,9 +660,9 @@ async fn test_openrouter_complete_with_tools() {
         .await;
 
     let config = ProviderConfig {
-        name: "openrouter".into(),
+        name: ProviderName::try_new("openrouter".to_string()).unwrap(),
         api_key: "sk-or-test".into(),
-        base_url: mock_server.uri(),
+        base_url: ConfigUrl::try_new(mock_server.uri()).unwrap(),
         basecf_url: None,
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
@@ -711,9 +712,9 @@ async fn test_openrouter_complete_with_temperature() {
         .await;
 
     let config = ProviderConfig {
-        name: "openrouter".into(),
+        name: ProviderName::try_new("openrouter".to_string()).unwrap(),
         api_key: "sk-or-test".into(),
-        base_url: mock_server.uri(),
+        base_url: ConfigUrl::try_new(mock_server.uri()).unwrap(),
         basecf_url: None,
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
@@ -751,9 +752,9 @@ async fn test_openrouter_complete_401() {
         .await;
 
     let config = ProviderConfig {
-        name: "openrouter".into(),
+        name: ProviderName::try_new("openrouter".to_string()).unwrap(),
         api_key: "sk-bad".into(),
-        base_url: mock_server.uri(),
+        base_url: ConfigUrl::try_new(mock_server.uri()).unwrap(),
         basecf_url: None,
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
@@ -791,9 +792,9 @@ async fn test_openrouter_complete_429() {
         .await;
 
     let config = ProviderConfig {
-        name: "openrouter".into(),
+        name: ProviderName::try_new("openrouter".to_string()).unwrap(),
         api_key: "sk-or-test".into(),
-        base_url: mock_server.uri(),
+        base_url: ConfigUrl::try_new(mock_server.uri()).unwrap(),
         basecf_url: None,
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
@@ -828,9 +829,9 @@ async fn test_openrouter_complete_500() {
         .await;
 
     let config = ProviderConfig {
-        name: "openrouter".into(),
+        name: ProviderName::try_new("openrouter".to_string()).unwrap(),
         api_key: "sk-or-test".into(),
-        base_url: mock_server.uri(),
+        base_url: ConfigUrl::try_new(mock_server.uri()).unwrap(),
         basecf_url: None,
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
@@ -878,9 +879,9 @@ async fn test_openrouter_complete_with_reasoning() {
         .await;
 
     let config = ProviderConfig {
-        name: "openrouter".into(),
+        name: ProviderName::try_new("openrouter".to_string()).unwrap(),
         api_key: "sk-or-test".into(),
-        base_url: mock_server.uri(),
+        base_url: ConfigUrl::try_new(mock_server.uri()).unwrap(),
         basecf_url: None,
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
@@ -1538,9 +1539,9 @@ async fn test_webdav_edit_multiple_matches() {
 
 fn make_openrouter_image_config(mock_uri: &str) -> ProviderConfig {
     ProviderConfig {
-        name: "openrouter".into(),
+        name: ProviderName::try_new("openrouter".to_string()).unwrap(),
         api_key: "sk-or-v1-test".into(),
-        base_url: mock_uri.to_string(),
+        base_url: ConfigUrl::try_new(mock_uri.to_string()).unwrap(),
         basecf_url: None,
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
@@ -1701,9 +1702,9 @@ async fn test_openrouter_upload_file_data_uri() {
 
 fn make_fal_config(mock_uri: &str) -> ProviderConfig {
     ProviderConfig {
-        name: "fal".into(),
+        name: ProviderName::try_new("fal".to_string()).unwrap(),
         api_key: "fal-test-key".into(),
-        base_url: mock_uri.to_string(),
+        base_url: ConfigUrl::try_new(mock_uri.to_string()).unwrap(),
         basecf_url: None,
         chat_path: None,
         draw_path: None,

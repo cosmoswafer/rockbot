@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_valid::Validate;
 use std::collections::HashSet;
 use tracing::{debug, warn};
 use webdav::{WebDavClient, WebDavError, WebDavPath};
@@ -55,8 +56,9 @@ impl std::fmt::Display for KnowledgePriority {
 
 impl KnowledgePriority {}
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 pub struct IndexEntry {
+    #[validate(min_length = 1)]
     pub filename: String,
     #[serde(default)]
     pub when_useful: String,
@@ -70,10 +72,13 @@ impl IndexEntry {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 pub struct KnowledgeIndex {
+    #[validate(min_length = 1)]
     pub version: String,
+    #[validate(min_length = 1)]
     pub room_id: String,
+    #[validate]
     pub entries: Vec<IndexEntry>,
     pub updated: String,
 }

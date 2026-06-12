@@ -4,6 +4,7 @@ pub mod config;
 pub mod error;
 pub mod path;
 pub mod types;
+pub mod validated;
 
 pub use calendar::{build_vevent_ics, quick_uid};
 pub use client::WebDavClient;

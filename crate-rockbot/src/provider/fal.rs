@@ -403,13 +403,14 @@ impl crate::provider::ImageProvider for FalAiProvider {
 mod tests {
     use super::*;
     use crate::config::ProviderConfig;
+    use crate::validated::{ConfigUrl, ProviderName};
     use std::collections::HashMap;
 
     fn make_config(api_key: &str) -> ProviderConfig {
         ProviderConfig {
-            name: "fal".into(),
+            name: ProviderName::try_new("fal".to_string()).unwrap(),
             api_key: api_key.into(),
-            base_url: "https://queue.fal.run".into(),
+            base_url: ConfigUrl::try_new("https://queue.fal.run".to_string()).unwrap(),
             basecf_url: None,
             chat_path: None,
             draw_path: None,

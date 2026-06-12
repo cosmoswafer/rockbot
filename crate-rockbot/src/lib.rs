@@ -9,6 +9,7 @@ pub mod tool;
 pub mod tools;
 pub mod types;
 pub mod utils;
+pub mod validated;
 
 pub use config::{merge_toml, AppConfig, ProviderConfig};
 pub use error::{Result, RockBotError};

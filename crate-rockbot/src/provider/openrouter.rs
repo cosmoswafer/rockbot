@@ -557,12 +557,13 @@ impl crate::provider::ImageProvider for OpenRouterImageProvider {
 mod tests {
     use super::*;
     use crate::types::{ChatMessage, ThinkingConfig, ToolDef};
+    use crate::validated::{ConfigUrl, ProviderName};
 
     fn make_provider(model: &str) -> OpenRouterProvider {
         let config = ProviderConfig {
-            name: "openrouter".into(),
+            name: ProviderName::try_new("openrouter".to_string()).unwrap(),
             api_key: "sk-or-v1-test".into(),
-            base_url: "https://openrouter.ai/api/v1".into(),
+            base_url: ConfigUrl::try_new("https://openrouter.ai/api/v1".to_string()).unwrap(),
             basecf_url: None,
             chat_path: Some("/chat/completions".into()),
             draw_path: None,
@@ -864,9 +865,9 @@ mod tests {
     #[test]
     fn test_new_missing_api_key() {
         let config = ProviderConfig {
-            name: "openrouter".into(),
+            name: ProviderName::try_new("openrouter".to_string()).unwrap(),
             api_key: "EDITME".into(),
-            base_url: "https://openrouter.ai/api/v1".into(),
+            base_url: ConfigUrl::try_new("https://openrouter.ai/api/v1".to_string()).unwrap(),
             basecf_url: None,
             chat_path: None,
             draw_path: None,
@@ -879,9 +880,9 @@ mod tests {
     #[test]
     fn test_new_empty_api_key() {
         let config = ProviderConfig {
-            name: "openrouter".into(),
+            name: ProviderName::try_new("openrouter".to_string()).unwrap(),
             api_key: "".into(),
-            base_url: "https://openrouter.ai/api/v1".into(),
+            base_url: ConfigUrl::try_new("https://openrouter.ai/api/v1".to_string()).unwrap(),
             basecf_url: None,
             chat_path: None,
             draw_path: None,
@@ -901,9 +902,9 @@ mod tests {
     #[test]
     fn test_chat_url_custom_path() {
         let config = ProviderConfig {
-            name: "openrouter".into(),
+            name: ProviderName::try_new("openrouter".to_string()).unwrap(),
             api_key: "sk-test".into(),
-            base_url: "https://custom.api.com".into(),
+            base_url: ConfigUrl::try_new("https://custom.api.com".to_string()).unwrap(),
             basecf_url: None,
             chat_path: Some("/v2/chat".into()),
             draw_path: None,
@@ -916,9 +917,9 @@ mod tests {
     #[test]
     fn test_with_client() {
         let config = ProviderConfig {
-            name: "openrouter".into(),
+            name: ProviderName::try_new("openrouter".to_string()).unwrap(),
             api_key: "sk-test".into(),
-            base_url: "https://openrouter.ai/api/v1".into(),
+            base_url: ConfigUrl::try_new("https://openrouter.ai/api/v1".to_string()).unwrap(),
             basecf_url: None,
             chat_path: None,
             draw_path: None,
@@ -933,12 +934,13 @@ mod tests {
         use super::super::*;
         use crate::provider::ImageProvider;
         use crate::types::ImageGenParams;
+        use crate::validated::{ConfigUrl, ProviderName};
 
         fn make_image_provider(model: &str) -> OpenRouterImageProvider {
             let config = ProviderConfig {
-                name: "openrouter".into(),
+                name: ProviderName::try_new("openrouter".to_string()).unwrap(),
                 api_key: "sk-or-v1-test".into(),
-                base_url: "https://openrouter.ai/api/v1".into(),
+                base_url: ConfigUrl::try_new("https://openrouter.ai/api/v1".to_string()).unwrap(),
                 basecf_url: None,
                 chat_path: Some("/chat/completions".into()),
                 draw_path: None,
@@ -950,9 +952,9 @@ mod tests {
         #[test]
         fn test_new_missing_api_key() {
             let config = ProviderConfig {
-                name: "openrouter".into(),
+                name: ProviderName::try_new("openrouter".to_string()).unwrap(),
                 api_key: "EDITME".into(),
-                base_url: "https://openrouter.ai/api/v1".into(),
+                base_url: ConfigUrl::try_new("https://openrouter.ai/api/v1".to_string()).unwrap(),
                 basecf_url: None,
                 chat_path: None,
                 draw_path: None,
@@ -964,9 +966,9 @@ mod tests {
         #[test]
         fn test_new_empty_api_key() {
             let config = ProviderConfig {
-                name: "openrouter".into(),
+                name: ProviderName::try_new("openrouter".to_string()).unwrap(),
                 api_key: "".into(),
-                base_url: "https://openrouter.ai/api/v1".into(),
+                base_url: ConfigUrl::try_new("https://openrouter.ai/api/v1".to_string()).unwrap(),
                 basecf_url: None,
                 chat_path: None,
                 draw_path: None,
