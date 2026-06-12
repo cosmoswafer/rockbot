@@ -22,7 +22,7 @@ the system falls back to reading individual files.
 
 Archive is a single flow: messages accumulate in Layer 1. When Layer 1 exceeds
 `max_text_length` chars, the oldest half is AI-summarized into today's Layer 2
-daily summary. Summaries older than `summary_days` (default 7 days) are
+daily summary. Summaries older than `summary_days` (default 3 days) are
 deleted. The archived messages are pruned from Layer 1. The raw conversation
 state is also periodically saved to WebDAV as a crash-recovery checkpoint.
 
@@ -257,7 +257,7 @@ flowchart TD
     SNAP_WRITE[Write snapshot.json]
     DAV[(NextCloud WebDAV)]
     LOAD[Load on Room Init]
-    FALLBACK[Truncate Without<br/>Summarizing]
+    FALLBACK["Skip Archiving<br/>(prune skipped)"]
     WARN[Warn + Continue]
     RETRY[Retry Next Tick]
 
@@ -336,7 +336,7 @@ change). Source of truth for each layer remains its dedicated file
 | `max_chars`            | `usize`                      | Archive threshold (max_text_length)      |
 | `max_history_messages` | `usize`                      | Layer 1 message count limit for context  |
 | `max_summary_chars`    | `usize`                      | Layer 2 total chars across loaded summaries |
-| `summary_days`         | `u32`                        | Layer 2 retention window (default 7)     |
+| `summary_days`         | `u32`                        | Layer 2 retention window (default 3)     |
 | `max_soul_chars`       | `usize`                      | Layer 3 max chars for soul.md content    |
 | `daily_summaries`      | `HashMap<String, Vec<DailySummary>>` | Layer 2 in-memory cache           |
 | `souls`                | `HashMap<String, SoulMemory>`| Layer 3 in-memory cache                  |
@@ -415,7 +415,7 @@ Fields from `ModelConfig` in [Configuration Management](config.md):
 | Field                  | Type    | Default | Notes                                              |
 | ---------------------- | ------- | ------- | -------------------------------------------------- |
 | `max_text_length`      | `usize` | 50000   | Archive threshold — triggers Layer 1 → Layer 2     |
-| `max_history_size`     | `usize` | 12      | Layer 1 max messages in context                    |
+| `max_history_size`     | `usize` | 18      | Layer 1 max messages in context                    |
 | `max_summary_chars`    | `usize` | 8000    | Layer 2 total chars across loaded summaries         |
 | `max_soul_chars`       | `usize` | 2000    | Layer 3 max chars for soul.md content              |
 | `summary_days`         | `u32`   | 7       | Layer 2 retention window (days)                    |

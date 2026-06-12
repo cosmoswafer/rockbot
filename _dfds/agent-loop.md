@@ -39,7 +39,7 @@ flowchart TD
     ARCHIVE(CompressDaily)
     REVIEW(DailySummaryReview)
     EVICT_ROOMS(EvictStaleRooms)
-    PERSIST_ASSETS(PersistAssets)
+    PERSIST_ASSETS["PersistAssets<br/>(via tools: image_gen → WebDAV,<br/>edit_soul → soul.md, etc.)"]
     CFG[(AppConfig)]
     HISTORY[(ConversationHistory)]
     TOOLS[(ToolRegistry)]

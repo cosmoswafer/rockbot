@@ -94,7 +94,7 @@ flowchart TD
 | ---------------------- | ------- | ------------------------------------------------------------- |
 | `default_provider`     | `String`| Must match a `[[chat_providers]].name`                        |
 | `default_model`        | `String`| Model alias key in provider's models map                      |
-| `max_history_size`     | `usize` | Max conversation turns (default 21)                           |
+| `max_history_size`     | `usize` | Max conversation turns (default 18)                           |
 | `max_text_length`      | `usize` | Layer 1 overflow threshold chars (default 50000)              |
 | `max_iterations`       | `u32`   | Max agent loop iterations (default 38)                         |
 | `max_summary_chars`    | `usize` | Layer 2 max chars across loaded summaries (default 8000)      |
@@ -102,7 +102,7 @@ flowchart TD
 | `summary_days`         | `u32`   | Layer 2 retention window in days (default 7)                  |
 | `memory_ttl_secs`      | `u64`   | Room idle timeout — snapshot to WebDAV then evict (default 300)|
 | `persist_interval_secs`| `u64`   | Snapshot persist timer interval (default 60)                  |
-| `max_context_bytes`    | `usize` | Max total byte size of context sent to LLM (default 30MB). Exceeding this drops oldest image data first, preserving the latest user message images. |
+| `max_context_bytes`    | `usize` | Max total byte size of context sent to LLM (default 2MB). Exceeding this triggers inline summarization to keep tokens under ~1M. |
 | `max_attachment_bytes` | `u64`   | Max size of a single attachment in bytes (default 25_000_000) |
 
 #### `ProviderConfig`

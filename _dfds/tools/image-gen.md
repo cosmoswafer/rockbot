@@ -34,7 +34,7 @@ flowchart TD
     CACHE[(ImageCache)]
     FORMAT(FormatResult)
 
-    AGENT -->|"prompt + image_size (LLM), room_id + webdav_dir + image_cache_key (harness injects)"| PARSE
+    AGENT -->|"prompt + image_urls (LLM), room_id + webdav_dir + image_cache_key + image_size (harness injects)"| PARSE
     PARSE -->|"merged with config defaults (quality, output_format, num_images) + uploaded image_urls"| RESOLVE
     RESOLVE -->|"t2i or edit provider + ImageGenParams"| PROVIDER
     PROVIDER --> GEN
@@ -138,7 +138,8 @@ LLM provides `prompt` and optional `image_size`; all other fields come from conf
 | Field           | Source            | Type                                           | Description                                      |
 | --------------- | ----------------- | ---------------------------------------------- | ------------------------------------------------ |
 | `prompt`        | LLM               | `string`                                       | **Required.** Text description of the image      |
-| `image_size`    | LLM               | preset name or `{width: int, height: int}`     | Aspect ratio preset or custom dimensions. Both edges multiples of 16, max edge 3840px, aspect ratio ≤ 3:1. Default: `"landscape_4_3"` |
+| `image_size`    | Config            | preset name                                   | Aspect ratio preset. Set from `[image_model] default_image_size`. Hidden from LLM. |
+| `size_tier`     | Config            | `"4K"`, `"2K"`, `"1K"`                        | Resolution tier for OpenRouter. Set from `default_image_size_tier`. Ignored by fal. |
 | `room_id`       | Harness           | `string`                                       | Room UUID for image storage (injected if omitted)|
 | `webdav_dir`    | Harness           | `string`                                       | Type-prefixed room path (injected; falls back to room_id) |
 | `image_cache_key`| Harness          | `string`                                       | Tool call_id — used as ImageCache lookup key     |

@@ -39,7 +39,7 @@ flowchart TD
     COUNT["Count Days Mentioned<br/>= week_count (0-7)"]
     NEW_PRIO{"Compute New Priority<br/>(see 2b state diagram)"}
     CHANGED{Priority Changed?}
-    DEGRADE{Is Degradation?<br/>(new > current, higher ord = worse)}
+    DEGRADE{"Is Degradation?<br/>(new &gt; current, higher ord = worse)"}
     RATE_CHECK{"last_degraded_at<br/>same calendar day?"}
     RATE_SKIP[Skip — Rate Limited<br/>At most 1 degrade/day]
     MARK_DIRTY[Update Entry Priority<br/>+ set last_degraded_at]
@@ -268,7 +268,7 @@ flowchart TD
     ERR_SUMS{summary<br/>read fails?}
     ERR_WRITE{index.json<br/>write fails?}
     SKIP[Skip Room — Retry Next Cycle]
-    WARN[Warn + Continue<br/>(missing days = not mentioned)]
+    WARN["Warn + Continue<br/>(missing days = not mentioned)"]
     DONE[Done]
 
     RECALC -->|"GET index.json"| ERR_IDX

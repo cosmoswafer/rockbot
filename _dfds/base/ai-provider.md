@@ -74,7 +74,7 @@ flowchart TD
     IMG_URL(FormatImageUrl)
     IMG_B64(FormatImageBase64)
     STRIP{Provider<br/>supports vision?}
-    CONVERT(Convert ImageUrl<br/>to [image] text)
+    CONVERT["Convert ImageUrl<br/>to &#91;image&#93; text"]
     REQ[ProviderRequest]
 
     MSG -->|"chat message"| CHECK
