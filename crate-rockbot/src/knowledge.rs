@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use tracing::{debug, warn};
-use webdav::{WebDavClient, WebDavPath};
+use webdav::{WebDavClient, WebDavError, WebDavPath};
 
 use crate::error::Result;
 use crate::memory::DailySummary;
@@ -61,7 +61,9 @@ impl KnowledgePriority {}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexEntry {
     pub filename: String,
+    #[serde(default)]
     pub when_useful: String,
+    #[serde(default)]
     pub tags: Vec<String>,
 }
 
@@ -132,7 +134,7 @@ impl KnowledgeManager {
                 })?;
                 Ok(index)
             }
-            Err(_) => {
+            Err(WebDavError::NotFound(_)) => {
                 debug!("No knowledge index found for room {}, starting fresh", webdav_dir);
                 Ok(KnowledgeIndex {
                     version: "rockbot-knowledge/1".into(),
@@ -140,6 +142,11 @@ impl KnowledgeManager {
                     entries: Vec::new(),
                     updated: String::new(),
                 })
+            }
+            Err(e) => {
+                Err(crate::error::RockBotError::Provider(format!(
+                    "Failed to read knowledge index: {e}"
+                )))
             }
         }
     }
@@ -157,8 +164,33 @@ impl KnowledgeManager {
         let now = now_iso_string();
         let slug = format!("{}_{}", category, Self::slugify(topic));
         let filename = format!("{}.md", slug);
-        let md_path = format!("{}{}", Self::knowledge_dir(webdav_dir), filename);
 
+        // Update index first — the index is the source of truth
+        let mut index = Self::load_index(webdav, webdav_dir).await?;
+        if let Some(existing) = index.entries.iter_mut().find(|e| e.filename == filename) {
+            existing.when_useful = when_useful.to_string();
+            existing.tags = tags.to_vec();
+        } else {
+            index.entries.push(IndexEntry {
+                filename: filename.clone(),
+                when_useful: when_useful.to_string(),
+                tags: tags.to_vec(),
+            });
+        }
+        index.updated = now.clone();
+
+        let index_body = serde_json::to_string_pretty(&index).map_err(|e| {
+            crate::error::RockBotError::Provider(format!("Failed to serialize knowledge index: {e}"))
+        })?;
+        webdav
+            .write_file_with_fallback(&Self::index_path(webdav_dir), index_body.as_bytes().to_vec())
+            .await
+            .map_err(|e| {
+                crate::error::RockBotError::Provider(format!("Knowledge index write failed: {e}"))
+            })?;
+
+        // Write .md file after index is committed
+        let md_path = format!("{}{}", Self::knowledge_dir(webdav_dir), filename);
         let folder = Self::knowledge_dir(webdav_dir);
         if let Err(e) = webdav.ensure_directory_all(&folder).await {
             warn!("Failed to ensure knowledge directory {}: {}", folder, e);
@@ -176,29 +208,6 @@ impl KnowledgeManager {
                 crate::error::RockBotError::Provider(format!("Knowledge write failed: {e}"))
             })?;
 
-        let mut index = Self::load_index(webdav, webdav_dir).await?;
-        if let Some(existing) = index.entries.iter_mut().find(|e| e.filename == filename) {
-            existing.when_useful = when_useful.to_string();
-            existing.tags = tags.to_vec();
-        } else {
-            index.entries.push(IndexEntry {
-                filename: filename.clone(),
-                when_useful: when_useful.to_string(),
-                tags: tags.to_vec(),
-            });
-        }
-        index.updated = now;
-
-        let index_body = serde_json::to_string_pretty(&index).map_err(|e| {
-            crate::error::RockBotError::Provider(format!("Failed to serialize knowledge index: {e}"))
-        })?;
-        webdav
-            .write_file_with_fallback(&Self::index_path(webdav_dir), index_body.as_bytes().to_vec())
-            .await
-            .map_err(|e| {
-                crate::error::RockBotError::Provider(format!("Knowledge index write failed: {e}"))
-            })?;
-
         debug!("Saved knowledge entry {} in room {}", filename, webdav_dir);
         Ok(())
     }
@@ -212,35 +221,21 @@ impl KnowledgeManager {
 
         let mut index = Self::load_index(webdav, webdav_dir).await?;
 
-        let mut deleted_files = 0usize;
         let matching_entries: Vec<_> = index.entries.iter().filter(|e| {
             e.filename.to_lowercase().contains(&topic_slug)
-        }).collect();
+        }).cloned().collect();
 
-        for entry in &matching_entries {
-            let md_path = format!(
-                "{}{}",
-                Self::knowledge_dir(webdav_dir),
-                entry.filename
-            );
-            match webdav.delete(&md_path).await {
-                Ok(()) => deleted_files += 1,
-                Err(e) => warn!("Failed to delete knowledge file {}: {}", entry.filename, e),
-            }
-        }
-
-        let len_before = index.entries.len();
-        index.entries.retain(|e| {
-            !e.filename.to_lowercase().contains(&topic_slug)
-        });
-
-        if len_before == index.entries.len() && deleted_files == 0 {
+        if matching_entries.is_empty() {
             return Err(crate::error::RockBotError::ToolCallParse(format!(
                 "Knowledge entry '{topic}' not found."
             )));
         }
 
+        index.entries.retain(|e| {
+            !e.filename.to_lowercase().contains(&topic_slug)
+        });
         index.updated = now_iso_string();
+
         let index_body = serde_json::to_string_pretty(&index).map_err(|e| {
             crate::error::RockBotError::Provider(format!("Failed to serialize knowledge index: {e}"))
         })?;
@@ -251,7 +246,20 @@ impl KnowledgeManager {
                 crate::error::RockBotError::Provider(format!("Knowledge index write failed: {e}"))
             })?;
 
-        debug!("Deleted knowledge entry for topic '{}' in room {}", topic, webdav_dir);
+        let mut _deleted_files = 0usize;
+        for entry in &matching_entries {
+            let md_path = format!(
+                "{}{}",
+                Self::knowledge_dir(webdav_dir),
+                entry.filename
+            );
+            match webdav.delete(&md_path).await {
+                Ok(()) => _deleted_files += 1,
+                Err(e) => warn!("Failed to delete knowledge file {}: {}", entry.filename, e),
+            }
+        }
+
+        debug!("Deleted {} knowledge file(s) for topic '{}' in room {}", _deleted_files, topic, webdav_dir);
         Ok(())
     }
 
