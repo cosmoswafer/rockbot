@@ -129,7 +129,7 @@ fn default_max_iterations() -> u32 {
 }
 
 fn default_max_history_size() -> usize {
-    8
+    18
 }
 
 fn default_max_text_length() -> usize {
