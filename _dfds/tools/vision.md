@@ -31,6 +31,14 @@ data URI for multimodal analysis by the AI provider.
 > mechanism by which vision-tool-fetched images actually reach the
 > multimodal model.
 
+**Coworking with webdav tool**: the `webdav` tool's `read` action detects image
+files by extension (`.png`, `.jpg`, etc.) and returns them as base64 markdown
+tags — the same format as vision tool results. The harness intercepts both
+`vision` AND `webdav` tool results for `ContentPart::ImageUrl` injection,
+so images read from WebDAV storage pass transparently into the LLM context.
+The `vision` tool handles public URLs; the `webdav` tool handles authenticated
+WebDAV paths. The LLM chooses which to use based on the image's location.
+
 - Upstream: [Agent Harness](../agent-harness.md) invokes the tool during the
   agent loop via `ToolRegistry::execute_by_name()`. The harness intercepts
   the result for injection into LLM context.

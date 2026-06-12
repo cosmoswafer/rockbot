@@ -370,6 +370,10 @@ impl AgentHarness {
                                 self.cache_vision_images(room_id, &tool_result.content);
                             }
 
+                            if tool_call.function.name == "webdav" && !tool_result.is_error {
+                                self.cache_vision_images(room_id, &tool_result.content);
+                            }
+
                             if tool_call.function.name == "image_gen" && !tool_result.is_error {
                                 image_ids_this_turn.push(tool_call.id.clone());
                             }

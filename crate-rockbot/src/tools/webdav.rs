@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use base64::Engine;
 use serde_json::Value;
 use tracing::debug;
 use webdav::{WebDavClient, WebDavPath};
@@ -26,10 +27,23 @@ impl WebDavTool {
     async fn do_read(&self, dir_key: &str, path: &str) -> Result<String> {
         let full = self.room_path(dir_key, path);
         debug!("webdav read: {}", full);
-        self.client
-            .read_file_to_string(&full)
-            .await
-            .map_err(|e| RockBotError::Provider(format!("WebDAV read failed: {e}")))
+
+        if is_image_extension(path) {
+            let bytes = self
+                .client
+                .read_file(&full)
+                .await
+                .map_err(|e| RockBotError::Provider(format!("WebDAV read failed: {e}")))?;
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+            let mime = mime_for_path(path);
+            let name = path.rsplit('/').next().unwrap_or("image");
+            Ok(format!("![{}](data:{};base64,{})", name, mime, b64))
+        } else {
+            self.client
+                .read_file_to_string(&full)
+                .await
+                .map_err(|e| RockBotError::Provider(format!("WebDAV read failed: {e}")))
+        }
     }
 
     async fn do_write(&self, dir_key: &str, path: &str, content: &str) -> Result<String> {
@@ -288,6 +302,33 @@ impl Tool for WebDavTool {
                 "Unknown webdav action: {other}. Valid: read, write, list, mkdir, delete, exists"
             ))),
         }
+    }
+}
+
+fn is_image_extension(path: &str) -> bool {
+    let lower = path.to_lowercase();
+    lower.ends_with(".png")
+        || lower.ends_with(".jpg")
+        || lower.ends_with(".jpeg")
+        || lower.ends_with(".gif")
+        || lower.ends_with(".webp")
+        || lower.ends_with(".svg")
+}
+
+fn mime_for_path(path: &str) -> &str {
+    let lower = path.to_lowercase();
+    if lower.ends_with(".png") {
+        "image/png"
+    } else if lower.ends_with(".jpg") || lower.ends_with(".jpeg") {
+        "image/jpeg"
+    } else if lower.ends_with(".gif") {
+        "image/gif"
+    } else if lower.ends_with(".webp") {
+        "image/webp"
+    } else if lower.ends_with(".svg") {
+        "image/svg+xml"
+    } else {
+        "image/png"
     }
 }
 
