@@ -36,5 +36,7 @@ flowchart LR
     WebPage -->|"page html"| Bot
 
     Bot -->|"image generation prompt"| ImageGen
-    ImageGen -->|"generated image URL"| Bot
+    ImageGen -->|"image bytes"| Bot
+    Bot -->|"upload + create share"| NextCloud
+    NextCloud -->|"share URL"| Bot
 ```

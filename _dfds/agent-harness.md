@@ -80,7 +80,7 @@ flowchart TD
     FALLBACK(SendFallbackReply)
     COMPRESS{ContextLength<br/>Exceeded?}
     STRIP(CompressHistoryForRetry<br/>strip images + prune to 6 msgs)
-    REBUILD(RebuildContext<br/>last 4 msgs + ÷16 byte limit)
+    REBUILD(HardTruncate<br/>keep system prefix + last 2 msgs)
     RETRY(Retry LLM Call)
     REPLY[BotReply]
 

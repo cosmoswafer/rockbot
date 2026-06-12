@@ -115,7 +115,7 @@ Errors during auto-attachment download/encode are logged and the attachment is
 skipped; the message still enters chat history with text-only content. Errors
 from the vision tool are returned as tool result errors.
 The size limit is configurable via `rocketchat.model.max_attachment_bytes`
-(default 25 MB).
+(default 20 MB).
 
 ### 2c. Image Download & Encoding
 

@@ -54,8 +54,6 @@ flowchart TD
     TOOLS -->|"tool definitions"| LOOP
     LOOP -->|"chat request"| AI
     AI -->|"completion result"| LOOP
-    LOOP -->|"search query"| EXA
-    EXA -->|"search results"| LOOP
     LOOP -->|"typing off"| RC
     LOOP -->|"bot reply"| RC
     LOOP -->|"reply produced<br/>(every response)"| DIRTY
@@ -97,7 +95,6 @@ flowchart TD
     RECONNECT -.->|"reconnect signal"| WS
     RECONNECT -.->|"max retries exhausted"| SHUTDOWN
     AI -.->|"api error response"| FALLBACK
-    DAV -.->|"connection lost"| FALLBACK
     SIGINT -.->|"SIGINT"| SHUTDOWN
     SIGTERM -.->|"SIGTERM"| SHUTDOWN
     SHUTDOWN -->|"1. abort"| ABORT_TIMER
@@ -122,8 +119,6 @@ flowchart TD
     LOGIN(LoginRocketChat)
     CONNECT(ConnectWebSocket)
     DAV[(NextCloud WebDAV)]
-    LIST_MEM(ListMemoryArchives)
-    SEED(SeedAllRooms)
     LOOP[AgentLoop]
     CFG_STORE[(AppConfig)]
 
@@ -135,12 +130,10 @@ flowchart TD
     LOGIN -->|"auth token"| CONNECT
     CONNECT -->|"connected"| DAV
     CFG_STORE -->|"webdav credentials"| DAV
-    DAV -->|"archive list"| LIST_MEM
-    LIST_MEM -->|"archived messages"| SEED
-    SEED -->|"ready"| LOOP
+    DAV -->|"WebDAV client"| LOOP
 ```
 
-Note: History loading is lazy — each room's archives are restored on first message via `restore_history()`, not eagerly at startup. The `ListMemoryArchives` and `SeedAllRooms` steps shown above are illustrative of what happens per room, not a boot-time batch.
+Note: History loading is lazy — each room's archives (summaries, soul, knowledge) are restored on first message per room via `restore_history()`, not eagerly at startup. No batch restore occurs at boot time.
 
 ### 2d. Typing Indicator Heartbeat
 
@@ -186,6 +179,10 @@ Typing indicator state is intentionally not retried or persisted — it is a tra
 | `rest_client`    | `Option<RestApiClient>`| Optional REST API client for alias sends  |
 | `max_iterations` | `u32`                 | Max agent loop iterations per message      |
 | `max_attachment_bytes` | `u64`           | Max size for attachment download           |
+| `image_pool`     | `HashMap<String, Vec<CachedImage>>` | Per-room cache of vision-fetched images |
+| `image_cache`    | `Arc<ImageCache>`     | Generated image cache (by call_id)         |
+| `last_image_ids` | `Vec<String>`         | IDs of images generated this turn          |
+| `current_image_urls` | `Vec<String>`     | Image URLs from current message (auto-injected into image_gen) |
 
 #### `RoomState`
 

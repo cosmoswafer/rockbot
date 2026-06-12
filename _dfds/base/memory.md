@@ -225,7 +225,7 @@ flowchart TD
     INJECT -->|"soul + summaries + history"| CTX[Agent Context]
 ```
 
-> **Note:** The diagram shows parallel branches for loading `soul.md` and summaries. The current implementation loads them sequentially — soul first, then summaries — rather than issuing concurrent WebDAV requests.
+> **Note:** The diagram shows parallel branches for loading `soul.md` and summaries. The current implementation loads them sequentially — summaries first, then soul (and knowledge after soul) — rather than issuing concurrent WebDAV requests.
 
 Knowledge entries are also restored during room init — see [Knowledge Management](knowledge.md).
 

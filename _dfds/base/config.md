@@ -86,6 +86,12 @@ flowchart TD
 | `url`      | `String` | RocketChat server host (no scheme)                                  |
 | `username` | `String` | Bot login username (`""` in defaults, filled in user config)        |
 | `password` | `String` | Bot login password (`""` in defaults, filled in user config)        |
+| `debug`    | `bool`   | Enable verbose DDP frame logging (default `false`)                  |
+
+> The rocketchat crate has its own `ServerConfig` in `crate-rocketchat/src/config.rs`
+> with a `use_tls: bool` field (default `true`) instead of `debug`. The rockbot crate's
+> `ServerConfig` is for bot-level connections; the rocketchat crate's is per-client TLS
+> configuration.
 
 #### `ModelConfig`
 

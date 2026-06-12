@@ -222,12 +222,11 @@ Stored as `{uid}.ics` within the calendar collection.
 Calendar paths are built via `CalendarTool::build_caldav_url(webdav_dir)` — the
 CalDAV endpoint is a separate URL (`/remote.php/dav/calendars/{user}/{webdav_dir}/`)
 independent of the WebDAV file storage root. `WebDavPath` does **not** provide
-calendar-specific methods.
+calendar-specific methods. The URL is constructed directly in `CalendarTool`.
 
 | Method                              | Returns  | Notes                             |
 | ----------------------------------- | -------- | --------------------------------- |
-| `caldav_base_url(calendar, username, origin)` | `String` | `/remote.php/dav/calendars/{user}/{calendar}/` |
-| `build_caldav_url(calendar_name)`   | `String` | Constructs the CalDAV URL for a given calendar name |
+| `build_caldav_url(calendar_name)`   | `String` | Constructs the CalDAV URL for a given calendar name — implemented in `CalendarTool`, not `WebDavPath` |
 
 ## 4. NextCloud API Reference
 

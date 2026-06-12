@@ -3,14 +3,18 @@
 ## 1. Purpose
 
 Configurable `AiProvider` trait abstracting over OpenAI-compatible chat
-completion APIs. Concrete implementations for OpenRouter and DeepSeek handle
-provider-specific headers, model naming, and vision payload formatting
-(both base64 data URIs and remote URLs via `ContentPart::ImageUrl`). Supports
-The `stream` field is sent in request bodies but SSE response parsing is not implemented — all responses are consumed as full JSON.
+completion APIs and `ImageProvider` trait for image generation. Concrete
+implementations include OpenRouter, DeepSeek (text), OpenRouterImageProvider,
+and FalAiProvider (image). Each handles provider-specific headers, model naming,
+and payload formatting. Supports both base64 data URIs and remote URLs via
+`ContentPart::ImageUrl`. The `stream` field is sent in request bodies but SSE
+response parsing is not implemented — all responses are consumed as full JSON.
 
 - Upstream: [Configuration Management](config.md) provides `AiConfig`
 - Downstream: [Agent Harness](../agent-harness.md) calls `complete()` with `ChatRequest`
   (message history + tool definitions) and returns `CompletionResult`
+- Downstream: [Image Gen Tool](../tools/image-gen.md) calls `generate_image()` via
+  `ImageProvider` trait, implemented by `FalAiProvider` and `OpenRouterImageProvider`
 
 ## 2. Diagram
 
@@ -171,7 +175,7 @@ through as-is — any model-specific vision support is handled by OpenRouter's A
 | ------------------- | --------------------- | ------------------------------------ |
 | `text`              | `Option<String>`      | Assistant text response              |
 | `tool_calls`        | `Vec<ToolCall>`       | Tool/function calls requested by LLM |
-| `finish`            | `FinishReason`        | `Stop`, `ToolUse`, `Length`, `Error` |
+| `finish`            | `FinishReason`        | `Stop`, `ToolUse`, `Length`, `ContentFilter`, `InsufficientSystemResource`, `Error` |
 | `reasoning_content` | `Option<String>`      | DeepSeek-style chain-of-thought text |
 | `usage`             | `Option<UsageInfo>`   | Token usage statistics               |
 

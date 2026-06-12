@@ -214,13 +214,14 @@ generated images for the reply pipeline. Entries are consumed by `take_image()`.
 
 | Function | Location | Role |
 |----------|----------|------|
-| `download_attachment_refs` | `harness.rs:495` | Downloads RocketChat attachments → `AttachmentRef` list |
-| `download_and_encode_single` | `harness.rs:524` | Single attachment → `data:` URI |
-| `inject_image_urls_from_refs` | `harness.rs:1348` | Injects image URLs from attachments + image_pool + agent URLs |
-| `cache_vision_images` | `harness.rs:571` | Parses `![name](data:...)` from tool results → `image_pool` |
-| `inject_vision_images` | `harness.rs:603` | Drains `image_pool` → `ChatMessage::user_with_images` |
-| `create_nextcloud_share_link` | `webdav/client.rs` | Creates 7-day public share for generated images |
-| `upload_data_uri` | `image_gen.rs:75` | Uploads `data:` URI to Fal CDN → returns `https://` URL |
-| `strip_markdown_image_id` | `utils.rs:96` | Removes `![desc](image_key)` from reply text |
-| `take_last_image_ids` | `harness.rs:143` | Returns and drains `last_image_ids` |
-| `take_image` | `harness.rs:147` | Removes `GeneratedImage` from `ImageCache` by call_id |
+| `download_attachment_refs` | `harness.rs` | Downloads RocketChat attachments → `AttachmentRef` list |
+| `download_and_encode_single` | `harness.rs` | Single attachment → `data:` URI |
+| `inject_image_urls_from_refs` | `harness.rs` | Injects image URLs from attachments + image_pool + agent URLs |
+| `current_image_urls injection` | `harness.rs` | Auto-injects message image URLs into image_gen args (no prompt matching) |
+| `cache_vision_images` | `harness.rs` | Parses `![name](data:...)` from tool results → `image_pool` |
+| `inject_vision_images` | `harness.rs` | Drains `image_pool` → `ChatMessage::user_with_images` |
+| `create_nextcloud_share_link` | `crate-webdav/src/client.rs` | Creates 7-day public share for generated images |
+| `upload_data_uri` | `tools/image_gen.rs` | Uploads `data:` URI to Fal CDN → returns `https://` URL |
+| `strip_markdown_image_id` | `utils.rs` | Removes `![desc](image_key)` from reply text |
+| `take_last_image_ids` | `harness.rs` | Returns and drains `last_image_ids` |
+| `take_image` | `harness.rs` | Removes `GeneratedImage` from `ImageCache` by call_id |
