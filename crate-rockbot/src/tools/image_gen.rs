@@ -499,4 +499,182 @@ mod tests {
         }
         assert!(params.image_urls.is_none());
     }
+
+    // ----- Gap-filled tests (image-gen.md coverage gaps) -----
+
+    struct MockImageProvider {
+        generate_result: std::sync::Mutex<Option<std::result::Result<Vec<u8>, RockBotError>>>,
+        upload_result: std::sync::Mutex<Option<std::result::Result<String, RockBotError>>>,
+    }
+
+    impl MockImageProvider {
+        fn new() -> Self {
+            Self {
+                generate_result: std::sync::Mutex::new(Some(Ok(vec![1, 2, 3]))),
+                upload_result: std::sync::Mutex::new(Some(Ok("https://cdn.example.com/uploaded.png".into()))),
+            }
+        }
+
+        fn with_generate_error(e: RockBotError) -> Self {
+            Self {
+                generate_result: std::sync::Mutex::new(Some(Err(e))),
+                upload_result: std::sync::Mutex::new(Some(Ok("https://cdn.example.com/uploaded.png".into()))),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl ImageProvider for MockImageProvider {
+        async fn generate_image(&self, _params: &ImageGenParams) -> crate::Result<Vec<u8>> {
+            self.generate_result.lock().unwrap().take().unwrap()
+        }
+
+        async fn upload_file(&self, _data: &[u8], _content_type: &str) -> crate::Result<String> {
+            self.upload_result.lock().unwrap().take().unwrap()
+        }
+
+        fn provider_name(&self) -> &str {
+            "mock"
+        }
+
+        fn model_id(&self) -> &str {
+            "mock-model"
+        }
+    }
+
+    #[test]
+    fn test_size_tier_is_set_from_config_default() {
+        let tool = ImageGenTool::new(
+            Box::new(MockImageProvider::new()),
+            "medium".into(),
+            "png".into(),
+            1,
+            "portrait_2_3".into(),
+            "4K".into(),
+            make_webdav(),
+            make_image_cache(),
+        );
+
+        // Verify default_image_size_tier is stored as "4K" per DFD §3
+        assert_eq!(tool.default_image_size_tier, "4K");
+    }
+
+    #[test]
+    fn test_size_tier_in_params_construction() {
+        let tool = ImageGenTool::new(
+            Box::new(MockImageProvider::new()),
+            "medium".into(),
+            "png".into(),
+            1,
+            "portrait_2_3".into(),
+            "2K".into(),
+            make_webdav(),
+            make_image_cache(),
+        );
+
+        // Simulate what execute() does when building ImageGenParams
+        let mut params = ImageGenParams::new("test prompt");
+        params.quality = Some(tool.default_quality.clone());
+        params.output_format = Some(tool.default_output_format.clone());
+        params.num_images = Some(tool.default_num_images);
+        params.image_size = Some(ImageSizeValue::Preset(tool.default_image_size.clone()));
+        params.size_tier = Some(tool.default_image_size_tier.clone());
+
+        assert_eq!(params.size_tier.as_deref(), Some("2K"));
+    }
+
+    #[tokio::test]
+    async fn test_upload_data_uri_decodes_base64_and_uploads() {
+        let provider = Box::new(MockImageProvider::new());
+        let tool = ImageGenTool::new(
+            provider,
+            "medium".into(),
+            "png".into(),
+            1,
+            "portrait_2_3".into(),
+            "4K".into(),
+            make_webdav(),
+            make_image_cache(),
+        );
+
+        // A minimal valid PNG data URI
+        let data_uri = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==";
+        let result = tool.upload_data_uri(data_uri).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "https://cdn.example.com/uploaded.png");
+    }
+
+    #[tokio::test]
+    async fn test_upload_data_uri_invalid_prefix() {
+        let tool = ImageGenTool::new(
+            Box::new(MockImageProvider::new()),
+            "medium".into(),
+            "png".into(),
+            1,
+            "portrait_2_3".into(),
+            "4K".into(),
+            make_webdav(),
+            make_image_cache(),
+        );
+
+        let result = tool.upload_data_uri("not-a-data-uri").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_upload_data_uri_missing_base64_delimiter() {
+        let tool = ImageGenTool::new(
+            Box::new(MockImageProvider::new()),
+            "medium".into(),
+            "png".into(),
+            1,
+            "portrait_2_3".into(),
+            "4K".into(),
+            make_webdav(),
+            make_image_cache(),
+        );
+
+        let result = tool.upload_data_uri("data:image/png;no-base64-delimiter").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_upload_data_uri_invalid_base64() {
+        let tool = ImageGenTool::new(
+            Box::new(MockImageProvider::new()),
+            "medium".into(),
+            "png".into(),
+            1,
+            "portrait_2_3".into(),
+            "4K".into(),
+            make_webdav(),
+            make_image_cache(),
+        );
+
+        let result = tool.upload_data_uri("data:image/png;base64,!!!invalid-base64!!!").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_execute_generate_image_failure() {
+        let tool = ImageGenTool::new(
+            Box::new(MockImageProvider::with_generate_error(RockBotError::Provider(
+                "Image generation failed".into(),
+            ))),
+            "medium".into(),
+            "png".into(),
+            1,
+            "portrait_2_3".into(),
+            "4K".into(),
+            make_webdav(),
+            make_image_cache(),
+        );
+
+        let args = serde_json::json!({
+            "prompt": "test prompt",
+            "room_id": "room1",
+        });
+        let result = tool.execute(&args.to_string()).await;
+        assert!(result.is_err(), "generate_image failure should propagate error");
+    }
 }

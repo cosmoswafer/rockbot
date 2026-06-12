@@ -2,7 +2,7 @@
 
 Tests connecting to live servers and APIs with real credentials. All `#[ignore]`-annotated — not run by default. Use for data collection during development and final integration verification.
 
-**Total: 21 tests across 6 files (3 crates) — 20 true real tests + 1 flaky unit test**
+**Total: 23 tests across 7 files (3 crates) — 22 true real tests + 1 flaky unit test**
 
 *Excludes 1 test in `rocketchat/src/ddp.rs` ignored for flaky `AtomicU64` global state race (not a real integration test).*
 
@@ -42,7 +42,7 @@ Tests connecting to live servers and APIs with real credentials. All `#[ignore]`
 
 ---
 
-## rockbot crate — 3 tests
+## rockbot crate — 5 tests
 
 ### `tests/fal_real.rs` — 1 test
 **Services:** fal.ai API
@@ -54,6 +54,18 @@ Tests connecting to live servers and APIs with real credentials. All `#[ignore]`
 | 1 | `test_fal_image_edit_with_p1` | Loads fal config, reads `_docs/ref_img/p1.png`, uploads to fal CDN, calls `generate_image_url()` with edit prompt ("Change red sweater to Rei Ayanami's blue plugsuit") and `landscape_4_3` preset. Exercises full pipeline: upload_file → submit_request → poll_status → fetch_result. Asserts result is HTTPS URL. | fal.ai |
 
 **Helpers:** `workspace_root()`, `load_fal_config()`
+
+### `tests/image_gen_real.rs` — 2 tests
+**Services:** fal.ai API (image provider), NextCloud WebDAV
+**Config:** `config.toml` (`[[image_providers]]` with `name = "fal"` + `[webdav]`) or `WEBDAV_*` env vars
+**Run:** `cargo test --test image_gen_real -- --ignored`
+
+| # | Test | What it does | Services |
+|---|------|-------------|----------|
+| 1 | `test_image_gen_real_text_to_image` | Loads fal + WebDAV config, creates `ImageGenTool` with real provider and WebDAV client, executes a text-to-image prompt. Validates the DFD's `ImageGenResult` shape (`{"ok": true, "webdav_path": "...", "image_key": "..."}`), verifies image is in `ImageCache`, confirms WebDAV existence, collects share URL format. Cleans up generated file. | fal.ai, WebDAV |
+| 2 | `test_image_gen_real_data_uri_handling` | Same setup as above but reads the test image `_docs/test_suite/p0.png` (4x4 red square), base64-encodes it as a `data:` URI, and passes it in `image_urls` — exercises the `upload_data_uri` → provider CDN → img2img path. Validates that data URIs injected by the harness (per image-interception.md §2d) are correctly translated to provider CDN URLs by the tool. | fal.ai, WebDAV |
+
+**Helpers:** `workspace_root()`, `load_config()`, `load_image_provider()`, `load_webdav_config()`
 
 ### `tests/knowledge_real.rs` — 2 tests
 **Services:** NextCloud WebDAV
@@ -96,8 +108,8 @@ Tests connecting to live servers and APIs with real credentials. All `#[ignore]`
 |--------|---------|
 | `config.toml` `[rocketchat.server]` | `integration_real.rs`, `integration_dual.rs` |
 | `config.toml` `[webdav]` | `integration_real.rs` (rocketchat test 6), `integration_real.rs` (webdav), `knowledge_real.rs` |
-| `config.toml` `[[image_providers]]` with `name = "fal"` | `fal_real.rs` |
-| `WEBDAV_URL/WEBDAV_USERNAME/WEBDAV_PASSWORD/WEBDAV_ROOT` env vars | `integration_real.rs` (webdav, primary), `knowledge_real.rs` (primary) |
+| `config.toml` `[[image_providers]]` with `name = "fal"` | `fal_real.rs`, `image_gen_real.rs` |
+| `WEBDAV_URL/WEBDAV_USERNAME/WEBDAV_PASSWORD/WEBDAV_ROOT` env vars | `integration_real.rs` (webdav, primary), `knowledge_real.rs` (primary), `image_gen_real.rs` (primary) |
 | `CONFIG_FILE` env var | All (config path override) |
 
 ## How to Run
@@ -115,6 +127,7 @@ cargo test -p webdav -- --ignored
 cargo test --test integration_real -- --ignored                      # rocketchat
 cargo test --test integration_dual -- --ignored                      # rocketchat
 cargo test --test fal_real -- --ignored                              # rockbot
+cargo test --test image_gen_real -- --ignored                        # rockbot
 cargo test --test knowledge_real -- --ignored                        # rockbot
 cargo test -p webdav --test integration_real -- --ignored            # webdav
 

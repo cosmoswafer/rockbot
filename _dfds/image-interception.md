@@ -39,7 +39,7 @@ flowchart TD
     end
 
     subgraph "Interception Layer"
-        REFS[AttachmentRef list<br/>{title, data_uri}]
+        REFS["AttachmentRef list<br/>{title, data_uri}"]
         POOL[(ImagePool<br/>room_id → Vec<CachedImage>)]
         CACHE_VISION[cache_vision_images<br/>parse markdown data URIs]
         INJECT_VISION[inject_vision_images<br/>drain pool → user msg]
@@ -87,8 +87,17 @@ flowchart LR
     HIST -->|"preserved on last user msg"| CTX
 ```
 
-The LLM sees text like `Attached: ![apple.png](apple.png)` while the multimodal
-provider receives the actual pixels via `ContentPart::ImageUrl { url: "data:..." }`.
+The message text contains a reference label like `Attached: ![apple.png](apple.png)`.
+The actual pixels are embedded as `ContentPart::ImageUrl { url: "data:..." }` in
+the same message.
+
+**Provider-level handling** (see [ai-provider.md §2c](../base/ai-provider.md#2c-vision-payload-deep-dive)):
+- **Vision-capable providers** (OpenRouter): multipart messages with `ImageUrl`
+  parts pass through unchanged — the LLM sees the actual image pixels.
+- **Text-only providers** (DeepSeek): `ImageUrl` parts are stripped from every
+  message and replaced with `[image]` text placeholders via
+  `strip_message_images()`. The LLM cannot see image content but can still call
+  `image_gen` to edit images via `current_image_urls` auto-injection.
 
 ### 2c. Vision/WebDAV → ImagePool → Context Flow
 
@@ -100,7 +109,7 @@ flowchart LR
     TOOL[Vision / WebDAV Read]
     RESULT["![name](data:image/png;base64,...)"]
     PARSE[cache_vision_images<br/>extract name + data URI]
-    POOL[(ImagePool<br/>CachedImage {data_uri, name})]
+    POOL["(ImagePool<br/>CachedImage {data_uri, name})"]
     INJECT[inject_vision_images<br/>rename to photoN.ext]
     MSG["user msg:<br/>'The requested image is visible below:<br/>Attached: ![photo1.png](photo1.png)'"]
 
@@ -123,14 +132,14 @@ arguments and injects real image data from four converging sources:
 ```mermaid
 flowchart TD
     PROMPT[LLM Prompt<br/>e.g. 'edit apple.png to add a hat']
-    ATTACH_REF[AttachmentRef<br/>{title: 'apple.png', data_uri: 'data:...'}]
-    IMG_POOL[(ImagePool<br/>CachedImage {name: 'photo1.png', data_uri: 'data:...'})]
+    ATTACH_REF["AttachmentRef<br/>{title: 'apple.png', data_uri: 'data:...'}"]
+    IMG_POOL["ImagePool<br/>CachedImage name: photo1.png, data_uri: ..."]
     AGENT_URL["LLM-provided URLs<br/>(share_url, https://...)"]
     MSG_URLS["Message Image URLs<br/>current_image_urls<br/>(from DDP urls,<br/>content_type image/*)"]
 
     INJECT[inject_image_urls_from_refs]
     DEDUP[Deduplicate by URL string]
-    OUT[args['image_urls']]
+    OUT["args[image_urls]"]
 
     PROMPT -->|"contains 'apple.png'?"| ATTACH_REF
     PROMPT -->|"contains 'photo1.png'?"| IMG_POOL
@@ -165,9 +174,9 @@ NextCloud `share_url` in its result JSON, which the LLM can pass back in
 
 ```mermaid
 flowchart LR
-    GEN[image_gen Result<br/>{share_url, image_key}]
+    GEN["image_gen Result<br/>{share_url, image_key}"]
     LLM[LLM sees share_url]
-    NEXT[Next image_gen Call<br/>image_urls: [share_url]]
+    NEXT["Next image_gen Call<br/>image_urls: share_url"]
     PROVIDER[Provider Receives<br/>https:// URL for img2img]
 
     GEN -->|"share_url in result JSON"| LLM

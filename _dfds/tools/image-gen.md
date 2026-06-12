@@ -99,35 +99,38 @@ flowchart TD
 
 The `ImageProvider` trait abstracts both — the tool and harness never branch on provider type.
 
-### 2d. Harness Attachment Injection
+### 2d. Image URL Injection for Editing
 
-User-attached images are downloaded and labeled by the harness before the agent
-loop. Images appear in the conversation as markdown tags `![title](title)`.
-The LLM references images by their title in image_gen prompts. The harness
-scans prompts for title matches and injects the matched data URIs.
+When the LLM calls `image_gen` for editing (with `image_urls` in the
+arguments), the harness intercepts the call at `inject_image_urls_from_refs()`
+(`harness.rs:1475`) and enriches the arguments with image URLs from four
+converging sources. The full merge logic is in
+[Image Interception](../image-interception.md#2d-image-editing--inject_image_urls_from_refs).
 
 ```mermaid
 flowchart TD
-    RC_ATT[User Attachment]
-    DLOAD(DownloadAttachment)
-    ENCODE(EncodeDataURI)
-    LABEL[AssignTitle from filename]
-    BUILD_MSG["BuildUserMessage with image tags"]
-    LLM_CTX[(LLM Context)]
-    GEN_PROMPT{LLM prompt mentions title?}
-    INJECT(InjectMatched DataURIs)
-    TOOL_ARGS[(image_gen args with image_urls)]
+    LLM_CALL["LLM Calls image_gen<br/>prompt + optional image_urls"]
+    ATTACH["1. User Attachments<br/>(matched by title in prompt)"]
+    POOL["2. Vision/WebDAV Pool<br/>(matched by name in prompt)"]
+    AGENT_URL["3. Agent-Provided URLs<br/>(explicit image_urls from LLM)"]
+    MSG_URL["4. Message Image URLs<br/>(auto-injected unconditionally)"]
+    INJECT["Harness Intercepts<br/>inject_image_urls_from_refs<br/>merge + deduplicate"]
+    IMG_GEN["ImageGenTool.execute<br/>prompt + enriched image_urls"]
 
-    RC_ATT --> DLOAD
-    DLOAD --> ENCODE
-    ENCODE --> LABEL
-    LABEL --> BUILD_MSG
-    BUILD_MSG --> LLM_CTX
-    LLM_CTX --> GEN_PROMPT
-    GEN_PROMPT -->|"yes"| INJECT
-    GEN_PROMPT -->|"no (new generation)"| TOOL_ARGS
-    INJECT --> TOOL_ARGS
+    LLM_CALL -->|"raw args"| INJECT
+    ATTACH -->|"data URIs"| INJECT
+    POOL -->|"data URIs"| INJECT
+    AGENT_URL -->|"https or data URLs"| INJECT
+    MSG_URL -->|"share URLs"| INJECT
+    INJECT -->|"enriched args"| IMG_GEN
 ```
+
+After injection, `data:` URIs are uploaded to the provider's CDN (Fal) via
+`upload_data_uri`, which returns an `https://` URL. Existing `https://` URLs
+(e.g. NextCloud share links from a previous `image_gen` result) pass through
+directly. See
+[Provider Selection](#2c-provider-selection--data-uri-handling) for the
+subsequent provider dispatch.
 
 ## 3. Data Structures
 
@@ -143,7 +146,7 @@ LLM provides `prompt` and optional `image_size`; all other fields come from conf
 | `room_id`       | Harness           | `string`                                       | Room UUID for image storage (injected if omitted). **Note:** injected at execute time, not stored in the Rust struct. |
 | `webdav_dir`    | Harness           | `string`                                       | Type-prefixed room path (injected; falls back to room_id). **Note:** injected at execute time, not stored in the Rust struct. |
 | `image_cache_key`| Harness          | `string`                                       | Tool call_id — used as ImageCache lookup key     |
-| `image_urls`    | Harness (auto)    | `[]string`                                     | Injected from user attachments or LLM-provided URLs |
+| `image_urls`    | Harness (auto)    | `[]string`                                     | Injected from 4 converging sources (see §2d): user attachments, vision/WebDAV pool, agent-provided URLs, and message image URLs (auto-injected unconditionally) |
 | `model_id`      | Config            | `string`                                       | From `default_text_model` / `default_edit_model` |
 | `quality`       | Config            | `string`                                       | From `default_quality`                           |
 | `output_format` | Config            | `string`                                       | From `default_output_format`                     |
