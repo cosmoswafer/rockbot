@@ -544,6 +544,29 @@ pub fn date_to_days(date: &str) -> Option<i64> {
     Some((era as i64) * 146097 + doe as i64 - 719468)
 }
 
+pub(crate) fn truncate_message_content(msg: &mut ChatMessage, max_chars: usize) {
+    match &mut msg.content {
+        crate::types::MessageContent::Text(text) => {
+            if text.chars().count() > max_chars {
+                let mut chars: Vec<char> = text.chars().take(max_chars).collect();
+                chars.extend("\n\n[...truncated]".chars());
+                *text = chars.into_iter().collect();
+            }
+        }
+        crate::types::MessageContent::Multipart(parts) => {
+            for part in parts.iter_mut() {
+                if let crate::types::ContentPart::Text { text } = part {
+                    if text.chars().count() > max_chars {
+                        let mut chars: Vec<char> = text.chars().take(max_chars).collect();
+                        chars.extend("\n\n[...truncated]".chars());
+                        *text = chars.into_iter().collect();
+                    }
+                }
+            }
+        }
+    }
+}
+
 pub(crate) fn strip_images_from_message(msg: ChatMessage) -> ChatMessage {
     let crate::types::MessageContent::Multipart(ref parts) = msg.content else {
         return msg;

@@ -1,6 +1,6 @@
 # Knowledge Priority Algorithm
 
-> **Deprecated** — The knowledge index was simplified to `filename` + `updated_at` only. Priority recalculation no longer runs (`review_priorities` is a no-op). This DFD is preserved for historical reference. Retrieval ordering now uses `updated_at` descending (most recently modified first).
+> **Deprecated** — The knowledge index was replaced with `filename` + `when_useful` + `tags` (see [Knowledge Management](knowledge.md)). Priority recalculation no longer runs (`review_priorities` is a no-op). This DFD is preserved for historical reference.
 
 ## 1. Purpose (historical)
 

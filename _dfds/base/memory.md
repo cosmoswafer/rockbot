@@ -330,7 +330,7 @@ change). Source of truth for each layer remains its dedicated file
 | `dirty_snapshots`      | `HashSet<String>`            | Room IDs needing snapshot rebuild        |
 | `knowledge`            | `HashMap<String, String>`    | Pre-formatted knowledge system messages per room |
 | `persist_interval_secs`| `u64`                        | Timer interval for writing snapshots (default 60) |
-| `max_context_bytes`    | `usize`                      | Image-stripping threshold (default 30MB). Drops oldest `ImageUrl` parts first when exceeded. Text token enforcement is the model's domain (1M for qwen3.7-plus). Set high — let the provider reject token overflow. |
+| `max_context_bytes`    | `usize`                      | Byte limit that triggers proactive inline summarization and image-stripping (default 4MB ≈ 1M tokens). Matches typical model context limits to prevent token overflow before the provider rejects the request. |
 
 ### `RoomState`
 

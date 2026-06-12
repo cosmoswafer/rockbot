@@ -16,7 +16,7 @@ standard harness mechanisms are present:
 |-------------|----------|---------|
 | **Tools**   | Full     | Abstract tool calling via `ToolRegistry` — individual tools each have their own DFD |
 | **Context** | Full     | Per-room conversation history buffer, summarization, archive loading — see [Memory Management](base/memory.md); plus iteration limits, room state routing, system prompt assembly |
-| **Knowledge** | Full     | `save_knowledge`, `forget_knowledge`, `recall_knowledge`; retrieval sorted by `updated_at` recency — see [Knowledge Management](base/knowledge.md) |
+| **Knowledge** | Full     | `save_knowledge`, `forget_knowledge`, `recall_knowledge`; retrieval via keyword-matching against `when_useful` + `tags` + filename — see [Knowledge Management](base/knowledge.md) |
 
 Intentionally absent — not needed for rockbot's scope:
 
@@ -318,9 +318,9 @@ This covers all four image sources for editing:
 
 After each daily summary write (archive) and during periodic maintenance, the
 harness calls `review_knowledge_priorities()` which is currently a no-op.
-Knowledge retrieval is ordered by `updated_at` descending (most recently
-modified first) via `match_relevant()`. Priority-based scoring was removed
-when the knowledge index was simplified to `filename` + `updated_at` only.
+Knowledge retrieval uses `match_relevant()` which scores entries by keyword
+overlap against `when_useful`, `tags`, and filename-derived title. Priority-based
+scoring was removed when the knowledge index was simplified.
 
 ```mermaid
 flowchart TD
@@ -401,7 +401,10 @@ flowchart TD
 Then rebuilds context with `max_history: Some(4)` and applies **hard truncation**
 (no LLM summarization — that call would also exceed context if it included the
 oversized text): keep system/front-matter messages at the front, and only the
-last 2 conversation messages at the end to guarantee token fit.
+last 2 conversation messages at the end. After hard truncation, **per-message
+content truncation** caps each remaining conversation message at 200K chars to
+handle cases where individual tool results or user pastes are themselves
+enormous.
 
 **Retry limit**: compression is attempted at most once per call. If the
 provider still returns `ContextLengthExceeded` after compression, the

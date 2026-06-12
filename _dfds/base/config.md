@@ -101,7 +101,7 @@ flowchart TD
 | `summary_days`         | `u32`   | Layer 2 retention window in days (default 3)                  |
 | `memory_ttl_secs`      | `u64`   | Room idle timeout — snapshot to WebDAV then evict (default 300)|
 | `persist_interval_secs`| `u64`   | Snapshot persist timer interval (default 60)                  |
-| `max_context_bytes`    | `usize` | Max byte size for image-stripping trigger (default 30MB). Text context is governed by the model's token limit (1M for qwen3.7-plus), not by byte count. Set high to let the provider enforce the real limit. |
+| `max_context_bytes`    | `usize` | Max byte size for context (default 4MB ≈ 1M tokens). Triggers proactive inline summarization and image-stripping when exceeded. |
 | `max_attachment_bytes` | `u64`   | Max size of a single attachment in bytes (default 25_000_000) |
 
 #### `ProviderConfig`

@@ -61,7 +61,8 @@ impl KnowledgePriority {}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexEntry {
     pub filename: String,
-    pub updated_at: String,
+    pub when_useful: String,
+    pub tags: Vec<String>,
 }
 
 impl IndexEntry {
@@ -94,15 +95,15 @@ pub struct KnowledgeEntry {
 pub struct KnowledgeManager;
 
 impl KnowledgeManager {
-    fn knowledge_dir(webdav_dir: &str) -> String {
+    pub fn knowledge_dir(webdav_dir: &str) -> String {
         format!("{}knowledge/", WebDavPath::new("").room_dir(webdav_dir))
     }
 
-    fn index_path(webdav_dir: &str) -> String {
+    pub fn index_path(webdav_dir: &str) -> String {
         format!("{}index.json", Self::knowledge_dir(webdav_dir))
     }
 
-    fn slugify(title: &str) -> String {
+    pub fn slugify(title: &str) -> String {
         let lower = title.to_lowercase();
         let mut result = String::with_capacity(lower.len());
         for ch in lower.chars() {
@@ -177,11 +178,13 @@ impl KnowledgeManager {
 
         let mut index = Self::load_index(webdav, webdav_dir).await?;
         if let Some(existing) = index.entries.iter_mut().find(|e| e.filename == filename) {
-            existing.updated_at = now.clone();
+            existing.when_useful = when_useful.to_string();
+            existing.tags = tags.to_vec();
         } else {
             index.entries.push(IndexEntry {
                 filename: filename.clone(),
-                updated_at: now.clone(),
+                when_useful: when_useful.to_string(),
+                tags: tags.to_vec(),
             });
         }
         index.updated = now;
@@ -266,10 +269,7 @@ impl KnowledgeManager {
             .collect();
 
         if keywords.is_empty() {
-            // No keywords: return all entries sorted by recency
-            let mut entries: Vec<IndexEntry> = index.entries.clone();
-            entries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-            return entries;
+            return index.entries.clone();
         }
 
         let mut scored: Vec<(usize, IndexEntry)> = index
@@ -277,10 +277,19 @@ impl KnowledgeManager {
             .iter()
             .filter_map(|entry| {
                 let title_lower = entry.display_title().to_lowercase();
+                let when_lower = entry.when_useful.to_lowercase();
                 let mut score = 0usize;
                 for kw in &keywords {
                     if title_lower.contains(kw.as_str()) {
                         score += 2;
+                    }
+                    if when_lower.contains(kw.as_str()) {
+                        score += 1;
+                    }
+                    for tag in &entry.tags {
+                        if tag.to_lowercase().contains(kw.as_str()) {
+                            score += 1;
+                        }
                     }
                 }
                 if score > 0 {
@@ -291,9 +300,7 @@ impl KnowledgeManager {
             })
             .collect();
 
-        scored.sort_by(|a, b| {
-            b.0.cmp(&a.0).then_with(|| b.1.updated_at.cmp(&a.1.updated_at))
-        });
+        scored.sort_by(|a, b| b.0.cmp(&a.0));
         scored.into_iter().map(|(_, e)| e).collect()
     }
 
@@ -310,9 +317,7 @@ impl KnowledgeManager {
         let query_lower = query.to_lowercase();
         if query_lower.is_empty() {
             let mut content_parts = Vec::new();
-            let mut sorted: Vec<&IndexEntry> = index.entries.iter().collect();
-            sorted.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-            for e in &sorted {
+            for e in &index.entries {
                 if let Ok(body) =
                     Self::read_entry_md(webdav, webdav_dir, &e.filename).await
                 {
@@ -348,7 +353,7 @@ impl KnowledgeManager {
         }
     }
 
-    async fn read_entry_md(
+    pub async fn read_entry_md(
         webdav: &WebDavClient,
         webdav_dir: &str,
         filename: &str,
@@ -399,13 +404,14 @@ mod tests {
     }
 
     #[test]
-    fn test_match_relevant_finds_by_tag() {
+    fn test_match_relevant_finds_by_title() {
         let index = KnowledgeIndex {
             version: "rockbot-knowledge/1".into(),
             room_id: "r-test".into(),
             entries: vec![IndexEntry {
                 filename: "note_build.md".into(),
-                updated_at: String::new(),
+                when_useful: "When building cargo projects".into(),
+                tags: vec!["rust".into()],
             }],
             updated: String::new(),
         };
@@ -417,13 +423,52 @@ mod tests {
     }
 
     #[test]
+    fn test_match_relevant_finds_by_tag() {
+        let index = KnowledgeIndex {
+            version: "rockbot-knowledge/1".into(),
+            room_id: "r-test".into(),
+            entries: vec![IndexEntry {
+                filename: "skill_api.md".into(),
+                when_useful: "random situation".into(),
+                tags: vec!["database".into(), "api".into()],
+            }],
+            updated: String::new(),
+        };
+
+        let matches =
+            KnowledgeManager::match_relevant(&index, &["how do I connect to the database?"]);
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].filename, "skill_api.md");
+    }
+
+    #[test]
+    fn test_match_relevant_finds_by_when_useful() {
+        let index = KnowledgeIndex {
+            version: "rockbot-knowledge/1".into(),
+            room_id: "r-test".into(),
+            entries: vec![IndexEntry {
+                filename: "note_contact.md".into(),
+                when_useful: "When someone asks about office hours or support phone numbers".into(),
+                tags: vec![],
+            }],
+            updated: String::new(),
+        };
+
+        let matches =
+            KnowledgeManager::match_relevant(&index, &["what are your office hours?"]);
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].filename, "note_contact.md");
+    }
+
+    #[test]
     fn test_match_relevant_no_match() {
         let index = KnowledgeIndex {
             version: "rockbot-knowledge/1".into(),
             room_id: "r-test".into(),
             entries: vec![IndexEntry {
                 filename: "skill_api.md".into(),
-                updated_at: String::new(),
+                when_useful: "When working with REST APIs".into(),
+                tags: vec!["http".into()],
             }],
             updated: String::new(),
         };
@@ -449,12 +494,4 @@ mod tests {
         assert!(path.contains("d-saru"));
     }
 
-    // --- Knowledge priority algorithm tests ---
-
-    fn make_entry(filename: &str) -> IndexEntry {
-        IndexEntry {
-            filename: filename.to_string(),
-            updated_at: String::new(),
-        }
-    }
 }

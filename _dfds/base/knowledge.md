@@ -244,14 +244,15 @@ Machine-readable JSON file at `{root}/{webdav_dir}/knowledge/index.json`.
 | Field         | Type               | Notes                                          |
 | ------------- | ------------------ | ---------------------------------------------- |
 | `filename`    | `String`           | `{category}_{slug}.md` — unique key and display identifier |
-| `updated_at`  | `String`           | ISO 8601 last-modified timestamp               |
+| `when_useful` | `String`           | Situation description (retrieval trigger)      |
+| `tags`        | `Vec<String>`      | Searchable keywords                            |
 
 The `filename` doubles as the display key — `display_title()` strips the `.md`
 suffix. Knowledge context is formatted as `[Knowledge: {display_title}]\n{body}`
-in system messages. Retrieval matching uses keyword overlap against the
-filename-derived title; entries are sorted by `updated_at` descending (most
-recent first). Category, title, tags, when_useful, and priority exist only in
-the `.md` file metadata — the index is a minimal lookup table.
+in system messages. Retrieval matching uses keyword overlap against
+`when_useful`, `tags`, and the filename-derived title. Category, title, and
+priority exist only in the `.md` file metadata — `when_useful` and `tags` are
+denormalized into the index for fast retrieval without reading every `.md` file.
 
 ### `KnowledgePriority`
 
@@ -266,8 +267,7 @@ enum KnowledgePriority {
 
 **Priority**: the `priority` field is stored in `.md` frontmatter for
 informational purposes but is no longer used in retrieval decisions.
-Retrieval is ordered by `keyword overlap` × `updated_at` recency — most
-recently modified matching entries appear first.
+Retrieval is ordered by keyword overlap score (descending).
 
 ### `KnowledgeCategory`
 

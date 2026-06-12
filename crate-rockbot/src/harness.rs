@@ -11,7 +11,7 @@ use crate::error::Result;
 use crate::error::RockBotError;
 use crate::image_cache::ImageCache;
 use crate::knowledge::KnowledgeManager;
-use crate::memory::{DailySummary, MemoryManager, SoulMemory, strip_images_from_message};
+use crate::memory::{DailySummary, MemoryManager, SoulMemory, strip_images_from_message, truncate_message_content};
 use crate::provider::AiProvider;
 use crate::tool::ToolRegistry;
 use crate::types::{ChatMessage, ChatRequest, Role};
@@ -474,6 +474,12 @@ impl AgentHarness {
                             if messages.len() > system_end + keep_last {
                                 let drop = messages.len() - system_end - keep_last;
                                 messages.drain(system_end..system_end + drop);
+                            }
+                            // Emergency per-message content truncation to
+                            // handle cases where remaining messages contain
+                            // enormous text (large tool results, pastes, etc.)
+                            for msg in messages.iter_mut().skip(system_end) {
+                                truncate_message_content(msg, 200_000);
                             }
                             debug!(
                                 "Context length retry for room {}: hard-truncated to {} messages",
