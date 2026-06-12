@@ -5,7 +5,7 @@ config.json
 config.toml
 .aider*
 .env
-.opencode/deno.lock
+.agents/deno.lock
 
 tmp/
 
