@@ -343,7 +343,7 @@ change). Source of truth for each layer remains its dedicated file
 | `dirty_snapshots`      | `HashSet<String>`            | Room IDs needing snapshot rebuild        |
 | `knowledge`            | `HashMap<String, String>`    | Pre-formatted knowledge system messages per room |
 | `persist_interval_secs`| `u64`                        | Timer interval for writing snapshots (default 60) |
-| `max_context_bytes`    | `usize`                      | Max total JSON bytes sent to LLM (default 30MB). Drops oldest `ImageUrl` parts first when exceeded, preserving the latest user message images. |
+| `max_context_bytes`    | `usize`                      | Image-stripping threshold (default 30MB). Drops oldest `ImageUrl` parts first when exceeded. Text token enforcement is the model's domain (1M for qwen3.7-plus). Set high — let the provider reject token overflow. |
 
 ### `RoomState`
 

@@ -157,7 +157,7 @@ fn default_memory_ttl_secs() -> u64 {
 }
 
 fn default_max_context_bytes() -> usize {
-    2_000_000
+    30_000_000
 }
 
 fn default_max_attachment_bytes() -> u64 {
