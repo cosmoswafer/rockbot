@@ -1404,6 +1404,7 @@ fn parse_summary_header(daily_md: &str) -> (usize, usize) {
 mod tests {
     use super::*;
     use crate::error::RockBotError;
+    use crate::image_cache::GeneratedImage;
     use crate::provider::AiProvider;
     use crate::types::{CompletionResult, ContentPart, FinishReason, MessageContent, ToolCall};
     use async_trait::async_trait;
@@ -1591,6 +1592,69 @@ chat = "mock-model"
         let harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
         assert_eq!(harness.memory().room_count(), 0);
         assert_eq!(harness.tools().len(), 0);
+    }
+
+    #[test]
+    fn test_last_image_ids_empty_by_default() {
+        let config = make_test_config();
+        let provider = Box::new(MockProvider::new(vec![]));
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
+        let ids = harness.take_last_image_ids();
+        assert!(ids.is_empty());
+    }
+
+    #[test]
+    fn test_take_image_ids_drains() {
+        let config = make_test_config();
+        let provider = Box::new(MockProvider::new(vec![]));
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
+        // Store some ids
+        harness.last_image_ids = vec!["call_a".into(), "call_b".into()];
+        let ids = harness.take_last_image_ids();
+        assert_eq!(ids, vec!["call_a", "call_b"]);
+        // Should be drained
+        let ids2 = harness.take_last_image_ids();
+        assert!(ids2.is_empty());
+    }
+
+    #[test]
+    fn test_take_image_from_cache() {
+        let config = make_test_config();
+        let provider = Box::new(MockProvider::new(vec![]));
+        let cache = Arc::new(ImageCache::new());
+        cache.store("call_test", GeneratedImage {
+            webdav_path: "/r-test/images/img.png".into(),
+            image_bytes: vec![1, 2, 3],
+            mime_type: "image/png".into(),
+            share_url: Some("https://example.com/s/abc/download".into()),
+        });
+        let harness = AgentHarness::new(config, provider, None, cache.clone());
+        let img = harness.take_image("call_test");
+        assert!(img.is_some());
+        let img = img.unwrap();
+        assert_eq!(img.webdav_path, "/r-test/images/img.png");
+        assert_eq!(img.share_url.unwrap(), "https://example.com/s/abc/download");
+        // Should be consumed
+        assert!(harness.take_image("call_test").is_none());
+    }
+
+    #[test]
+    fn test_image_cache_share_url_computed() {
+        let config = make_test_config();
+        let provider = Box::new(MockProvider::new(vec![]));
+        let cache = Arc::new(ImageCache::new());
+        // Image with no share_url (simulating failed share creation)
+        cache.store("call_no_share", GeneratedImage {
+            webdav_path: "/r-test/img.png".into(),
+            image_bytes: vec![1, 2, 3],
+            mime_type: "image/png".into(),
+            share_url: None,
+        });
+        let harness = AgentHarness::new(config, provider, None, cache);
+        let img = harness.take_image("call_no_share").unwrap();
+        assert!(img.share_url.is_none());
+        // data_uri fallback should still work
+        assert!(img.data_uri().starts_with("data:image/png;base64,"));
     }
 
     #[test]
