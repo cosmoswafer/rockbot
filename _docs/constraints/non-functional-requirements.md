@@ -1,29 +1,29 @@
 # Non-Functional Requirements — RockBot
 
 ## 1. Performance Efficiency
-- **PE1** Agent loop terminates within `max_iterations` (default 8).
+- **PE1** Agent loop terminates within `max_iterations` (configurable, default 28).
 - **PE2** Web fetch times out at 30s.
-- **PE3** Chat history capped at 50K chars / 12 messages per room.
-- **PE4** Summaries capped at 8K chars.
-- **PE5** Soul memory capped at 2K chars.
-- **PE6** Snapshot writes coalesced every 60s.
-- **PE7** Exa results: 5 results, 10K chars per highlight.
-- **PE8** Web fetch body truncated at 10K chars (json mode).
+- **PE3** Chat context: `max_history_size` default 18 messages, `max_text_length` default 50K chars, `max_context_bytes` default 4 MB. Context-length errors trigger compression to last 2 messages + 200K char per-message truncation.
+- **PE4** Summaries capped at `max_summary_chars` (default 8K chars).
+- **PE5** Soul memory capped at `max_soul_chars` (default 2K chars).
+- **PE6** Snapshot writes coalesced every `persist_interval_secs` (default 60s).
+- **PE7** Exa search: default 5 results, highlights maxCharacters 15K, 3 retries with 1s backoff.
+- **PE8** Web fetch body truncated at 10K chars (all output modes).
 
 ## 2. Reliability
-- **RL1** WebSocket reconnect: exponential backoff, max 5 retries, then exit.
-- **RL2** AI provider errors: 5xx/429 retry with backoff, 401 immediate fail.
-- **RL3** WebDAV auto-creates parent dirs on write.
-- **RL4** Snapshot write failures don't block agent loop (dirty flag retries).
-- **RL5** Soul write failures warn + continue.
-- **RL6** Room state survives restart: cache-first snapshot.json, fallback to individual files.
-- **RL7** DDP subscription loss triggers re-subscribe.
-- **RL8** Tool execution errors produce fallback reply (not crash).
-- **RL9** AI summary failure truncates oldest messages without summary.
-- **RL10** Knowledge load failure on room init skips knowledge gracefully.
-- **RL11** Max iterations exceeded forces final reply.
-- **RL12** Knowledge forget is idempotent.
-- **RL13** CalDAV 409 ETag mismatch → refetch + merge + retry.
+- **RL1** WebSocket reconnect: exponential backoff (2^attempt seconds), max 5 retries, then flush snapshots and exit.
+- **RL2** AI provider errors: 3 retries for 429/5xx with exponential backoff (2s, 4s, 8s); 401 and all other errors fail immediately.
+- **RL3** WebDAV write auto-creates parent dirs: tries NextCloud `X-NC-WebDAV-AutoMkcol` header first, falls back to explicit `MKCOL` per-directory-level.
+- **RL4** Snapshot write failures don't block agent loop (dirty flag retries on next maintenance tick).
+- **RL5** Soul write failures warn + continue; snapshot marked dirty regardless.
+- **RL6** Room state survives restart: cache-first `snapshot.json` (single GET), fallback to individual `soul.md` + daily summary files.
+- **RL7** DDP subscription loss triggers automatic re-subscribe (unlimited retries).
+- **RL8** Tool execution errors produce `ToolResult` with `is_error: true` (fed back to LLM, not crash).
+- **RL9** AI summary failure truncates oldest messages without summary (falls back to static "truncated" message).
+- **RL10** Knowledge load failure on room init skips knowledge gracefully (warn + continue).
+- **RL11** Max iterations exceeded appends apology fallback message and returns to user.
+- **RL12** Knowledge forget returns error to LLM if entry not found; underlying WebDAV delete is idempotent (accepts 404).
+- **RL13** CalDAV update sends `If-Match` header with ETag; no automatic refetch+merge+retry on conflict.
 
 ## 3. Security
 - **SC1** Credentials in gitignored `config.toml` only.
@@ -33,13 +33,13 @@
 - **SC5** Provider API keys in HTTP headers only (never query/body).
 - **SC6** `config.toml` and `Cargo.lock` gitignored.
 - **SC7** Exa API key supports `EXA_API_KEY` env var fallback.
-- **SC8** Bot never responds to its own messages.
+- **SC8** Bot never responds to its own messages (`MessageFilter` discards by `sender_id`).
 
 ## 4. Maintainability
 - **MN1** 3 workspace crates: rocketchat, rockbot, webdav.
-- **MN2** AI providers implement shared `AiProvider` trait.
+- **MN2** AI chat providers implement shared `AiProvider` trait; image providers implement `ImageProvider` trait.
 - **MN3** Tools implement shared `Tool` trait, registered in `ToolRegistry`.
-- **MN4** Registration config-driven (conditional on config sections).
+- **MN4** Registration config-driven (conditional on config sections: WebDAV, image_providers, exa).
 - **MN5** Typed `serde` deserialization with nested sub-structs.
 - **MN6** All I/O async via tokio.
 - **MN7** DFDs are source of truth (not reverse-engineered).
@@ -56,36 +56,36 @@
 - **CM6** DDP deprecation risk accepted; no Apps-Engine migration.
 
 ## 6. Scalability
-- **SC1** Per-room memory fully isolated (separate WebDAV dirs).
-- **SC2** Idle rooms evicted after 300s TTL.
-- **SC3** Evicted rooms restore with single WebDAV GET.
+- **SC1** Per-room memory fully isolated (separate WebDAV dirs: `r-{name}` for channels, `d-{name}` for DMs).
+- **SC2** Idle rooms evicted after `memory_ttl_secs` (default 300s).
+- **SC3** Evicted rooms restore with single WebDAV GET (`snapshot.json`).
 - **SC4** Snapshot is performance cache; individual files are source of truth.
-- **SC5** Old daily summaries auto-deleted (7-day rolling window).
-- **SC6** Shared HTTP connection pool for WebDAV.
-- **SC7** Calendar events globally scoped (not per-room).
+- **SC5** Old daily summaries auto-deleted via configurable rolling window (default 3 days).
+- **SC6** WebDAV `WebDavClient` cloned and shared across tools; HTTP clients per-module (not pooled).
+- **SC7** Calendar events per-room scoped (separate CalDAV calendar per room).
 
 ## 7. Portability & Availability
 - **PA1** Linux only.
-- **PA2** Zero local disk writes (all state on WebDAV).
-- **PA3** Config path via `CONFIG_FILE` env var only.
+- **PA2** Zero local disk writes (all state on WebDAV; only reads config files at startup).
+- **PA3** Config path via `CONFIG_FILE` env var only (falls back to `config.toml` in cwd).
 - **PA4** TLS via rustls (no OpenSSL).
 - **PA5** Single nohup command for daemonization.
 - **PA6** Restart via `pkill rockbot` (process name, never `-f`).
 - **PA7** Max retry exhaustion exits for supervisor restart.
-- **PA8** SIGTERM/SIGINT triggers graceful shutdown.
+- **PA8** SIGTERM/SIGINT triggers graceful shutdown (flushes all dirty snapshots first).
 
 ## 8. Observability
-- **OB1** DDP debug logging via `[rocketchat.server] debug` toggle.
-- **OB2** Logs to `./tmp/rockbot.log`.
+- **OB1** DDP debug logging via `[rocketchat.server] debug` config toggle.
+- **OB2** Structured tracing output to stderr (log level via `RUST_LOG` env var; `./tmp/rockbot.log` is a shell redirect, not code path).
 - **OB3** Snapshot dirty state observable via `dirty_snapshots` set.
 - **OB4** Snapshot schema versioned (`rockbot-snapshot/1`).
 - **OB5** Knowledge index versioned (`rockbot-knowledge/1`).
 
 ## 9. Testability
-- **TS1** Unit tests run offline (259 tests, no network).
-- **TS2** HTTP-dependent tests use wiremock (37 tests).
-- **TS3** AI provider tests use MockProvider (5 tests).
-- **TS4** Tool tests use MockTool (6 tests).
-- **TS5** Real integration tests marked `#[ignore]` (7 tests).
+- **TS1** 541 total tests across all 3 crates (unit, integration, and real).
+- **TS2** HTTP-dependent tests use wiremock (67 tests).
+- **TS3** AI provider integration tests use MockProvider (harness.rs test module, 30+ call sites).
+- **TS4** Tool tests use MockTool (6 tests in tool.rs).
+- **TS5** Real integration tests marked `#[ignore]` (11 tests).
 - **TS6** Integration tests source creds from env vars only.
-- **TS7** 266 tests across all 3 crates.
+- **TS7** Test distribution: ~287 rockbot unit, ~35 rocketchat unit, ~38 webdav unit, plus integration and real test suites.
