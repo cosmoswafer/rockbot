@@ -1,50 +1,73 @@
 # Running Tests
 
-## Unit + mock-integration tests (always run)
+## Core tests (312 inline `#[cfg(test)]` in `src/`)
 
-All unit tests (inline `#[cfg(test)]` modules in `src/`) and mock-based integration tests run with plain `cargo test` — no credentials, servers, or network required.
+Fine-grained unit tests against single modules and DFDs. Run with plain `cargo test` — no credentials or servers required.
 
-| Test file | Crate | Covers |
-| --------- | ----- | ------ |
-| `src/**.rs` (inline) | all | Unit tests for each module |
-| `tests/integration.rs` | rocketchat | Message parsing, filtering, config deserialization |
-| `tests/integration.rs` | webdav | Client construction, `WebDavPath` helpers |
-| `tests/config_tests.rs` | webdav | Config deserialization, base URL construction |
-| `tests/provider_tests.rs` | rockbot | Config parsing, types serde, error handling, provider construction |
-| `tests/integration_mock.rs` | rockbot | `wiremock`-based HTTP mock tests for DeepSeek and OpenRouter providers |
+| Crate | Count | Key modules |
+|-------|-------|-------------|
+| rocketchat | 35 | ddp.rs (18), types.rs (12), rest.rs (5) |
+| rockbot | 303 | memory.rs (30), harness.rs (41), provider/ (69), tools/ (143), knowledge.rs (10) |
+| webdav | 38 | client.rs (20), path.rs (10), calendar.rs (8) |
 
-## Real-integration tests (`#[ignore]`)
+## User tests (161 in `tests/` — wiremock + in-memory)
 
-These tests connect to live services and require real credentials. Run with `cargo test -- --ignored`.
+Multi-DFD integration tests. Also run with `cargo test` — wiremock mocks HTTP; no live services.
 
-### `crate-rocketchat/tests/integration_real.rs` — requires `config.toml` + running RocketChat server
+| Test file | Crate | Tests | Mocked | Covers |
+|-----------|-------|-------|--------|--------|
+| `tests/integration.rs` | rocketchat | 30 | — | DDP messages, MessageFilter, config, BotReply |
+| `tests/integration_rest.rs` | rocketchat | 9 | wiremock | REST API: get_rooms, send_message, resolve_fname |
+| `tests/integration_mock.rs` | rockbot | 58 | wiremock | DeepSeek, OpenRouter, Fal, OpenRouterImage, WebDavTool, MemoryManager |
+| `tests/provider_tests.rs` | rockbot | 46 | — | Config parsing, type serde, error handling, provider construction |
+| `tests/integration.rs` | webdav | 10 | — | Client construction, WebDavPath helpers |
+| `tests/config_tests.rs` | webdav | 7 | — | Config deserialization, URL path building |
+| `tests/knowledge_real.rs` | rockbot | 1 | — | Public API accessibility (compile-time) |
 
-| Test | What it does | Credentials needed |
-| ---- | ------------ | ------------------ |
-| `test_config_toml_exists_and_parses` | Reads `config.toml` and verifies the `[rocketchat]` section | `url`, `username`, `password` in `config.toml` |
-| `test_connect_and_receive_events` | Opens a WebSocket, subscribes to `stream-room-messages`, logs incoming messages (30s timeout) | Same + running RocketChat instance |
-| `test_send_message_and_verify` | Validates WebSocket URI and host extraction from config | `config.toml` only (no server needed for URI parsing) |
+## Real tests (21 `#[ignore]` — live servers)
 
-### `crate-webdav/tests/integration_real.rs` — requires WebDAV env vars + running NextCloud
+Connect to live RocketChat, NextCloud WebDAV, and fal.ai. Requires real credentials.
 
-| Test | What it does | Credentials needed |
-| ---- | ------------ | ------------------ |
-| `test_real_ensure_directory_and_list` | Creates a directory, lists it with PROPFIND, then cleans up | `WEBDAV_URL`, `WEBDAV_USERNAME`, `WEBDAV_PASSWORD` |
-| `test_real_write_and_read_file` | Writes a file, reads it back, verifies content, cleans up | Same |
-| `test_real_write_file_auto_mkcol` | Writes to a deeply-nested path with `X-NC-WebDAV-AutoMkcol`, reads back, cleans up | Same |
-| `test_real_exists` | Checks a path doesn't exist, creates it, verifies exist check, cleans up | Same |
+| Test file | Crate | Tests | Services | Credentials |
+|-----------|-------|-------|----------|-------------|
+| `tests/integration_real.rs` | rocketchat | 7 | DDP, REST, WebDAV | `config.toml` |
+| `tests/integration_dual.rs` | rocketchat | 3 | DDP | `config.toml` |
+| `tests/fal_real.rs` | rockbot | 1 | fal.ai | `config.toml` |
+| `tests/knowledge_real.rs` | rockbot | 2 | WebDAV | env vars or `config.toml` |
+| `tests/integration_real.rs` | webdav | 7 | WebDAV | env vars or `config.toml` |
+| `src/ddp.rs` (inline) | rocketchat | 1 | — | *(flaky unit test, not a real integration)* |
 
-Env vars for WebDAV tests:
+### Real test credentials
 
-| Variable | Required | Example |
-| -------- | -------- | ------- |
-| `WEBDAV_URL` | Yes | `https://nextcloud.example.com` |
-| `WEBDAV_USERNAME` | Yes | `bot` |
-| `WEBDAV_PASSWORD` | Yes | `app-password-xxxx` |
-| `WEBDAV_ROOT` | No (defaults to `rockbot-test`) | `rockbot` |
+| Source | Priority | Tests using it |
+|--------|----------|----------------|
+| `config.toml` `[rocketchat.server]` | 1st | `integration_real.rs`, `integration_dual.rs` |
+| `config.toml` `[webdav]` | 1st | `knowledge_real.rs`, `integration_real.rs` (webdav) |
+| `config.toml` `[[image_providers]]` (fal) | 1st | `fal_real.rs` |
+| `WEBDAV_URL` / `WEBDAV_USERNAME` / `WEBDAV_PASSWORD` / `WEBDAV_ROOT` env vars | 1st/fallback | `integration_real.rs` (webdav), `knowledge_real.rs` |
+| `CONFIG_FILE` env var | Override | All |
 
-Run individual real-integration suites:
+### Run real tests
+
 ```bash
-cargo test -p rocketchat --test integration_real -- --ignored
+# All real integration tests
+cargo test -- --ignored
+
+# Per crate
+cargo test -p rocketchat -- --ignored
+cargo test -p rockbot -- --ignored
+cargo test -p webdav -- --ignored
+
+# Single test file
+cargo test --test integration_real -- --ignored
+cargo test --test integration_dual -- --ignored
+cargo test --test fal_real -- --ignored
+cargo test --test knowledge_real -- --ignored
 cargo test -p webdav --test integration_real -- --ignored
+
+# Single test
+cargo test -p webdav --test integration_real test_real_exists -- --ignored
+
+# With logging
+RUST_LOG=debug cargo test -p rocketchat --test integration_real test_connect_and_receive_events -- --ignored --nocapture
 ```
