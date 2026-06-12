@@ -1,58 +1,160 @@
-# fal.ai Integration Notes
+# fal.ai Image Generation — API Reference & Implementation Notes
 
-## API endpoint patterns
+## Config
 
-The fal.ai queue API uses the following URL patterns:
+```toml
+[[image_providers]]
+name = "fal"
+api_key = "EDITME"
+base_url = "https://queue.fal.run"
 
-| Operation | Method | URL pattern |
-|---|---|---|
-| Submit request | `POST` | `{base_url}/{model_id}` |
-| Poll status | `GET` | Use `status_url` from submit response |
-| Fetch result | `GET` | Use `response_url` from submit response |
+[image_providers.models]
+seedream    = "fal-ai/bytedance/seedream/v4.5/text-to-image"
+gptimage    = "openai/gpt-image-2"
+gptimage_edit = "openai/gpt-image-2/edit"
+grok_edit   = "xai/grok-imagine-image/quality/edit"
+```
 
-## Critical: Use API-returned URLs, do NOT reconstruct
+| Config field | Purpose |
+|---|---|
+| `base_url` | Queue submit endpoint (`POST {base_url}/{model_id}`) |
+| `basecf_url` | CDN storage endpoint; defaults to `https://rest.fal.ai` if unset |
+| `models` | Alias → full model ID resolution |
 
-The submit response includes `status_url` and `response_url` fields. These must be used **as-is** — do not construct URLs from `base_url + model_id + request_id`.
+## API Pipeline (3-phase async)
 
-Example submit response for `openai/gpt-image-2/edit`:
+### Phase 1 — Submit
 
-```json
+```
+POST {base_url}/{model_id}
+Authorization: Key {api_key}
+Content-Type: application/json
+
 {
-  "request_id": "019eb448-b6c5-7fe2-bc14-2b2498ae92d0",
-  "status_url": "https://queue.fal.run/openai/gpt-image-2/requests/019eb448-.../status",
-  "response_url": "https://queue.fal.run/openai/gpt-image-2/requests/019eb448-..."
+  "prompt": "...",
+  "quality": "medium",
+  "output_format": "png",
+  "num_images": 1,
+  "image_size": { "width": 3312, "height": 2480 },
+  "image_urls": ["https://fal-cdn/uploaded.png"]   // img2img only
 }
 ```
 
-Note the model portion is `openai/gpt-image-2` (without `/edit`). The `/edit` suffix is an action on the base model, and the API strips it from the status/response URLs. Reconstructing with `{model_id}/requests/{id}/status` would produce `openai/gpt-image-2/edit/requests/{id}/status`, which returns an empty **405** response, causing `response.json()` to fail with "EOF while parsing a value".
+Success response (200):
+```json
+{
+  "request_id": "019eb448-b6c5-7fe2-bc14-2b2498ae92d0",
+  "status_url": "https://queue.fal.run/openai/gpt-image-2/requests/019eb448.../status",
+  "response_url": "https://queue.fal.run/openai/gpt-image-2/requests/019eb448..."
+}
+```
 
-## Status polling
+Error responses carry `{"detail": "..."}` with a human-readable message.
 
-- Polling interval: 2 seconds
-- Max attempts: 90 (3 minutes total)
-- Exit conditions: `COMPLETED`, `FAILED`, or timeout
+### Phase 2 — Poll status
 
-## Real-image edit flow
+```
+GET {status_url}
+Authorization: Key {api_key}
+```
 
-1. Upload source image to fal storage via `POST {storage_url}/storage/upload/initiate` → `PUT {upload_url}`
-2. Submit edit request with `image_urls` pointing to uploaded file
-3. Poll `status_url` until `COMPLETED`
-4. Fetch result from `response_url` — extracts `images[0].url`
-5. Download result from fal CDN, re-upload to WebDAV
+Polling loop: 2 s interval, 300 attempts max (~10 min timeout). Logs progress every 5th attempt.
 
-## Test
+Status values:
 
-`crate-rockbot/tests/fal_real.rs` (`#[ignore]`) exercises the full flow against the real API using `_docs/ref_img/p1.png`:
-- Uploads p1.png to fal CDN (~1.3 MB)
-- Submits edit: "Change the girl's red sweater outfit to Rei Ayanami's iconic blue plugsuit cosplay from Neon Genesis Evangelion"
-- Polls every 2s (typical queue wait ~2–3 minutes)
-- Asserts result is an HTTPS URL
-
-## Turnaround times
-
-| Step | Typical time |
+| Status | Action |
 |---|---|
-| Upload | <1s |
-| Queue wait | 30s–180s |
-| Inference | ~30ms |
-| Download + cleanup | <1s |
+| `COMPLETED` | Fetch result |
+| `FAILED` | Return error from `body.error` field |
+| anything else | Sleep 2s, retry |
+
+### Phase 3 — Fetch result + download
+
+```
+GET {response_url}
+Authorization: Key {api_key}
+```
+
+Success response (200):
+```json
+{
+  "images": [
+    { "url": "https://fal.media/files/.../result.png", "width": 1024, "height": 1024 }
+  ]
+}
+```
+
+The provider extracts `images[0].url`, then HTTP GETs that URL to download the raw bytes. The bytes are returned to the caller (`ImageProvider::generate_image` returns `Vec<u8>`).
+
+## File Upload (img2img pre-upload)
+
+Fal requires source images to be hosted at a public URL. We upload to fal's own CDN:
+
+### Step 1 — Initiate
+
+```
+POST {storage_url}/storage/upload/initiate?storage_type=fal-cdn-v3
+Authorization: Key {api_key}
+Content-Type: application/json
+
+{
+  "content_type": "image/png",
+  "file_name": "rockbot-{unix_ts}.png"
+}
+```
+
+Returns:
+```json
+{
+  "file_url": "https://fal-cdn/.../rockbot-1718123456.png",
+  "upload_url": "https://storage.fal.ai/...presigned..."
+}
+```
+
+### Step 2 — PUT binary
+
+```
+PUT {upload_url}
+Content-Type: image/png
+
+<raw bytes>
+```
+
+Returns `file_url` to the caller. This URL is then passed as an `image_urls` entry in the submit request.
+
+### Turnaround times
+
+| Step | Typical |
+|---|---|
+| Upload initiate + PUT | <1 s |
+| Queue wait (submit → COMPLETED) | 30–180 s |
+| Inference | ~30 ms |
+| Result download | <1 s |
+| **Total end-to-end** | **2–3 min** |
+
+## Trait Mapping
+
+`FalAiProvider` implements `ImageProvider`:
+
+| Trait method | Implementation |
+|---|---|
+| `generate_image(params) -> Vec<u8>` | Submit → poll → fetch URL → HTTP GET bytes → return |
+| `upload_file(data, content_type) -> String` | Initiate → PUT → return `file_url` |
+| `provider_name() -> "fal"` | Static |
+| `model_id() -> &str` | From config model resolution |
+
+The inherent `generate_image_url(params) -> String` remains public for direct URL access (used by integration tests).
+
+## Critical: Use API-returned URLs, do NOT reconstruct
+
+The submit response includes `status_url` and `response_url`. Use them **as-is**. The API strips model action suffixes (`/edit`) from these URLs. Reconstructing from `base_url + model_id + request_id` would produce a wrong path that returns HTTP 405, causing `response.json()` to fail with "EOF while parsing a value".
+
+## Real-image test
+
+`crate-rockbot/tests/fal_real.rs` (`#[ignore]`) — exercises the full flow against the live API:
+
+1. Reads `_docs/ref_img/p1.png` (~1.3 MB)
+2. Uploads to fal CDN
+3. Submits edit with image reference
+4. Polls every 2 s until COMPLETED
+5. Asserts result is an HTTPS URL

@@ -601,6 +601,127 @@ mod tests {
         let provider = OpenRouterProvider::with_client(&config, "openai/gpt-4", client).unwrap();
         assert_eq!(provider.model_name(), "openai/gpt-4");
     }
+
+    mod image_provider {
+        use super::super::*;
+        use crate::provider::ImageProvider;
+        use crate::types::ImageGenParams;
+
+        fn make_image_provider(model: &str) -> OpenRouterImageProvider {
+            let config = ProviderConfig {
+                name: "openrouter".into(),
+                api_key: "sk-or-v1-test".into(),
+                base_url: "https://openrouter.ai/api/v1".into(),
+                basecf_url: None,
+                chat_path: Some("/chat/completions".into()),
+                draw_path: None,
+                models: std::collections::HashMap::new(),
+            };
+            OpenRouterImageProvider::new(&config, model).unwrap()
+        }
+
+        #[test]
+        fn test_new_missing_api_key() {
+            let config = ProviderConfig {
+                name: "openrouter".into(),
+                api_key: "EDITME".into(),
+                base_url: "https://openrouter.ai/api/v1".into(),
+                basecf_url: None,
+                chat_path: None,
+                draw_path: None,
+                models: std::collections::HashMap::new(),
+            };
+            assert!(OpenRouterImageProvider::new(&config, "test-model").is_err());
+        }
+
+        #[test]
+        fn test_new_empty_api_key() {
+            let config = ProviderConfig {
+                name: "openrouter".into(),
+                api_key: "".into(),
+                base_url: "https://openrouter.ai/api/v1".into(),
+                basecf_url: None,
+                chat_path: None,
+                draw_path: None,
+                models: std::collections::HashMap::new(),
+            };
+            assert!(OpenRouterImageProvider::new(&config, "test-model").is_err());
+        }
+
+        #[test]
+        fn test_provider_names() {
+            let provider = make_image_provider("google/gemini-3.1-flash-image-preview");
+            assert_eq!(provider.provider_name(), "openrouter");
+            assert_eq!(provider.model_id(), "google/gemini-3.1-flash-image-preview");
+        }
+
+        #[test]
+        fn test_trait_provider_name() {
+            let provider = make_image_provider("google/gemini-3.1-flash-image-preview");
+            let trait_ref: &dyn ImageProvider = &provider;
+            assert_eq!(trait_ref.provider_name(), "openrouter");
+            assert_eq!(trait_ref.model_id(), "google/gemini-3.1-flash-image-preview");
+        }
+
+        #[test]
+        fn test_preset_to_aspect_ratio_known() {
+            assert_eq!(OpenRouterImageProvider::preset_to_aspect_ratio("landscape_16_9"), "16:9");
+            assert_eq!(OpenRouterImageProvider::preset_to_aspect_ratio("portrait_16_9"), "9:16");
+            assert_eq!(OpenRouterImageProvider::preset_to_aspect_ratio("landscape_4_3"), "4:3");
+            assert_eq!(OpenRouterImageProvider::preset_to_aspect_ratio("portrait_4_3"), "3:4");
+            assert_eq!(OpenRouterImageProvider::preset_to_aspect_ratio("landscape_3_2"), "3:2");
+            assert_eq!(OpenRouterImageProvider::preset_to_aspect_ratio("portrait_2_3"), "2:3");
+            assert_eq!(OpenRouterImageProvider::preset_to_aspect_ratio("square"), "1:1");
+            assert_eq!(OpenRouterImageProvider::preset_to_aspect_ratio("square_hd"), "1:1");
+        }
+
+        #[test]
+        fn test_preset_to_aspect_ratio_passthrough() {
+            assert_eq!(OpenRouterImageProvider::preset_to_aspect_ratio("auto"), "auto");
+            assert_eq!(OpenRouterImageProvider::preset_to_aspect_ratio("unknown"), "unknown");
+        }
+
+        #[tokio::test]
+        async fn test_upload_file_returns_data_uri() {
+            let provider = make_image_provider("google/gemini-3.1-flash-image-preview");
+            let data = b"\x89PNG\r\n\x1a\nfake png bytes";
+            let result = provider.upload_file(data, "image/png").await.unwrap();
+            assert!(result.starts_with("data:image/png;base64,"));
+            assert!(result.len() > "data:image/png;base64,".len());
+        }
+
+        #[test]
+        fn test_parse_response_body_success() {
+            let json = serde_json::json!({
+                "id": "gen-abc123",
+                "choices": [{
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": "Here is an image.",
+                        "images": [{
+                            "type": "image_url",
+                            "image_url": { "url": "data:image/png;base64,iVBORw0KGgo=" }
+                        }]
+                    },
+                    "finish_reason": "stop"
+                }],
+                "usage": { "prompt_tokens": 10, "completion_tokens": 1, "total_tokens": 11 }
+            });
+
+            let result = OpenRouterProvider::parse_response_body(&json).unwrap();
+            assert_eq!(result.text, Some("Here is an image.".into()));
+            assert_eq!(result.finish, FinishReason::Stop);
+            assert_eq!(result.usage.unwrap().total_tokens, 11);
+        }
+
+        #[test]
+        fn test_image_params_model_id_override() {
+            let mut params = ImageGenParams::new("test prompt");
+            params.model_id = Some("black-forest-labs/flux.2-pro".into());
+            assert_eq!(params.model_id.as_deref(), Some("black-forest-labs/flux.2-pro"));
+        }
+    }
 }
 
 pub struct OpenRouterImageProvider {

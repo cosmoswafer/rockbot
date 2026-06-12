@@ -1,6 +1,6 @@
 use rockbot::config::{AppConfig, ProviderConfig};
 use rockbot::error::{Result, RockBotError};
-use rockbot::provider::{AiProvider, DeepSeekProvider, OpenRouterProvider};
+use rockbot::provider::{AiProvider, DeepSeekProvider, FalAiProvider, OpenRouterProvider};
 use rockbot::types::{
     ChatMessage, ChatRequest, CompletionResult, ContentPart, FinishReason, ImageUrlPayload,
     MessageContent, Role, ThinkingConfig, ToolCall, ToolDef, UsageInfo,
@@ -873,6 +873,24 @@ fn test_ai_provider_is_object_safe() {
     let _: &dyn AiProvider = &provider;
     assert_eq!(provider.provider_name(), "deepseek");
     assert_eq!(provider.model_name(), "deepseek-v4-pro");
+}
+
+#[test]
+fn test_image_provider_is_object_safe() {
+    let config = ProviderConfig {
+        name: "fal".into(),
+        api_key: "fal-key".into(),
+        base_url: "https://queue.fal.run".into(),
+        basecf_url: None,
+        chat_path: None,
+        draw_path: None,
+        models: HashMap::new(),
+    };
+    let provider = FalAiProvider::new(&config, "fal-ai/flux/schnell").unwrap();
+    // Verify it can be used as a trait object
+    let _: &dyn rockbot::provider::ImageProvider = &provider;
+    assert_eq!(provider.provider_name(), "fal");
+    assert_eq!(provider.model_id(), "fal-ai/flux/schnell");
 }
 
 // ─── ChatMessage Multipart Tests ─────────────────────────────────────────────

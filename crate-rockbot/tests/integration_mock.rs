@@ -1,6 +1,6 @@
 use rockbot::config::ProviderConfig;
 use rockbot::error::RockBotError;
-use rockbot::provider::{AiProvider, DeepSeekProvider, FalAiProvider, OpenRouterProvider};
+use rockbot::provider::{AiProvider, DeepSeekProvider, FalAiProvider, ImageProvider, OpenRouterImageProvider, OpenRouterProvider};
 use rockbot::tool::Tool;
 use rockbot::types::{ChatMessage, ChatRequest, FinishReason, ImageGenParams, ThinkingConfig, ToolDef};
 use std::collections::HashMap;
@@ -1532,6 +1532,169 @@ async fn test_webdav_edit_multiple_matches() {
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(err.contains("found 2 times"));
+}
+
+// ─── Mock HTTP Tests: OpenRouterImageProvider.generate_image() ─────────────────
+
+fn make_openrouter_image_config(mock_uri: &str) -> ProviderConfig {
+    ProviderConfig {
+        name: "openrouter".into(),
+        api_key: "sk-or-v1-test".into(),
+        base_url: mock_uri.to_string(),
+        basecf_url: None,
+        chat_path: Some("/chat/completions".into()),
+        draw_path: None,
+        models: HashMap::new(),
+    }
+}
+
+#[tokio::test]
+async fn test_openrouter_image_gen_success() {
+    let mock_server = MockServer::start().await;
+    let base = mock_server.uri();
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(header("Authorization", "Bearer sk-or-v1-test"))
+        .and(header("Content-Type", "application/json"))
+        .and(body_string_contains("\"modalities\":[\"image\"]"))
+        .and(body_string_contains("a sunset"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "gen-abc123",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "Here is an image.",
+                    "images": [{
+                        "type": "image_url",
+                        "image_url": { "url": "data:image/png;base64,iVBORw0KGgo=" }
+                    }]
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": { "prompt_tokens": 10, "completion_tokens": 1, "total_tokens": 11 }
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let config = make_openrouter_image_config(&base);
+    let provider = OpenRouterImageProvider::new(&config, "google/gemini-3.1-flash-image-preview").unwrap();
+    let bytes = provider.generate_image(&ImageGenParams::new("a sunset")).await.unwrap();
+    assert!(!bytes.is_empty());
+}
+
+#[tokio::test]
+async fn test_openrouter_image_gen_with_img2img() {
+    let mock_server = MockServer::start().await;
+    let base = mock_server.uri();
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(body_string_contains("\"type\":\"image_url\""))
+        .and(body_string_contains("https://example.com/photo.png"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "choices": [{
+                "message": {
+                    "images": [{
+                        "image_url": { "url": "data:image/png;base64,AAAA" }
+                    }]
+                }
+            }]
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let config = make_openrouter_image_config(&base);
+    let provider = OpenRouterImageProvider::new(&config, "google/gemini-3.1-flash-image-preview").unwrap();
+    let mut params = ImageGenParams::new("edit this photo");
+    params.image_urls = Some(vec!["https://example.com/photo.png".into()]);
+    let bytes = provider.generate_image(&params).await.unwrap();
+    assert!(!bytes.is_empty());
+}
+
+#[tokio::test]
+async fn test_openrouter_image_gen_unauthorized() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(401).set_body_json(serde_json::json!({
+                "error": { "message": "Invalid API key" }
+            })),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let config = make_openrouter_image_config(&mock_server.uri());
+    let provider = OpenRouterImageProvider::new(&config, "google/gemini-3.1-flash-image-preview").unwrap();
+    let result = provider.generate_image(&ImageGenParams::new("test")).await;
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("Invalid API key"));
+}
+
+#[tokio::test]
+async fn test_openrouter_image_gen_missing_images_field() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "choices": [{
+                "message": { "content": "No images returned" }
+            }]
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let config = make_openrouter_image_config(&mock_server.uri());
+    let provider = OpenRouterImageProvider::new(&config, "google/gemini-3.1-flash-image-preview").unwrap();
+    let result = provider.generate_image(&ImageGenParams::new("test")).await;
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("no images"));
+}
+
+#[tokio::test]
+async fn test_openrouter_image_gen_with_aspect_ratio() {
+    let mock_server = MockServer::start().await;
+    let base = mock_server.uri();
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(body_string_contains("\"aspect_ratio\":\"16:9\""))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "choices": [{
+                "message": {
+                    "images": [{
+                        "image_url": { "url": "data:image/png;base64,AAAA" }
+                    }]
+                }
+            }]
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let config = make_openrouter_image_config(&base);
+    let provider = OpenRouterImageProvider::new(&config, "google/gemini-3.1-flash-image-preview").unwrap();
+    let mut params = ImageGenParams::new("a sunset");
+    params.image_size = Some(rockbot::ImageSizeValue::Preset("landscape_16_9".into()));
+    params.quality = Some("high".into());
+    params.output_format = Some("webp".into());
+    params.num_images = Some(2);
+    let bytes = provider.generate_image(&params).await.unwrap();
+    assert!(!bytes.is_empty());
+}
+
+#[tokio::test]
+async fn test_openrouter_upload_file_data_uri() {
+    let config = make_openrouter_image_config("https://openrouter.ai/api/v1");
+    let provider = OpenRouterImageProvider::new(&config, "google/gemini-3.1-flash-image-preview").unwrap();
+    let result = provider.upload_file(b"fake-png", "image/png").await.unwrap();
+    assert_eq!(result, "data:image/png;base64,ZmFrZS1wbmc=");
 }
 
 // ─── Mock HTTP Tests: FalAiProvider.generate_image_url() ──────────────────────────
