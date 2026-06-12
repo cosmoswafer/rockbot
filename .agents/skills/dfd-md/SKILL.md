@@ -42,18 +42,68 @@ DFD must be:
    mocking; targets a live server, API, or resource) and run it to collect
    actual data shapes. Use this data as reference for the implementation phase.
 3. **Implement data flow validation constraints** — enforce data structure
-   correctness through code-level constraints.  Every data flow crossing DFD
-   boundaries must carry a concrete type/struct; parse and validate at
-   subsystem entry points ("parse, don't validate").  Cross-DFD shared
-   structures must be defined once in a canonical location and imported by both
-   producer and consumer crates — this makes mismatches a compile-time error.
-   Where runtime validation is unavoidable, fail fast with a clear error naming
-   the expected DFD data structure and the offending field.
+   correctness through code-level constraints (see
+   [Type-Driven Design & Validation Implementation](#type-driven-design--validation-implementation)
+   below).  Parse and validate at subsystem entry points ("parse, don't
+   validate"); cross-DFD shared structures defined once in a canonical location
+   and imported by both producer and consumer crates for compile-time
+   enforcement.  Where runtime validation is unavoidable, fail fast naming the
+   expected DFD data structure and offending field.
 4. **Concrete implementation** — code the types, core logic, and wiring
    described by the DFD. Favour incremental, type-first implementation.
 5. **Review all DFDs** — once the implementation is stable, re-read every DFD
    in the project and confirm it still matches the code. Update any DFD that
    has drifted.
+
+## Type-Driven Design & Validation Implementation
+
+DFD data structures (section 3) are implemented as Rust types following strict
+**"Parse, don't validate"** discipline:
+
+- **Parse at boundaries** — all external input (JSON, config, CLI args, HTTP
+  responses) is parsed into infallible domain types at the subsystem entry
+  point.  After parsing, the rest of the system uses only these types — never
+  raw strings, `serde_json::Value`, or untyped collections.
+- **Newtype wrapping** — primitives that carry invariants (IDs, emails, URLs,
+  non-empty strings, bounded integers) are wrapped in single-field structs
+  using crates such as [`nutype`](https://crates.io/crates/nutype) (validation
+  at construction), [`derive_more`](https://crates.io/crates/derive_more)
+  (boilerplate `Deref`/`From`), or hand-rolled newtypes with private fields
+  and a fallible constructor (`TryFrom`/`FromStr`).  An invalid value must be
+  impossible to construct — if you hold an instance, the invariants are
+  guaranteed.
+- **Type-first implementation** — design types from the DFD data structure
+  tables _before_ writing functions.  Each table row becomes a struct or enum
+  variant.  Functions then operate on those types, with the compiler enforcing
+  correctness at every call site.
+- **Cross-DFD shared types** — a data structure consumed by multiple DFDs is
+  defined once in a canonical crate or module.  Both producer and consumer
+  crates import it, making type mismatches a **compile-time error** — no
+  runtime check or test suite needed.
+- **Fallible conversion layer** — all `TryFrom`/`FromStr`/`nutype` constructors
+  return `Result` with a specific error type (via
+  [`thiserror`](https://crates.io/crates/thiserror)).  Failure messages name
+  the DFD data structure and the offending field so errors are
+  self-documenting.
+- **Avoid `unwrap()`/`expect()`** — production code uses `?` with `thiserror`
+  error types.  Panics are reserved for truly unrecoverable programmer errors
+  (invariant violations that indicate a bug).
+
+### Example: newtype with `nutype`
+
+```rust
+use nutype::nutype;
+
+#[nutype(validate(len_char_min = 1, len_char_max = 100), derive(Debug, Clone, Serialize, Deserialize))]
+struct UserName(String);
+
+// Construction fails for invalid input — no .unwrap() needed downstream.
+let name = UserName::new(input)?;
+```
+
+Plain newtypes with manual `TryFrom` or builder patterns are equally valid when
+`nutype`'s attribute macros are too restrictive.  The invariant is what matters,
+not the crate.
 
 ## Notation
 
