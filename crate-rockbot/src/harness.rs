@@ -1154,8 +1154,8 @@ impl AgentHarness {
             match webdav.read_file_to_string(&md_path).await {
                 Ok(body) => {
                     parts.push(format!(
-                        "[Knowledge: {}]\nUse when: {}\n{}",
-                        entry.display_title(), entry.when_useful, body
+                        "[Knowledge: {}]\n{}",
+                        entry.display_title(), body
                     ));
                 }
                 Err(e) => {
