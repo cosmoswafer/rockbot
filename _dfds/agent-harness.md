@@ -16,7 +16,7 @@ standard harness mechanisms are present:
 |-------------|----------|---------|
 | **Tools**   | Full     | Abstract tool calling via `ToolRegistry` — individual tools each have their own DFD |
 | **Context** | Full     | Per-room conversation history buffer, summarization, archive loading — see [Memory Management](base/memory.md); plus iteration limits, room state routing, system prompt assembly |
-| **Knowledge** | Full     | `save_knowledge`, `forget_knowledge`, `recall_knowledge`; adaptive priority recalculation via daily summary review — see [Knowledge Management](base/knowledge.md) and [Knowledge Priority Algorithm](base/knowledge-priority.md) |
+| **Knowledge** | Full     | `save_knowledge`, `forget_knowledge`, `recall_knowledge`; retrieval sorted by `updated_at` recency — see [Knowledge Management](base/knowledge.md) |
 
 Intentionally absent — not needed for rockbot's scope:
 
@@ -259,60 +259,25 @@ a separate vision tool call. Injection happens at two points in the agent loop:
 (1) before the first LLM call for a message, and (2) after each tool-execution
 iteration before the next LLM call.
 
-### 2h. Daily Summary Review — Knowledge Priority Recalculation
+### 2h. Daily Summary Review — Knowledge Retrieval Ordering
 
 After each daily summary write (archive) and during periodic maintenance, the
-harness runs a review step that scans the latest 3 days of Layer 2 summaries
-for mentions of each knowledge entry, then recalculates priorities using a
-state machine that depends on both mention count and current priority.
-Degradation is rate-limited to at most once per 24 hours per entry. The full
-algorithm is defined in [Knowledge Priority Algorithm](base/knowledge-priority.md).
+harness calls `review_knowledge_priorities()` which is currently a no-op.
+Knowledge retrieval is ordered by `updated_at` descending (most recently
+modified first) via `match_relevant()`. Priority-based scoring was removed
+when the knowledge index was simplified to `filename` + `updated_at` only.
 
 ```mermaid
 flowchart TD
     ARCHIVE["archive_room_if_needed()<br/>(after upsert_daily_summary)"]
     TIMER["Maintenance Timer<br/>(every persist_interval_secs)"]
-    REVIEW["review_knowledge_priorities()"]
-    LOAD_SUMS["Load Latest 7 Days<br/>of Daily Summaries"]
-    DAV[(NextCloud WebDAV)]
-    LOAD_IDX["Load knowledge/index.json"]
-    PER_ENTRY{"For Each<br/>IndexEntry"}
-    SCAN["Scan Summaries for<br/>Entry Mentions"]
-    COUNT["Count Days Mentioned<br/>= week_count"]
-    RECALC["Compute New Priority<br/>(see knowledge-priority.md 2b)"]
-    UPDATE["Update Entry Priority"]
-    DIRTY{Any Priority<br/>Changed?}
-    WRITE["Write index.json"]
-    SKIP["Skip Room"]
-    MARK["Mark Snapshot Dirty"]
+    REVIEW["review_knowledge_priorities()<br/>(no-op)"]
+    SKIP["(no action)"]
 
     ARCHIVE -->|"post-archive trigger"| REVIEW
     TIMER -->|"periodic trigger"| REVIEW
-    REVIEW -->|"per room"| LOAD_SUMS
-    LOAD_SUMS -->|"GET summaries/*.md"| DAV
-    DAV -->|"summary texts (up to 7)"| LOAD_SUMS
-    LOAD_SUMS --> LOAD_IDX
-    LOAD_IDX -->|"GET knowledge/index.json"| DAV
-    DAV -->|"IndexEntry list"| PER_ENTRY
-    PER_ENTRY -->|"next entry<br/>(title + tags + when_useful<br/>+ current priority)"| SCAN
-    LOAD_SUMS -->|"7 days of summary texts"| SCAN
-    SCAN -->|"per-day match bool"| COUNT
-    COUNT -->|"week_count + current priority"| RECALC
-    RECALC -->|"new priority"| UPDATE
-    UPDATE -->|"updated entry"| PER_ENTRY
-    PER_ENTRY -->|"done"| DIRTY
-    DIRTY -->|"yes"| WRITE
-    WRITE -->|"PUT knowledge/index.json"| DAV
-    WRITE --> MARK
-    DIRTY -->|"no"| SKIP
+    REVIEW --> SKIP
 ```
-
-Mention matching uses keyword tokenization against summary texts — an entry is
-considered "mentioned" on a given day if any of its title tokens, `when_useful`
-tokens, or tags appear as substrings in that day's summary (case-insensitive,
-tokens > 2 characters, split on non-alphanumeric boundaries). The resulting
-`day_count` (0-3) and current priority drive a state machine (see
-knowledge-priority.md section 2b).
 
 ### 2i. Inline Context Overflow — truncate_and_summarize
 

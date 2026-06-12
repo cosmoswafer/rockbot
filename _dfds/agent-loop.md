@@ -37,9 +37,7 @@ flowchart TD
     DIRTY(MarkSnapshotDirty)
     SNAPSHOT(FlushSnapshots)
     ARCHIVE(CompressDaily)
-    REVIEW(DailySummaryReview)
     EVICT_ROOMS(EvictStaleRooms)
-    PERSIST_ASSETS["PersistAssets<br/>(via tools: image_gen → WebDAV,<br/>edit_soul → soul.md, etc.)"]
     CFG[(AppConfig)]
     HISTORY[(ConversationHistory)]
     TOOLS[(ToolRegistry)]
@@ -63,17 +61,10 @@ flowchart TD
     LOOP -->|"reply produced<br/>(every response)"| DIRTY
     DIRTY -->|"dirty flag"| ROOMS
     LOOP -->|"new message"| ARCHIVE
-    LOOP -->|"image asset"| PERSIST_ASSETS
     ARCHIVE -->|"summary prompt"| AI
     AI -->|"summary text"| ARCHIVE
-    ARCHIVE -->|"daily summary + soul"| PERSIST_ASSETS
     ARCHIVE -->|"also marks dirty"| DIRTY
-    PERSIST_ASSETS -->|"file data"| DAV
-    DAV -->|"file data"| PERSIST_ASSETS
     ARCHIVE -->|"pruned history"| HISTORY
-    ARCHIVE -->|"post-archive"| REVIEW
-    TIMER -->|"every persist_interval_secs"| REVIEW
-    REVIEW -->|"scan summaries,<br/>recalc knowledge priorities"| DAV
     LOOP -->|"updated room state"| ROOMS
     TIMER -->|"every persist_interval_secs"| SNAPSHOT
     ROOMS -->|"dirty rooms"| SNAPSHOT

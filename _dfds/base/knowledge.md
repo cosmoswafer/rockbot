@@ -243,19 +243,15 @@ Machine-readable JSON file at `{root}/{webdav_dir}/knowledge/index.json`.
 
 | Field         | Type               | Notes                                          |
 | ------------- | ------------------ | ---------------------------------------------- |
-| `filename`    | `String`           | `{category}_{slug}.md` — serves as unique key  |
-| `when_useful` | `String`           | Situation description for retrieval matching   |
-| `tags`        | `Vec<String>`      | Searchable keywords                            |
-| `priority`    | `KnowledgePriority` | P0 (highest), P1 (default for new entries), P2, P3 (stale); managed by [Knowledge Priority Algorithm](knowledge-priority.md) |
-| `last_degraded_at` | `Option<String>` (ISO 8601) | Timestamp of last degradation; enforces ≤1 degrade/day |
-| `created_at`  | `String`           | ISO 8601                                       |
-| `updated_at`  | `String`           | ISO 8601                                       |
+| `filename`    | `String`           | `{category}_{slug}.md` — unique key and display identifier |
+| `updated_at`  | `String`           | ISO 8601 last-modified timestamp               |
 
 The `filename` doubles as the display key — `display_title()` strips the `.md`
-suffix. Knowledge context is formatted as `[Knowledge: {display_title}]\n...`
-in system messages. Keyword matching for retrieval uses the filename-derived
-title, `when_useful`, and `tags`. `category` and `title` are no longer stored
-in the index — they exist only in the `.md` file metadata for human readability.
+suffix. Knowledge context is formatted as `[Knowledge: {display_title}]\n{body}`
+in system messages. Retrieval matching uses keyword overlap against the
+filename-derived title; entries are sorted by `updated_at` descending (most
+recent first). Category, title, tags, when_useful, and priority exist only in
+the `.md` file metadata — the index is a minimal lookup table.
 
 ### `KnowledgePriority`
 

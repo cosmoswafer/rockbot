@@ -1,6 +1,8 @@
 # Knowledge Priority Algorithm
 
-## 1. Purpose
+> **Deprecated** — The knowledge index was simplified to `filename` + `updated_at` only. Priority recalculation no longer runs (`review_priorities` is a no-op). This DFD is preserved for historical reference. Retrieval ordering now uses `updated_at` descending (most recently modified first).
+
+## 1. Purpose (historical)
 
 Defines the **adaptive priority recalculation** algorithm that runs during daily
 summary review. Knowledge entries are re-evaluated against their mention
