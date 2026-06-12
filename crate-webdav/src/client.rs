@@ -172,12 +172,14 @@ impl WebDavClient {
                     .replace("&amp;", "&")
                     .replace("&lt;", "<")
                     .replace("&gt;", ">");
+                // Append /download for direct raw file access (inline image rendering)
+                let download_url = format!("{}/download", cleaned.trim_end_matches('/'));
                 tracing::debug!(
                     "Created NextCloud share link for '{}': {}",
                     file_path,
-                    cleaned
+                    download_url
                 );
-                return Some(cleaned);
+                return Some(download_url);
             }
         }
 
