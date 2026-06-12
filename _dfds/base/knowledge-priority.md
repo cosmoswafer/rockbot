@@ -4,9 +4,11 @@
 
 Defines the **adaptive priority recalculation** algorithm that runs during daily
 summary review. Knowledge entries are re-evaluated against their mention
-presence in the latest 7 daily summaries, promoting frequently-used entries
-and progressively degrading stale ones. A "week" means any consecutive 7-day
+presence in the latest 3 daily summaries, promoting frequently-used entries
+and progressively degrading stale ones. A "cycle" means any consecutive 3-day
 sliding window — not a calendar week.
+
+New entries default to **P1** (not P2).
 
 This DFD is referenced by [Knowledge Management](knowledge.md) for data
 structures and by [Agent Harness](../agent-harness.md) for the daily summary
@@ -28,7 +30,7 @@ review trigger.
 flowchart TD
     START[Daily Summary Review Trigger]
     ROOM["Per-Room<br/>(webdav_dir)"]
-    LOAD_SUMS["Harness Provides<br/>Latest 7-Day Summaries<br/>(from in-memory cache)"]
+    LOAD_SUMS["Harness Provides<br/>Latest 3-Day Summaries<br/>(from in-memory cache)"]
     DAV[(NextCloud WebDAV)]
     LOAD_IDX["Load knowledge/index.json"]
     EMPTY{Any knowledge<br/>entries?}
@@ -36,7 +38,7 @@ flowchart TD
     TICK{More entries?}
     NEXT[Next IndexEntry]
     SCAN["Scan Summaries for<br/>Entry Mentions<br/>(title + tags + when_useful keywords)"]
-    COUNT["Count Days Mentioned<br/>= week_count (0-7)"]
+    COUNT["Count Days Mentioned<br/>= day_count (0-3)"]
     NEW_PRIO{"Compute New Priority<br/>(see 2b state diagram)"}
     CHANGED{Priority Changed?}
     DEGRADE{"Is Degradation?<br/>(new &gt; current, higher ord = worse)"}
@@ -57,7 +59,7 @@ flowchart TD
     NEXT -->|"entry title, tags, when_useful"| SCAN
     LOAD_SUMS -.->|"summary texts passed by caller"| SCAN
     SCAN -->|"per-day match bool"| COUNT
-    COUNT -->|"week_count + current priority"| NEW_PRIO
+    COUNT -->|"day_count + current priority"| NEW_PRIO
     NEW_PRIO --> CHANGED
     CHANGED -->|"yes"| DEGRADE
     CHANGED -->|"no"| SKIP
@@ -74,66 +76,64 @@ flowchart TD
 
 ### 2b. Priority State Diagram
 
-Priority transitions depend on the **week_count** (number of days in the latest
-7-day window where the entry is mentioned) and the entry's **current priority**.
-New entries always start at P2.
+Priority transitions depend on the **day_count** (number of days in the latest
+3-day window where the entry is mentioned) and the entry's **current priority**.
+New entries always start at **P1** (default).
 
 ```mermaid
 stateDiagram-v2
     direction LR
 
-    [*] --> P2 : new entry
+    [*] --> P1 : new entry
 
     state P0 {
         [*] --> used_every_day
-        used_every_day : week == 7
+        used_every_day : day_count == 3
     }
     state P1 {
-        [*] --> mentioned
-        mentioned : week ≥ 1
+        [*] --> mentioned_or_new
+        mentioned_or_new : day_count ≥ 1
     }
     state P2 {
-        [*] --> new_or_demoted
-        new_or_demoted : week == 0 (from P0/P1)
+        [*] --> degraded_once
+        degraded_once : day_count == 0\n(from P1)
     }
     state P3 {
         [*] --> stale
-        stale : week == 0 (from P2)
+        stale : day_count == 0\n(2nd cycle no-mention)
     }
 
-    P0 --> P0 : week == 7\n(stay P0)
-    P0 --> P1 : week ≥ 1,\nweek < 7
-    P0 --> P2 : week == 0\n(1st cycle no-mention)
+    P0 --> P0 : day_count == 3\n(stay P0)
+    P0 --> P1 : day_count ≥ 1,\nday_count < 3
+    P0 --> P1 : day_count == 0
 
-    P1 --> P0 : week == 7
-    P1 --> P1 : week ≥ 1,\nweek < 7
-    P1 --> P2 : week == 0\n(1st cycle no-mention)
+    P1 --> P0 : day_count == 3
+    P1 --> P1 : day_count ≥ 1
+    P1 --> P2 : day_count == 0\n(1st cycle no-mention)
 
-    P2 --> P0 : week == 7
-    P2 --> P1 : week ≥ 1,\nweek < 7
-    P2 --> P3 : week == 0\n(2nd cycle no-mention)
+    P2 --> P1 : day_count ≥ 1
+    P2 --> P3 : day_count == 0\n(2nd cycle no-mention)
 
-    P3 --> P0 : week == 7
-    P3 --> P1 : week ≥ 1,\nweek < 7
-    P3 --> P3 : week == 0\n(stay stale)
+    P3 --> P1 : day_count ≥ 1
+    P3 --> P3 : day_count == 0\n(stay stale)
 ```
 
 **Transition table**:
 
-| Current | week_count == 7 | week_count ≥ 1 (but < 7) | week_count == 0 |
-| ------- | --------------- | ------------------------ | --------------- |
-| **P0**  | → P0            | → P1                     | → P2            |
-| **P1**  | → P0            | → P1                     | → P2            |
-| **P2**  | → P0            | → P1                     | → P3            |
-| **P3**  | → P0            | → P1                     | → P3            |
+| Current | day_count == 3 | day_count ≥ 1 (but < 3) | day_count == 0 |
+| ------- | -------------- | ----------------------- | -------------- |
+| **P0**  | → P0           | → P1                    | → P1           |
+| **P1**  | → P0           | → P1                    | → P2           |
+| **P2**  | → P1           | → P1                    | → P3           |
+| **P3**  | → P1           | → P1                    | → P3           |
 
 **Rules**:
-- **P0** = used every day (7/7) — always recalled in context
-- **P1** = mentioned at least once in the latest 7 days — highest priority short of daily use
-- **P2** = not mentioned in the latest 7 days, OR new entry — one-cycle degradation
-- **P3** = not mentioned for two consecutive cycles (from P2) — stale, but can recover if mentioned again
-- Promotion is immediate: any mention ≥1 day jumps to P1; 7/7 jumps to P0
-- Degradation is incremental: P0/P1 → P2 → P3, one step per review cycle with 0 mentions
+- **P0** = recalled every day (3/3) — always recalled in context
+- **P1** = recalled at least once in 3 days — default for new entries
+- **P2** = not recalled in latest 3-day cycle (1st no-mention) — degradation from P1
+- **P3** = not recalled for two consecutive cycles — stale, can still recover
+- Promotion: any mention ≥1 day promotes P1/P2/P3 to at least P1; 3/3 promotes to P0
+- Degradation: one step per cycle — P0→P1, P1→P2, P2→P3. Max one step down per review.
 - **Rate limit**: degradation is capped at **once per calendar day** — if
   `last_degraded_at` is from today's date, the degradation is skipped and
   the current priority is kept. Promotions are never rate-limited and clear
@@ -145,24 +145,21 @@ stateDiagram-v2
 flowchart TD
     ENTRY["IndexEntry<br/>(title, tags, when_useful)"]
     EXTRACT["Extract Keywords<br/>title tokens + when_useful tokens + tags"]
-    SUMS["Daily Summary Texts<br/>(latest 7 days)"]
+    SUMS["Daily Summary Texts<br/>(latest 3 days)"]
     DAY0["Day 0 (today)"]
     DAY1["Day 1"]
-    DAY2["..."]
-    DAY6["Day 6"]
+    DAY2["Day 2"]
     MATCH_DAY{"Day Summary<br/>Matches Entry?"}
-    COUNT["week_count<br/>= days matched (0-7)"]
+    COUNT["day_count<br/>= days matched (0-3)"]
 
     ENTRY --> EXTRACT
     EXTRACT -->|"keyword set"| MATCH_DAY
     SUMS --> DAY0
     SUMS --> DAY1
     SUMS --> DAY2
-    SUMS --> DAY6
     DAY0 --> MATCH_DAY
     DAY1 --> MATCH_DAY
     DAY2 --> MATCH_DAY
-    DAY6 --> MATCH_DAY
     MATCH_DAY -->|"per-day match result"| COUNT
 ```
 
@@ -171,9 +168,10 @@ A day is a **mention** if the daily summary text contains any entry keyword
 case-insensitive, split on non-alphanumeric boundaries). Simple boolean
 `contains()` per keyword; no fuzzy matching.
 
-**Missing summaries**: if fewer than 7 summaries exist (young rooms, early
+**Missing summaries**: if fewer than 3 summaries exist (young rooms, early
 operation), missing days count as **not mentioned**. This naturally produces
-lower priorities for rooms without a full week of history.
+lower priorities for rooms without a full 3-day history. A room with only
+1 summary has day_count ≤ 1.
 
 ### 2d. Trigger — Daily Summary Review
 
@@ -205,16 +203,16 @@ The priority recalculation runs at two points:
 
 | Field             | Type               | Notes                                                       |
 | ----------------- | ------------------ | ----------------------------------------------------------- |
-| `priority`        | `KnowledgePriority` | Updated by this algorithm; **default for new entries is P2** |
+| `priority`        | `KnowledgePriority` | Updated by this algorithm; **default for new entries is P1** |
 | `last_degraded_at`| `String` (ISO 8601) | Timestamp of last degradation; used to enforce ≤1 degrade/day |
 
 ### KnowledgePriority
 
 ```rust
 enum KnowledgePriority {
-    P0, // used every day (week_count == 7) — always recalled
-    P1, // used ≥ 1 in latest 7 days — strong recall boost (+5)
-    P2, // not used in latest 7 days (1st cycle) OR new entry — moderate boost (+2)
+    P0, // used every day (day_count == 3) — always recalled
+    P1, // used ≥ 1 in latest 3 days — default for new entries — strong recall (+5)
+    P2, // not used in latest 3 days (1st no-mention) — moderate recall (+2)
     P3, // not used for 2+ consecutive cycles — baseline (+0)
 }
 ```
@@ -236,7 +234,7 @@ No dedicated config keys. The algorithm reuses:
 
 | Key            | Source                 | Default | Used for                                  |
 | -------------- | ---------------------- | ------- | ----------------------------------------- |
-| `summary_days` | `[rocketchat.model]`   | 7       | Summary retention window; algorithm always reads latest 7 days |
+| `summary_days` | `[rocketchat.model]`   | 3       | Summary retention window; algorithm reads latest 3 days for mention counting |
 
 ## 5. Integration with Other Subsystems
 
@@ -251,7 +249,7 @@ The harness calls `review_knowledge_priorities()` at two points:
 
 - Reads `index.json` for current entry metadata and priority
 - Writes updated `index.json` with recalculated priorities
-- New entries default to P2
+- New entries default to **P1**
 
 ### With Memory Management
 

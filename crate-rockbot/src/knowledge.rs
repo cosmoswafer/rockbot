@@ -52,7 +52,7 @@ impl std::fmt::Display for KnowledgePriority {
 
 impl Default for KnowledgePriority {
     fn default() -> Self {
-        KnowledgePriority::P2
+        KnowledgePriority::P1
     }
 }
 
@@ -424,13 +424,13 @@ impl KnowledgeManager {
             .any(|kw| text_lower.contains(kw.as_str()))
     }
 
-    /// Counts how many of the latest 7 daily summaries mention the entry.
+    /// Counts how many of the latest 3 daily summaries mention the entry.
     fn count_mentioned_days(entry: &IndexEntry, summaries: &[DailySummary]) -> usize {
         let mut sorted: Vec<&DailySummary> = summaries.iter().collect();
         sorted.sort_by_key(|s| std::cmp::Reverse(s.date.as_str()));
         sorted
             .iter()
-            .take(7)
+            .take(3)
             .filter(|s| Self::entry_mentioned_in_text(entry, &s.summary))
             .count()
     }
@@ -447,19 +447,31 @@ impl KnowledgeManager {
         &iso_str[..10] != today.as_str()
     }
 
-    /// Computes the new priority given current priority and mention count.
+    /// Computes the new priority given current priority and mention day count.
     /// Returns (new_priority, is_degradation).
+    /// Rule: if recalled in 3-day window → promote/maintain; if not → degrade one step.
+    /// P0 = 3/3 days, P1 = default for new entries, P2 = 1st no-mention, P3 = stale.
     pub fn compute_new_priority(
         current: &KnowledgePriority,
-        week_count: usize,
+        day_count: usize,
     ) -> (KnowledgePriority, bool) {
-        let new = if week_count == 7 {
-            KnowledgePriority::P0
-        } else if week_count >= 1 {
-            KnowledgePriority::P1
-        } else {
+        let new = if day_count == 3 {
+            // 3/3 days: P1→P0, P0 stays, all others → P1
             match current {
-                KnowledgePriority::P0 | KnowledgePriority::P1 => KnowledgePriority::P2,
+                KnowledgePriority::P0 | KnowledgePriority::P1 => KnowledgePriority::P0,
+                _ => KnowledgePriority::P1,
+            }
+        } else if day_count >= 1 {
+            // ≥1 but <3: P0→P1 (degrade), all others → P1 (promote/maintain)
+            match current {
+                KnowledgePriority::P0 => KnowledgePriority::P1,
+                _ => KnowledgePriority::P1,
+            }
+        } else {
+            // day_count == 0: degrade one step
+            match current {
+                KnowledgePriority::P0 => KnowledgePriority::P1,
+                KnowledgePriority::P1 => KnowledgePriority::P2,
                 KnowledgePriority::P2 => KnowledgePriority::P3,
                 KnowledgePriority::P3 => KnowledgePriority::P3,
             }
@@ -490,9 +502,9 @@ impl KnowledgeManager {
         let mut changed = false;
 
         for entry in &mut index.entries {
-            let week_count = Self::count_mentioned_days(entry, summaries);
+            let day_count = Self::count_mentioned_days(entry, summaries);
             let (new_prio, is_degradation) =
-                Self::compute_new_priority(&entry.priority, week_count);
+                Self::compute_new_priority(&entry.priority, day_count);
 
             if new_prio == entry.priority {
                 continue;
@@ -508,8 +520,8 @@ impl KnowledgeManager {
             }
 
             debug!(
-                "Priority change for {}: {:?} → {:?} (week_count={})",
-                entry.title, entry.priority, new_prio, week_count
+                "Priority change for {}: {:?} → {:?} (day_count={})",
+                entry.title, entry.priority, new_prio, day_count
             );
             entry.priority = new_prio;
             if is_degradation {
@@ -834,28 +846,29 @@ mod tests {
 
     #[test]
     fn test_compute_new_priority_p0_to_p0_when_mentioned_every_day() {
-        let (prio, degraded) = KnowledgeManager::compute_new_priority(&KnowledgePriority::P0, 7);
+        let (prio, degraded) = KnowledgeManager::compute_new_priority(&KnowledgePriority::P0, 3);
         assert_eq!(prio, KnowledgePriority::P0);
         assert!(!degraded, "P0→P0 should not be a degradation");
     }
 
     #[test]
     fn test_compute_new_priority_p0_to_p1_when_mentioned_some_days() {
-        let (prio, degraded) = KnowledgeManager::compute_new_priority(&KnowledgePriority::P0, 3);
+        let (prio, degraded) = KnowledgeManager::compute_new_priority(&KnowledgePriority::P0, 1);
         assert_eq!(prio, KnowledgePriority::P1);
         assert!(degraded, "P0→P1 is a degradation");
     }
 
     #[test]
-    fn test_compute_new_priority_p0_to_p2_when_zero_mentions() {
+    fn test_compute_new_priority_p0_to_p1_when_zero_mentions() {
+        // P0 with 0 mentions in 3-day window → P1 (one step degradation)
         let (prio, degraded) = KnowledgeManager::compute_new_priority(&KnowledgePriority::P0, 0);
-        assert_eq!(prio, KnowledgePriority::P2);
+        assert_eq!(prio, KnowledgePriority::P1);
         assert!(degraded);
     }
 
     #[test]
-    fn test_compute_new_priority_p1_to_p0_when_7() {
-        let (prio, _) = KnowledgeManager::compute_new_priority(&KnowledgePriority::P1, 7);
+    fn test_compute_new_priority_p1_to_p0_when_3() {
+        let (prio, _) = KnowledgeManager::compute_new_priority(&KnowledgePriority::P1, 3);
         assert_eq!(prio, KnowledgePriority::P0);
     }
 
@@ -874,14 +887,14 @@ mod tests {
     }
 
     #[test]
-    fn test_compute_new_priority_p2_to_p0_when_7() {
-        let (prio, _) = KnowledgeManager::compute_new_priority(&KnowledgePriority::P2, 7);
-        assert_eq!(prio, KnowledgePriority::P0);
+    fn test_compute_new_priority_p2_to_p1_when_3() {
+        let (prio, _) = KnowledgeManager::compute_new_priority(&KnowledgePriority::P2, 3);
+        assert_eq!(prio, KnowledgePriority::P1);
     }
 
     #[test]
     fn test_compute_new_priority_p2_to_p1_when_some() {
-        let (prio, degraded) = KnowledgeManager::compute_new_priority(&KnowledgePriority::P2, 3);
+        let (prio, degraded) = KnowledgeManager::compute_new_priority(&KnowledgePriority::P2, 1);
         assert_eq!(prio, KnowledgePriority::P1);
         assert!(!degraded, "P2→P1 is not a degradation");
     }
@@ -894,9 +907,9 @@ mod tests {
     }
 
     #[test]
-    fn test_compute_new_priority_p3_to_p0_when_7() {
-        let (prio, _) = KnowledgeManager::compute_new_priority(&KnowledgePriority::P3, 7);
-        assert_eq!(prio, KnowledgePriority::P0);
+    fn test_compute_new_priority_p3_to_p1_when_3() {
+        let (prio, _) = KnowledgeManager::compute_new_priority(&KnowledgePriority::P3, 3);
+        assert_eq!(prio, KnowledgePriority::P1);
     }
 
     #[test]
@@ -987,30 +1000,28 @@ mod tests {
             make_summary("2026-06-06", "api version 2 discussion"),
             make_summary("2026-06-05", "deployment went fine"),
         ];
-        // Match on: 06-11 (database), 06-09 (api), 06-08 (database), 06-06 (api) = 4 matches
-        assert_eq!(KnowledgeManager::count_mentioned_days(&entry, &summaries), 4);
+        // Latest 3 days: 06-11 (database) ✓, 06-10 ✗, 06-09 (api) ✓ = 2 matches
+        assert_eq!(KnowledgeManager::count_mentioned_days(&entry, &summaries), 2);
     }
 
     #[test]
-    fn test_count_mentioned_days_only_latest_7() {
+    fn test_count_mentioned_days_only_latest_3() {
         let entry = make_entry(
-            KnowledgePriority::P2,
+            KnowledgePriority::P1,
             "Database API",
             "when calling the api",
             &[],
         );
-        // 10 summaries, only latest 7 should be checked
+        // 5 summaries, only latest 3 should be checked
         let mut summaries = Vec::new();
-        for i in 0..10 {
+        for i in 0..5 {
             summaries.push(make_summary(
-                &format!("2026-06-{:02}", 11 - i),
-                if i == 8 { "database was discussed" } else { "irrelevant" },
+                &format!("2026-06-{:02}", 15 - i),
+                if i == 0 { "database was discussed" } else { "irrelevant" },
             ));
         }
-        // Day 3 (i=8 from top, so 11-8=3 meaning 06-03) is outside latest 7
-        // Latest 7: 06-11 down to 06-05. Only 06-11 through 06-05 are checked.
-        // 06-03 is the 9th entry from bottom = position 8 from end = outside latest 7
-        assert_eq!(KnowledgeManager::count_mentioned_days(&entry, &summaries), 0);
+        // Only the first (i=0, date 06-15) should match, within latest 3
+        assert_eq!(KnowledgeManager::count_mentioned_days(&entry, &summaries), 1);
     }
 
     #[test]
@@ -1031,7 +1042,7 @@ mod tests {
     }
 
     #[test]
-    fn test_default_priority_is_p2() {
-        assert_eq!(KnowledgePriority::default(), KnowledgePriority::P2);
+    fn test_default_priority_is_p1() {
+        assert_eq!(KnowledgePriority::default(), KnowledgePriority::P1);
     }
 }
