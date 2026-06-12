@@ -306,6 +306,7 @@ impl Tool for ImageGenTool {
 mod tests {
     use super::*;
     use crate::config::ProviderConfig;
+    use serde_json::Value;
     use std::collections::HashMap;
 
     fn make_fal_config() -> ProviderConfig {

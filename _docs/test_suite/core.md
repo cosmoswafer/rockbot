@@ -2,7 +2,7 @@
 
 Fine-grained tests against single DFDs and modules. All inline `#[cfg(test)] mod tests` blocks in `src/` files. No external I/O, no mocking — pure unit tests.
 
-**Total: 391 tests across 25 files (3 crates)**
+**Total: 408 tests across 26 files (3 crates)**
 
 ---
 
@@ -22,7 +22,7 @@ REST API client construction (host, TLS, user_id, auth_token), API URL building 
 
 ---
 
-## rockbot crate (314 tests, 19 files)
+## rockbot crate (330 tests, 20 files)
 
 ### `src/memory.rs` — 35 tests
 `ConversationHistory` lifecycle (append, char_count, needs_archive, oldest_messages, prune_first, archive_seq), `MemoryManager` room creation/deduplication, context building with message window trimming, `RoomState` construction (channel + DM with Chinese fname), orphaned tool call/message stripping (6 scenarios), identity name extraction from Soul Memory markdown (8 scenarios: standard, emoji, CJK, same-line, no-match, too-long, not-a-header, empty, plus 2 display-name self-detection regex tests).
@@ -82,12 +82,15 @@ Request body building (minimal, tools, temperature/max_tokens, thinking enabled/
 **Image provider sub-module:** Constructor validation, provider name/model (both inherent and through `dyn ImageProvider` trait), `preset_to_aspect_ratio` mapping (landscape_16_9→16:9, square→1:1, passthrough), upload_file data URIs, response body parsing, `model_id` override.
 - Helpers: `make_provider()`, `make_image_provider()`
 
-### `src/provider/fal.rs` — 15 tests
-`FalAiProvider::new` (success, missing/"EDITME"/empty key), provider name/model, `ImageGenParams` defaults and full-field construction, image size resolution presets (landscape_16_9=3840x2160, square_hd=2880x2880, landscape_4_3=3312x2480), custom size, None passthrough, unknown preset string passthrough.
+### `src/provider/fal.rs` — 22 tests
+`FalAiProvider::new` (success, missing/"EDITME"/empty key), provider name/model, `ImageGenParams` defaults and full-field construction, image size resolution presets (landscape_16_9=3840x2160, square_hd=2880x2880, landscape_4_3=3312x2480), custom size, None passthrough, unknown preset string passthrough, aspect-ratio strings (16:9, 2:3, 1:1, 9:16, 3:4, 3:2), named orientations (portrait_16_9, portrait_4_3, landscape_3_2, square).
 - Helper: `make_config()`
 
 ### `src/utils.rs` — 9 tests
 `civil_from_days` date conversion (epoch=1970-01-01, known date), `strip_emoji` (CJK+emoji, no-emoji, emoji-only), `strip_markdown_image_id` (markdown `![alt](call_id)` removal, no-match passthrough, inline, plain-text key removal).
+
+### `src/types.rs` — 9 tests
+`ImageGenParams::validate_dimensions`: preset bypass, custom valid dimensions (1920x1088), None passthrough, max edge exceeded (>3840), aspect ratio exceeded, pixel count too low (<1M), pixel count too high (>14.7M), not multiple of 16, zero edge.
 
 ---
 
@@ -110,11 +113,11 @@ iCalendar parsing: VEVENT (simple, with description+location, with VALARM/remind
 | Crate | Files | Tests |
 |-------|-------|-------|
 | rocketchat | 3 | 40 |
-| rockbot | 19 | 314 |
+| rockbot | 20 | 330 |
 | webdav | 3 | 38 |
-| **Total** | **25** | **391** |
+| **Total** | **26** | **408** |
 
 ### Files with no core tests
 `rocketchat`: config.rs, error.rs, main.rs, lib.rs
-`rockbot`: config.rs, error.rs, image_cache.rs, lib.rs, main.rs, types.rs, provider/mod.rs, tools/mod.rs
+`rockbot`: config.rs, error.rs, image_cache.rs, lib.rs, main.rs, provider/mod.rs, tools/mod.rs
 `webdav`: config.rs, error.rs, lib.rs, types.rs
