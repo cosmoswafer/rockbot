@@ -255,6 +255,8 @@ impl Tool for ImageGenTool {
             t_start.elapsed().as_millis(),
         );
 
+        let share_url = self.webdav.create_nextcloud_share_link(&webdav_path).await;
+
         let mime = format!(
             "image/{}",
             ext.replace("jpg", "jpeg")
@@ -272,6 +274,7 @@ impl Tool for ImageGenTool {
                 webdav_path: webdav_path.clone(),
                 image_bytes: image_bytes.clone(),
                 mime_type: mime,
+                share_url,
             },
         );
 

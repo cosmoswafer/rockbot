@@ -74,6 +74,86 @@ impl WebDavClient {
         headers
     }
 
+    pub async fn create_nextcloud_share_link(&self, file_path: &str) -> Option<String> {
+        let share_url = format!(
+            "{}ocs/v2.php/apps/files_sharing/api/v1/shares",
+            self.base_url.trim_end_matches('/')
+        );
+        let expire_date = {
+            let now = time::OffsetDateTime::now_utc();
+            let seven_days = now + time::Duration::days(7);
+            seven_days
+                .date()
+                .format(&time::format_description::parse("[year]-[month]-[day]").unwrap())
+                .unwrap_or_default()
+        };
+        let body = format!(
+            "path={}&shareType=3&permissions=1&expireDate={}",
+            percent_encoding::percent_encode(
+                file_path.as_bytes(),
+                percent_encoding::NON_ALPHANUMERIC
+            ),
+            expire_date
+        );
+
+        let mut headers = HeaderMap::new();
+        headers.insert(AUTHORIZATION, HeaderValue::from_str(&self.auth_header).unwrap());
+        headers.insert("OCS-APIRequest", HeaderValue::from_static("true"));
+        headers.insert(
+            "Content-Type",
+            HeaderValue::from_static("application/x-www-form-urlencoded"),
+        );
+
+        let resp = match self
+            .client
+            .post(&share_url)
+            .headers(headers)
+            .body(body)
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!("NextCloud share link creation failed (HTTP): {}", e);
+                return None;
+            }
+        };
+
+        let resp_body = match resp.text().await {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::warn!("NextCloud share link creation failed (body): {}", e);
+                return None;
+            }
+        };
+
+        // Extract share URL from OCS XML response: <url>https://...</url>
+        let tag = "<url>";
+        if let Some(start) = resp_body.find(tag) {
+            let start = start + tag.len();
+            if let Some(end) = resp_body[start..].find("</url>") {
+                let raw = &resp_body[start..start + end];
+                // OCS returns HTML-encoded angle brackets; fix common artifacts
+                let cleaned = raw
+                    .replace("&amp;", "&")
+                    .replace("&lt;", "<")
+                    .replace("&gt;", ">");
+                tracing::debug!(
+                    "Created NextCloud share link for '{}': {}",
+                    file_path,
+                    cleaned
+                );
+                return Some(cleaned);
+            }
+        }
+
+        tracing::warn!(
+            "NextCloud share link creation failed (no <url> in response): {}",
+            &resp_body[..resp_body.len().min(200)]
+        );
+        None
+    }
+
     pub async fn read_file(&self, path: &str) -> Result<Vec<u8>> {
         let url = self.full_url(path)?;
         let response = self.client.get(url).headers(self.headers()).send().await?;

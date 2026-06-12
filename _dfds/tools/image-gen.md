@@ -160,12 +160,17 @@ The tool returns minimal JSON — no base64. The actual image bytes are in `Imag
 
 Stored in `Arc<Mutex<HashMap<String, GeneratedImage>>>` keyed by call_id.
 
-| Field          | Type     | Description                                   |
-| -------------- | -------- | --------------------------------------------- |
-| `webdav_path`  | `string` | WebDAV path where the image was persisted     |
-| `image_bytes`  | `Vec<u8>`| Raw image bytes (for upload to RocketChat)    |
-| `mime_type`    | `string` | MIME type, e.g. `image/png`                  |
+| Field          | Type           | Description                                   |
+| -------------- | -------------- | --------------------------------------------- |
+| `webdav_path`  | `string`       | WebDAV path where the image was persisted     |
+| `image_bytes`  | `Vec<u8>`      | Raw image bytes (fallback for data URI)       |
+| `mime_type`    | `string`       | MIME type, e.g. `image/png`                  |
+| `share_url`    | `Option<string>`| NextCloud public share link (7-day expiry)    |
 
-The harness retrieves the `GeneratedImage` via `ImageCache::take(call_id)`,
-uploads the raw bytes to RocketChat as a file attachment, then injects the
-resulting attachment URL into the LLM's reply text in place of `image_key`.
+After WebDAV upload, the tool calls `create_nextcloud_share_link()` on the
+`WebDavClient` which POSTs to `/ocs/v2.php/apps/files_sharing/api/v1/shares`
+with `shareType=3`, `permissions=1`, and `expireDate={today+7d}`. The resulting
+short URL is stored in `share_url`. The agent loop (main.rs) prefers this URL
+for the reply text — appending `![Generated image](share_url)` — which
+RocketChat renders as an inline image preview. If share generation fails,
+the agent falls back to a `data:` URI as a DDP attachment.

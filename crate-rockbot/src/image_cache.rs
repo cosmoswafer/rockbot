@@ -7,6 +7,7 @@ pub struct GeneratedImage {
     pub webdav_path: String,
     pub image_bytes: Vec<u8>,
     pub mime_type: String,
+    pub share_url: Option<String>,
 }
 
 impl GeneratedImage {

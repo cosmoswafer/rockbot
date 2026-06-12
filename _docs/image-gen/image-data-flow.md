@@ -2,7 +2,7 @@
 
 End-to-end summary of how image data moves from RocketChat attachments through
 the harness to LLM context, to image generation, and finally back to RocketChat
-as a file attachment.
+as a NextCloud share link.
 
 ---
 
@@ -52,13 +52,16 @@ LLM prompt mentions title? → inject matching data URIs into image_urls
 
 ---
 
-## Layer 3: Image Gen Tool → Provider → ImageCache
+## Layer 3: Image Gen Tool → Provider → ImageCache + NextCloud Share
 
 **DFD**: `_dfds/tools/image-gen.md` §2a (Happy Flow), §2c (Provider Selection)
-**Code**: `crate-rockbot/src/tools/image_gen.rs:219–240`, `provider/fal.rs:326–386`, `provider/openrouter.rs:779–910`
+**Code**: `crate-rockbot/src/tools/image_gen.rs:219–280`,
+`provider/fal.rs:326–386`, `provider/openrouter.rs:779–910`,
+`crate-webdav/src/client.rs:76–140`
 
 ```
-data URI? → upload to provider storage → provider.generate_image() → Vec<u8> → ImageCache
+data URI? → upload to provider storage → provider.generate_image() → Vec<u8>
+  → WebDAV PUT → create NextCloud share link (7-day expiry) → store in ImageCache
 ```
 
 1. Image gen tool receives `image_urls` (mix of data URIs and regular URLs)
@@ -69,36 +72,44 @@ data URI? → upload to provider storage → provider.generate_image() → Vec<u
      in the request messages. No pre-upload needed (`openrouter.rs:912–915`).
 3. Regular HTTP(S) URLs pass through directly on both providers
 4. `provider.generate_image()` returns raw `Vec<u8>` bytes
-5. Image bytes are stored in `ImageCache` (keyed by `call_id`) via
-   `image_cache.rs::ImageCache::store()`
-6. **Tool returns minimal JSON**: `{"ok": true, "webdav_path": "...", "image_key": "call_...}"`
+5. Image bytes are uploaded to NextCloud WebDAV via `write_file_with_fallback()`
+6. **A NextCloud public share link is created** via OCS API
+   (`POST /ocs/v2.php/apps/files_sharing/api/v1/shares`) with `shareType=3`
+   (public link), `permissions=1` (read-only), and `expireDate={today+7d}`.
+   This generates a short URL like `https://nc.tokyofy.top/s/abc123`.
+7. Image bytes + share URL are stored in `ImageCache` (keyed by `call_id`) via
+   `ImageCache::store()`. The `GeneratedImage` struct holds both `image_bytes`
+   (for future direct access) and `share_url: Option<String>`.
+8. **Tool returns minimal JSON**: `{"ok": true, "webdav_path": "...", "image_key": "call_...}"`
    — NO base64, NO data URI. The LLM context stays small.
 
 ---
 
-## Layer 4: Harness → RocketChat Attachment Upload
+## Layer 4: Agent Loop → Reply Assembly (main.rs)
 
-**DFD**: `_dfds/agent-harness.md` §2i (Generated Image Upload & Injection Pipeline)
-**Code**: `crate-rockbot/src/harness.rs:409–440`
+**DFD**: `_dfds/agent-loop.md`
+**Code**: `crate-rockbot/src/main.rs:437–470`
 
 ```
-ImageCache.take(call_id) → image_bytes → POST rooms.upload → attachment URL → replace image_key in reply
+take_last_image_ids() → ImageCache.take(call_id) → share_url or data_uri → build reply text
 ```
 
-1. After the LLM produces the final text reply, the harness iterates over
-   `image_ids_this_turn` (call IDs of successful `image_gen` tool calls)
-2. For each call ID, takes the `GeneratedImage` from `ImageCache`
-3. Uploads the raw `image_bytes` to RocketChat as a file attachment via
-   `POST /api/v1/rooms.upload/{roomId}` (`rest.rs:293–340`)
-4. Receives the file URL (e.g. `/file-upload/uuid/filename.png`) from RocketChat
-5. Prepends the server base URL to form a full download URL
-6. Replaces the `image_key` placeholder in the LLM's reply text with the
-   uploaded file URL — or appends `![Generated image](attachment_url)` if the
-   LLM didn't reference the key
-7. **Fallback**: if REST upload fails or `RestApiClient` is not yet initialised,
-   falls back to a `data:` URI via `GeneratedImage::data_uri()`
-8. The reply message is now small — no embedded image bytes
-9. RocketChat renders the attachment inline natively
+1. After `process_message()` returns, the agent loop retrieves image call IDs
+   from the harness via `take_last_image_ids()`.
+2. For each call ID, takes the `GeneratedImage` from `ImageCache`.
+3. **Primary path**: if `share_url` is available (NextCloud share link),
+   appends `![Generated image](share_url)` to the reply text. The message
+   is small and works with both REST and DDP.
+4. **Fallback path**: if `share_url` is `None` (share generation failed),
+   builds a DDP attachment with the base64 `data_uri()` and sends via
+   `reply_with_attachments()`.
+5. The `image_key` placeholder is removed from the reply text via
+   `strip_markdown_image_id()`.
+
+**Design rationale**: NextCloud share links are short URLs (~40 chars) that
+RocketChat renders as inline image previews. This eliminates both the
+`Message_MaxAllowedSize` REST limit and the DDP attachments schema issue.
+Share links expire after 7 days — longer than typical chat message lifetimes.
 
 ---
 

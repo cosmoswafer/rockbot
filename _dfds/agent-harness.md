@@ -310,50 +310,56 @@ tokens > 2 characters, split on non-alphanumeric boundaries). The resulting
 `week_count` (0-7) and current priority drive a state machine (see
 knowledge-priority.md section 2b).
 
-### 2i. Generated Image Upload & Injection Pipeline
+### 2i. Generated Image Sharing via NextCloud Share Links
 
-After the LLM produces a final text reply, the harness scans for image_gen
-tool calls made during the agent loop. For each successful image_gen call,
-it retrieves the `GeneratedImage` from `ImageCache`, uploads the raw image
-bytes to RocketChat as a file attachment, and replaces the `image_key`
-placeholder in the reply text with the attachment URL. This keeps the
-message payload small — no base64 data URIs are embedded.
+The `image_gen` tool generates a NextCloud public share link (7-day expiry)
+immediately after uploading to WebDAV. The share URL is stored in `ImageCache`
+alongside the raw bytes. After the LLM produces the final text reply, the agent
+loop (main.rs) retrieves the share URL and appends it as markdown —
+no base64 data URIs, no RocketChat attachment upload needed.
 
 ```mermaid
 flowchart TD
     LLM_TEXT["text reply<br/>(references image_key)"]
-    IMG_IDS["image_ids_this_turn<br/>(call_ids from image_gen)"]
+    IMG_IDS["last_image_ids<br/>(take_last_image_ids)"]
     CACHE[(ImageCache)]
     TAKE(CacheTake<br/>by call_id)
-    BYTES["image_bytes<br/>+ mime_type"]
-    UPLOAD(UploadToRocketChat<br/>POST rooms.upload)
-    RC[RocketChat]
-    URL["attachment URL<br/>from upload response"]
-    REPLACE(Replace image_key<br/>with URL in reply)
+    SHARE{"share_url<br/>present?"}
+    MARKDOWN["Append<br/>![Generated image](share_url)"]
+    FALLBACK["Build DDP attachment<br/>with data_uri()"]
+    STRIP(StripMarkdownImageKey<br/>from reply text)
     SEND(SendReply<br/>via REST or DDP)
+    RC[RocketChat]
 
-    LLM_TEXT --> REPLACE
+    LLM_TEXT --> STRIP
     IMG_IDS --> TAKE
     TAKE -->|"lookup by call_id"| CACHE
-    CACHE -->|"GeneratedImage"| BYTES
-    BYTES -->|"multipart file"| UPLOAD
-    UPLOAD -->|"POST /api/v1/rooms.upload/{roomId}"| RC
-    RC -->|"file_id + download URL"| URL
-    URL --> REPLACE
-    REPLACE -->|"reply text (small, no base64)"| SEND
+    CACHE -->|"GeneratedImage"| SHARE
+    SHARE -->|"yes (preferred)"| MARKDOWN
+    SHARE -->|"no (fallback)"| FALLBACK
+    MARKDOWN --> STRIP
+    FALLBACK --> SEND
+    STRIP -->|"reply text (small, no base64)"| SEND
     SEND -->|"chat.sendMessage"| RC
 ```
 
-**Design rationale**: embedding multi-megabyte base64 data URIs in message text
-exceeds RocketChat's `Message_MaxAllowedSize` (HTTP 400). Uploading the image
-as a proper file attachment — which RocketChat can store and serve natively —
-eliminates the size limit while preserving inline image display for the user.
-The `ImageCache` stores `image_bytes: Vec<u8>` specifically to enable this
-upload without re-downloading from WebDAV.
+**Primary path**: the `image_gen` tool calls `create_nextcloud_share_link()` on
+the `WebDavClient` right after upload — `POST /ocs/v2.php/apps/files_sharing/api/v1/shares`
+with `shareType=3`, `permissions=1`, and `expireDate={today+7d}`. The resulting
+short URL (`https://nc.tokyofy.top/s/abc123`) is stored in `GeneratedImage.share_url`.
+The agent loop appends `![Generated image](share_url)` to the reply text — a
+small markdown snippet that RocketChat renders as an inline image preview.
 
-**Fallback**: if the RocketChat upload fails, the image URL is omitted from the
-reply and the LLM's text is sent as-is. No retry or error injection — the
-image remains on WebDAV for inspection.
+**Fallback**: if share generation fails (`share_url` is `None`), the agent loop
+builds a DDP `sendMessage` with a `data:` URI in the `attachments` field, using
+`GeneratedImage::data_uri()`. This is a worst-case path for when NextCloud's
+sharing API is unavailable.
+
+**Design rationale**: NextCloud share URLs are short (~40 chars), expire after
+7 days, and eliminate both RocketChat's `Message_MaxAllowedSize` REST limit and
+the DDP attachments schema restriction (Match failed [400]). No extra upload
+API is needed — the image already lives on NextCloud where it was persisted
+during tool execution.
 
 ## 3. Data Structures
 
@@ -394,11 +400,12 @@ image remains on WebDAV for inspection.
 
 Stored in `Arc<Mutex<HashMap<String, GeneratedImage>>>` keyed by tool call_id.
 
-| Field          | Type     | Description                                   |
-| -------------- | -------- | --------------------------------------------- |
-| `webdav_path`  | `string` | WebDAV path where the image was persisted     |
-| `image_bytes`  | `Vec<u8>`| Raw image bytes for RocketChat file upload    |
-| `mime_type`    | `string` | MIME type, e.g. `image/png`                  |
+| Field          | Type           | Description                                   |
+| -------------- | -------------- | --------------------------------------------- |
+| `webdav_path`  | `string`       | WebDAV path where the image was persisted     |
+| `image_bytes`  | `Vec<u8>`      | Raw image bytes for fallback data URI         |
+| `mime_type`    | `string`       | MIME type, e.g. `image/png`                  |
+| `share_url`    | `Option<string>`| NextCloud public share link (7-day expiry)    |
 
 #### Registered Tools
 

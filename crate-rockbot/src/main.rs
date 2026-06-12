@@ -440,16 +440,24 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                                 let mut reply_text = reply.clone();
 
                                 for image_id in &image_ids {
-                                    if reply_text.contains(image_id.as_str()) {
-                                        if let Some(img) = h.take_image(image_id) {
+                                    if let Some(img) = h.take_image(image_id) {
+                                        reply_text = strip_markdown_image_id(
+                                            &reply_text,
+                                            image_id,
+                                        );
+                                        if let Some(ref share_url) = img.share_url {
+                                            // Prefer NextCloud share URL (short, works with REST)
+                                            let markdown = format!(
+                                                "\n\n![Generated image]({})",
+                                                share_url
+                                            );
+                                            reply_text.push_str(&markdown);
+                                        } else {
+                                            // Fallback: data URI as DDP attachment
                                             let data_uri = img.data_uri();
                                             attachments.push(serde_json::json!({
                                                 "image_url": data_uri
                                             }));
-                                            reply_text = strip_markdown_image_id(
-                                                &reply_text,
-                                                image_id,
-                                            );
                                         }
                                     }
                                 }
