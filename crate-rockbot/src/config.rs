@@ -125,7 +125,7 @@ impl Default for ImageModelConfig {
 }
 
 fn default_max_iterations() -> u32 {
-    8
+    28
 }
 
 fn default_max_history_size() -> usize {
