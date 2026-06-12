@@ -95,7 +95,7 @@ impl Tool for SaveKnowledgeTool {
 
         Ok(format!(
             "Knowledge saved: [{}/{}] {}",
-            params.category, params.topic, params.topic
+            params.category, params.topic.as_str(), params.topic.as_str()
         ))
     }
 }

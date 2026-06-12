@@ -6,10 +6,11 @@ use webdav::{WebDavClient, WebDavPath};
 
 use crate::error::{Result, RockBotError};
 use crate::tool::Tool;
+use crate::validated::NonEmptyString;
 
 #[derive(Debug, Deserialize)]
 struct WebDavParams {
-    action: String,
+    action: NonEmptyString,
     path: String,
     #[serde(default)]
     room_id: Option<String>,

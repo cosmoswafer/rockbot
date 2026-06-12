@@ -7,6 +7,7 @@ use webdav::{WebDavClient, WebDavError, WebDavPath};
 use crate::error::Result;
 use crate::memory::DailySummary;
 use crate::utils::now_iso_string;
+use crate::validated::NonEmptyString;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum KnowledgeCategory {
@@ -100,8 +101,8 @@ pub struct KnowledgeEntry {
 #[derive(Debug, Clone, Deserialize)]
 pub struct SaveKnowledgeParams {
     pub category: KnowledgeCategory,
-    pub topic: String,
-    pub content: String,
+    pub topic: NonEmptyString,
+    pub content: NonEmptyString,
     pub when_useful: String,
     #[serde(default)]
     pub priority: KnowledgePriority,
@@ -114,7 +115,7 @@ pub struct SaveKnowledgeParams {
 /// Parsed tool arguments for forget_knowledge.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ForgetKnowledgeParams {
-    pub topic: String,
+    pub topic: NonEmptyString,
     #[serde(default)]
     pub webdav_dir: Option<String>,
 }

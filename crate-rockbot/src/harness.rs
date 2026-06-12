@@ -414,8 +414,8 @@ impl AgentHarness {
                                 .await
                                 .unwrap_or_else(|e| {
                                     crate::tool::ToolResult {
-                                        call_id: tool_call.id.clone(),
-                                        name: tool_call.function.name.clone(),
+                                        call_id: crate::validated::NonEmptyString::try_new(tool_call.id.clone()).expect("non-empty tool call id from provider"),
+                                        name: crate::validated::NonEmptyString::try_new(tool_call.function.name.clone()).expect("non-empty tool name from provider"),
                                         is_error: true,
                                         content: format!("Tool error: {}", e),
                                     }
@@ -1095,7 +1095,7 @@ impl AgentHarness {
         if let Ok(content) = webdav_client.read_file_to_string(&snap_path).await {
             if let Ok(snapshot) = serde_json::from_str::<crate::memory::PersistSnapshot>(&content) {
                 // Schema version check: reject unknown schemas
-                if snapshot.schema == "rockbot-snapshot/1" {
+                if snapshot.schema.as_str() == "rockbot-snapshot/1" {
                     self.memory.restore_snapshot(&snapshot);
                     got_soul = snapshot.soul.is_some();
                     got_summaries = !snapshot.daily_summaries.is_empty();
@@ -1106,7 +1106,7 @@ impl AgentHarness {
                 } else {
                     warn!(
                         "Unknown snapshot schema '{}' for room {}, using individual files",
-                        snapshot.schema, room_name
+                        snapshot.schema.as_str(), room_name
                     );
                 }
             }
@@ -1197,7 +1197,7 @@ impl AgentHarness {
                     let (msg_count, char_count) = parse_summary_header(&content);
                     if !summary_text.is_empty() {
                         summaries.push(DailySummary {
-                            date: date_str.to_string(),
+                            date: crate::validated::NonEmptyString::try_new(date_str.to_string()).expect("date must be non-empty"),
                             summary: summary_text,
                             msg_count,
                             char_count,
@@ -1225,7 +1225,7 @@ impl AgentHarness {
             Err(e) => {
                 warn!("Failed to load soul.md from {}: {} — returning empty soul", path, e);
                 return Ok(SoulMemory {
-                    room_id: webdav_dir.to_string(),
+                    room_id: crate::validated::NonEmptyString::try_new(webdav_dir.to_string()).expect("webdav_dir must be non-empty"),
                     content: String::new(),
                     updated_at: String::new(),
                 });
@@ -1235,7 +1235,7 @@ impl AgentHarness {
         let updated_at = now_iso_string();
 
         Ok(SoulMemory {
-            room_id: webdav_dir.to_string(),
+            room_id: crate::validated::NonEmptyString::try_new(webdav_dir.to_string()).expect("webdav_dir must be non-empty"),
             content,
             updated_at,
         })

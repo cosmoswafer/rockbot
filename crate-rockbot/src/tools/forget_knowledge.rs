@@ -49,9 +49,9 @@ impl Tool for ForgetKnowledgeTool {
 
         let webdav_dir = params.webdav_dir.as_deref().unwrap_or("unknown");
 
-        KnowledgeManager::delete_entry(&self.webdav, webdav_dir, &params.topic).await?;
+        KnowledgeManager::delete_entry(&self.webdav, webdav_dir, params.topic.as_str()).await?;
 
-        Ok(format!("Knowledge entry '{}' deleted.", params.topic))
+        Ok(format!("Knowledge entry '{}' deleted.", params.topic.as_str()))
     }
 }
 

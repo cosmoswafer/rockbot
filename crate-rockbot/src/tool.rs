@@ -4,11 +4,12 @@ use async_trait::async_trait;
 
 use crate::error::Result;
 use crate::types::ToolDef;
+use crate::validated::NonEmptyString;
 
 #[derive(Debug, Clone)]
 pub struct ToolResult {
-    pub call_id: String,
-    pub name: String,
+    pub call_id: NonEmptyString,
+    pub name: NonEmptyString,
     pub content: String,
     pub is_error: bool,
 }
@@ -19,9 +20,13 @@ impl ToolResult {
         name: impl Into<String>,
         content: impl Into<String>,
     ) -> Self {
+        let call_id = NonEmptyString::try_new(call_id.into())
+            .expect("ToolResult::success call_id must be non-empty");
+        let name = NonEmptyString::try_new(name.into())
+            .expect("ToolResult::success name must be non-empty");
         Self {
-            call_id: call_id.into(),
-            name: name.into(),
+            call_id,
+            name,
             content: content.into(),
             is_error: false,
         }
@@ -32,9 +37,13 @@ impl ToolResult {
         name: impl Into<String>,
         content: impl Into<String>,
     ) -> Self {
+        let call_id = NonEmptyString::try_new(call_id.into())
+            .unwrap_or_else(|_| NonEmptyString::try_new("unknown".to_string()).unwrap());
+        let name = NonEmptyString::try_new(name.into())
+            .unwrap_or_else(|_| NonEmptyString::try_new("unknown".to_string()).unwrap());
         Self {
-            call_id: call_id.into(),
-            name: name.into(),
+            call_id,
+            name,
             content: content.into(),
             is_error: true,
         }
@@ -152,8 +161,8 @@ mod tests {
     #[test]
     fn test_tool_result_success() {
         let result = ToolResult::success("call_1", "test", "result text");
-        assert_eq!(result.call_id, "call_1");
-        assert_eq!(result.name, "test");
+        assert_eq!(result.call_id.as_str(), "call_1");
+        assert_eq!(result.name.as_str(), "test");
         assert_eq!(result.content, "result text");
         assert!(!result.is_error);
     }
@@ -222,7 +231,7 @@ mod tests {
             result: "Hello from tool!".into(),
         }));
 
-        let result = registry.execute_by_name("", "hello", "{}").await.unwrap();
+        let result = registry.execute_by_name("call_1", "hello", "{}").await.unwrap();
         assert!(!result.is_error);
         assert_eq!(result.content, "Hello from tool!");
     }

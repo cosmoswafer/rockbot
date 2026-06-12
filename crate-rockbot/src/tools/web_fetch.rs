@@ -8,11 +8,12 @@ use webdav::WebDavClient;
 
 use crate::error::{Result, RockBotError};
 use crate::tool::Tool;
+use crate::validated::NonEmptyString;
 
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
 struct WebFetchParams {
-    url: String,
+    url: NonEmptyString,
     #[serde(default = "default_method")]
     method: String,
     #[serde(default)]

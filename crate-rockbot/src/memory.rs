@@ -8,11 +8,12 @@ use webdav::WebDavPath;
 
 use crate::types::ChatMessage;
 use crate::utils::now_iso_string;
+use crate::validated::NonEmptyString;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersistSnapshot {
-    pub schema: String,
-    pub room_id: String,
+    pub schema: NonEmptyString,
+    pub room_id: NonEmptyString,
     pub messages: Vec<ChatMessage>,
     pub char_count: usize,
     pub archive_seq: u64,
@@ -25,7 +26,7 @@ pub struct PersistSnapshot {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DailySummary {
-    pub date: String,
+    pub date: NonEmptyString,
     pub summary: String,
     pub msg_count: usize,
     pub char_count: usize,
@@ -33,7 +34,7 @@ pub struct DailySummary {
 
 #[derive(Debug, Clone)]
 pub struct SoulMemory {
-    pub room_id: String,
+    pub room_id: NonEmptyString,
     pub content: String,
     pub updated_at: String,
 }
@@ -256,7 +257,7 @@ impl MemoryManager {
             let mut summary_text = String::from("[Recent conversation summaries]\n");
             let mut total = 0usize;
             for s in summaries.iter().rev() {
-                let line = format!("## {} ({} messages)\n{}\n\n", s.date, s.msg_count, s.summary);
+                let line = format!("## {} ({} messages)\n{}\n\n", s.date.as_str(), s.msg_count, s.summary);
                 if total + line.len() > self.max_summary_chars {
                     break;
                 }
@@ -438,8 +439,8 @@ impl MemoryManager {
         let updated_at = now_iso_string();
 
         let mut snapshot = PersistSnapshot {
-            schema: "rockbot-snapshot/1".into(),
-            room_id: room_id.to_string(),
+            schema: NonEmptyString::try_new("rockbot-snapshot/1".to_string()).expect("hardcoded"),
+            room_id: NonEmptyString::try_new(room_id.to_string()).expect("room_id must be non-empty"),
             messages: room.history.messages.clone(),
             char_count: room.history.char_count,
             archive_seq: room.history.archive_seq,
@@ -462,7 +463,7 @@ impl MemoryManager {
     }
 
     pub fn restore_snapshot(&mut self, snapshot: &PersistSnapshot) {
-        if let Some(room) = self.rooms.get_mut(&snapshot.room_id) {
+        if let Some(room) = self.rooms.get_mut(snapshot.room_id.as_str()) {
             let mut messages = snapshot.messages.clone();
             strip_orphaned_tool_calls(&mut messages);
             // Recompute char_count from cleaned messages
@@ -478,12 +479,14 @@ impl MemoryManager {
                 content: soul_content.clone(),
                 updated_at: snapshot.updated_at.clone(),
             };
-            self.souls.insert(snapshot.room_id.clone(), soul);
+            let room_key: String = snapshot.room_id.to_string();
+            self.souls.insert(room_key, soul);
         }
 
         if !snapshot.daily_summaries.is_empty() {
+            let room_key: String = snapshot.room_id.to_string();
             self.daily_summaries.insert(
-                snapshot.room_id.clone(),
+                room_key,
                 snapshot.daily_summaries.clone(),
             );
         }
@@ -975,7 +978,7 @@ mod tests {
     fn test_self_display_name_regex_match() {
         let mut mm = MemoryManager::new(1000, 12, 8000, 7, 2000, 60, 30_000_000);
         let soul = SoulMemory {
-            room_id: "r-test".into(),
+            room_id: NonEmptyString::try_new("r-test".to_string()).unwrap(),
             content: "# Soul Memory\n\n- My name is 香菜 🌿\n- foo".into(),
             updated_at: String::new(),
         };
@@ -987,7 +990,7 @@ mod tests {
     fn test_self_display_name_no_myname() {
         let mut mm = MemoryManager::new(1000, 12, 8000, 7, 2000, 60, 30_000_000);
         let soul = SoulMemory {
-            room_id: "r-test".into(),
+            room_id: NonEmptyString::try_new("r-test".to_string()).unwrap(),
             content: "零夢\n\n- foo".into(),
             updated_at: String::new(),
         };

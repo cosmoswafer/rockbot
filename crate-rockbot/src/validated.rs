@@ -2,7 +2,7 @@ use nutype::nutype;
 
 #[nutype(
     validate(not_empty),
-    derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Deref)
+    derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Deref, Borrow)
 )]
 pub struct NonEmptyString(String);
 

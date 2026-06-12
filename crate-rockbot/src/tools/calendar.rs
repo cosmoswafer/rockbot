@@ -8,10 +8,11 @@ use webdav::{CaldavEvent, CaldavTodo, Reminder, WebDavClient, WebDavConfig, buil
 
 use crate::error::{Result, RockBotError};
 use crate::tool::Tool;
+use crate::validated::NonEmptyString;
 
 #[derive(Debug, Deserialize)]
 struct CalendarParams {
-    action: String,
+    action: NonEmptyString,
     #[serde(default)]
     room_id: Option<String>,
     #[serde(default)]

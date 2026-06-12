@@ -1,6 +1,6 @@
 use rockbot::config::ProviderConfig;
 use rockbot::error::RockBotError;
-use rockbot::validated::{ConfigUrl, ProviderName};
+use rockbot::validated::{ConfigUrl, NonEmptyString, ProviderName};
 use rockbot::provider::{AiProvider, DeepSeekProvider, FalAiProvider, ImageProvider, OpenRouterImageProvider, OpenRouterProvider};
 use rockbot::tool::Tool;
 use rockbot::types::{ChatMessage, ChatRequest, FinishReason, ImageGenParams, ThinkingConfig, ToolDef};
@@ -2060,7 +2060,7 @@ fn test_memory_load_snapshot_with_soul_and_summaries_no_conflict() {
 
     // Pre-populate soul
     let soul = rockbot::memory::SoulMemory {
-        room_id: room_id.to_string(),
+        room_id: NonEmptyString::try_new(room_id.to_string()).unwrap(),
         content: "# Soul Memory\n\n- My name is TestBot\n- likes Rust".to_string(),
         updated_at: "2026-06-10T00:00:00Z".to_string(),
     };
@@ -2069,13 +2069,13 @@ fn test_memory_load_snapshot_with_soul_and_summaries_no_conflict() {
     // Pre-populate daily summaries
     let summaries = vec![
         rockbot::memory::DailySummary {
-            date: "2026-06-10".to_string(),
+            date: NonEmptyString::try_new("2026-06-10".to_string()).unwrap(),
             summary: "User asked about Rust macros".to_string(),
             msg_count: 5,
             char_count: 200,
         },
         rockbot::memory::DailySummary {
-            date: "2026-06-09".to_string(),
+            date: NonEmptyString::try_new("2026-06-09".to_string()).unwrap(),
             summary: "User asked about Docker".to_string(),
             msg_count: 3,
             char_count: 150,
@@ -2188,14 +2188,14 @@ fn test_memory_multi_room_no_cross_contamination() {
 
     // Set soul in room1
     mm.set_soul("r1", rockbot::memory::SoulMemory {
-        room_id: "r1".to_string(),
+        room_id: NonEmptyString::try_new("r1".to_string()).unwrap(),
         content: "# Soul Memory\n\n- My name is Room1Bot".to_string(),
         updated_at: String::new(),
     });
 
     // Set summaries in room2
     mm.set_daily_summaries("r2", vec![rockbot::memory::DailySummary {
-        date: "2026-06-10".to_string(),
+        date: NonEmptyString::try_new("2026-06-10".to_string()).unwrap(),
         summary: "Room2 daily".to_string(),
         msg_count: 1,
         char_count: 10,

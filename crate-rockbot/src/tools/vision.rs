@@ -4,11 +4,12 @@ use serde::Deserialize;
 
 use crate::error::{Result, RockBotError};
 use crate::tool::Tool;
+use crate::validated::NonEmptyString;
 
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
 struct VisionParams {
-    url: String,
+    url: NonEmptyString,
     #[serde(default)]
     prompt: Option<String>,
 }

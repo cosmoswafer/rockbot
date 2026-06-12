@@ -5,6 +5,7 @@ use tracing::warn;
 
 use crate::error::{Result, RockBotError};
 use crate::tool::Tool;
+use crate::validated::NonEmptyString;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -24,7 +25,7 @@ enum ContentsMode {
 
 #[derive(Debug, Deserialize)]
 struct WebSearchParams {
-    query: String,
+    query: NonEmptyString,
     #[serde(rename = "type", default = "default_search_type")]
     search_type: SearchType,
     #[serde(default = "default_num_results")]

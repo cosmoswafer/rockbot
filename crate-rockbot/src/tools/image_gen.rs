@@ -9,10 +9,11 @@ use crate::image_cache::{GeneratedImage, ImageCache};
 use crate::provider::ImageProvider;
 use crate::tool::Tool;
 use crate::types::{ImageGenParams, ImageSizeValue};
+use crate::validated::NonEmptyString;
 
 #[derive(Debug, Deserialize)]
 struct ImageGenArgs {
-    prompt: String,
+    prompt: NonEmptyString,
     #[serde(default)]
     aspect_ratio: Option<String>,
     #[serde(default)]
@@ -186,7 +187,7 @@ impl Tool for ImageGenTool {
         let room_id = args.room_id.as_deref().unwrap_or("unknown");
         let webdav_dir = args.webdav_dir.as_deref().unwrap_or(room_id);
 
-        let mut params = ImageGenParams::new(prompt);
+        let mut params = ImageGenParams::new(prompt.as_str());
         params.quality = Some(self.default_quality.clone());
         params.output_format = Some(self.default_output_format.clone());
         params.num_images = Some(self.default_num_images);

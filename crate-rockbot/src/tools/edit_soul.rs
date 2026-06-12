@@ -5,10 +5,11 @@ use webdav::{WebDavClient, WebDavPath};
 
 use crate::error::{Result, RockBotError};
 use crate::tool::Tool;
+use crate::validated::NonEmptyString;
 
 #[derive(Debug, Deserialize)]
 pub struct EditSoulParams {
-    pub content: String,
+    pub content: NonEmptyString,
     #[serde(default)]
     pub webdav_dir: Option<String>,
     #[serde(default)]
