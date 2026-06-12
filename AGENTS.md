@@ -71,7 +71,8 @@ Data Flow Diagrams in `_dfds/` are the design spec. The development flow is defi
 - **Phase 3**: Implement data flow validation constraints — enforce data structure correctness through code-level constraints. Parse and validate at subsystem entry points ("parse, don't validate"). Cross-DFD shared structures defined once in a canonical location, imported by both producer and consumer modules, making mismatches compile-time errors.
 - **Phase 4**: Concrete implementation — code types, core logic, and wiring described by the DFD. Favour incremental, type-first implementation.
 - **Phase 5**: Review all DFDs — re-read every DFD and confirm it matches the code. If a DFD's `mtime` is newer than its corresponding Rust source, the code is stale and must be updated to match the DFD. If the code was updated first, update the DFD.
-- **Phase 6**: `cargo build --release` → commit → push → restart bot.
+- **Phase 6**: Integration test — write mock-backed (Wiremock) integration tests to verify the implementation works end-to-end. Each DFD's happy-path flow should have corresponding mock integration coverage.
+- **Phase 7**: `cargo build --release` → commit → push → restart bot.
 
 ### Rust type-driven design rules
 
