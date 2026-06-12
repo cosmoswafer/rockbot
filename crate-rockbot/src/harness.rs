@@ -42,17 +42,17 @@ The image_gen tool returns a WebDAV path and an image_key — \
 always share the image with the user in markdown image format \
 as `![{description}]({image_key})` so they can view the image inline. \
 When a user says !soul or asks to save or update preferences, identity, or facts, use the edit_soul tool. \
+edit_soul performs a full replace — it overwrites the entire soul with the content you provide. \
+When setting your soul, always use this exact template: \
+\"# Soul Memory\\n\\n## Identity\\nYourName ✨\\n\\n## Preferences\\n(optional)\\n\\n## Facts\\n(optional)\". \
+Your display name is extracted by the regex \\\"## Identity[ \\t]*\\n?[ \\t]*(.+)\\\" — \
+the text after \"## Identity\" (same line or very next line) becomes your name. \
+The name MUST immediately follow \"## Identity\". Keep it under 32 characters. \
 When a user asks you to remember something, shares notes, or says !remember, !note, !save or shares important \
 information worth persisting, use the save_knowledge tool. \
 When a user says !forget or asks to remove something you learned, \
 use the forget_knowledge tool. \
 When you need to recall previously saved knowledge, use the recall_knowledge tool. \
-When setting your soul via edit_soul, always use this exact format: \
-\"# Soul Memory\\n\\n## Identity\\nYourName ✨\". \
-Your display name is extracted by the regex \\\"## Identity[ \\t]*\\n?[ \\t]*(.+)\\\" — \
-the text after \"## Identity\" (same line or very next line) becomes your name. \
-The name MUST immediately follow \"## Identity\". Keep it under 32 characters.
-You may add ## Preferences and ## Facts sections below Identity. \
 Answer in the same language as the user. \
 Keep responses clear and to the point.\
 ";

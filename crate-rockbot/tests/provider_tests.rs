@@ -50,7 +50,7 @@ reasoner = "deepseek-reasoner"
     assert_eq!(config.rocketchat.model.default_model, "deepseek");
     assert_eq!(config.rocketchat.model.max_history_size, 12);
     assert_eq!(config.rocketchat.model.max_text_length, 50000);
-    assert_eq!(config.rocketchat.model.max_iterations, 8); // default
+    assert_eq!(config.rocketchat.model.max_iterations, 28); // default
 
     assert_eq!(config.chat_providers.len(), 2);
 
@@ -94,7 +94,7 @@ base_url = "https://mock.ai/v1"
 chat = "mock-model"
 "#;
     let config = AppConfig::from_toml(toml).unwrap();
-    assert_eq!(config.rocketchat.model.max_iterations, 8);
+    assert_eq!(config.rocketchat.model.max_iterations, 28);
 }
 
 #[test]

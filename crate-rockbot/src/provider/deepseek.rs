@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::config::ProviderConfig;
 use crate::error::{Result, RockBotError};
@@ -155,7 +155,18 @@ impl DeepSeekProvider {
             .and_then(|t| t.as_array())
             .map(|arr| {
                 arr.iter()
-                    .filter_map(|tc| serde_json::from_value(tc.clone()).ok())
+                    .filter_map(|tc| serde_json::from_value::<ToolCall>(tc.clone()).ok())
+                    .map(|mut tc| {
+                        if serde_json::from_str::<serde_json::Value>(&tc.function.arguments)
+                            .is_err()
+                        {
+                            tc.function.arguments = Self::sanitize_tool_args(
+                                &tc.function.name,
+                                &tc.function.arguments,
+                            );
+                        }
+                        tc
+                    })
                     .collect()
             })
             .unwrap_or_default();
@@ -199,6 +210,37 @@ impl DeepSeekProvider {
             }
         }
     }
+
+    fn sanitize_tool_args(name: &str, args: &str) -> String {
+        let mut fixed = args.to_string();
+        let open_braces = fixed.matches('{').count();
+        let close_braces = fixed.matches('}').count();
+        let open_brackets = fixed.matches('[').count();
+        let close_brackets = fixed.matches(']').count();
+        for _ in 0..(open_braces.saturating_sub(close_braces)) {
+            fixed.push('}');
+        }
+        for _ in 0..(open_brackets.saturating_sub(close_brackets)) {
+            fixed.push(']');
+        }
+        let quote_count = fixed.matches('"').count();
+        if quote_count % 2 != 0 {
+            fixed.push('"');
+        }
+        if serde_json::from_str::<serde_json::Value>(&fixed).is_ok() {
+            warn!(
+                "Sanitized malformed tool_call arguments for fn={}: balanced braces/quotes",
+                name
+            );
+            fixed
+        } else {
+            warn!(
+                "Tool_call arguments for fn={} are irrecoverably malformed ({} chars), resetting to {{}}",
+                name, args.len()
+            );
+            "{}".to_string()
+        }
+    }
 }
 
 fn extract_error_message(body: &str) -> String {
@@ -215,7 +257,22 @@ fn extract_error_message(body: &str) -> String {
 
 #[async_trait]
 impl AiProvider for DeepSeekProvider {
-    async fn complete(&self, request: ChatRequest) -> Result<CompletionResult> {
+    async fn complete(&self, mut request: ChatRequest) -> Result<CompletionResult> {
+        for msg in &mut request.messages {
+            msg.reasoning_content = None;
+            if let Some(ref mut tool_calls) = msg.tool_calls {
+                for tc in tool_calls {
+                    if serde_json::from_str::<serde_json::Value>(&tc.function.arguments)
+                        .is_err()
+                    {
+                        tc.function.arguments = DeepSeekProvider::sanitize_tool_args(
+                            &tc.function.name,
+                            &tc.function.arguments,
+                        );
+                    }
+                }
+            }
+        }
         let body = self.build_request_body(&request);
         let msg_count = request.messages.len();
         let tool_count = request.tools.as_ref().map(|t| t.len()).unwrap_or(0);
@@ -286,6 +343,13 @@ impl AiProvider for DeepSeekProvider {
                 tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
                 continue;
             }
+
+            tracing::warn!(
+                "DeepSeek HTTP {} (non-retryable): error_body={} request_body={}",
+                status_code,
+                &error_body,
+                serde_json::to_string(&body).unwrap_or_default()
+            );
 
             return Err(Self::map_http_error(status_code, &error_body));
         }

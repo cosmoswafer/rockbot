@@ -18,6 +18,7 @@ example.config.toml   # template for config; real config.toml is gitignored
 - Restart: covered in Phase 3 — Ship (step 4).
 - Restart with debug (wipes old log): `pkill rockbot 2>/dev/null; sleep 1; rm -f ./tmp/rockbot.log && RUST_LOG=debug nohup ./target/release/rockbot < /dev/null > ./tmp/rockbot.log 2>&1 &`
 - Use `pkill rockbot` (process name) — **not** `pkill -f` (full cmdline). The `-f` flag reads `/proc/*/cmdline` which can hang on systems with stuck D-state kernel threads.
+- **Bot must run in background** — all start/restart commands end with `&`. When launching via the Bash tool, run the `nohup ... &` command alone (without chaining `sleep` or `ps` after `;`), then use a separate Bash call to verify. Chaining foreground commands after `nohup ... &` can cause the tool to hang.
 - **Debug logging**: set `RUST_LOG=rocketchat=debug` to see outbound `WS>>>` DDP payloads (typing, replies, auth) and inbound `WS<<<` messages. Use `RUST_LOG=debug` for all crates — gives rockbot internals too (tool invocations, `mark_snapshot_dirty`, snapshot flushes, WebDAV PUTs).
 
 ## Build & test
@@ -81,8 +82,12 @@ For each DFD (ordered by the mapping table below):
 1. **Build release**: `cargo build --release`
 2. **Commit**: `git add -A` and `git commit` with a descriptive message.
 3. **Push**: `git push`
-4. **Restart bot**: `pkill rockbot 2>/dev/null; sleep 1; nohup ./target/release/rockbot < /dev/null > ./tmp/rockbot.log 2>&1 &`
-5. **Restart with debug**: `pkill rockbot 2>/dev/null; sleep 1; rm -f ./tmp/rockbot.log && RUST_LOG=debug nohup ./target/release/rockbot < /dev/null > ./tmp/rockbot.log 2>&1 &`
+4. **Restart bot** (two separate Bash calls — never chain after `nohup ... &`):
+   - `pkill rockbot 2>/dev/null; rm -f ./tmp/rockbot.log`
+   - `nohup ./target/release/rockbot < /dev/null > ./tmp/rockbot.log 2>&1 &`
+5. **Restart with debug** (two separate Bash calls):
+   - `pkill rockbot 2>/dev/null; rm -f ./tmp/rockbot.log`
+   - `RUST_LOG=debug nohup ./target/release/rockbot < /dev/null > ./tmp/rockbot.log 2>&1 &`
 
 ### DFD-to-code mapping
 
