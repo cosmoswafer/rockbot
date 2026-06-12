@@ -69,18 +69,22 @@ impl KnowledgePriority {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexEntry {
-    pub id: String,
     pub filename: String,
-    pub category: KnowledgeCategory,
-    pub title: String,
-    pub when_useful: String,
     pub tags: Vec<String>,
+    pub when_useful: String,
     #[serde(default)]
     pub priority: KnowledgePriority,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_degraded_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+impl IndexEntry {
+    pub fn display_title(&self) -> &str {
+        let name = self.filename.strip_suffix(".md").unwrap_or(&self.filename);
+        name
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -189,18 +193,14 @@ impl KnowledgeManager {
             })?;
 
         let mut index = Self::load_index(webdav, webdav_dir).await?;
-        if let Some(existing) = index.entries.iter_mut().find(|e| e.id == slug) {
-            existing.title = topic.to_string();
+        if let Some(existing) = index.entries.iter_mut().find(|e| e.filename == filename) {
             existing.when_useful = when_useful.to_string();
             existing.tags = tags.to_vec();
             existing.priority = priority.clone();
             existing.updated_at = now.clone();
         } else {
             index.entries.push(IndexEntry {
-                id: slug.clone(),
-                filename,
-                category: category.clone(),
-                title: topic.to_string(),
+                filename: filename.clone(),
                 when_useful: when_useful.to_string(),
                 tags: tags.to_vec(),
                 priority: priority.clone(),
@@ -221,7 +221,7 @@ impl KnowledgeManager {
                 crate::error::RockBotError::Provider(format!("Knowledge index write failed: {e}"))
             })?;
 
-        debug!("Saved knowledge entry {} in room {}", slug, webdav_dir);
+        debug!("Saved knowledge entry {} in room {}", filename, webdav_dir);
         Ok(())
     }
 
@@ -236,9 +236,7 @@ impl KnowledgeManager {
 
         let mut deleted_files = 0usize;
         let matching_entries: Vec<_> = index.entries.iter().filter(|e| {
-            e.title.eq_ignore_ascii_case(topic)
-                || e.id.eq_ignore_ascii_case(&topic_slug)
-                || e.id.ends_with(&format!("_{}", topic_slug))
+            e.filename.to_lowercase().contains(&topic_slug)
         }).collect();
 
         for entry in &matching_entries {
@@ -255,10 +253,7 @@ impl KnowledgeManager {
 
         let len_before = index.entries.len();
         index.entries.retain(|e| {
-            let topic_match = e.title.eq_ignore_ascii_case(topic);
-            let slug_match = e.id.eq_ignore_ascii_case(&topic_slug)
-                || e.id.ends_with(&format!("_{}", topic_slug));
-            !(topic_match || slug_match)
+            !e.filename.to_lowercase().contains(&topic_slug)
         });
 
         if len_before == index.entries.len() && deleted_files == 0 {
@@ -304,7 +299,7 @@ impl KnowledgeManager {
             .iter()
             .filter_map(|entry| {
                 let useful_lower = entry.when_useful.to_lowercase();
-                let title_lower = entry.title.to_lowercase();
+                let title_lower = entry.display_title().to_lowercase();
                 let tag_set: HashSet<String> = entry
                     .tags
                     .iter()
@@ -354,8 +349,8 @@ impl KnowledgeManager {
                     Self::read_entry_md(webdav, webdav_dir, &e.filename).await
                 {
                     content_parts.push(format!(
-                        "[Knowledge: {}/{}]\n{}\nUse when: {}",
-                        e.category, e.title, body, e.when_useful
+                        "[Knowledge: {}]\n{}\nUse when: {}",
+                        e.display_title(), body, e.when_useful
                     ));
                 }
             }
@@ -376,8 +371,8 @@ impl KnowledgeManager {
                     Self::read_entry_md(webdav, webdav_dir, &e.filename).await
                 {
                     content_parts.push(format!(
-                        "[Knowledge: {}/{}]\n{}\nUse when: {}",
-                        e.category, e.title, body, e.when_useful
+                        "[Knowledge: {}]\n{}\nUse when: {}",
+                        e.display_title(), body, e.when_useful
                     ));
                 }
             }
@@ -400,7 +395,7 @@ impl KnowledgeManager {
     /// and tags, each > 2 chars, lowercased.
     fn entry_keywords(entry: &IndexEntry) -> Vec<String> {
         let mut keys: Vec<String> = entry
-            .title
+            .display_title()
             .split(|c: char| !c.is_alphanumeric())
             .chain(entry.when_useful.split(|c: char| !c.is_alphanumeric()))
             .filter(|w| w.len() > 2)
@@ -513,7 +508,7 @@ impl KnowledgeManager {
             if is_degradation && !Self::can_degrade(&entry.last_degraded_at) {
                 debug!(
                     "Rate-limited degradation for {} (last degraded {})",
-                    entry.title,
+                    entry.display_title(),
                     entry.last_degraded_at.as_deref().unwrap_or("never")
                 );
                 continue;
@@ -521,7 +516,7 @@ impl KnowledgeManager {
 
             debug!(
                 "Priority change for {}: {:?} → {:?} (day_count={})",
-                entry.title, entry.priority, new_prio, day_count
+                entry.display_title(), entry.priority, new_prio, day_count
             );
             entry.priority = new_prio;
             if is_degradation {
@@ -606,10 +601,7 @@ mod tests {
             version: "rockbot-knowledge/1".into(),
             room_id: "r-test".into(),
             entries: vec![IndexEntry {
-                id: "skill_api".into(),
                 filename: "skill_api.md".into(),
-                category: KnowledgeCategory::Skill,
-                title: "API Access".into(),
                 when_useful: "when calling the database API".into(),
                 tags: vec!["api".into(), "database".into()],
                 priority: KnowledgePriority::P3,
@@ -630,10 +622,7 @@ mod tests {
             version: "rockbot-knowledge/1".into(),
             room_id: "r-test".into(),
             entries: vec![IndexEntry {
-                id: "skill_api".into(),
                 filename: "skill_api.md".into(),
-                category: KnowledgeCategory::Skill,
-                title: "API Access".into(),
                 when_useful: "when calling the database API".into(),
                 tags: vec![],
                 priority: KnowledgePriority::P3,
@@ -649,7 +638,7 @@ mod tests {
             &["I need to call the database", "can you help?"],
         );
         assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].title, "API Access");
+        assert_eq!(matches[0].display_title(), "skill_api");
     }
 
     #[test]
@@ -658,10 +647,7 @@ mod tests {
             version: "rockbot-knowledge/1".into(),
             room_id: "r-test".into(),
             entries: vec![IndexEntry {
-                id: "note_build".into(),
                 filename: "note_build.md".into(),
-                category: KnowledgeCategory::Note,
-                title: "Build Commands".into(),
                 when_useful: "general reference".into(),
                 tags: vec!["build".into(), "cargo".into()],
                 priority: KnowledgePriority::P3,
@@ -675,7 +661,7 @@ mod tests {
         let matches =
             KnowledgeManager::match_relevant(&index, &["how do I build this cargo project"]);
         assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].id, "note_build");
+        assert_eq!(matches[0].filename, "note_build.md");
     }
 
     #[test]
@@ -684,10 +670,7 @@ mod tests {
             version: "rockbot-knowledge/1".into(),
             room_id: "r-test".into(),
             entries: vec![IndexEntry {
-                id: "skill_api".into(),
                 filename: "skill_api.md".into(),
-                category: KnowledgeCategory::Skill,
-                title: "API Access".into(),
                 when_useful: "when calling the database API".into(),
                 tags: vec!["api".into()],
                 priority: KnowledgePriority::P3,
@@ -712,10 +695,7 @@ mod tests {
             room_id: "r-test".into(),
             entries: vec![
                 IndexEntry {
-                    id: "a".into(),
                     filename: "a.md".into(),
-                    category: KnowledgeCategory::Note,
-                    title: "Entry A".into(),
                     when_useful: "when talking about weather".into(),
                     tags: vec![],
                     priority: KnowledgePriority::P3,
@@ -724,12 +704,9 @@ mod tests {
                     updated_at: String::new(),
                 },
                 IndexEntry {
-                    id: "b".into(),
                     filename: "b.md".into(),
-                    category: KnowledgeCategory::Note,
-                    title: "Weather Report".into(),
                     when_useful: "general reference".into(),
-                    tags: vec![],
+                    tags: vec!["weather".into()],
                     priority: KnowledgePriority::P3,
                     last_degraded_at: None,
                     created_at: String::new(),
@@ -741,8 +718,8 @@ mod tests {
 
         let matches = KnowledgeManager::match_relevant(&index, &["what is the weather like"]);
         assert_eq!(matches.len(), 2);
-        assert_eq!(matches[0].id, "a");
-        assert_eq!(matches[1].id, "b");
+        assert_eq!(matches[0].filename, "a.md");
+        assert_eq!(matches[1].filename, "b.md");
     }
 
     #[test]
@@ -764,10 +741,7 @@ mod tests {
         let mut entries = Vec::new();
         for i in 1..=7 {
             entries.push(IndexEntry {
-                id: format!("entry_{}", i),
                 filename: format!("entry_{}.md", i),
-                category: KnowledgeCategory::Note,
-                title: format!("Entry {}", i),
                 when_useful: "when talking about shared topics".into(),
                 tags: vec!["shared".into()],
                 priority: KnowledgePriority::P3,
@@ -796,10 +770,7 @@ mod tests {
             version: "rockbot-knowledge/1".into(),
             room_id: "r-test".into(),
             entries: vec![IndexEntry {
-                id: "critical_rule".into(),
                 filename: "critical_rule.md".into(),
-                category: KnowledgeCategory::Secret,
-                title: "Critical Rule".into(),
                 when_useful: "for specific rare scenarios only".into(),
                 tags: vec!["rare".into()],
                 priority: KnowledgePriority::P0,
@@ -815,17 +786,14 @@ mod tests {
             &["completely unrelated topic"],
         );
         assert_eq!(matches.len(), 1, "P0 entry should always be returned");
-        assert_eq!(matches[0].id, "critical_rule");
+        assert_eq!(matches[0].filename, "critical_rule.md");
     }
 
     // --- Knowledge priority algorithm tests ---
 
-    fn make_entry(priority: KnowledgePriority, title: &str, when_useful: &str, tags: &[&str]) -> IndexEntry {
+    fn make_entry(filename: &str, priority: KnowledgePriority, when_useful: &str, tags: &[&str]) -> IndexEntry {
         IndexEntry {
-            id: title.to_lowercase().replace(' ', "_"),
-            filename: format!("{}.md", title.to_lowercase().replace(' ', "_")),
-            category: KnowledgeCategory::Skill,
-            title: title.to_string(),
+            filename: filename.to_string(),
             when_useful: when_useful.to_string(),
             tags: tags.iter().map(|t| t.to_string()).collect(),
             priority,
@@ -929,8 +897,8 @@ mod tests {
     #[test]
     fn test_entry_mentioned_in_text_title_match() {
         let entry = make_entry(
+            "database_api.md",
             KnowledgePriority::P2,
-            "Database API",
             "when calling the api",
             &[],
         );
@@ -941,8 +909,8 @@ mod tests {
     #[test]
     fn test_entry_mentioned_in_text_when_useful_match() {
         let entry = make_entry(
+            "build_config.md",
             KnowledgePriority::P2,
-            "Build Config",
             "when setting up the build pipeline on CI",
             &[],
         );
@@ -952,8 +920,8 @@ mod tests {
     #[test]
     fn test_entry_mentioned_in_text_tag_match() {
         let entry = make_entry(
+            "cargo_setup.md",
             KnowledgePriority::P2,
-            "Cargo Setup",
             "general reference",
             &["cargo", "rust", "build"],
         );
@@ -963,8 +931,8 @@ mod tests {
     #[test]
     fn test_entry_mentioned_in_text_no_match() {
         let entry = make_entry(
+            "database_api.md",
             KnowledgePriority::P2,
-            "Database API",
             "when calling the database API",
             &["database", "sql"],
         );
@@ -974,8 +942,8 @@ mod tests {
     #[test]
     fn test_entry_mentioned_in_text_short_tokens_filtered() {
         let entry = make_entry(
+            "db_api.md",
             KnowledgePriority::P2,
-            "DB API",
             "hi",
             &[],
         );
@@ -986,8 +954,8 @@ mod tests {
     #[test]
     fn test_count_mentioned_days() {
         let entry = make_entry(
+            "database_api.md",
             KnowledgePriority::P2,
-            "Database API",
             "when calling the api",
             &[],
         );
@@ -1007,8 +975,8 @@ mod tests {
     #[test]
     fn test_count_mentioned_days_only_latest_3() {
         let entry = make_entry(
+            "database_api.md",
             KnowledgePriority::P1,
-            "Database API",
             "when calling the api",
             &[],
         );

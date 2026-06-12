@@ -105,7 +105,7 @@ flowchart TD
     AI -->|"summary text"| SUMMARIZE
     SUMMARIZE -->|"{date} raw summary"| TODAY
     WEBDAV -->|"read existing"| MERGE
-    MERGE -->|"appended summary"| WRITE
+    MERGE -->|"merged into single ## section"| WRITE
     WRITE -->|"PUT summaries/{date}.md"| WEBDAV
     MERGE --> PRUNE
     PRUNE -->|"prune_from_layer1"| L1
@@ -451,7 +451,7 @@ Knowledge entries are injected between soul and summaries (see
 | Timer evict        | `maintenance_tick()` (Phase 2)     | Called every `persist_interval_secs`; persists snapshot then removes stale rooms |
 | Archive check      | `memory.check_and_archive()`       | Returns oldest half if Layer 1 overflowed           |
 | AI summarize       | `summarize_for_archive()`          | Calls AI provider with oldest messages              |
-| Merge daily        | `upsert_daily_summary()`           | Reads today's `.md`, appends, writes back; marks snapshot dirty |
+| Merge daily        | `upsert_daily_summary()`           | Reads today's `.md`, merges summaries into single `##` section, writes back; marks snapshot dirty |
 | Prune Layer 1      | `memory.prune_archived()`          | Removes archived messages from buffer               |
 | Age out summaries  | `delete_old_summaries()`           | Deletes `.md` older than `summary_days`             |
 | Room init          | `restore_history()`                | Cache-first: reads snapshot.json, falls back to individual files |

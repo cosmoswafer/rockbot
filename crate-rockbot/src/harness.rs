@@ -801,20 +801,37 @@ impl AgentHarness {
         let today = today_iso_date();
         let path = format!("{}memory/summaries/{}.md", WebDavPath::new("").room_dir(webdav_dir), today);
 
-        let header = format!(
-            "## {} ({} messages, {} chars)\n{}\n\n",
-            today, msg_count, char_count, new_summary
-        );
-
         let folder = format!("{}memory/summaries/", WebDavPath::new("").room_dir(webdav_dir));
         if let Err(e) = webdav.ensure_directory_all(&folder).await {
             warn!("Failed to ensure summaries directory {}: {}", folder, e);
         }
 
         let content = match webdav.read_file_to_string(&path).await {
-            Ok(existing) => format!("{}{}", existing, header),
+            Ok(existing) => {
+                // Merge into a single ## section for today
+                let old_summary = extract_latest_summary(&existing);
+                let (old_msg, old_chars) = parse_summary_header(&existing);
+                let merged = if old_summary.is_empty() {
+                    new_summary.to_string()
+                } else if old_summary == new_summary {
+                    new_summary.to_string()
+                } else {
+                    format!("{}\n\n{}", old_summary, new_summary)
+                };
+                let total_msgs = old_msg + msg_count;
+                let total_chars = old_chars + char_count;
+                let title = format!("# Daily Summaries — {}\n\n", webdav_dir);
+                format!(
+                    "{}## {} ({} messages, {} chars)\n{}\n",
+                    title, today, total_msgs, total_chars, merged
+                )
+            }
             Err(_) => {
                 let title = format!("# Daily Summaries — {}\n\n", webdav_dir);
+                let header = format!(
+                    "## {} ({} messages, {} chars)\n{}\n",
+                    today, msg_count, char_count, new_summary
+                );
                 format!("{}{}", title, header)
             }
         };
@@ -1137,8 +1154,8 @@ impl AgentHarness {
             match webdav.read_file_to_string(&md_path).await {
                 Ok(body) => {
                     parts.push(format!(
-                        "[Knowledge: {}/{}]\nUse when: {}\n{}",
-                        entry.category, entry.title, entry.when_useful, body
+                        "[Knowledge: {}]\nUse when: {}\n{}",
+                        entry.display_title(), entry.when_useful, body
                     ));
                 }
                 Err(e) => {

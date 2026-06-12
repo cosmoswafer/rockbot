@@ -26,7 +26,6 @@ fn setup_logging() {
         .with_thread_ids(false)
         .with_file(false)
         .with_line_number(false)
-        .without_time()
         .finish();
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 }
