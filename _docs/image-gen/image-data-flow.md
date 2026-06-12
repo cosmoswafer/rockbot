@@ -1,7 +1,8 @@
 # Image Data Flow
 
 End-to-end summary of how image data moves from RocketChat attachments through
-the harness to LLM context and finally to fal.ai generation.
+the harness to LLM context, to image generation, and finally back to RocketChat
+as a file attachment.
 
 ---
 
@@ -51,27 +52,57 @@ LLM prompt mentions title? → inject matching data URIs into image_urls
 
 ---
 
-## Layer 3: Image Gen Tool → fal.ai
+## Layer 3: Image Gen Tool → Provider → ImageCache
 
-**DFD**: `_dfds/tools/image-gen.md` §2c (Model Selection), §2b (Error Handling)
-**Code**: `crate-rockbot/src/tools/image_gen.rs:219–240`, `provider/fal.rs:326–386`
+**DFD**: `_dfds/tools/image-gen.md` §2a (Happy Flow), §2c (Provider Selection)
+**Code**: `crate-rockbot/src/tools/image_gen.rs:219–240`, `provider/fal.rs:326–386`, `provider/openrouter.rs:779–910`
 
 ```
-data URI? → upload to fal storage → hosted URL → fal queue API
+data URI? → upload to provider storage → provider.generate_image() → Vec<u8> → ImageCache
 ```
 
 1. Image gen tool receives `image_urls` (mix of data URIs and regular URLs)
-2. **All data URIs** (`starts_with("data:")`) are uploaded to fal.ai storage
-   via two-step initiate+PUT protocol (`fal.rs:326–386`)
-3. Regular HTTP(S) URLs pass through directly
-4. fal queue API receives only hosted URLs — **no inline base64** in the
-   request body
-5. Returns: `{"ok": true, "fal_url": "...", "webdav_path": "..."}` — LLM
-   shares `fal_url` as `![desc](fal_url)` markdown
+2. **Data URI handling** differs per provider:
+   - **fal.ai**: all data URIs are uploaded to fal storage via two-step
+     initiate+PUT protocol (`fal.rs:326–386`). Queue API receives only hosted URLs.
+   - **OpenRouter**: data URIs pass inline as `ContentPart::ImageUrl` parts
+     in the request messages. No pre-upload needed (`openrouter.rs:912–915`).
+3. Regular HTTP(S) URLs pass through directly on both providers
+4. `provider.generate_image()` returns raw `Vec<u8>` bytes
+5. Image bytes are stored in `ImageCache` (keyed by `call_id`) via
+   `image_cache.rs::ImageCache::store()`
+6. **Tool returns minimal JSON**: `{"ok": true, "webdav_path": "...", "image_key": "call_...}"`
+   — NO base64, NO data URI. The LLM context stays small.
 
 ---
 
-## Layer 4: Vision Tool Image Injection
+## Layer 4: Harness → RocketChat Attachment Upload
+
+**DFD**: `_dfds/agent-harness.md` §2i (Generated Image Upload & Injection Pipeline)
+**Code**: `crate-rockbot/src/harness.rs:409–440`
+
+```
+ImageCache.take(call_id) → image_bytes → POST rooms.upload → attachment URL → replace image_key in reply
+```
+
+1. After the LLM produces the final text reply, the harness iterates over
+   `image_ids_this_turn` (call IDs of successful `image_gen` tool calls)
+2. For each call ID, takes the `GeneratedImage` from `ImageCache`
+3. Uploads the raw `image_bytes` to RocketChat as a file attachment via
+   `POST /api/v1/rooms.upload/{roomId}` (`rest.rs:293–340`)
+4. Receives the file URL (e.g. `/file-upload/uuid/filename.png`) from RocketChat
+5. Prepends the server base URL to form a full download URL
+6. Replaces the `image_key` placeholder in the LLM's reply text with the
+   uploaded file URL — or appends `![Generated image](attachment_url)` if the
+   LLM didn't reference the key
+7. **Fallback**: if REST upload fails or `RestApiClient` is not yet initialised,
+   falls back to a `data:` URI via `GeneratedImage::data_uri()`
+8. The reply message is now small — no embedded image bytes
+9. RocketChat renders the attachment inline natively
+
+---
+
+## Layer 5: Vision Tool Image Injection
 
 **DFD**: `_dfds/tools/vision.md` §2d (Harness Vision Injection), `_dfds/agent-harness.md` §2g
 **Code**: `crate-rockbot/src/harness.rs:468–522`
