@@ -31,11 +31,7 @@ DFD must be:
   structures: an upstream DFD produces a data shape that a downstream DFD
   consumes. Every cross-DFD reference must name the specific data structure
   (section 3 table) that forms the coupling
-- **High cohesion, low coupling** — each process, data store, and data flow
-  belongs to exactly one DFD. Data crosses DFD boundaries only through
-  explicit data structures listed in section 3. Internal data movement within
-  a subsystem stays in its own DFD; never split a single subsystem's happy
-  flows across multiple files
+
 
 ## DFD-Driven Development Workflow ("DFD Dev Flow")
 
