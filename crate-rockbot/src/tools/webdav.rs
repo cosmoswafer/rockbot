@@ -512,4 +512,34 @@ mod tests {
         let tool = WebDavTool::new(client);
         assert_eq!(tool.room_dir("d-alice"), "//d-alice/");
     }
+
+    #[test]
+    fn test_is_image_extension_png() {
+        assert!(is_image_extension("photo.png"));
+        assert!(is_image_extension("/path/to/photo.PNG"));
+        assert!(is_image_extension("image.JPG"));
+        assert!(is_image_extension("image.jpeg"));
+        assert!(is_image_extension("anim.gif"));
+        assert!(is_image_extension("icon.svg"));
+        assert!(is_image_extension("photo.webp"));
+    }
+
+    #[test]
+    fn test_is_image_extension_no_match() {
+        assert!(!is_image_extension("notes.txt"));
+        assert!(!is_image_extension("document.pdf"));
+        assert!(!is_image_extension("script.py"));
+        assert!(!is_image_extension("imagepng")); // no dot
+    }
+
+    #[test]
+    fn test_mime_for_path_png() {
+        assert_eq!(mime_for_path("photo.png"), "image/png");
+        assert_eq!(mime_for_path("photo.jpg"), "image/jpeg");
+        assert_eq!(mime_for_path("photo.jpeg"), "image/jpeg");
+        assert_eq!(mime_for_path("anim.gif"), "image/gif");
+        assert_eq!(mime_for_path("icon.svg"), "image/svg+xml");
+        assert_eq!(mime_for_path("photo.webp"), "image/webp");
+        assert_eq!(mime_for_path("unknown.xyz"), "image/png"); // default
+    }
 }

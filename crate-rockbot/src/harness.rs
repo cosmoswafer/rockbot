@@ -1815,6 +1815,23 @@ chat = "mock-model"
     }
 
     #[test]
+    fn test_cache_vision_images_from_webdav_read_result() {
+        // Simulates a webdav tool read result for an image file.
+        // Format: ![{name}](data:{mime};base64,{bytes}) — same as vision.
+        let config = make_test_config();
+        let provider = Box::new(MockProvider::new(vec![]));
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
+
+        let webdav_result = "![generated_image.png](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==)";
+        harness.cache_vision_images("room1", webdav_result);
+
+        let pool = harness.image_pool.get("room1").unwrap();
+        assert_eq!(pool.len(), 1);
+        assert_eq!(pool[0].name, "generated_image.png");
+        assert!(pool[0].data_uri.starts_with("data:image/png;base64,"));
+    }
+
+    #[test]
     fn test_cache_vision_images_malformed_markdown() {
         let config = make_test_config();
         let provider = Box::new(MockProvider::new(vec![]));
