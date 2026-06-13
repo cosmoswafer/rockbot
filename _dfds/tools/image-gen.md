@@ -124,6 +124,7 @@ flowchart TD
 | Ratio string | Fal `resolve_image_size()` output | OpenRouter `preset_to_aspect_ratio()` output |
 |---|---|---|
 | `"16:9"` | `{"width": 3840, "height": 2160}` | `"16:9"` |
+| `"9:16"` | `{"width": 2160, "height": 3840}` | `"9:16"` |
 | `"2:3"` | `{"width": 2336, "height": 3504}` | `"2:3"` |
 | `"1:1"` | `{"width": 2880, "height": 2880}` | `"1:1"` |
 | `"4:3"` | `{"width": 3312, "height": 2480}` | `"4:3"` |
