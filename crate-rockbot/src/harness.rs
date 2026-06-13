@@ -1753,20 +1753,24 @@ chat = "mock-model"
         let harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
         let prompt = harness.build_system_prompt();
         assert!(
-            prompt.contains("flat enumeration list"),
-            "Prompt must describe flat enumeration list format"
+            prompt.contains("edit_soul tool"),
+            "Prompt must reference the edit_soul tool"
         );
         assert!(
-            prompt.contains("- My name is"),
-            "Prompt must contain the flat bullet template"
+            prompt.contains("save_knowledge tool"),
+            "Prompt must reference save_knowledge tool"
         );
         assert!(
-            prompt.contains(r"My name is (.+)"),
-            "Prompt must document the name extraction regex"
+            prompt.contains("forget_knowledge tool"),
+            "Prompt must reference forget_knowledge tool"
         );
         assert!(
-            !prompt.contains("## Identity"),
-            "Prompt must not reference old ## Identity format"
+            prompt.contains("recall_knowledge tool"),
+            "Prompt must reference recall_knowledge tool"
+        );
+        assert!(
+            prompt.contains("only image_gen produces real images"),
+            "Prompt must warn against fabricating fake image references"
         );
     }
 
