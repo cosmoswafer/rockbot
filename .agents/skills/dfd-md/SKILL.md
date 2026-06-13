@@ -67,19 +67,17 @@ language:
 - **Parse at boundaries** — all external input (wire formats, config files, CLI
   args) is parsed into domain types at the subsystem entry point.  After
   parsing, the rest of the system uses only those types — never raw strings,
-  untyped dictionaries, or loose primitives.
+  untyped dictionaries/maps, or loose primitives.
 - **Make invalid states unrepresentable** — any value carrying an invariant
   (non-empty string, valid email, bounded number, well-formed URL) must be
   wrapped in a dedicated type whose constructor enforces the invariant at
   creation time.  Holding an instance of the type *guarantees* the invariant;
   no downstream validation needed.
 - **Newtype / wrapper pattern** — single-field types that wrap a primitive and
-  expose only valid constructions (`TryFrom`, factory function, builder).  In
-  Rust this is achieved with crates like
-  [`nutype`](https://crates.io/crates/nutype),
-  [`derive_more`](https://crates.io/crates/derive_more), or hand-rolled
-  newtypes.  Equivalent patterns exist in every language (data classes with
-  private constructors, tagged types, opaque types, smart constructors).
+  expose only valid constructions (fallible factory function, builder, private
+  constructor).  Equivalent patterns exist in every language: data classes with
+  private constructors, tagged types, opaque types, smart constructors, or
+  newtype structs with a `TryFrom` impl.
 - **Type-first implementation** — design types from the DFD data structure
   tables *before* writing functions.  Each table row becomes a record or enum
   variant.  Functions operate on those types; the compiler/type-checker
@@ -89,11 +87,12 @@ language:
   import it, making type mismatches a **compile-time (or static-analysis)
   error** — no runtime check or test suite needed.
 - **Fallible construction** — all constructors that can reject invalid input
-  return a result or throw a specific error naming the DFD data structure and
-  the offending field.  Errors are self-documenting.
-- **No bare panics in production** — use structured error types or checked
-   exceptions.  Panics/asserts only for truly unrecoverable programmer bugs
-   (invariant violations indicating a logic error).
+  return a typed error (result type, checked exception, optional chaining with
+  diagnostics) naming the DFD data structure and the offending field.  Errors
+  are self-documenting.
+- **No bare panics/asserts in production** — use structured errors or checked
+   exceptions.  Unrecoverable programmer bugs (invariant violations indicating
+   a logic error) are the only acceptable use of panics/asserts.
 
 ## Notation
 

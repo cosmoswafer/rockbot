@@ -79,12 +79,24 @@ Data Flow Diagrams in `_dfds/` are the design spec. The development flow is defi
 Every DFD data structure (section 3) becomes a Rust type. Follow these rules
 to make data flow violations compile-time errors rather than runtime surprises:
 
-- **Newtype wrapping** — primitives carrying invariants (non-empty strings,
-  bounded numbers, well-formed URLs, IDs) must be single-field structs with a
-  fallible constructor (`TryFrom` / `FromStr` / factory fn). Use
-  [`nutype`](https://crates.io/crates/nutype) for attribute-macro newtypes
-  with built-in validation, or hand-roll with a private field. Holding an
-  instance guarantees the invariant — no downstream `.is_valid()` checks.
+- **Input protection layer** — all external input must be validated at the
+  boundary before entering the system. Use two complementary crates:
+  - [`serde_valid`](https://crates.io/crates/serde_valid) (JSON Schema-based)
+    for format/shape constraints at deserialization boundaries — `max_length`,
+    `min_length`, `pattern`, `maximum`, `minimum`, `multiple_of`, `max_items`,
+    `min_items`, `unique_items`, `enum`. Use `FromJsonValue` to deserialize
+    and validate in a single step. Cross-field custom validation is supported
+    via closure with `self` access.
+  - [`validator`](https://crates.io/crates/validator) (business-logic
+    validators) for domain-level constraints — `email`, `url`, `length`,
+    `range`, `must_match`, `contains`, `regex`, `required`, `nested`, struct-
+    level `schema` validation, `custom` function references, `ValidateArgs`
+    for context passing. Works alongside `serde` `Deserialize`.
+  Both can be derived on the same struct when a type needs both layers.
+  Newtypes with invariants (non-empty strings, bounded numbers, well-formed
+  URLs, IDs) should still be single-field structs with a fallible constructor
+  (`TryFrom` / `FromStr` / factory fn) and a private field, guaranteeing the
+  invariant — no downstream `.is_valid()` checks.
 - **Parse at boundaries** — all external input (JSON, TOML config, CLI args)
   is parsed into domain types once, at the subsystem entry point.  Use `serde`
   `Deserialize` on validated types directly; never pass `serde_json::Value`
