@@ -154,7 +154,6 @@ async fn test_image_gen_real_text_to_image() {
         "standard".into(), // default_quality
         "png".into(),      // default_output_format
         1,                 // default_num_images
-        "square_1_1".into(), // default_image_size
         "2K".into(),       // default_image_size_tier
         webdav.clone(),
         image_cache.clone(),
@@ -164,6 +163,7 @@ async fn test_image_gen_real_text_to_image() {
     // 5. Execute the tool with a text-to-image prompt
     let args = serde_json::json!({
         "prompt": "A simple geometric test pattern: a blue square on a white background, minimal, clean",
+        "aspect_ratio": "1:1",
         "room_id": "test-room-image-gen-real",
         "webdav_dir": "test-image-gen-real",
         "image_cache_key": "test-call-id-001",
@@ -309,7 +309,6 @@ async fn test_image_gen_real_data_uri_handling() {
         "standard".into(),
         "png".into(),
         1,
-        "square_1_1".into(),
         "2K".into(),
         webdav.clone(),
         image_cache.clone(),
@@ -337,6 +336,7 @@ async fn test_image_gen_real_data_uri_handling() {
 
     let args = serde_json::json!({
         "prompt": "Make this red pixel image into a larger red square",
+        "aspect_ratio": "1:1",
         "room_id": "test-room-image-gen-real",
         "webdav_dir": "test-image-gen-real",
         "image_cache_key": "test-call-id-data-uri",

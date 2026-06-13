@@ -14,8 +14,7 @@ use crate::validated::NonEmptyString;
 #[derive(Debug, Deserialize)]
 struct ImageGenArgs {
     prompt: NonEmptyString,
-    #[serde(default)]
-    aspect_ratio: Option<String>,
+    aspect_ratio: String,
     #[serde(default)]
     image_urls: Option<Vec<String>>,
     #[serde(default)]
@@ -34,7 +33,6 @@ pub struct ImageGenTool {
     default_quality: String,
     default_output_format: String,
     default_num_images: u32,
-    default_image_size: String,
     default_image_size_tier: String,
     webdav: WebDavClient,
     image_cache: Arc<ImageCache>,
@@ -47,7 +45,6 @@ impl ImageGenTool {
         default_quality: String,
         default_output_format: String,
         default_num_images: u32,
-        default_image_size: String,
         default_image_size_tier: String,
         webdav: WebDavClient,
         image_cache: Arc<ImageCache>,
@@ -58,7 +55,6 @@ impl ImageGenTool {
             default_quality,
             default_output_format,
             default_num_images,
-            default_image_size,
             default_image_size_tier,
             webdav,
             image_cache,
@@ -72,7 +68,6 @@ impl ImageGenTool {
         default_quality: String,
         default_output_format: String,
         default_num_images: u32,
-        default_image_size: String,
         default_image_size_tier: String,
         webdav: WebDavClient,
         image_cache: Arc<ImageCache>,
@@ -83,7 +78,6 @@ impl ImageGenTool {
             default_quality,
             default_output_format,
             default_num_images,
-            default_image_size,
             default_image_size_tier,
             webdav,
             image_cache,
@@ -142,7 +136,7 @@ impl Tool for ImageGenTool {
 
     fn description(&self) -> &str {
         "Generate or edit an image. For text-to-image, provide a prompt \
-         and optional image_size. To edit or transform an image, the user's \
+         and aspect_ratio (W:H, e.g. '16:9'). To edit or transform an image, the user's \
          attachments are automatically provided as image_urls — just describe \
          what to do in the prompt. \
          Returns a JSON object: {\"ok\": true, \"image_key\": \"...\", \"webdav_path\": \"...\"}. \
@@ -161,7 +155,7 @@ impl Tool for ImageGenTool {
                 },
                 "aspect_ratio": {
                     "type": "string",
-                    "description": "Aspect ratio for the generated image as W:H (e.g. '16:9', '2:3', '1:1'). If omitted, the server default aspect ratio is used."
+                    "description": "Aspect ratio for the generated image as W:H (e.g. '16:9', '2:3', '1:1')"
                 },
                 "room_id": {
                     "type": "string",
@@ -173,7 +167,7 @@ impl Tool for ImageGenTool {
                     "description": "Image URLs for editing/transformations. When the user sends images, they are automatically injected. Do NOT try to reference data URIs from vision context — they will be provided automatically."
                 }
             },
-            "required": ["prompt"]
+            "required": ["prompt", "aspect_ratio"]
         })
     }
 
@@ -192,10 +186,7 @@ impl Tool for ImageGenTool {
         params.output_format = Some(self.default_output_format.clone());
         params.num_images = Some(self.default_num_images);
 
-        let aspect_ratio = args.aspect_ratio.as_deref().filter(|s| !s.is_empty());
-        params.image_size = Some(ImageSizeValue::Preset(
-            aspect_ratio.unwrap_or(&self.default_image_size).to_string(),
-        ));
+        params.image_size = Some(ImageSizeValue::Preset(args.aspect_ratio.clone()));
         params.size_tier = Some(self.default_image_size_tier.clone());
 
         if let Some(image_urls) = &args.image_urls {
@@ -339,7 +330,7 @@ mod tests {
 
     #[test]
     fn test_image_gen_tool_definition() {
-        let tool = ImageGenTool::new(make_fal_provider(), "medium".into(), "png".into(), 1, "portrait_2_3".into(), "4K".into(), make_webdav(), make_image_cache());
+        let tool = ImageGenTool::new(make_fal_provider(), "medium".into(), "png".into(), 1, "4K".into(), make_webdav(), make_image_cache());
 
         assert_eq!(tool.name(), "image_gen");
         assert!(tool.description().contains("Generate or edit an image"));
@@ -351,60 +342,45 @@ mod tests {
                 .unwrap()
                 .contains(&serde_json::json!("prompt"))
         );
+        assert!(
+            params["required"]
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::json!("aspect_ratio"))
+        );
         assert!(params["properties"].get("aspect_ratio").is_some(), "aspect_ratio visible to LLM — set via tool arg");
         assert!(params["properties"].get("image_urls").is_some());
     }
 
     #[tokio::test]
     async fn test_execute_missing_prompt() {
-        let tool = ImageGenTool::new(make_fal_provider(), "medium".into(), "png".into(), 1, "portrait_2_3".into(), "4K".into(), make_webdav(), make_image_cache());
+        let tool = ImageGenTool::new(make_fal_provider(), "medium".into(), "png".into(), 1, "4K".into(), make_webdav(), make_image_cache());
         let result = tool.execute(r#"{}"#).await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn test_execute_invalid_json() {
-        let tool = ImageGenTool::new(make_fal_provider(), "medium".into(), "png".into(), 1, "portrait_2_3".into(), "4K".into(), make_webdav(), make_image_cache());
+        let tool = ImageGenTool::new(make_fal_provider(), "medium".into(), "png".into(), 1, "4K".into(), make_webdav(), make_image_cache());
         let result = tool.execute("not json").await;
         assert!(result.is_err());
     }
 
     #[test]
-    fn test_aspect_ratio_from_llm_overrides_config_default() {
-        // Simulate execute() arg parsing when LLM provides aspect_ratio
+    fn test_aspect_ratio_passed_through_to_params() {
+        // aspect_ratio is required from LLM — verify it's stored as Preset
         let args: Value = serde_json::from_str(r#"{"prompt":"a cat","aspect_ratio":"16:9"}"#).unwrap();
-        let default_image_size = "portrait_2_3";
         let aspect_ratio = args
             .get("aspect_ratio")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty());
-        let used_size = aspect_ratio.unwrap_or(default_image_size);
-        assert_eq!(used_size, "16:9", "LLM aspect_ratio should override config default");
+            .and_then(|v| v.as_str());
+        assert_eq!(aspect_ratio, Some("16:9"), "LLM-provided aspect_ratio should be available");
     }
 
     #[test]
-    fn test_aspect_ratio_missing_falls_back_to_config_default() {
-        // Simulate execute() arg parsing when LLM does NOT provide aspect_ratio
-        let args: Value = serde_json::from_str(r#"{"prompt":"a cat"}"#).unwrap();
-        let default_image_size = "portrait_2_3";
-        let aspect_ratio = args
-            .get("aspect_ratio")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty());
-        let used_size = aspect_ratio.unwrap_or(default_image_size);
-        assert_eq!(used_size, "portrait_2_3", "Without LLM aspect_ratio, config default should be used");
-    }
-
-    #[test]
-    fn test_aspect_ratio_empty_string_falls_back_to_config() {
-        let args: Value = serde_json::from_str(r#"{"prompt":"a cat","aspect_ratio":""}"#).unwrap();
-        let default_image_size = "portrait_2_3";
-        let aspect_ratio = args
-            .get("aspect_ratio")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty());
-        let used_size = aspect_ratio.unwrap_or(default_image_size);
-        assert_eq!(used_size, "portrait_2_3", "Empty aspect_ratio should fall back to config default");
+    fn test_aspect_ratio_missing_fails_deserialization() {
+        // aspect_ratio is required — missing it should fail deserialization
+        let result: std::result::Result<ImageGenArgs, _> = serde_json::from_str(r#"{"prompt":"a cat"}"#);
+        assert!(result.is_err(), "Missing required aspect_ratio should fail deserialization");
     }
 
     #[test]
@@ -597,7 +573,6 @@ mod tests {
             "medium".into(),
             "png".into(),
             1,
-            "portrait_2_3".into(),
             "4K".into(),
             make_webdav(),
             make_image_cache(),
@@ -614,7 +589,6 @@ mod tests {
             "medium".into(),
             "png".into(),
             1,
-            "portrait_2_3".into(),
             "2K".into(),
             make_webdav(),
             make_image_cache(),
@@ -625,7 +599,7 @@ mod tests {
         params.quality = Some(tool.default_quality.clone());
         params.output_format = Some(tool.default_output_format.clone());
         params.num_images = Some(tool.default_num_images);
-        params.image_size = Some(ImageSizeValue::Preset(tool.default_image_size.clone()));
+        params.image_size = Some(ImageSizeValue::Preset("16:9".into()));
         params.size_tier = Some(tool.default_image_size_tier.clone());
 
         assert_eq!(params.size_tier.as_deref(), Some("2K"));
@@ -639,7 +613,6 @@ mod tests {
             "medium".into(),
             "png".into(),
             1,
-            "portrait_2_3".into(),
             "4K".into(),
             make_webdav(),
             make_image_cache(),
@@ -659,7 +632,6 @@ mod tests {
             "medium".into(),
             "png".into(),
             1,
-            "portrait_2_3".into(),
             "4K".into(),
             make_webdav(),
             make_image_cache(),
@@ -676,7 +648,6 @@ mod tests {
             "medium".into(),
             "png".into(),
             1,
-            "portrait_2_3".into(),
             "4K".into(),
             make_webdav(),
             make_image_cache(),
@@ -693,7 +664,6 @@ mod tests {
             "medium".into(),
             "png".into(),
             1,
-            "portrait_2_3".into(),
             "4K".into(),
             make_webdav(),
             make_image_cache(),
@@ -712,7 +682,6 @@ mod tests {
             "medium".into(),
             "png".into(),
             1,
-            "portrait_2_3".into(),
             "4K".into(),
             make_webdav(),
             make_image_cache(),
@@ -720,6 +689,7 @@ mod tests {
 
         let args = serde_json::json!({
             "prompt": "test prompt",
+            "aspect_ratio": "1:1",
             "room_id": "room1",
         });
         let result = tool.execute(&args.to_string()).await;

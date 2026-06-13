@@ -34,7 +34,7 @@ flowchart TD
     CACHE[(ImageCache)]
     FORMAT(FormatResult)
 
-    AGENT -->|"prompt + image_urls (LLM), aspect_ratio (LLM optional), room_id + webdav_dir + image_cache_key (harness injects)"| PARSE
+    AGENT -->|"prompt + aspect_ratio + image_urls (LLM), room_id + webdav_dir + image_cache_key (harness injects)"| PARSE
     PARSE -->|"merged with config defaults (quality, output_format, num_images, size_tier) + uploaded image_urls + resolved image_size"| RESOLVE
     RESOLVE -->|"t2i or edit provider + ImageGenParams"| PROVIDER
     PROVIDER --> GEN
@@ -101,14 +101,13 @@ The `ImageProvider` trait abstracts both — the tool and harness never branch o
 
 ### 2d. Aspect Ratio Resolution
 
-The LLM supplies `aspect_ratio` as a `W:H` string (e.g. `"16:9"`, `"2:3"`,
-`"1:1"`). If the LLM omits it, the tool falls back to `default_image_size` from
-config. The tool stores the value as `ImageSizeValue::Preset(ratio_string)` and
+The LLM is **required** to supply `aspect_ratio` as a `W:H` string (e.g. `"16:9"`, `"2:3"`,
+`"1:1"`). The tool stores the value as `ImageSizeValue::Preset(ratio_string)` and
 each provider resolves it to its required format:
 
 ```mermaid
 flowchart TD
-    LLM["LLM provides<br/>aspect_ratio: '16:9'<br/>(optional)"]
+    LLM["LLM provides<br/>aspect_ratio: '16:9'<br/>(required)"]
     TOOL["ImageGenTool.execute<br/>stores as Preset('16:9')"]
     FAL["FalAiProvider<br/>resolve_image_size()"]
     OR["OpenRouterImageProvider<br/>preset_to_aspect_ratio()"]
@@ -173,13 +172,13 @@ subsequent provider dispatch.
 
 #### `ImageGenParams`
 
-LLM provides `prompt` and optional `aspect_ratio`; all other fields come from config.
+LLM provides `prompt` and `aspect_ratio` (both required); all other fields come from config.
 
 | Field           | Source            | Type                                           | Description                                      |
 | --------------- | ----------------- | ---------------------------------------------- | ------------------------------------------------ |
 | `prompt`        | LLM               | `NonEmptyString`                               | **Required.** Validated at JSON deserialization — empty prompt fails at parse boundary. |
-| `aspect_ratio`  | LLM (optional)   | `string`                                      | Aspect ratio as `W:H` (e.g. `"16:9"`, `"2:3"`, `"1:1"`). Parsed at execute time and stored directly as `image_size: Preset(ratio_string)` — not a separate field on the Rust struct. If omitted, falls back to `default_image_size` from config. |
-| `image_size`    | Tool (resolved)  | preset name → pixels                         | Resolved from LLM's `aspect_ratio` (or config default) per-provider. Hidden from LLM. |
+| `aspect_ratio`  | LLM               | `string`                                      | **Required.** Aspect ratio as `W:H` (e.g. `"16:9"`, `"2:3"`, `"1:1"`). Parsed at execute time and stored directly as `image_size: Preset(ratio_string)` — not a separate field on the Rust struct. |
+| `image_size`    | Tool (resolved)  | preset name → pixels                         | Resolved from LLM's `aspect_ratio` per-provider. Hidden from LLM. |
 | `size_tier`     | Config            | `"4K"`, `"2K"`, `"1K"`                        | Resolution tier for OpenRouter. Set from `default_image_size_tier`. Ignored by fal. |
 | `room_id`       | Harness           | `string`                                       | Room UUID for image storage (injected if omitted). **Note:** injected at execute time, not stored in the Rust struct. |
 | `webdav_dir`    | Harness           | `string`                                       | Type-prefixed room path (injected; falls back to room_id). **Note:** injected at execute time, not stored in the Rust struct; also absent from the LLM-facing tool schema. |
