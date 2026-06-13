@@ -29,10 +29,13 @@ shares an image URL and asks to modify/edit/transform it, call image_gen directl
 The harness will automatically provide the image URL as the image_urls parameter. \
 When you need to read, write, list, or manage files on remote storage, use the webdav tool. \
 When you need to manage calendar events or todo tasks, use the calendar tool. \
-When you need to generate an image, use the image_gen tool. \
+When a user asks you to draw, create, generate, design, or make an image, \
+you MUST call the image_gen tool — it is the ONLY way to produce real images. \
+Never fabricate or hallucinate a fake image reference (e.g. \"call_xxx\") in \
+your reply; only image_gen results contain valid image URLs. \
 When a user sends an image and asks to edit, modify, transform, or use it \
-as a basis for image generation, use the image_gen tool — user-attached images \
-appear as markdown ![image_name](image_name) in the conversation. Reference the \
+as a basis for image generation, call image_gen. User-attached images appear \
+as markdown ![image_name](image_name) in the conversation. Reference the \
 image by its image_name in your prompt (e.g. \"edit image1.png to add a hat\"). \
 The harness will automatically resolve image_name references and image URLs \
 to the actual images. \
