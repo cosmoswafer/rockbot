@@ -29,6 +29,7 @@ draw_path = "/images/generations"
 [image_providers.models]
 seedream = "bytedance-seed/seedream-4.5"
 banana = "google/gemini-3.1-flash-image-preview"
+mai = "microsoft/mai-image-2.5"
 
 [[image_providers]]
 name = "fal"
@@ -42,9 +43,9 @@ gptimage_edit = "openai/gpt-image-2/edit"
 grok_edit = "xai/grok-imagine-image/quality/edit"
 
 [image_model]
-default_provider = "fal"
-default_text_model = "gptimage"
-default_edit_model = "gptimage_edit"
+default_provider = "openrouter"
+default_text_model = "mai"
+default_edit_model = "mai"
 default_quality = "medium"
 default_output_format = "png"
 default_num_images = 1
