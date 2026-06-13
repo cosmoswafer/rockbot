@@ -103,7 +103,7 @@ pub struct SaveKnowledgeParams {
     pub category: KnowledgeCategory,
     pub topic: NonEmptyString,
     pub content: NonEmptyString,
-    pub when_useful: String,
+    pub when_useful: NonEmptyString,
     #[serde(default)]
     pub priority: KnowledgePriority,
     #[serde(default)]

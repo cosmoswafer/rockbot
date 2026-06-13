@@ -14,7 +14,7 @@ use crate::validated::NonEmptyString;
 #[derive(Debug, Deserialize)]
 struct ImageGenArgs {
     prompt: NonEmptyString,
-    aspect_ratio: String,
+    aspect_ratio: NonEmptyString,
     #[serde(default)]
     image_urls: Option<Vec<String>>,
     #[serde(default)]
@@ -186,7 +186,7 @@ impl Tool for ImageGenTool {
         params.output_format = Some(self.default_output_format.clone());
         params.num_images = Some(self.default_num_images);
 
-        params.image_size = Some(ImageSizeValue::Preset(args.aspect_ratio.clone()));
+        params.image_size = Some(ImageSizeValue::Preset(args.aspect_ratio.as_str().to_string()));
         params.size_tier = Some(self.default_image_size_tier.clone());
 
         if let Some(image_urls) = &args.image_urls {

@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::Value;
+use serde_valid::Validate;
 use tracing::warn;
 
 use crate::error::{Result, RockBotError};
@@ -23,12 +24,14 @@ enum ContentsMode {
     Deep,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Validate)]
 struct WebSearchParams {
     query: NonEmptyString,
     #[serde(rename = "type", default = "default_search_type")]
     search_type: SearchType,
     #[serde(default = "default_num_results")]
+    #[validate(minimum = 1)]
+    #[validate(maximum = 20)]
     num_results: u32,
     #[serde(default = "default_contents_mode")]
     contents_mode: ContentsMode,
@@ -261,6 +264,9 @@ impl Tool for WebSearchTool {
     async fn execute(&self, arguments: &str) -> Result<String> {
         let params: WebSearchParams = serde_json::from_str(arguments).map_err(|e| {
             RockBotError::ToolCallParse(format!("Failed to parse web_search arguments: {}", e))
+        })?;
+        params.validate().map_err(|e| {
+            RockBotError::ToolCallParse(format!("Invalid web_search arguments: {e}"))
         })?;
 
         let search_type = match params.search_type {

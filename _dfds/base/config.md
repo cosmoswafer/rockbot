@@ -154,13 +154,24 @@ flowchart TD
 | `calendar_name` | `Option<String>` | CalDAV calendar name (enables calendar tool if set) |
 | `dav_path`      | `String`         | WebDAV/NextCloud API path prefix (default `"/remote.php/dav"`) |
 
-> **Validated newtypes.** `ProviderName`, `ConfigUrl`, `DavUrl`, `DavRoot`, and `BoundedUsize`
-> are `nutype`-based validated wrappers that enforce invariants at deserialization time
-> (config boundary). `ProviderName`, `ConfigUrl`, `DavUrl`, and `DavRoot` require
+> **Validated newtypes.** `ProviderName`, `ConfigUrl`, `DavUrl`, `DavRoot`, `NonEmptyString`, and `BoundedUsize`
+> are hand-written validated wrappers that enforce invariants at deserialization time
+> (config boundary) via custom `Serialize`/`Deserialize` implementations. `ProviderName`, `ConfigUrl`,
+> `DavUrl`, `DavRoot`, and `NonEmptyString` require
 > non-empty strings. `BoundedUsize` enforces the range `1..=100_000_000`. Holding
 > an instance of any of these types guarantees the invariant — no downstream runtime
-> checks needed. Defined in `crate-rockbot/src/validated.rs` (rockbot types) and
-> `crate-webdav/src/config.rs` (WebDAV types).
+> checks needed.
+>
+> **Two-layer input protection** follows the pattern in AGENTS.md:
+> - [`serde_valid`](https://crates.io/crates/serde_valid) — format/shape constraints at deserialization
+>   boundaries (`min_length`, `max_length`, `pattern`, etc.). Used on `ToolServiceConfig`,
+>   `KnowledgeIndex`, and `IndexEntry`.
+> - [`validator`](https://crates.io/crates/validator) — business-logic cross-field validation.
+>   Used on `AppConfig` via a `#[validate(schema)]` function that verifies `default_provider`
+>   references exist in `[[chat_providers]]` and `[[image_providers]]`.
+>
+> Defined in `crate-rockbot/src/validated.rs` (rockbot types) and
+> `crate-webdav/src/validated.rs` + `crate-webdav/src/types.rs` (WebDAV types).
 
 ## 4. Config Files
 

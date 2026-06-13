@@ -1,6 +1,7 @@
 use rockbot::config::{AppConfig, ProviderConfig};
 use rockbot::error::{Result, RockBotError};
 use rockbot::provider::{AiProvider, DeepSeekProvider, FalAiProvider, OpenRouterProvider};
+use validator::Validate;
 use rockbot::types::{
     ChatMessage, ChatRequest, CompletionResult, ContentPart, FinishReason, ImageUrlPayload,
     MessageContent, Role, ThinkingConfig, ToolCall, ToolDef, UsageInfo,
@@ -376,10 +377,6 @@ base_url = "https://test.ai/v1"
     let config = AppConfig::from_toml(toml).unwrap();
     let result = config.validate();
     assert!(result.is_err());
-    match result {
-        Err(RockBotError::ProviderNotFound(name)) => assert_eq!(name, "nonexistent"),
-        _ => panic!("Expected ProviderNotFound"),
-    }
 }
 
 #[test]

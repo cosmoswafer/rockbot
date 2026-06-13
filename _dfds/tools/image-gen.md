@@ -177,7 +177,7 @@ LLM provides `prompt` and `aspect_ratio` (both required); all other fields come 
 | Field           | Source            | Type                                           | Description                                      |
 | --------------- | ----------------- | ---------------------------------------------- | ------------------------------------------------ |
 | `prompt`        | LLM               | `NonEmptyString`                               | **Required.** Validated at JSON deserialization — empty prompt fails at parse boundary. |
-| `aspect_ratio`  | LLM               | `string`                                      | **Required.** Aspect ratio as `W:H` (e.g. `"16:9"`, `"2:3"`, `"1:1"`). Parsed at execute time and stored directly as `image_size: Preset(ratio_string)` — not a separate field on the Rust struct. |
+| `aspect_ratio`  | LLM               | `NonEmptyString`                              | **Required.** Aspect ratio as `W:H` (e.g. `"16:9"`, `"2:3"`, `"1:1"`). Validated non-empty at deserialization. Stored directly as `image_size: Preset(ratio_string)`. |
 | `image_size`    | Tool (resolved)  | preset name → pixels                         | Resolved from LLM's `aspect_ratio` per-provider. Hidden from LLM. |
 | `size_tier`     | Config            | `"4K"`, `"2K"`, `"1K"`                        | Resolution tier for OpenRouter. Set from `default_image_size_tier`. Ignored by fal. |
 | `room_id`       | Harness           | `string`                                       | Room UUID for image storage (injected if omitted). **Note:** injected at execute time, not stored in the Rust struct. |

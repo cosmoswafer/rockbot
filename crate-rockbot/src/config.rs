@@ -1,13 +1,15 @@
 use serde::Deserialize;
 use serde_valid::Validate;
 use std::collections::HashMap;
+use validator::Validate as ValidatorValidate;
 use webdav::WebDavConfig;
 
 use crate::validated::{BoundedUsize, ConfigUrl, ProviderName};
 
 const DEFAULT_CONFIG_PATH: &str = "default.config.toml";
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, ValidatorValidate)]
+#[validate(schema(function = "validate_app_config"))]
 pub struct AppConfig {
     pub rocketchat: RocketChatSection,
     #[serde(default)]
@@ -28,10 +30,13 @@ pub struct RocketChatSection {
     pub model: ModelConfig,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Validate)]
 pub struct ServerConfig {
+    #[validate(min_length = 1)]
     pub url: String,
+    #[validate(min_length = 1)]
     pub username: String,
+    #[validate(min_length = 1)]
     pub password: String,
     #[serde(default)]
     pub debug: bool,
@@ -215,7 +220,12 @@ impl AppConfig {
             .map_err(|e| crate::error::RockBotError::Config(format!("merge failed: {}", e)))?;
         let config: Self = toml::from_str(&merged_str)
             .map_err(|e| crate::error::RockBotError::Config(format!("merged parse: {}", e)))?;
-        config.validate()?;
+        config.rocketchat.server.validate().map_err(|e| {
+            crate::error::RockBotError::Config(format!("server config validation: {e}"))
+        })?;
+        <Self as ValidatorValidate>::validate(&config).map_err(|e| {
+            crate::error::RockBotError::Config(format!("config validation: {e}"))
+        })?;
         Ok(config)
     }
 
@@ -223,19 +233,6 @@ impl AppConfig {
         let config: Self = toml::from_str(content)
             .map_err(|e| crate::error::RockBotError::Config(format!("toml parse: {}", e)))?;
         Ok(config)
-    }
-
-    pub fn validate(&self) -> crate::error::Result<()> {
-        let provider_name: &str = &self.rocketchat.model.default_provider;
-        self.find_chat_provider(provider_name)
-            .ok_or_else(|| crate::error::RockBotError::ProviderNotFound(provider_name.to_string()))?;
-
-        let image_provider: &str = &self.image_model.default_provider;
-        if !self.image_providers.is_empty() {
-            self.find_image_provider(image_provider)
-                .ok_or_else(|| crate::error::RockBotError::ProviderNotFound(image_provider.to_string()))?;
-        }
-        Ok(())
     }
 
     pub fn find_chat_provider(&self, name: &str) -> Option<&ProviderConfig> {
@@ -257,8 +254,27 @@ impl AppConfig {
     }
 }
 
+/// Validator schema function — cross-field business-logic validation for AppConfig.
+fn validate_app_config(config: &AppConfig) -> Result<(), validator::ValidationError> {
+    let provider_name: &str = &config.rocketchat.model.default_provider;
+    if config.find_chat_provider(provider_name).is_none() {
+        let mut err = validator::ValidationError::new("provider_not_found");
+        err.message = Some(format!("chat_provider '{}' not found in [[chat_providers]]", provider_name).into());
+        return Err(err);
+    }
+
+    let image_provider: &str = &config.image_model.default_provider;
+    if !config.image_providers.is_empty() {
+        if config.find_image_provider(image_provider).is_none() {
+            let mut err = validator::ValidationError::new("provider_not_found");
+            err.message = Some(format!("image_provider '{}' not found in [[image_providers]]", image_provider).into());
+            return Err(err);
+        }
+    }
+    Ok(())
+}
+
 /// Recursively merge two TOML values. `base` provides defaults, `override_` wins.
-/// Arrays of tables are merged by matching a `name` key in each element.
 pub fn merge_toml(base: toml::Value, override_: toml::Value) -> toml::Value {
     match (base, override_) {
         (toml::Value::Table(mut base), toml::Value::Table(over)) => {

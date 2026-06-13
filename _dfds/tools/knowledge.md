@@ -191,7 +191,7 @@ All data structures are shared with [Knowledge Management](../base/knowledge.md#
 | `category`   | `KnowledgeCategory`     | Enum: `skill`, `secret`, or `note`              |
 | `topic`      | `NonEmptyString`        | Short title for the entry. Validated newtype.   |
 | `content`    | `NonEmptyString`        | Markdown body of the knowledge entry. Validated newtype. |
-| `when_useful`| `String`                | Situation description for retrieval             |
+| `when_useful`| `NonEmptyString`        | Situation description for retrieval. Validated non-empty (required field). |
 | `tags`       | `Option<String>`        | Comma-separated keywords. Serde default: `None`. |
 | `priority`   | `KnowledgePriority`     | Enum: `P0`, `P1`, `P2`, `P3`. Default `P1`.    |
 | `webdav_dir` | `Option<String>`        | Room WebDAV key. Serde default: `None` (injected by harness). |

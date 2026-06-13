@@ -2,18 +2,7 @@ use serde::Deserialize;
 
 use crate::client::WebDavClient;
 use crate::error::{Result, WebDavError};
-
-#[nutype::nutype(
-    validate(not_empty),
-    derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Deref)
-)]
-struct DavUrl(String);
-
-#[nutype::nutype(
-    validate(not_empty),
-    derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Deref)
-)]
-struct DavRoot(String);
+use crate::validated::{DavRoot, DavUrl};
 
 fn default_dav_path() -> String {
     "/remote.php/dav".to_string()

@@ -150,14 +150,22 @@ impl<'a> MessageFilter<'a> {
 
         let file = first_arg
             .get("file")
-            .and_then(|v| serde_json::from_value(v.clone()).ok());
+            .and_then(|v| {
+                serde_json::from_value(v.clone())
+                    .map_err(|e| tracing::warn!("rocketchat: skipping malformed file metadata: {e}"))
+                    .ok()
+            });
 
         let files: Vec<FileInfo> = first_arg
             .get("files")
             .and_then(|v| v.as_array())
             .map(|arr| {
                 arr.iter()
-                    .filter_map(|v| serde_json::from_value(v.clone()).ok())
+                    .filter_map(|v| {
+                        serde_json::from_value(v.clone())
+                            .map_err(|e| tracing::warn!("rocketchat: skipping malformed file entry in files list: {e}"))
+                            .ok()
+                    })
                     .collect()
             })
             .unwrap_or_default();
@@ -167,7 +175,11 @@ impl<'a> MessageFilter<'a> {
             .and_then(|v| v.as_array())
             .map(|arr| {
                 arr.iter()
-                    .filter_map(|v| serde_json::from_value(v.clone()).ok())
+                    .filter_map(|v| {
+                        serde_json::from_value(v.clone())
+                            .map_err(|e| tracing::warn!("rocketchat: skipping malformed attachment: {e}"))
+                            .ok()
+                    })
                     .collect()
             })
             .unwrap_or_default();
@@ -177,7 +189,11 @@ impl<'a> MessageFilter<'a> {
             .and_then(|v| v.as_array())
             .map(|arr| {
                 arr.iter()
-                    .filter_map(|v| serde_json::from_value(v.clone()).ok())
+                    .filter_map(|v| {
+                        serde_json::from_value(v.clone())
+                            .map_err(|e| tracing::warn!("rocketchat: skipping malformed message url: {e}"))
+                            .ok()
+                    })
                     .collect()
             })
             .unwrap_or_default();

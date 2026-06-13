@@ -1,17 +1,158 @@
-use nutype::nutype;
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::ops::Deref;
 
-#[nutype(
-    validate(predicate = |s| !s.is_empty() && s.len() <= 64),
-    derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Deref)
-)]
+use crate::validated::ValidationError;
+
+fn validate_action(value: &str) -> Result<(), ValidationError> {
+    if value.is_empty() {
+        return Err(ValidationError {
+            type_name: "ReminderAction",
+            message: "must not be empty".into(),
+        });
+    }
+    if value.len() > 64 {
+        return Err(ValidationError {
+            type_name: "ReminderAction",
+            message: "must be at most 64 characters".into(),
+        });
+    }
+    Ok(())
+}
+
+// ----- ReminderAction -----
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReminderAction(String);
 
-#[nutype(
-    validate(not_empty),
-    derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Deref)
-)]
+impl ReminderAction {
+    pub fn try_new(value: String) -> Result<Self, ValidationError> {
+        validate_action(&value)?;
+        Ok(Self(value))
+    }
+
+    pub fn into_inner(self) -> String {
+        self.0
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Deref for ReminderAction {
+    type Target = String;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl Serialize for ReminderAction {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for ReminderAction {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Self::try_new(s).map_err(serde::de::Error::custom)
+    }
+}
+
+// ----- ReminderTrigger -----
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReminderTrigger(String);
+
+impl ReminderTrigger {
+    pub fn try_new(value: String) -> Result<Self, ValidationError> {
+        if value.is_empty() {
+            return Err(ValidationError {
+                type_name: "ReminderTrigger",
+                message: "must not be empty".into(),
+            });
+        }
+        Ok(Self(value))
+    }
+
+    pub fn into_inner(self) -> String {
+        self.0
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Deref for ReminderTrigger {
+    type Target = String;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl Serialize for ReminderTrigger {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for ReminderTrigger {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Self::try_new(s).map_err(serde::de::Error::custom)
+    }
+}
+
+// ----- NonEmptyString -----
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct NonEmptyString(String);
+
+impl NonEmptyString {
+    pub fn try_new(value: String) -> Result<Self, ValidationError> {
+        if value.is_empty() {
+            return Err(ValidationError {
+                type_name: "NonEmptyString",
+                message: "must not be empty".into(),
+            });
+        }
+        Ok(Self(value))
+    }
+
+    pub fn into_inner(self) -> String {
+        self.0
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Deref for NonEmptyString {
+    type Target = String;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl Serialize for NonEmptyString {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for NonEmptyString {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Self::try_new(s).map_err(serde::de::Error::custom)
+    }
+}
+
+// ----- Domain types -----
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct WebDavEntry {
@@ -141,9 +282,3 @@ pub struct CaldavTodo {
     pub completed: Option<String>,
     pub created: String,
 }
-
-#[nutype(
-    validate(not_empty),
-    derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Deref)
-)]
-pub struct NonEmptyString(String);

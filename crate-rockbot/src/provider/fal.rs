@@ -158,9 +158,12 @@ impl FalAiProvider {
 
         debug!("fal.ai request submitted: request_id={} status_url={}", request_id, status_url);
         Ok(SubmittedRequest {
-            request_id: NonEmptyString::try_new(request_id).expect("request_id must be non-empty"),
-            status_url: NonEmptyString::try_new(status_url).expect("status_url must be non-empty"),
-            response_url: NonEmptyString::try_new(response_url).expect("response_url must be non-empty"),
+            request_id: NonEmptyString::try_new(request_id)
+                .map_err(|e| RockBotError::Provider(format!("fal.ai response: {}", e)))?,
+            status_url: NonEmptyString::try_new(status_url)
+                .map_err(|e| RockBotError::Provider(format!("fal.ai response: {}", e)))?,
+            response_url: NonEmptyString::try_new(response_url)
+                .map_err(|e| RockBotError::Provider(format!("fal.ai response: {}", e)))?,
         })
     }
 

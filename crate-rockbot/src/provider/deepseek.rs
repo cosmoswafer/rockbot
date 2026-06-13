@@ -155,7 +155,13 @@ impl DeepSeekProvider {
             .and_then(|t| t.as_array())
             .map(|arr| {
                 arr.iter()
-                    .filter_map(|tc| serde_json::from_value::<ToolCall>(tc.clone()).ok())
+                    .filter_map(|tc| {
+                        serde_json::from_value::<ToolCall>(tc.clone())
+                            .map_err(|e| {
+                                warn!("deepseek: skipping malformed tool_call in response: {e}");
+                            })
+                            .ok()
+                    })
                     .map(|mut tc| {
                         if serde_json::from_str::<serde_json::Value>(&tc.function.arguments)
                             .is_err()

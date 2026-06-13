@@ -3,6 +3,7 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use serde_valid::Validate;
 use tracing::debug;
 use webdav::WebDavPath;
 
@@ -10,7 +11,7 @@ use crate::types::ChatMessage;
 use crate::utils::now_iso_string;
 use crate::validated::NonEmptyString;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 pub struct PersistSnapshot {
     pub schema: NonEmptyString,
     pub room_id: NonEmptyString,
@@ -20,11 +21,13 @@ pub struct PersistSnapshot {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub soul: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[validate]
     pub daily_summaries: Vec<DailySummary>,
+    #[validate(min_length = 1)]
     pub updated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 pub struct DailySummary {
     pub date: NonEmptyString,
     pub summary: String,
