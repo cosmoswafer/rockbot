@@ -6,10 +6,10 @@ All prompts and prompt-adjacent strings in the Rust codebase, organized by what 
 
 ## 1. System Prompt (sent to AI provider)
 
-**File:** `crate-rockbot/src/harness.rs:20-64`
+**File:** `crate-rockbot/src/harness.rs:20-44`
 **Constant:** `DEFAULT_SYSTEM_PROMPT`
 **Sent to:** AI provider as the `system` role message in `ChatRequest.messages`
-**Used via:** `build_system_prompt()` (line 598) → `MemoryManager::build_context()` → prepended as first message in context
+**Used via:** `build_system_prompt()` (line 578) → `MemoryManager::build_context()` → prepended as first message in context
 
 Note: `{name}`, `{max_context_mb}`, and `{max_iterations}` are replaced at runtime with config values via `build_system_prompt()`.
 
@@ -24,39 +24,14 @@ When you need the current date or time, use the datetime tool. \
 When you need information from the web, use the web_search tool. \
 When you need to fetch a URL, use web_fetch. \
 When you need to describe or analyze an image, use the vision tool. \
-Do NOT use vision just to identify an image before editing — when a user \
-shares an image URL and asks to modify/edit/transform it, call image_gen directly. \
-The harness will automatically provide the image URL as the image_urls parameter. \
+When you need to generate or edit images, use the image_gen tool. \
+Share image_gen results as markdown `![{description}]({image_key})`. \
+Do NOT fabricate fake image references — only image_gen produces real images. \
 When you need to read, write, list, or manage files on remote storage, use the webdav tool. \
 When you need to manage calendar events or todo tasks, use the calendar tool. \
-When a user asks you to draw, create, generate, design, or make an image, \
-you MUST call the image_gen tool — it is the ONLY way to produce real images. \
-Never fabricate or hallucinate a fake image reference (e.g. \"call_xxx\") in \
-your reply; only image_gen results contain valid image URLs. \
-When a user sends an image and asks to edit, modify, transform, or use it \
-as a basis for image generation, call image_gen. User-attached images appear \
-as markdown ![image_name](image_name) in the conversation. Reference the \
-image by its image_name in your prompt (e.g. \"edit image1.png to add a hat\"). \
-The harness will automatically resolve image_name references and image URLs \
-to the actual images. \
-If the user asks to edit a previously generated image (no new attachment), \
-you MUST include the image CDN URL from the previous result in the \
-image_urls parameter yourself. \
-The image_gen tool returns a WebDAV path and an image_key — \
-always share the image with the user in markdown image format \
-as `![{description}]({image_key})` so they can view the image inline. \
-When a user says !soul or asks to save or update preferences, identity, or facts, use the edit_soul tool. \
-edit_soul performs a full replace — it overwrites the entire soul with the content you provide. \
-The soul is a flat enumeration list — each line is a \"- \" bullet item with no sub-headings. \
-When setting your soul, always use this exact template: \
-\"# Soul Memory\\n\\n- My name is YourName ✨\\n- (optional)\\n- (optional)\\n- (optional)\\n- (optional)\". \
-Your display name is extracted by the regex \\\"My name is (.+)\\\" — \
-the first item must start with \"My name is ...\" and becomes your name. \
-Keep the name under 32 characters. \
-When a user asks you to remember something, shares notes, or says !remember, !note, !save or shares important \
-information worth persisting, use the save_knowledge tool. \
-When a user says !forget or asks to remove something you learned, \
-use the forget_knowledge tool. \
+When you need to save or update your personality, preferences, or identity, use the edit_soul tool. \
+When you need to remember something important, use the save_knowledge tool. \
+When you need to remove something you learned, use the forget_knowledge tool. \
 When you need to recall previously saved knowledge, use the recall_knowledge tool. \
 Answer in the same language as the user. \
 Keep responses clear and to the point.\
@@ -136,16 +111,11 @@ Manage calendar events on NextCloud CalDAV. Events are stored per-room — each 
 ```
 
 ### 3g. `image_gen`
-**File:** `crate-rockbot/src/tools/image_gen.rs:128-136`
+**File:** `crate-rockbot/src/tools/image_gen.rs:137-142`
 ```
-Generate or edit an image. For text-to-image, provide a prompt
-and optional aspect_ratio. To edit or transform an image, the user's
-attachments are automatically provided as image_urls — just describe
-what to do in the prompt.
-Returns a JSON object: {"ok": true, "image_key": "...", "webdav_path": "..."}.
-Always share the image with the user in markdown image format
-as `![{description}]({image_key})` so they can view the image inline.
-After a successful image_gen call, respond to the user — do not call image_gen again.
+Generate or edit an image. Provide a prompt and optional aspect_ratio (e.g. '16:9').
+User attachments are auto-provided as image_urls for editing.
+Returns {"ok": true, "image_key": "..."} — share result as `![desc]({image_key})`.
 ```
 
 Note: `image_size` is NOT exposed to the LLM as a tool parameter — it is set from `[image_model]` config (`default_image_size`, `default_image_size_tier`). `aspect_ratio` IS exposed to the LLM as an optional parameter. The harness injects `room_id` and `image_cache_key` automatically. `image_urls` are auto-injected from message attachments.
@@ -226,7 +196,7 @@ Search the knowledge index for entries matching a query. If no query is given, r
 | `image_gen.rs` | 144 | `image_gen` | `prompt` | Text description of the image to generate |
 | `image_gen.rs` | 148 | `image_gen` | `aspect_ratio` | Aspect ratio for the generated image as W:H (e.g. '16:9', '2:3', '1:1'). If omitted, the server default aspect ratio is used. |
 | `image_gen.rs` | 152 | `image_gen` | `room_id` | Room ID for image storage (injected automatically if omitted) |
-| `image_gen.rs` | 157 | `image_gen` | `image_urls` | Image URLs for editing/transformations. When the user sends images, they are automatically injected. Do NOT try to reference data URIs from vision context — they will be provided automatically. |
+| `image_gen.rs` | 157 | `image_gen` | `image_urls` | Reference image URLs for editing (auto-injected from user attachments) |
 | `edit_soul.rs` | 57 | `edit_soul` | `content` | Full soul.md content following the template: # Soul Memory\n\n- My name is Name ✨\n- ...\n- ..." |
 | `edit_soul.rs` | 61 | `edit_soul` | `webdav_dir` | Room WebDAV directory key (injected automatically) |
 | `save_knowledge.rs` | 53 | `save_knowledge` | `category` | Knowledge category: skill (procedural/how-to), secret (credential/sensitive), note (factual info) |

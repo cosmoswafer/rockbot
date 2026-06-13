@@ -135,14 +135,9 @@ impl Tool for ImageGenTool {
     }
 
     fn description(&self) -> &str {
-        "Generate or edit an image. For text-to-image, provide a prompt \
-         and aspect_ratio (W:H, e.g. '16:9'). To edit or transform an image, the user's \
-         attachments are automatically provided as image_urls — just describe \
-         what to do in the prompt. \
-         Returns a JSON object: {\"ok\": true, \"image_key\": \"...\", \"webdav_path\": \"...\"}. \
-         Always share the image with the user in markdown image format \
-         as `![{description}]({image_key})` so they can view the image inline. \
-         After a successful image_gen call, respond to the user — do not call image_gen again."
+        "Generate or edit an image. Provide a prompt and optional aspect_ratio (e.g. '16:9'). \
+         User attachments are auto-provided as image_urls for editing. \
+         Returns {\"ok\": true, \"image_key\": \"...\"} — share result as `![desc]({image_key})`."
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -164,7 +159,7 @@ impl Tool for ImageGenTool {
                 "image_urls": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "Image URLs for editing/transformations. When the user sends images, they are automatically injected. Do NOT try to reference data URIs from vision context — they will be provided automatically."
+                    "description": "Reference image URLs for editing (auto-injected from user attachments)"
                 }
             },
             "required": ["prompt", "aspect_ratio"]
