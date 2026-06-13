@@ -43,8 +43,8 @@ grok_edit = "xai/grok-imagine-image/quality/edit"
 
 [image_model]
 default_provider = "fal"
-default_text_model = "seedream"
-default_edit_model = "fal-ai/nano-banana-pro/edit"
+default_text_model = "gptimage"
+default_edit_model = "gptimage_edit"
 default_quality = "medium"
 default_output_format = "png"
 default_num_images = 1
