@@ -314,10 +314,10 @@ async fn test_image_gen_real_data_uri_handling() {
         image_cache.clone(),
     );
 
-    // Read the test image from _docs/test_suite/p0.png and encode as data URI.
+    // Read the test image from _doc/test_suite/p0.png and encode as data URI.
     // This exercises the real file-read + base64-encode path that the harness
     // uses when downloading RocketChat attachments (harness.rs:download_attachment_refs).
-    let png_path = workspace_root().join("_docs/test_suite/p0.png");
+    let png_path = workspace_root().join("_doc/test_suite/p0.png");
     let png_bytes = match std::fs::read(&png_path) {
         Ok(bytes) => {
             eprintln!("Read test image: {} ({} bytes)", png_path.display(), bytes.len());

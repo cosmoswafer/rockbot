@@ -25,8 +25,6 @@ password = "secret"
 [rocketchat.model]
 default_provider = "openrouter"
 default_model = "deepseek"
-max_history_size = 12
-max_text_length = 50000
 
 [[chat_providers]]
 name = "openrouter"
@@ -51,8 +49,6 @@ reasoner = "deepseek-reasoner"
 
     assert_eq!(config.rocketchat.model.default_provider.as_str(), "openrouter");
     assert_eq!(config.rocketchat.model.default_model, "deepseek");
-    assert_eq!(*config.rocketchat.model.max_history_size, 12);
-    assert_eq!(*config.rocketchat.model.max_text_length, 50000);
     assert_eq!(config.rocketchat.model.max_iterations, 28); // default
 
     assert_eq!(config.chat_providers.len(), 2);
@@ -137,8 +133,6 @@ password = "secret"
 [rocketchat.model]
 default_provider = "openrouter"
 default_model = "deepseek"
-max_history_size = 12
-max_text_length = 50000
 
 [[chat_providers]]
 name = "openrouter"
@@ -175,8 +169,6 @@ password = "secret"
 [rocketchat.model]
 default_provider = "openrouter"
 default_model = "deepseek"
-max_history_size = 12
-max_text_length = 50000
 
 [[chat_providers]]
 name = "openrouter"
@@ -225,8 +217,6 @@ password = "secret"
 [rocketchat.model]
 default_provider = "openrouter"
 default_model = "deepseek"
-max_history_size = 12
-max_text_length = 50000
 
 [[chat_providers]]
 name = "openrouter"
@@ -257,8 +247,6 @@ password = "secret"
 [rocketchat.model]
 default_provider = "openrouter"
 default_model = "deepseek"
-max_history_size = 12
-max_text_length = 50000
 
 [[chat_providers]]
 name = "openrouter"

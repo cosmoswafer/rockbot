@@ -8,7 +8,7 @@ by a NextCloud WebDAV server for persistent state.
 ## User Stories
 
 > **Priority**: P0 = critical, P1 = core, P2 = enhancement
-> Full details: [`_docs/constraints/`](_docs/constraints/)
+> Full details: [`_doc/constraints/`](_doc/constraints/)
 
 1. **DM Conversation** (P0) — DMs bot, gets AI replies with per-room conversation history across sessions.
 2. **@Mention & Display Name in Channels** (P0) — `@rockbot` or display name triggers reply in-thread; per-room isolation.
@@ -91,34 +91,34 @@ cargo test                           # unit + mock integration tests
 cargo test -- --ignored              # real integration tests (needs credentials)
 ```
 
-Test inventory and run instructions: [`_docs/test_suite/`](_docs/test_suite/).
+Test inventory and run instructions: [`_doc/test_suite/`](_doc/test_suite/).
 
 ## Reference docs
 
 ### Constraints & user stories
 | Document | Description |
 | -------- | ----------- |
-| [`_docs/constraints/README.md`](_docs/constraints/README.md) | Directory index |
-| [`_docs/constraints/top-10-user-stories.md`](_docs/constraints/top-10-user-stories.md) | Top-level user-facing features |
-| [`_docs/constraints/image-generation-user-stories.md`](_docs/constraints/image-generation-user-stories.md) | Image pipeline: 5 detailed stories |
-| [`_docs/constraints/non-functional-requirements.md`](_docs/constraints/non-functional-requirements.md) | Quality attributes |
+| [`_doc/constraints/README.md`](_doc/constraints/README.md) | Directory index |
+| [`_doc/constraints/top-10-user-stories.md`](_doc/constraints/top-10-user-stories.md) | Top-level user-facing features |
+| [`_doc/constraints/image-generation-user-stories.md`](_doc/constraints/image-generation-user-stories.md) | Image pipeline: 5 detailed stories |
+| [`_doc/constraints/non-functional-requirements.md`](_doc/constraints/non-functional-requirements.md) | Quality attributes |
 
 ### DFDs
 | Component | DFD | Detailed notes |
 | --------- | --- | -------------- |
-| Agent loop | [`_dfds/agent-loop.md`](_dfds/agent-loop.md) | — |
-| Agent harness | [`_dfds/agent-harness.md`](_dfds/agent-harness.md) | [`_docs/agent-harness.md`](_docs/agent-harness.md) |
-| Image interception | [`_dfds/image-interception.md`](_dfds/image-interception.md) | — |
-| RocketChat client | [`_dfds/base/rocketchat.md`](_dfds/base/rocketchat.md) | [`_docs/rocketchat-client.md`](_docs/rocketchat-client.md) |
-| AI Provider | [`_dfds/base/ai-provider.md`](_dfds/base/ai-provider.md) | — |
-| Config | [`_dfds/base/config.md`](_dfds/base/config.md) | — |
-| Memory | [`_dfds/base/memory.md`](_dfds/base/memory.md) | — |
-| Knowledge | [`_dfds/base/knowledge.md`](_dfds/base/knowledge.md) | — |
-| Context diagram | [`_dfds/context-diagram.md`](_dfds/context-diagram.md) | — |
-| WebDAV tool | [`_dfds/tools/webdav.md`](_dfds/tools/webdav.md) | — |
-| Calendar tool | [`_dfds/tools/calendar.md`](_dfds/tools/calendar.md) | — |
-| Web search / fetch | [`_dfds/tools/exa-search.md`](_dfds/tools/exa-search.md) | [`_dfds/tools/web-fetch.md`](_dfds/tools/web-fetch.md) |
-| Test suite | — | [`_docs/test_suite/running.md`](_docs/test_suite/running.md) |
+| Agent loop | [`_dfd/agent-loop.md`](_dfd/agent-loop.md) | — |
+| Agent harness | [`_dfd/agent-harness.md`](_dfd/agent-harness.md) | [`_doc/agent-harness.md`](_doc/agent-harness.md) |
+| Image interception | [`_dfd/image-interception.md`](_dfd/image-interception.md) | — |
+| RocketChat client | [`_dfd/base/rocketchat.md`](_dfd/base/rocketchat.md) | [`_doc/rocketchat-client.md`](_doc/rocketchat-client.md) |
+| AI Provider | [`_dfd/base/ai-provider.md`](_dfd/base/ai-provider.md) | — |
+| Config | [`_dfd/base/config.md`](_dfd/base/config.md) | — |
+| Memory | [`_dfd/base/memory.md`](_dfd/base/memory.md) | — |
+| Knowledge | [`_dfd/base/knowledge.md`](_dfd/base/knowledge.md) | — |
+| Context diagram | [`_dfd/context-diagram.md`](_dfd/context-diagram.md) | — |
+| WebDAV tool | [`_dfd/tools/webdav.md`](_dfd/tools/webdav.md) | — |
+| Calendar tool | [`_dfd/tools/calendar.md`](_dfd/tools/calendar.md) | — |
+| Web search / fetch | [`_dfd/tools/exa-search.md`](_dfd/tools/exa-search.md) | [`_dfd/tools/web-fetch.md`](_dfd/tools/web-fetch.md) |
+| Test suite | — | [`_doc/test_suite/running.md`](_doc/test_suite/running.md) |
 
 ## Environment variables
 

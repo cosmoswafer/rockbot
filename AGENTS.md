@@ -6,8 +6,8 @@
 crate-rocketchat/     # lib + debug binary — standalone RocketChat DDP WebSocket client
 crate-rockbot/        # lib + application binary — config, AiProvider trait, agent loop, tools, memory
 crate-webdav/         # lib only — WebDAV client for NextCloud storage operations
-_dfds/                # Mermaid data flow diagrams (design spec)
-_docs/                # constraints, test suite inventory
+_dfd/                # Mermaid data flow diagrams (design spec)
+_doc/                # constraints, test suite inventory
 .agents/skills/       # OpenCode skill definitions (dfd-md, mermaid-cli)
 default.config.toml   # full config with all defaults (empty credentials)
 example.config.toml   # minimal user overrides with EDITME placeholders
@@ -64,7 +64,7 @@ No CI, no `rustfmt.toml`, no `clippy.toml`, no `rust-toolchain` file.
 
 ## DFD-driven development
 
-Data Flow Diagrams in `_dfds/` are the design spec. The development flow is defined in the [`dfd-md` skill](.agents/skills/dfd-md/SKILL.md). Key rules:
+Data Flow Diagrams in `_dfd/` are the design spec. The development flow is defined in the [`dfd-md` skill](.agents/skills/dfd-md/SKILL.md). Key rules:
 
 - **Phase 1**: Integration probe (data collection; optional) — live-data probe against real server/API to collect actual data shapes. Skip if sufficient real-world data already exists.
 - **Phase 2**: Revise DFD — design or update the DFD to accurately model desired data movement. Base data structures (section 3) on shapes observed in the probe when available. Keep levels clean; use notation rules from the skill.
@@ -115,27 +115,28 @@ to make data flow violations compile-time errors rather than runtime surprises:
 
 | DFD | Primary source | Key secondary sources |
 | --- | -------------- | --------------------- |
-| `_dfds/context-diagram.md` | Level 0 system boundary (no code) | — |
-| `_dfds/base/config.md` | `config.rs` | `example.config.toml`, `default.config.toml` |
-| `_dfds/base/rocketchat.md` | rocketchat (`client.rs`, `ddp.rs`, `types.rs`) | — |
-| `_dfds/base/rocketchat-rest.md` | rocketchat (`rest.rs`), `harness.rs` | — |
-| `_dfds/base/ai-provider.md` | `provider/mod.rs`, `provider/deepseek.rs`, `provider/openrouter.rs`, `provider/fal.rs` | `types.rs` |
-| `_dfds/base/memory.md` | `memory.rs` | `harness.rs`, webdav crate |
-| `_dfds/base/memory-compression.md` | `harness.rs` (`compress_room_if_needed`, `compress_for_summary`, `write_summary_md`, `load_summary`, `truncate_and_summarize`) | `memory.rs`, `knowledge.rs`, `config.rs` |
-| `_dfds/base/knowledge.md` | `knowledge.rs` | `tools/save_knowledge.rs`, `tools/forget_knowledge.rs`, `tools/recall_knowledge.rs` |
-| `_dfds/base/knowledge-priority.md` | `knowledge.rs` | `harness.rs`, `memory.rs` |
-| `_dfds/agent-loop.md` | `main.rs` | `harness.rs`, `config.rs` |
-| `_dfds/agent-harness.md` | `harness.rs` | `memory.rs`, `tool.rs`, `provider/mod.rs` |
-| `_dfds/image-interception.md` | `harness.rs` | `tools/image_gen.rs`, `tools/vision.rs`, `tools/webdav.rs`, `provider/fal.rs`, `image_cache.rs` |
-| `_dfds/tools/webdav.md` | `tools/webdav.rs` | webdav crate |
-| `_dfds/tools/calendar.md` | `tools/calendar.rs` | webdav crate |
-| `_dfds/tools/exa-search.md` | `tools/web_search.rs` | `tools/web_fetch.rs` |
-| `_dfds/tools/web-fetch.md` | `tools/web_fetch.rs` | `tools/web_search.rs` |
-| `_dfds/tools/image-gen.md` | `tools/image_gen.rs` | `provider/fal.rs`, webdav crate |
-| `_dfds/tools/vision.md` | `tools/vision.rs` | — |
-| `_dfds/tools/datetime.md` | `tools/datetime.rs` | — |
-| `_dfds/tools/edit-soul.md` | `tools/edit_soul.rs` | `memory.rs`, webdav crate |
-| `_dfds/tools/knowledge.md` | `tools/save_knowledge.rs`, `tools/forget_knowledge.rs`, `tools/recall_knowledge.rs` | `knowledge.rs`, webdav crate |
+| `_dfd/context-diagram.md` | Level 0 system boundary (no code) | — |
+| `_dfd/base/config.md` | `config.rs` | `example.config.toml`, `default.config.toml` |
+| `_dfd/base/rocketchat.md` | rocketchat (`client.rs`, `ddp.rs`, `types.rs`) | — |
+| `_dfd/base/rocketchat-rest.md` | rocketchat (`rest.rs`), `harness.rs` | — |
+| `_dfd/base/ai-provider.md` | `provider/mod.rs`, `provider/deepseek.rs`, `provider/openrouter.rs`, `provider/fal.rs` | `types.rs` |
+| `_dfd/base/memory.md` | `memory.rs` | `harness.rs`, webdav crate |
+| `_dfd/base/memory-compression.md` | `harness.rs` (`compress_room_if_needed`, `compress_for_summary`, `write_summary_md`, `load_summary`, `truncate_and_summarize`) | `memory.rs`, `knowledge.rs`, `config.rs` |
+| `_dfd/base/knowledge.md` | `knowledge.rs` | `tools/save_knowledge.rs`, `tools/forget_knowledge.rs`, `tools/recall_knowledge.rs` |
+| `_dfd/base/knowledge-priority.md` | `knowledge.rs` | `harness.rs`, `memory.rs` |
+| `_dfd/agent-loop.md` | `main.rs` | `harness.rs`, `config.rs` |
+| `_dfd/agent-harness.md` | `harness.rs` | `memory.rs`, `tool.rs`, `provider/mod.rs` |
+| `_dfd/image-interception.md` | `harness.rs` | `tools/image_gen.rs`, `tools/vision.rs`, `tools/webdav.rs`, `provider/fal.rs`, `image_cache.rs` |
+| `_dfd/tools/compress-memory.md` | `tools/compress_memory.rs` | `harness.rs`, `memory.rs` |
+| `_dfd/tools/webdav.md` | `tools/webdav.rs` | webdav crate |
+| `_dfd/tools/calendar.md` | `tools/calendar.rs` | webdav crate |
+| `_dfd/tools/exa-search.md` | `tools/web_search.rs` | `tools/web_fetch.rs` |
+| `_dfd/tools/web-fetch.md` | `tools/web_fetch.rs` | `tools/web_search.rs` |
+| `_dfd/tools/image-gen.md` | `tools/image_gen.rs` | `provider/fal.rs`, webdav crate |
+| `_dfd/tools/vision.md` | `tools/vision.rs` | — |
+| `_dfd/tools/datetime.md` | `tools/datetime.rs` | — |
+| `_dfd/tools/edit-soul.md` | `tools/edit_soul.rs` | `memory.rs`, webdav crate |
+| `_dfd/tools/knowledge.md` | `tools/save_knowledge.rs`, `tools/forget_knowledge.rs`, `tools/recall_knowledge.rs` | `knowledge.rs`, webdav crate |
 
 ## OpenCode skills
 

@@ -5,17 +5,17 @@
 // Pure-computation tools (datetime) are tested via direct execute() calls.
 //
 // DFDs covered:
-//   _dfds/tools/datetime.md
-//   _dfds/tools/vision.md
-//   _dfds/tools/exa-search.md
-//   _dfds/tools/web-fetch.md
-//   _dfds/tools/edit-soul.md
-//   _dfds/tools/webdav.md
-//   _dfds/tools/calendar.md
-//   _dfds/base/memory.md
-//   _dfds/agent-harness.md
-//   _dfds/image-interception.md
-//   _dfds/agent-loop.md
+//   _dfd/tools/datetime.md
+//   _dfd/tools/vision.md
+//   _dfd/tools/exa-search.md
+//   _dfd/tools/web-fetch.md
+//   _dfd/tools/edit-soul.md
+//   _dfd/tools/webdav.md
+//   _dfd/tools/calendar.md
+//   _dfd/base/memory.md
+//   _dfd/agent-harness.md
+//   _dfd/image-interception.md
+//   _dfd/agent-loop.md
 
 use rockbot::harness::AgentHarness;
 use rockbot::image_cache::ImageCache;
@@ -48,7 +48,7 @@ fn tiny_png_bytes() -> Vec<u8> {
 }
 
 // ============================================================================
-// _dfds/tools/datetime.md — Happy Path
+// _dfd/tools/datetime.md — Happy Path
 // ============================================================================
 
 #[tokio::test]
@@ -141,7 +141,7 @@ async fn test_datetime_invalid_format_falls_back() {
 }
 
 // ============================================================================
-// _dfds/tools/vision.md — Happy Path (wiremock)
+// _dfd/tools/vision.md — Happy Path (wiremock)
 // ============================================================================
 
 #[tokio::test]
@@ -266,7 +266,7 @@ async fn test_vision_missing_url_param() {
 }
 
 // ============================================================================
-// _dfds/tools/exa-search.md — Happy Path (wiremock)
+// _dfd/tools/exa-search.md — Happy Path (wiremock)
 // ============================================================================
 
 #[tokio::test]
@@ -355,7 +355,7 @@ async fn test_web_search_tool_definitions_includes_all_modes() {
 }
 
 // ============================================================================
-// _dfds/tools/web-fetch.md — Happy Path (wiremock)
+// _dfd/tools/web-fetch.md — Happy Path (wiremock)
 // ============================================================================
 
 #[tokio::test]
@@ -480,7 +480,7 @@ async fn test_web_fetch_http_error() {
 }
 
 // ============================================================================
-// _dfds/tools/edit-soul.md — Happy Path (wiremock WebDAV)
+// _dfd/tools/edit-soul.md — Happy Path (wiremock WebDAV)
 // ============================================================================
 
 #[tokio::test]
@@ -533,7 +533,7 @@ async fn test_edit_soul_missing_content_fails() {
 }
 
 // ============================================================================
-// _dfds/tools/webdav.md — Happy Path (wiremock WebDAV)
+// _dfd/tools/webdav.md — Happy Path (wiremock WebDAV)
 // ============================================================================
 
 #[tokio::test]
@@ -800,7 +800,7 @@ async fn test_webdav_write_missing_content_fails() {
 }
 
 // ============================================================================
-// _dfds/tools/calendar.md — Tool definition + param validation
+// _dfd/tools/calendar.md — Tool definition + param validation
 // ============================================================================
 
 #[tokio::test]
@@ -843,7 +843,7 @@ async fn test_calendar_add_event_missing_required_fields() {
 }
 
 // ============================================================================
-// _dfds/base/memory.md — Happy Path (MemoryManager, ConversationHistory, PersistSnapshot)
+// _dfd/base/memory.md — Happy Path (MemoryManager, ConversationHistory, PersistSnapshot)
 // ============================================================================
 
 #[test]
@@ -911,7 +911,7 @@ fn test_persist_snapshot_serialization() {
 }
 
 // ============================================================================
-// _dfds/agent-harness.md — Happy Path (harness with mock AI provider)
+// _dfd/agent-harness.md — Happy Path (harness with mock AI provider)
 // ============================================================================
 
 /// A mock AI provider that returns canned responses for testing the harness.
@@ -995,7 +995,7 @@ async fn test_harness_get_or_create_room() {
 }
 
 // ============================================================================
-// _dfds/image-interception.md — Harness image pool starts empty
+// _dfd/image-interception.md — Harness image pool starts empty
 // ============================================================================
 
 #[tokio::test]
@@ -1014,15 +1014,14 @@ async fn test_harness_image_pool_starts_empty() {
 }
 
 // ============================================================================
-// _dfds/agent-loop.md — Happy Path (main loop config-driven behavior)
+// _dfd/agent-loop.md — Happy Path (main loop config-driven behavior)
 // ============================================================================
 
 #[test]
 fn test_agent_loop_max_iterations_from_config() {
     let config = make_test_config("https://chat.example.com");
     assert_eq!(config.rocketchat.model.max_iterations, 5);
-    assert_eq!(*config.rocketchat.model.max_text_length, 50000);
-    assert_eq!(*config.rocketchat.model.max_history_size, 12);
+    assert_eq!(config.rocketchat.model.model_context_length, 1_000_000);
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -1065,14 +1064,13 @@ fn make_test_config(webdav_url: &str) -> rockbot::config::AppConfig {
             model: ModelConfig {
                 default_provider: ProviderName::try_new("mock".to_string()).unwrap(),
                 default_model: "mock-model".into(),
-                max_history_size: BoundedUsize::try_new(12).unwrap(),
-                max_text_length: BoundedUsize::try_new(50000).unwrap(),
                 max_soul_chars: BoundedUsize::try_new(5000).unwrap(),
                 max_iterations: 5,
                 persist_interval_secs: 60,
                 memory_ttl_secs: 86400,
                 max_context_bytes: BoundedUsize::try_new(4194304).unwrap(),
                 max_attachment_bytes: 20971520,
+                model_context_length: 1_000_000,
             },
         },
         chat_providers: vec![chat_config],

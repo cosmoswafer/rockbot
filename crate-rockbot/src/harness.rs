@@ -911,6 +911,7 @@ impl AgentHarness {
                 );
                 let count = msgs.len();
                 self.memory.prune_archived(&rid, count);
+                self.memory.clear_pressure_flags(&rid);
             }
         }
         Ok(())
@@ -1497,8 +1498,6 @@ password = "secret"
 [rocketchat.model]
 default_provider = "mock"
 default_model = "chat"
-max_history_size = 12
-max_text_length = 50000
 max_iterations = 8
 
 [[chat_providers]]

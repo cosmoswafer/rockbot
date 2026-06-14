@@ -70,7 +70,7 @@ async fn test_fal_image_edit_with_p1() {
         .expect("Failed to create FalAiProvider");
 
     // Read p1.png
-    let png_path = workspace_root().join("_docs/ref_img/p1.png");
+    let png_path = workspace_root().join("_doc/ref_img/p1.png");
     let png_bytes = std::fs::read(&png_path)
         .unwrap_or_else(|e| panic!("Cannot read p1.png at {:?}: {}", png_path, e));
     eprintln!("Read p1.png: {} bytes", png_bytes.len());

@@ -12,4 +12,4 @@ Design-time constraints that shape the system's architecture and behavior.
 
 ## Relationship to DFDs
 
-Constraints define _what_ the system must do and _how well_ it must do it. DFDs in `_dfds/` define _how_ data moves through the system to satisfy those constraints. When constraints change, DFDs must be updated; when DFDs reveal new necessary behavior, constraints should be updated.
+Constraints define _what_ the system must do and _how well_ it must do it. DFDs in `_dfd/` define _how_ data moves through the system to satisfy those constraints. When constraints change, DFDs must be updated; when DFDs reveal new necessary behavior, constraints should be updated.

@@ -2223,3 +2223,257 @@ async fn test_nextcloud_share_link_compiles_and_handles_no_server() {
     let result = client.create_nextcloud_share_link("images/test.png").await;
     assert!(result.is_none(), "No server available → None");
 }
+
+// ─── Mock HTTP Tests: Memory Compression Pipeline ─────────────────────────────
+
+use rockbot::harness::AgentHarness;
+use rockbot::memory::MemoryManager;
+use std::sync::Arc;
+
+#[cfg(test)]
+mod compression_tests {
+    use super::*;
+    use rockbot::image_cache::ImageCache;
+    use rockbot::types::CompletionResult;
+    use rockbot::validated::BoundedUsize;
+
+    /// Mock AI provider that returns text and tracks whether it was called.
+    struct CountingMockProvider {
+        text: String,
+        call_count: std::sync::atomic::AtomicUsize,
+    }
+
+    impl CountingMockProvider {
+        fn new(text: &str) -> Self {
+            Self {
+                text: text.to_string(),
+                call_count: std::sync::atomic::AtomicUsize::new(0),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl AiProvider for CountingMockProvider {
+        async fn complete(&self, _request: ChatRequest) -> Result<CompletionResult, RockBotError> {
+            self.call_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(CompletionResult {
+                text: Some(self.text.clone()),
+                tool_calls: vec![],
+                finish: FinishReason::Stop,
+                reasoning_content: None,
+                usage: Some(rockbot::types::UsageInfo {
+                    prompt_tokens: 0,
+                    completion_tokens: 10,
+                    total_tokens: 10,
+                }),
+            })
+        }
+
+        fn provider_name(&self) -> &str {
+            "counting-mock"
+        }
+
+        fn model_name(&self) -> &str {
+            "counting-model"
+        }
+    }
+
+    fn make_compression_test_config() -> rockbot::config::AppConfig {
+        use rockbot::config::{ImageModelConfig, ModelConfig, RocketChatSection, ServerConfig};
+        rockbot::config::AppConfig {
+            rocketchat: RocketChatSection {
+                server: ServerConfig {
+                    url: "test.example.com".into(),
+                    username: "bot".into(),
+                    password: "secret".into(),
+                    debug: false,
+                },
+                model: ModelConfig {
+                    default_provider: ProviderName::try_new("counting-mock".to_string()).unwrap(),
+                    default_model: "counting-model".into(),
+                    max_iterations: 5,
+                    max_soul_chars: BoundedUsize::try_new(5000).unwrap(),
+                    persist_interval_secs: 60,
+                    memory_ttl_secs: 86400,
+                    max_context_bytes: BoundedUsize::try_new(4194304).unwrap(),
+                    max_attachment_bytes: 20971520,
+                    model_context_length: 1_000_000,
+                },
+            },
+            chat_providers: vec![rockbot::config::ProviderConfig {
+                name: ProviderName::try_new("counting-mock".to_string()).unwrap(),
+                api_key: "sk-test".into(),
+                base_url: ConfigUrl::try_new("https://mock.ai/v1".to_string()).unwrap(),
+                basecf_url: None,
+                chat_path: Some("/chat/completions".into()),
+                draw_path: None,
+                models: HashMap::new(),
+            }],
+            image_providers: vec![],
+            image_model: ImageModelConfig {
+                default_provider: ProviderName::try_new("mock".to_string()).unwrap(),
+                default_text_model: "mock-img".into(),
+                default_edit_model: "mock-img-edit".into(),
+                default_quality: "standard".into(),
+                default_output_format: "png".into(),
+                default_num_images: 1,
+                default_image_size: "1024x1024".into(),
+                default_image_size_tier: "1K".into(),
+            },
+            tools: HashMap::new(),
+            webdav: None,
+        }
+    }
+
+    /// Token pressure flag is set, then background compression prunes history.
+    #[tokio::test]
+    async fn test_token_pressure_triggers_compression() {
+        let image_cache = Arc::new(ImageCache::new());
+        let config = make_compression_test_config();
+        // Provider returns text with low token count (10 << 900K threshold)
+        let provider = Box::new(CountingMockProvider::new("Hello!"));
+        let mut harness = AgentHarness::new(config, provider, None, image_cache);
+
+        // Create room with enough messages to trigger compression
+        let room = harness
+            .memory_mut()
+            .get_or_create("room1", "general", "", false);
+        for i in 0..20 {
+            room.history.append(ChatMessage::user(format!(
+                "Message number {} with some extra padding text for testing",
+                i
+            )));
+        }
+        let before = room.history.messages.len();
+        assert_eq!(before, 20);
+
+        // Set token pressure flag manually (simulating post-LLM check)
+        harness.memory_mut().set_token_pressure("room1");
+
+        // Run background compression
+        harness.compress_room_if_needed("room1").await.unwrap();
+
+        // History should be pruned (oldest half: 10 of 20 removed)
+        let after = harness
+            .memory()
+            .get("room1")
+            .map(|r| r.history.messages.len())
+            .unwrap_or(0);
+        assert_eq!(after, 10, "Oldest half of 20 messages should be pruned");
+    }
+
+    /// Byte pressure flag triggers compression after context trim.
+    #[tokio::test]
+    async fn test_byte_pressure_triggers_compression() {
+        let image_cache = Arc::new(ImageCache::new());
+        let config = make_compression_test_config();
+        let provider = Box::new(CountingMockProvider::new("ok"));
+        let mut harness = AgentHarness::new(config, provider, None, image_cache);
+
+        let room = harness
+            .memory_mut()
+            .get_or_create("room1", "general", "", false);
+        for i in 0..15 {
+            room.history.append(ChatMessage::user(format!(
+                "Repeating message number {} with ample padding",
+                i
+            )));
+        }
+        assert_eq!(room.history.messages.len(), 15);
+
+        // Set byte pressure flag (simulating context assembly overflow)
+        harness.memory_mut().set_byte_pressure("room1");
+
+        harness.compress_room_if_needed("room1").await.unwrap();
+
+        // Oldest half pruned (7 of 15, integer division)
+        let after = harness
+            .memory()
+            .get("room1")
+            .map(|r| r.history.messages.len())
+            .unwrap_or(0);
+        assert_eq!(after, 8, "Oldest half (7) of 15 messages pruned");
+    }
+
+    /// Background compression does nothing when no pressure flags are set.
+    #[tokio::test]
+    async fn test_no_pressure_no_compression() {
+        let image_cache = Arc::new(ImageCache::new());
+        let config = make_compression_test_config();
+        let provider = Box::new(CountingMockProvider::new("ok"));
+        let mut harness = AgentHarness::new(config, provider, None, image_cache);
+
+        let room = harness
+            .memory_mut()
+            .get_or_create("room1", "general", "", false);
+        for i in 0..20 {
+            room.history.append(ChatMessage::user(format!("msg {}", i)));
+        }
+        let before = room.history.messages.len();
+
+        // No pressure flags set
+        harness.compress_room_if_needed("room1").await.unwrap();
+
+        let after = harness
+            .memory()
+            .get("room1")
+            .map(|r| r.history.messages.len())
+            .unwrap_or(0);
+        assert_eq!(after, before, "No flags → no compression, all messages remain");
+    }
+
+    /// compress_room_full forces all messages to be compressed regardless of flags.
+    #[tokio::test]
+    async fn test_compress_room_full_clears_history() {
+        let image_cache = Arc::new(ImageCache::new());
+        let config = make_compression_test_config();
+        let provider = Box::new(CountingMockProvider::new("ok"));
+        let mut harness = AgentHarness::new(config, provider, None, image_cache);
+
+        let room = harness
+            .memory_mut()
+            .get_or_create("room1", "general", "", false);
+        for i in 0..10 {
+            room.history.append(ChatMessage::user(format!("msg {}", i)));
+        }
+        assert_eq!(room.history.messages.len(), 10);
+
+        // Force full compression (no WebDAV, so just truncates)
+        let result = harness.compress_room_full("room1").await;
+        // Without WebDAV, compress_room_full returns summary via compress_room_inner
+        // which falls to the "No WebDAV client, truncating" path
+        assert!(result.is_ok(), "compress_room_full should succeed even without WebDAV");
+
+        // All messages should be cleared (force=true, count=10)
+        let after = harness
+            .memory()
+            .get("room1")
+            .map(|r| r.history.messages.len())
+            .unwrap_or(0);
+        assert_eq!(after, 0, "force=true should prune all 10 messages");
+    }
+
+    /// Pressure flags cleared after compression completes.
+    #[tokio::test]
+    async fn test_pressure_flags_cleared_after_compression() {
+        let image_cache = Arc::new(ImageCache::new());
+        let config = make_compression_test_config();
+        let provider = Box::new(CountingMockProvider::new("ok"));
+        let mut harness = AgentHarness::new(config, provider, None, image_cache);
+
+        let room = harness
+            .memory_mut()
+            .get_or_create("room1", "general", "", false);
+        for i in 0..10 {
+            room.history.append(ChatMessage::user(format!("msg {}", i)));
+        }
+
+        harness.memory_mut().set_token_pressure("room1");
+        assert!(harness.memory().has_token_pressure("room1"));
+
+        harness.compress_room_if_needed("room1").await.unwrap();
+
+        assert!(!harness.memory().has_token_pressure("room1"), "Token pressure should be cleared");
+    }
+}
