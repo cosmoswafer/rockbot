@@ -33,8 +33,8 @@ impl WebDavTool {
         Self { client }
     }
 
-    fn room_path(&self, dir_key: &str, subpath: &str) -> String {
-        WebDavPath::new("").room_path(dir_key, subpath)
+    fn room_path(&self, dir_key: &str, subpath: &str) -> Result<String> {
+        WebDavPath::new("").room_path(dir_key, subpath).map_err(|e| RockBotError::Provider(format!("Path traversal rejected: {e}")))
     }
 
     fn room_dir(&self, dir_key: &str) -> String {
@@ -42,7 +42,7 @@ impl WebDavTool {
     }
 
     async fn do_read(&self, dir_key: &str, path: &str) -> Result<String> {
-        let full = self.room_path(dir_key, path);
+        let full = self.room_path(dir_key, path)?;
         debug!("webdav read: {}", full);
 
         // Dummy data gate: never expose real secrets.toml to the LLM.
@@ -74,7 +74,7 @@ impl WebDavTool {
     }
 
     async fn do_write(&self, dir_key: &str, path: &str, content: &str) -> Result<String> {
-        let full = self.room_path(dir_key, path);
+        let full = self.room_path(dir_key, path)?;
         debug!("webdav write: {} ({})", full, content.len());
         self.client
             .write_file_with_fallback(&full, content.as_bytes().to_vec())
@@ -90,7 +90,7 @@ impl WebDavTool {
         old_string: &str,
         new_string: &str,
     ) -> Result<String> {
-        let full = self.room_path(dir_key, path);
+        let full = self.room_path(dir_key, path)?;
         debug!("webdav edit: {}, old_len={}, new_len={}", full, old_string.len(), new_string.len());
 
         let content = self
@@ -141,7 +141,7 @@ impl WebDavTool {
         let dir = if path.is_empty() {
             self.room_dir(dir_key)
         } else {
-            self.room_path(dir_key, path)
+            self.room_path(dir_key, path)?
         };
         debug!("webdav list: {}", dir);
         let entries = self
@@ -168,7 +168,7 @@ impl WebDavTool {
     }
 
     async fn do_mkdir(&self, dir_key: &str, path: &str) -> Result<String> {
-        let dir = self.room_path(dir_key, path);
+        let dir = self.room_path(dir_key, path)?;
         debug!("webdav mkdir: {}", dir);
         self.client
             .ensure_directory_all(&dir)
@@ -178,7 +178,7 @@ impl WebDavTool {
     }
 
     async fn do_delete(&self, dir_key: &str, path: &str) -> Result<String> {
-        let full = self.room_path(dir_key, path);
+        let full = self.room_path(dir_key, path)?;
         debug!("webdav delete: {}", full);
         self.client
             .delete(&full)
@@ -188,7 +188,7 @@ impl WebDavTool {
     }
 
     async fn do_exists(&self, dir_key: &str, path: &str) -> Result<String> {
-        let full = self.room_path(dir_key, path);
+        let full = self.room_path(dir_key, path)?;
         debug!("webdav exists: {}", full);
         let exists = self
             .client
@@ -411,11 +411,11 @@ mod tests {
         let client = webdav::WebDavClient::new("https://example.com", "user", "pass").unwrap();
         let tool = WebDavTool::new(client);
         assert_eq!(
-            tool.room_path("general", "notes.txt"),
+            tool.room_path("general", "notes.txt").unwrap(),
             "//general/notes.txt"
         );
         assert_eq!(
-            tool.room_path("general", "/workspace/readme.md"),
+            tool.room_path("general", "workspace/readme.md").unwrap(),
             "//general/workspace/readme.md"
         );
     }
@@ -514,7 +514,7 @@ mod tests {
         let client = webdav::WebDavClient::new("https://example.com", "user", "pass").unwrap();
         let tool = WebDavTool::new(client);
         assert_eq!(
-            tool.room_path("r-atomkb", "notes.txt"),
+            tool.room_path("r-atomkb", "notes.txt").unwrap(),
             "//r-atomkb/notes.txt"
         );
     }
@@ -523,7 +523,7 @@ mod tests {
     fn test_webdav_dir_dm_path() {
         let client = webdav::WebDavClient::new("https://example.com", "user", "pass").unwrap();
         let tool = WebDavTool::new(client);
-        assert_eq!(tool.room_path("d-saru", "data.csv"), "//d-saru/data.csv");
+        assert_eq!(tool.room_path("d-saru", "data.csv").unwrap(), "//d-saru/data.csv");
     }
 
     #[test]

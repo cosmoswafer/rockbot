@@ -98,7 +98,8 @@ impl ImageGenTool {
     }
 
     async fn upload_to_webdav(&self, room_id: &str, ext: &str, image_bytes: Vec<u8>) -> Result<String> {
-        let filename = WebDavPath::new("").image_path(room_id, &format!("{}.{}", uuid_string(), ext));
+        let filename = WebDavPath::new("").image_path(room_id, &format!("{}.{}", uuid_string(), ext))
+            .map_err(|e| RockBotError::Provider(format!("WebDAV path error: {e}")))?;
         debug!("Uploading generated image to WebDAV: {}", filename);
         self.webdav
             .write_file_with_fallback(&filename, image_bytes)

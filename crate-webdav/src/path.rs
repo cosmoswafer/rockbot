@@ -1,3 +1,5 @@
+use crate::error::{Result, WebDavError};
+
 #[derive(Debug, Clone)]
 pub struct WebDavPath {
     pub root: String,
@@ -7,6 +9,47 @@ impl WebDavPath {
     pub fn new(root: impl Into<String>) -> Self {
         let root = root.into().trim_matches('/').to_string();
         Self { root }
+    }
+
+    pub fn sanitize_subpath(raw: &str) -> Result<String> {
+        let trimmed = raw.trim();
+
+        if trimmed.is_empty() {
+            return Ok(String::new());
+        }
+
+        if trimmed.starts_with('/') {
+            return Err(WebDavError::PathTraversal {
+                path: raw.to_string(),
+                reason: "absolute path not allowed".into(),
+            });
+        }
+
+        let mut normalized = String::with_capacity(trimmed.len());
+
+        for segment in trimmed.split('/') {
+            if segment == ".." {
+                return Err(WebDavError::PathTraversal {
+                    path: raw.to_string(),
+                    reason: "contains '..' segment".into(),
+                });
+            }
+
+            if segment == "." {
+                continue;
+            }
+
+            if segment.is_empty() {
+                continue;
+            }
+
+            if !normalized.is_empty() {
+                normalized.push('/');
+            }
+            normalized.push_str(segment);
+        }
+
+        Ok(normalized)
     }
 
     pub fn room_dir(&self, room_id: &str) -> String {
@@ -25,13 +68,20 @@ impl WebDavPath {
         format!("/{}/{}/workspace/", self.root, room_id)
     }
 
-    pub fn image_path(&self, room_id: &str, name: &str) -> String {
-        format!(
+    pub fn image_path(&self, room_id: &str, name: &str) -> Result<String> {
+        let cleaned = Self::sanitize_subpath(name)?;
+        if cleaned.is_empty() {
+            return Err(WebDavError::PathTraversal {
+                path: name.to_string(),
+                reason: "image name must not be empty after sanitization".into(),
+            });
+        }
+        Ok(format!(
             "/{}/{}/images/{}",
             self.root,
             room_id,
-            name.trim_start_matches('/')
-        )
+            cleaned
+        ))
     }
 
     pub fn config_backup_path(&self, filename: &str) -> String {
@@ -42,9 +92,13 @@ impl WebDavPath {
         )
     }
 
-    pub fn room_path(&self, room_id: &str, file_path: &str) -> String {
-        let file_path = file_path.trim_start_matches('/');
-        format!("/{}/{}/{}", self.root, room_id, file_path)
+    pub fn room_path(&self, room_id: &str, file_path: &str) -> Result<String> {
+        let cleaned = Self::sanitize_subpath(file_path)?;
+        if cleaned.is_empty() {
+            Ok(format!("/{}/{}/", self.root, room_id))
+        } else {
+            Ok(format!("/{}/{}/{}", self.root, room_id, cleaned))
+        }
     }
 
     pub fn parent_path(path: &str) -> String {
@@ -82,13 +136,15 @@ mod tests {
     fn test_image_path() {
         let p = WebDavPath::new("rockbot");
         assert_eq!(
-            p.image_path("general", "photo.png"),
+            p.image_path("general", "photo.png").unwrap(),
             "/rockbot/general/images/photo.png"
         );
         assert_eq!(
-            p.image_path("general", "/subdir/photo.png"),
+            p.image_path("general", "subdir/photo.png").unwrap(),
             "/rockbot/general/images/subdir/photo.png"
         );
+        // Absolute paths are rejected
+        assert!(p.image_path("general", "/etc/passwd.png").is_err());
     }
 
     #[test]
@@ -116,13 +172,19 @@ mod tests {
     fn test_room_path() {
         let p = WebDavPath::new("rockbot");
         assert_eq!(
-            p.room_path("general", "notes.txt"),
+            p.room_path("general", "notes.txt").unwrap(),
             "/rockbot/general/notes.txt"
         );
         assert_eq!(
-            p.room_path("general", "/notes.txt"),
-            "/rockbot/general/notes.txt"
+            p.room_path("general", "sub/notes.txt").unwrap(),
+            "/rockbot/general/sub/notes.txt"
         );
+        assert_eq!(
+            p.room_path("general", "").unwrap(),
+            "/rockbot/general/"
+        );
+        // Absolute paths are rejected
+        assert!(p.room_path("general", "/secrets.toml").is_err());
     }
 
     #[test]
@@ -137,7 +199,81 @@ mod tests {
     #[test]
     fn test_room_path_empty_root() {
         let p = WebDavPath::new("");
-        assert_eq!(p.room_path("general", "notes.txt"), "//general/notes.txt");
+        assert_eq!(
+            p.room_path("general", "notes.txt").unwrap(),
+            "//general/notes.txt"
+        );
         assert_eq!(p.room_dir("general"), "//general/");
+    }
+
+    #[test]
+    fn test_sanitize_rejects_dot_dot() {
+        assert!(WebDavPath::sanitize_subpath("../secrets.toml").is_err());
+        assert!(WebDavPath::sanitize_subpath("foo/../../bar").is_err());
+        assert!(WebDavPath::sanitize_subpath("..").is_err());
+        assert!(WebDavPath::sanitize_subpath("/etc/../passwd").is_err());
+    }
+
+    #[test]
+    fn test_sanitize_rejects_absolute_paths() {
+        assert!(WebDavPath::sanitize_subpath("/etc/passwd").is_err());
+    }
+
+    #[test]
+    fn test_sanitize_normalizes_dots_and_slashes() {
+        assert_eq!(
+            WebDavPath::sanitize_subpath("./foo").unwrap(),
+            "foo"
+        );
+        assert_eq!(
+            WebDavPath::sanitize_subpath("foo/./bar").unwrap(),
+            "foo/bar"
+        );
+        assert_eq!(
+            WebDavPath::sanitize_subpath("foo//bar").unwrap(),
+            "foo/bar"
+        );
+        assert_eq!(
+            WebDavPath::sanitize_subpath("  foo/bar  ").unwrap(),
+            "foo/bar"
+        );
+        assert_eq!(
+            WebDavPath::sanitize_subpath("foo/bar/").unwrap(),
+            "foo/bar"
+        );
+    }
+
+    #[test]
+    fn test_sanitize_empty_path() {
+        assert_eq!(WebDavPath::sanitize_subpath("").unwrap(), "");
+        assert_eq!(WebDavPath::sanitize_subpath("   ").unwrap(), "");
+        assert_eq!(WebDavPath::sanitize_subpath(".").unwrap(), "");
+        assert_eq!(WebDavPath::sanitize_subpath("././.").unwrap(), "");
+    }
+
+    #[test]
+    fn test_room_path_rejects_traversal() {
+        let p = WebDavPath::new("rockbot");
+        assert!(p.room_path("general", "../other-room/secrets.toml").is_err());
+        assert!(p.room_path("general", "../../secrets.toml").is_err());
+    }
+
+    #[test]
+    fn test_image_path_rejects_traversal() {
+        let p = WebDavPath::new("rockbot");
+        assert!(p.image_path("general", "../other-room/evil.png").is_err());
+        assert!(p.image_path("general", "..").is_err());
+    }
+
+    #[test]
+    fn test_sanitize_allows_hidden_files() {
+        assert_eq!(
+            WebDavPath::sanitize_subpath(".hidden").unwrap(),
+            ".hidden"
+        );
+        assert_eq!(
+            WebDavPath::sanitize_subpath("dir/.gitignore").unwrap(),
+            "dir/.gitignore"
+        );
     }
 }

@@ -1367,10 +1367,39 @@ struct SecretEntry {
     value: String,
 }
 
+#[derive(Debug, Clone)]
+struct ResolvedSecret {
+    uuid: String,
+    host: String,
+    key: String,
+    value: String,
+}
+
 #[derive(Debug, serde::Deserialize)]
 struct SecretsToml {
     #[serde(default)]
     secrets: Vec<SecretEntry>,
+}
+
+const SECRET_UUID_NAMESPACE: uuid::Uuid = uuid::Uuid::from_bytes([
+    0x6b, 0xa7, 0xb8, 0x10, 0x9d, 0xad, 0x11, 0xd1,
+    0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8,
+]);
+
+fn generate_secret_uuid(host: &str, key: &str) -> String {
+    let name = format!("{host}:{key}");
+    uuid::Uuid::new_v5(&SECRET_UUID_NAMESPACE, name.as_bytes()).to_string()
+}
+
+fn build_secret_uuids_prompt(secrets: &[ResolvedSecret]) -> String {
+    if secrets.is_empty() {
+        return String::new();
+    }
+    let mut lines = vec!["\nAvailable API secrets (use secret:<UUID> to authenticate):".to_string()];
+    for s in secrets {
+        lines.push(format!("- secret:{} ({})", s.uuid, s.key));
+    }
+    lines.join("\n")
 }
 
 fn inject_room_context(arguments: &str, room_id: &str, webdav_dir: &str) -> String {
@@ -1439,7 +1468,7 @@ fn replace_secret_refs(value: &str, secrets: &HashMap<String, String>) -> String
         result.push_str(&remaining[..pos]);
         let after_prefix = &remaining[pos + 7..];
         let key_end = after_prefix
-            .find(|c: char| !c.is_alphanumeric() && c != '_' && c != '-')
+            .find(|c: char| !c.is_ascii_hexdigit() && c != '-')
             .unwrap_or(after_prefix.len());
         if key_end == 0 {
             result.push_str("secret:");
@@ -1449,11 +1478,13 @@ fn replace_secret_refs(value: &str, secrets: &HashMap<String, String>) -> String
         let key = &after_prefix[..key_end];
         match secrets.get(key) {
             Some(secret_value) => {
-                debug!("Resolved secret ref for key '{}'", key);
+                debug!("Resolved secret ref for UUID '{}'", key);
                 result.push_str(secret_value);
             }
             None => {
-                warn!("Secret key '{}' not found in secrets.toml", key);
+                if key.len() >= 32 && key.contains('-') {
+                    warn!("Secret UUID '{}' not found in secrets map", key);
+                }
                 result.push_str("secret:");
                 result.push_str(key);
             }
@@ -1464,7 +1495,7 @@ fn replace_secret_refs(value: &str, secrets: &HashMap<String, String>) -> String
     result
 }
 
-fn filter_secrets_by_host(entries: &[SecretEntry], args_json: &str) -> Option<HashMap<String, String>> {
+fn filter_secrets_by_host(entries: &[ResolvedSecret], args_json: &str) -> Option<HashMap<String, String>> {
     let args: serde_json::Value = serde_json::from_str(args_json).ok()?;
     let url_str = args.get("url")?.as_str()?;
 
@@ -1484,7 +1515,7 @@ fn filter_secrets_by_host(entries: &[SecretEntry], args_json: &str) -> Option<Ha
     let map: HashMap<String, String> = entries
         .iter()
         .filter(|e| e.host == host)
-        .map(|e| (e.key.clone(), e.value.clone()))
+        .map(|e| (e.uuid.clone(), e.value.clone()))
         .collect();
 
     if map.is_empty() {
@@ -1493,7 +1524,7 @@ fn filter_secrets_by_host(entries: &[SecretEntry], args_json: &str) -> Option<Ha
     } else {
         debug!("Resolved {} secret(s) for host '{}': {:?}",
             map.len(), host,
-            map.keys().collect::<Vec<_>>());
+            entries.iter().filter(|e| e.host == host).map(|e| &e.key).collect::<Vec<_>>());
         Some(map)
     }
 }
@@ -1528,15 +1559,19 @@ fn resolve_json_value(value: &mut serde_json::Value, secrets: &HashMap<String, S
     }
 }
 
-async fn load_secrets_from_webdav(webdav: Option<&WebDavClient>) -> Option<Vec<SecretEntry>> {
+async fn load_secrets_from_webdav(webdav: Option<&WebDavClient>) -> Option<Vec<ResolvedSecret>> {
     let client = webdav?;
     match client.read_file_to_string("secrets.toml").await {
         Ok(content) => match toml::from_str::<SecretsToml>(&content) {
             Ok(parsed) if !parsed.secrets.is_empty() => {
+                let resolved: Vec<ResolvedSecret> = parsed.secrets.into_iter().map(|e| {
+                    let uuid = generate_secret_uuid(&e.host, &e.key);
+                    ResolvedSecret { uuid, host: e.host, key: e.key, value: e.value }
+                }).collect();
                 debug!("Loaded {} secret(s) from WebDAV (hosts: {:?})",
-                    parsed.secrets.len(),
-                    parsed.secrets.iter().map(|e| e.host.as_str()).collect::<std::collections::HashSet<_>>());
-                Some(parsed.secrets)
+                    resolved.len(),
+                    resolved.iter().map(|r| r.host.as_str()).collect::<std::collections::HashSet<_>>());
+                Some(resolved)
             }
             Ok(_) => {
                 debug!("secrets.toml loaded but contains no entries — skipping interception");
@@ -2564,9 +2599,9 @@ chat = "mock-model"
     #[test]
     fn test_replace_secret_refs_simple() {
         let mut secrets = HashMap::new();
-        secrets.insert("gitea_token".to_string(), "abc123".to_string());
+        secrets.insert("a1b2c3d4-e5f6-4789-a0b1-c2d3e4f56789".to_string(), "abc123".to_string());
         assert_eq!(
-            replace_secret_refs("token secret:gitea_token", &secrets),
+            replace_secret_refs("token secret:a1b2c3d4-e5f6-4789-a0b1-c2d3e4f56789", &secrets),
             "token abc123"
         );
     }
@@ -2574,9 +2609,9 @@ chat = "mock-model"
     #[test]
     fn test_replace_secret_refs_bare_reference() {
         let mut secrets = HashMap::new();
-        secrets.insert("api_key".to_string(), "sk-xyz".to_string());
+        secrets.insert("e5f6a7b8-c9d0-41e1-f2a3-b4c5d6e7f890".to_string(), "sk-xyz".to_string());
         assert_eq!(
-            replace_secret_refs("secret:api_key", &secrets),
+            replace_secret_refs("secret:e5f6a7b8-c9d0-41e1-f2a3-b4c5d6e7f890", &secrets),
             "sk-xyz"
         );
     }
@@ -2584,21 +2619,25 @@ chat = "mock-model"
     #[test]
     fn test_replace_secret_refs_multiple_in_one_value() {
         let mut secrets = HashMap::new();
-        secrets.insert("key1".to_string(), "aaa".to_string());
-        secrets.insert("key2".to_string(), "bbb".to_string());
-        assert_eq!(
-            replace_secret_refs("secret:key1:secret:key2", &secrets),
-            "aaa:bbb"
-        );
+        secrets.insert("a1b2c3d4-e5f6-4789-a0b1-c2d3e4f56789".to_string(), "aaa".to_string());
+        secrets.insert("f8a9b0c1-d2e3-45f4-a5b6-c7d8e9f0a1b2".to_string(), "bbb".to_string());
+        let input = "secret:a1b2c3d4-e5f6-4789-a0b1-c2d3e4f56789:secret:f8a9b0c1-d2e3-45f4-a5b6-c7d8e9f0a1b2";
+        assert_eq!(replace_secret_refs(input, &secrets), "aaa:bbb");
     }
 
     #[test]
-    fn test_replace_secret_refs_missing_key_preserves_original() {
+    fn test_replace_secret_refs_missing_uuid_preserves_original() {
         let mut secrets = HashMap::new();
-        secrets.insert("other".to_string(), "value".to_string());
+        secrets.insert("a1b2c3d4-e5f6-4789-a0b1-c2d3e4f56789".to_string(), "value".to_string());
+        // non-UUID keys are not resolved
         assert_eq!(
-            replace_secret_refs("secret:missing", &secrets),
-            "secret:missing"
+            replace_secret_refs("secret:gitea_token", &secrets),
+            "secret:gitea_token"
+        );
+        // unknown UUID preserved
+        assert_eq!(
+            replace_secret_refs("secret:00000000-0000-0000-0000-000000000000", &secrets),
+            "secret:00000000-0000-0000-0000-000000000000"
         );
     }
 
@@ -2614,20 +2653,20 @@ chat = "mock-model"
     #[test]
     fn test_replace_secret_refs_preserves_surrounding_text() {
         let mut secrets = HashMap::new();
-        secrets.insert("tok".to_string(), "real".to_string());
+        secrets.insert("a1b2c3d4-e5f6-4789-a0b1-c2d3e4f56789".to_string(), "real".to_string());
         assert_eq!(
-            replace_secret_refs("Bearer secret:tok extra", &secrets),
+            replace_secret_refs("Bearer secret:a1b2c3d4-e5f6-4789-a0b1-c2d3e4f56789 extra", &secrets),
             "Bearer real extra"
         );
     }
 
     #[test]
-    fn test_replace_secret_refs_key_with_hyphens_underscores() {
+    fn test_replace_secret_refs_non_uuid_key_passthrough() {
         let mut secrets = HashMap::new();
-        secrets.insert("my-api_key".to_string(), "resolved".to_string());
+        secrets.insert("gitea_token".to_string(), "should_not_resolve".to_string());
         assert_eq!(
-            replace_secret_refs("secret:my-api_key", &secrets),
-            "resolved"
+            replace_secret_refs("token secret:gitea_token", &secrets),
+            "token secret:gitea_token"
         );
     }
 
@@ -2652,34 +2691,28 @@ chat = "mock-model"
     #[test]
     fn test_resolve_secret_refs_deep_headers() {
         let mut secrets = HashMap::new();
-        secrets.insert("gitea_token".to_string(), "abc123".to_string());
-        let args = r#"{"url":"https://example.com","headers":{"Authorization":"token secret:gitea_token"}}"#;
+        secrets.insert("a1b2c3d4-e5f6-4789-a0b1-c2d3e4f56789".to_string(), "abc123".to_string());
+        let args = r#"{"url":"https://example.com","headers":{"Authorization":"token secret:a1b2c3d4-e5f6-4789-a0b1-c2d3e4f56789"}}"#;
         let result = resolve_secret_refs_deep(args, &secrets);
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
-        assert_eq!(
-            parsed["headers"]["Authorization"].as_str().unwrap(),
-            "token abc123"
-        );
+        assert_eq!(parsed["headers"]["Authorization"].as_str().unwrap(), "token abc123");
     }
 
     #[test]
     fn test_resolve_secret_refs_deep_url() {
         let mut secrets = HashMap::new();
-        secrets.insert("api_key".to_string(), "sk-xyz".to_string());
-        let args = r#"{"url":"https://api.example.com/v1?token=secret:api_key"}"#;
+        secrets.insert("e5f6a7b8-c9d0-41e1-f2a3-b4c5d6e7f890".to_string(), "sk-xyz".to_string());
+        let args = r#"{"url":"https://api.example.com/v1?token=secret:e5f6a7b8-c9d0-41e1-f2a3-b4c5d6e7f890"}"#;
         let result = resolve_secret_refs_deep(args, &secrets);
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
-        assert_eq!(
-            parsed["url"].as_str().unwrap(),
-            "https://api.example.com/v1?token=sk-xyz"
-        );
+        assert_eq!(parsed["url"].as_str().unwrap(), "https://api.example.com/v1?token=sk-xyz");
     }
 
     #[test]
     fn test_resolve_secret_refs_deep_body() {
         let mut secrets = HashMap::new();
-        secrets.insert("token".to_string(), "abc123".to_string());
-        let args = r#"{"url":"https://example.com","body":"auth=secret:token"}"#;
+        secrets.insert("a1b2c3d4-e5f6-4789-a0b1-c2d3e4f56789".to_string(), "abc123".to_string());
+        let args = r#"{"url":"https://example.com","body":"auth=secret:a1b2c3d4-e5f6-4789-a0b1-c2d3e4f56789"}"#;
         let result = resolve_secret_refs_deep(args, &secrets);
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["body"].as_str().unwrap(), "auth=abc123");
@@ -2688,8 +2721,8 @@ chat = "mock-model"
     #[test]
     fn test_resolve_secret_refs_deep_body_json() {
         let mut secrets = HashMap::new();
-        secrets.insert("gh_pat".to_string(), "ghp-xyz".to_string());
-        let args = r#"{"url":"https://example.com","body_json":{"pat":"secret:gh_pat"}}"#;
+        secrets.insert("f8a9b0c1-d2e3-45f4-a5b6-c7d8e9f0a1b2".to_string(), "ghp-xyz".to_string());
+        let args = r#"{"url":"https://example.com","body_json":{"pat":"secret:f8a9b0c1-d2e3-45f4-a5b6-c7d8e9f0a1b2"}}"#;
         let result = resolve_secret_refs_deep(args, &secrets);
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["body_json"]["pat"].as_str().unwrap(), "ghp-xyz");
@@ -2698,9 +2731,9 @@ chat = "mock-model"
     #[test]
     fn test_resolve_secret_refs_deep_multiple() {
         let mut secrets = HashMap::new();
-        secrets.insert("tok".to_string(), "real_tok".to_string());
-        secrets.insert("key2".to_string(), "val2".to_string());
-        let args = r#"{"url":"https://api.example.com?key=secret:key2","headers":{"Authorization":"Bearer secret:tok"},"body":"param=secret:key2"}"#;
+        secrets.insert("aaa11111-bbbb-4ccc-8ddd-eeeeeeeeeee1".to_string(), "real_tok".to_string());
+        secrets.insert("aaa11111-bbbb-4ccc-8ddd-eeeeeeeeeee2".to_string(), "val2".to_string());
+        let args = r#"{"url":"https://api.example.com?key=secret:aaa11111-bbbb-4ccc-8ddd-eeeeeeeeeee2","headers":{"Authorization":"Bearer secret:aaa11111-bbbb-4ccc-8ddd-eeeeeeeeeee1"},"body":"param=secret:aaa11111-bbbb-4ccc-8ddd-eeeeeeeeeee2"}"#;
         let result = resolve_secret_refs_deep(args, &secrets);
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["headers"]["Authorization"].as_str().unwrap(), "Bearer real_tok");
@@ -2711,24 +2744,31 @@ chat = "mock-model"
     #[test]
     fn test_resolve_secret_refs_deep_no_secret_refs() {
         let mut secrets = HashMap::new();
-        secrets.insert("key".to_string(), "value".to_string());
+        secrets.insert("a1b2c3d4-e5f6-4789-a0b1-c2d3e4f56789".to_string(), "value".to_string());
         let args = r#"{"headers":{"Content-Type":"application/json"},"url":"https://example.com"}"#;
         let result = resolve_secret_refs_deep(args, &secrets);
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
-        assert_eq!(
-            parsed["headers"]["Content-Type"].as_str().unwrap(),
-            "application/json"
-        );
+        assert_eq!(parsed["headers"]["Content-Type"].as_str().unwrap(), "application/json");
     }
 
     #[test]
     fn test_resolve_secret_refs_deep_empty_secrets() {
         let secrets = HashMap::new();
-        let args = r#"{"headers":{"Authorization":"secret:tok"},"url":"https://x.com?k=secret:val"}"#;
+        let args = r#"{"headers":{"Authorization":"secret:a1b2c3d4-e5f6-4789-a0b1-c2d3e4f56789"},"url":"https://x.com?k=secret:e5f6a7b8-c9d0-41e1-f2a3-b4c5d6e7f890"}"#;
         let result = resolve_secret_refs_deep(args, &secrets);
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
-        assert_eq!(parsed["headers"]["Authorization"].as_str().unwrap(), "secret:tok");
-        assert_eq!(parsed["url"].as_str().unwrap(), "https://x.com?k=secret:val");
+        assert_eq!(parsed["headers"]["Authorization"].as_str().unwrap(), "secret:a1b2c3d4-e5f6-4789-a0b1-c2d3e4f56789");
+        assert_eq!(parsed["url"].as_str().unwrap(), "https://x.com?k=secret:e5f6a7b8-c9d0-41e1-f2a3-b4c5d6e7f890");
+    }
+
+    #[test]
+    fn test_resolve_secret_refs_deep_ignores_non_uuid_keys() {
+        let mut secrets = HashMap::new();
+        secrets.insert("a1b2c3d4-e5f6-4789-a0b1-c2d3e4f56789".to_string(), "resolved".to_string());
+        let args = r#"{"url":"https://example.com","headers":{"Authorization":"Bearer secret:gitea_token"}}"#;
+        let result = resolve_secret_refs_deep(args, &secrets);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["headers"]["Authorization"].as_str().unwrap(), "Bearer secret:gitea_token");
     }
 
     #[tokio::test]
@@ -2765,8 +2805,10 @@ value = "sk-xyz"
         assert_eq!(entries[0].host, "https://example.com");
         assert_eq!(entries[0].key, "gitea_token");
         assert_eq!(entries[0].value, "abc123");
+        assert_eq!(entries[0].uuid.len(), 36, "UUID should be 36 chars");
         assert_eq!(entries[1].key, "github_api_key");
         assert_eq!(entries[1].value, "sk-xyz");
+        assert_ne!(entries[0].uuid, entries[1].uuid, "different keys must get different UUIDs");
     }
 
     #[tokio::test]
@@ -2810,11 +2852,12 @@ value = "real_gitea_token_123"
         let client = WebDavClient::new(mock_server.uri(), "test", "pass")
             .expect("valid webdav client");
         let entries = load_secrets_from_webdav(Some(&client)).await.unwrap();
+        let secret_uuid = &entries[0].uuid;
 
         let args = serde_json::json!({
             "url": format!("{}/api/test", mock_server.uri()),
             "headers": {
-                "Authorization": "token secret:gitea_token"
+                "Authorization": format!("token secret:{secret_uuid}")
             },
             "format": "raw"
         })
@@ -2835,54 +2878,63 @@ value = "real_gitea_token_123"
 
     #[test]
     fn test_filter_secrets_by_host_matches() {
+        let uuid1 = generate_secret_uuid("https://example.com", "tok");
+        let uuid2 = generate_secret_uuid("https://other.com", "other_tok");
         let entries = vec![
-            SecretEntry {
-                host: "https://example.com".into(),
-                key: "tok".into(),
-                value: "abc".into(),
-            },
-            SecretEntry {
-                host: "https://other.com".into(),
-                key: "other_tok".into(),
-                value: "xyz".into(),
-            },
+            ResolvedSecret { uuid: uuid1.clone(), host: "https://example.com".into(), key: "tok".into(), value: "abc".into() },
+            ResolvedSecret { uuid: uuid2.clone(), host: "https://other.com".into(), key: "other_tok".into(), value: "xyz".into() },
         ];
         let args = r#"{"url":"https://example.com/api"}"#;
         let map = filter_secrets_by_host(&entries, args).unwrap();
         assert_eq!(map.len(), 1);
-        assert_eq!(map.get("tok").unwrap(), "abc");
-        assert!(map.get("other_tok").is_none());
+        assert_eq!(map.get(&uuid1).unwrap(), "abc");
+        assert!(!map.contains_key(&uuid2));
     }
 
     #[test]
     fn test_filter_secrets_by_host_no_match() {
-        let entries = vec![SecretEntry {
-            host: "https://example.com".into(),
-            key: "tok".into(),
-            value: "abc".into(),
-        }];
+        let uuid = generate_secret_uuid("https://example.com", "tok");
+        let entries = vec![ResolvedSecret { uuid, host: "https://example.com".into(), key: "tok".into(), value: "abc".into() }];
         let args = r#"{"url":"https://other.com/api"}"#;
         assert!(filter_secrets_by_host(&entries, args).is_none());
     }
 
     #[test]
     fn test_filter_secrets_by_host_multiple_same_host() {
+        let uuid1 = generate_secret_uuid("https://example.com", "tok1");
+        let uuid2 = generate_secret_uuid("https://example.com", "tok2");
         let entries = vec![
-            SecretEntry {
-                host: "https://example.com".into(),
-                key: "tok1".into(),
-                value: "abc".into(),
-            },
-            SecretEntry {
-                host: "https://example.com".into(),
-                key: "tok2".into(),
-                value: "def".into(),
-            },
+            ResolvedSecret { uuid: uuid1.clone(), host: "https://example.com".into(), key: "tok1".into(), value: "abc".into() },
+            ResolvedSecret { uuid: uuid2.clone(), host: "https://example.com".into(), key: "tok2".into(), value: "def".into() },
         ];
         let args = r#"{"url":"https://example.com/api"}"#;
         let map = filter_secrets_by_host(&entries, args).unwrap();
         assert_eq!(map.len(), 2);
-        assert_eq!(map.get("tok1").unwrap(), "abc");
-        assert_eq!(map.get("tok2").unwrap(), "def");
+        assert_eq!(map.get(&uuid1).unwrap(), "abc");
+        assert_eq!(map.get(&uuid2).unwrap(), "def");
+    }
+
+    #[test]
+    fn test_generate_secret_uuid_deterministic() {
+        let a = generate_secret_uuid("https://gitea.example.com", "gitea_token");
+        let b = generate_secret_uuid("https://gitea.example.com", "gitea_token");
+        assert_eq!(a, b, "UUIDv5 must be deterministic");
+        let c = generate_secret_uuid("https://gitea.example.com", "webhook_secret");
+        assert_ne!(a, c, "different keys must produce different UUIDs");
+        let d = generate_secret_uuid("https://api.github.com", "gitea_token");
+        assert_ne!(a, d, "different hosts must produce different UUIDs");
+    }
+
+    #[test]
+    fn test_build_secret_uuids_prompt() {
+        let entries = vec![
+            ResolvedSecret { uuid: "a1b2c3d4-e5f6-4789-a0b1-c2d3e4f56789".into(), host: "https://gitea.example.com".into(), key: "gitea_token".into(), value: "abc".into() },
+            ResolvedSecret { uuid: "e5f6a7b8-c9d0-41e1-f2a3-b4c5d6e7f890".into(), host: "https://api.github.com".into(), key: "github_pat".into(), value: "xyz".into() },
+        ];
+        let prompt = build_secret_uuids_prompt(&entries);
+        assert!(prompt.contains("secret:a1b2c3d4-e5f6-4789-a0b1-c2d3e4f56789 (gitea_token)"));
+        assert!(prompt.contains("secret:e5f6a7b8-c9d0-41e1-f2a3-b4c5d6e7f890 (github_pat)"));
+        assert!(!prompt.contains("gitea.example.com"), "host name must not appear in prompt");
+        assert!(!prompt.contains("api.github.com"), "host name must not appear in prompt");
     }
 }

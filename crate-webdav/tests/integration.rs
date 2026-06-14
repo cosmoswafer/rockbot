@@ -36,7 +36,7 @@ fn test_webdav_path_memory_dir() {
 fn test_webdav_path_image_path() {
     let path = WebDavPath::new("rockbot");
     assert_eq!(
-        path.image_path("general", "photo.png"),
+        path.image_path("general", "photo.png").unwrap(),
         "/rockbot/general/images/photo.png"
     );
 }
@@ -64,15 +64,11 @@ fn test_webdav_path_workspace_dir() {
 fn test_webdav_path_room_path() {
     let path = WebDavPath::new("rockbot");
     assert_eq!(
-        path.room_path("general", "notes.txt"),
+        path.room_path("general", "notes.txt").unwrap(),
         "/rockbot/general/notes.txt"
     );
     assert_eq!(
-        path.room_path("general", "/notes.txt"),
-        "/rockbot/general/notes.txt"
-    );
-    assert_eq!(
-        path.room_path("dm-alice", "sub/notes.txt"),
+        path.room_path("dm-alice", "sub/notes.txt").unwrap(),
         "/rockbot/dm-alice/sub/notes.txt"
     );
 }

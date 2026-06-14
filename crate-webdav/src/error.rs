@@ -46,6 +46,9 @@ pub enum WebDavError {
 
     #[error("XML deserialization error: {0}")]
     XmlDe(#[from] quick_xml::DeError),
+
+    #[error("Path traversal rejected: {path} ({reason})")]
+    PathTraversal { path: String, reason: String },
 }
 
 pub type Result<T> = std::result::Result<T, WebDavError>;
