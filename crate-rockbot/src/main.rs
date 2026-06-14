@@ -265,10 +265,10 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     harness = harness.with_tools(tool_registry);
     let harness = Arc::new(Mutex::new(harness));
 
-    // Register compress_memory tool (needs Arc<Mutex<AgentHarness>>)
+    // Register compress_memory tool (intercepted in process_message, no harness ref needed)
     {
         let mut h = harness.lock().await;
-        h.register_tool(Box::new(CompressMemoryTool::new(harness.clone())));
+        h.register_tool(Box::new(CompressMemoryTool::new()));
     }
 
     info!("Bot initialized. Starting RocketChat connection...");

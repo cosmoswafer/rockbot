@@ -1,7 +1,5 @@
 use async_trait::async_trait;
 use serde::Deserialize;
-use std::sync::Arc;
-use tokio::sync::Mutex;
 use tracing::debug;
 
 use crate::error::Result;
@@ -9,6 +7,11 @@ use crate::tool::Tool;
 
 /// User-explicit memory compression: compresses ALL Layer 1 messages into
 /// summary.md, then clears the history entirely (zero messages remain).
+///
+/// NOTE: compress_memory is intercepted in AgentHarness::process_message()
+/// and calls compress_room_full() directly on &mut self (which holds the
+/// harness lock).  This tool exists only for LLM tool-registration and
+/// argument injection; execute() is never reached in the main code path.
 #[derive(Debug, Deserialize)]
 pub struct CompressMemoryParams {
     #[serde(default)]
@@ -17,13 +20,11 @@ pub struct CompressMemoryParams {
     pub room_id: Option<String>,
 }
 
-pub struct CompressMemoryTool {
-    harness: Arc<Mutex<crate::AgentHarness>>,
-}
+pub struct CompressMemoryTool;
 
 impl CompressMemoryTool {
-    pub fn new(harness: Arc<Mutex<crate::AgentHarness>>) -> Self {
-        Self { harness }
+    pub fn new() -> Self {
+        Self
     }
 }
 
@@ -59,18 +60,12 @@ impl Tool for CompressMemoryTool {
 
     async fn execute(&self, arguments: &str) -> Result<String> {
         debug!("compress_memory execute: {}", arguments);
-        let params: CompressMemoryParams = serde_json::from_str(arguments).map_err(|e| {
-            crate::error::RockBotError::ToolCallParse(format!("compress_memory parse error: {e}"))
-        })?;
-
-        let room_id = params.room_id.as_deref().unwrap_or("");
-        if room_id.is_empty() {
-            return Err(crate::error::RockBotError::ToolCallParse(
-                "compress_memory requires room_id".into(),
-            ));
-        }
-
-        let mut harness = self.harness.lock().await;
-        harness.compress_room_full(room_id).await
+        // compress_memory is intercepted in AgentHarness::process_message(),
+        // which calls compress_room_full() on &mut self directly.
+        // If this is reached (e.g. tests), the caller must have already
+        // obtained the harness lock, or must not be holding it.
+        Err(crate::error::RockBotError::ToolCallParse(
+            "compress_memory must be executed via AgentHarness::process_message()".into(),
+        ))
     }
 }

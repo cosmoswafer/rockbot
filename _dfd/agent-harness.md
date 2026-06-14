@@ -140,20 +140,31 @@ Stateless tools (web search, fetch, datetime, etc.) receive raw arguments
 without room context. The `ToolRegistry` maps tool names to implementations;
 calls are dispatched generically via `execute_by_name()`.
 
+**Exception**: `compress_memory` is intercepted before `execute_by_name()` and
+executed directly on `&mut self` (`self.compress_room_full(room_id)`) because
+the harness lock is already held by the caller. The tool's own `execute()` is
+a stub that returns an error — this avoids a deadlock from re-acquiring the
+same `Arc<Mutex<AgentHarness>>`.
+
 ```mermaid
 flowchart TD
     CALL[ToolCall]
     INJECT{Stateful?}
     ROOM_CTX[(RoomState<br/>room_id + webdav_dir)]
     REG[(ToolRegistry)]
+    COMPRESS{compress_memory?}
+    DIRECT["Call compress_room_full()<br/>directly on &mut self"]
     EXEC(ExecuteToolByName)
     RESULT[ToolResult]
 
     CALL -->|"tool name + args"| INJECT
     ROOM_CTX -->|"room_id + webdav_dir"| INJECT
-    INJECT -->|"stateful: enriched args"| EXEC
-    INJECT -->|"stateless: raw args"| EXEC
+    INJECT -->|"stateful: enriched args"| COMPRESS
+    INJECT -->|"stateless: raw args"| COMPRESS
+    COMPRESS -->|"yes (no re-lock)"| DIRECT
+    COMPRESS -->|"no"| EXEC
     REG -->|"tool implementations"| EXEC
+    DIRECT -->|"formatted result"| RESULT
     EXEC -->|"formatted result"| RESULT
 ```
 

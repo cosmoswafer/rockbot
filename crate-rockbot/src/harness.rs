@@ -400,18 +400,41 @@ impl AgentHarness {
                                 tool_call.function.arguments.clone()
                             };
 
-                            let tool_result = self
-                                .tools
-                                .execute_by_name(&tool_call.id, &tool_call.function.name, &arguments)
-                                .await
-                                .unwrap_or_else(|e| {
-                                    crate::tool::ToolResult {
-                                        call_id: crate::validated::NonEmptyString::try_new(tool_call.id.clone()).expect("non-empty tool call id from provider"),
-                                        name: crate::validated::NonEmptyString::try_new(tool_call.function.name.clone()).expect("non-empty tool name from provider"),
+                            // compress_memory must call harness.compress_room_full()
+                            // directly because the harness lock is already held
+                            // (tools cannot re-acquire the same Arc<Mutex<>>).
+                            let tool_result = if tool_call.function.name == "compress_memory" {
+                                let call_id = crate::validated::NonEmptyString::try_new(tool_call.id.clone())
+                                    .expect("non-empty tool call id from provider");
+                                match self.compress_room_full(room_id).await {
+                                    Ok(summary) => crate::tool::ToolResult {
+                                        call_id,
+                                        name: crate::validated::NonEmptyString::try_new("compress_memory".to_string())
+                                            .expect("non-empty tool name"),
+                                        is_error: false,
+                                        content: summary,
+                                    },
+                                    Err(e) => crate::tool::ToolResult {
+                                        call_id,
+                                        name: crate::validated::NonEmptyString::try_new("compress_memory".to_string())
+                                            .expect("non-empty tool name"),
                                         is_error: true,
-                                        content: format!("Tool error: {}", e),
-                                    }
-                                });
+                                        content: format!("Tool execution error: {}", e),
+                                    },
+                                }
+                            } else {
+                                self.tools
+                                    .execute_by_name(&tool_call.id, &tool_call.function.name, &arguments)
+                                    .await
+                                    .unwrap_or_else(|e| {
+                                        crate::tool::ToolResult {
+                                            call_id: crate::validated::NonEmptyString::try_new(tool_call.id.clone()).expect("non-empty tool call id from provider"),
+                                            name: crate::validated::NonEmptyString::try_new(tool_call.function.name.clone()).expect("non-empty tool name from provider"),
+                                            is_error: true,
+                                            content: format!("Tool error: {}", e),
+                                        }
+                                    })
+                            };
 
                             debug!(
                                 "Tool {} completed in {}ms (is_error={})",

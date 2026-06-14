@@ -142,18 +142,31 @@ Memory compressed. Summary:
 | WebDAV | `write_file_with_fallback(path, bytes)` | Persist summary.md |
 
 The tool is registered in `ToolRegistry` at startup when WebDAV is configured.
-It holds an `Arc<Mutex<AgentHarness>>` reference rather than a raw `WebDavClient`
-because it needs access to the full compression pipeline (AI provider + WebDAV +
-memory manager).
+It is a **stub tool** — its `execute()` is never called in the main code path.
+Instead, `AgentHarness::process_message()` intercepts the `compress_memory`
+tool call and invokes `compress_room_full()` directly on `&mut self` (the harness
+lock is already held by the caller). The tool exists solely for LLM
+tool-registration (name, description, parameters) and argument injection. This
+avoids a deadlock: the tool would otherwise attempt to re-acquire the same
+`Arc<Mutex<AgentHarness>>` lock that `process_message` already holds.
 
 ## 5. Registration
 
 ```rust
-// main.rs — registered after harness is wrapped in Arc<Mutex<>>
+// main.rs — stub tool, no harness ref needed (intercepted in process_message)
 let mut h = harness.lock().await;
-h.register_tool(Box::new(CompressMemoryTool::new(harness.clone())));
+h.register_tool(Box::new(CompressMemoryTool::new()));
 ```
 
 Room context (`room_id` + `webdav_dir`) is auto-injected by the harness before
 tool execution via `inject_room_context()`. The tool name is added to the
 stateful-tools list alongside `webdav`, `edit_soul`, `save_knowledge`, etc.
+
+### Execution path
+
+When the LLM returns a `compress_memory` tool call, `process_message()` does
+**not** call `execute_by_name()` for this tool. Instead it directly invokes
+`self.compress_room_full(room_id)` on the harness, which already holds the
+exclusive `&mut` reference. This is safe because the harness lock is held by
+the caller (`main.rs`) for the duration of `process_message()`. The tool's
+own `execute()` returns an error if called directly.
