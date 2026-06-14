@@ -28,14 +28,22 @@ is also reviewed: entries used in the conversation are promoted.
 
 ## 2. Diagram
 
-### 2a. Happy Flow — Full Compression
+### 2a. Happy Flow — Flag-Driven (Post-Reply)
+
+Compression is **post-reply, flag-driven**. The tool call sets
+`explicit_compress` flag; the LLM generates a natural reply using the
+full conversation context; then `compress_room_if_needed()` executes the
+actual compression after the reply is sent. This avoids clearing history
+mid-conversation (which would make the LLM see an empty context).
 
 ```mermaid
 flowchart TD
     USER["User: !compress<br/>or save memory"]
     AI[AiProvider]
-    TOOL["compress_memory Tool<br/>(force=true)"]
-    HARNESS[AgentHarness<br/>compress_room_full]
+    TOOL["compress_memory Tool<br/>(set flag, return ack)"]
+    SET_FLAG["Set explicit_compress<br/>flag on room"]
+    LLM_REPLY["LLM generates reply<br/>(full context intact)"]
+    POST["Post-reply:<br/>compress_room_if_needed()"]
     EXTRACT["Extract ALL<br/>Layer 1 Messages"]
     EXISTING[Existing summary.md]
     KNOWLEDGE[(Knowledge Entries)]
@@ -44,13 +52,15 @@ flowchart TD
     PRIORITY["review_priorities<br/>(used entries)"]
     PRUNE["Prune ALL Messages<br/>(Layer 1 → 0)"]
     DAV[(NextCloud WebDAV)]
-    REPLY["Reply: Memory compressed.<br/>Summary:\n\n..."]
     DIRTY[Mark Snapshot Dirty]
 
     USER -->|"explicit request"| AI
     AI -->|"tool_call: compress_memory"| TOOL
-    TOOL -->|"room_id + webdav_dir"| HARNESS
-    HARNESS -->|"force full extraction"| EXTRACT
+    TOOL -->|"room_id"| SET_FLAG
+    SET_FLAG -->|"acknowledgment"| LLM_REPLY
+    LLM_REPLY -->|"bot reply (no delay)"| USER
+    LLM_REPLY -->|"after reply sent"| POST
+    POST -->|"force=true"| EXTRACT
     EXTRACT -->|"all messages"| COMPRESS
     EXISTING -->|"GET summary.md"| COMPRESS
     KNOWLEDGE -->|"load_index entries"| COMPRESS
@@ -60,13 +70,11 @@ flowchart TD
     PRIORITY -->|"PUT index.json"| DAV
     PRIORITY --> PRUNE
     WRITE --> PRUNE
-    PRUNE -->|"clear Layer 1"| REPLY
     PRUNE --> DIRTY
 ```
 
-The tool is **synchronous** — the user waits for the compression to complete
-and receives the summary as confirmation. This is acceptable because the user
-explicitly requested it.
+The user receives the bot's reply immediately (no delay for compression).
+Compression runs asynchronously after the reply is delivered to RocketChat.
 
 ### 2b. Tool Parameters
 
@@ -131,15 +139,25 @@ Memory compressed. Summary:
 
 ## 4. Integration
 
-| Subsystem | Method | Purpose |
-|-----------|--------|---------|
-| `AgentHarness` | `compress_room_full(room_id)` | Full compression + clear |
-| `MemoryManager` | `check_and_archive(room_id, true)` | Extract all messages |
-| `MemoryManager` | `prune_archived(room_id, count)` | Clear Layer 1 |
-| `MemoryManager` | `set_summary(room_id, Some(...))` | Cache new summary |
-| `KnowledgeManager` | `load_index(webdav, wd)` | Get entry list for LLM |
-| `KnowledgeManager` | `review_priorities(webdav, wd, used)` | Promote/decay entries |
-| WebDAV | `write_file_with_fallback(path, bytes)` | Persist summary.md |
+### Flag-driven execution
+
+The tool call sets `explicit_compress` flag on the room. Actual compression
+is handled by `compress_room_if_needed()` which is called **after** the reply
+is sent (in `main.rs`). When the flag is set, `compress_room_inner` uses
+`force=true` for full compression.
+
+| Phase | Subsystem | Method | Purpose |
+|-------|-----------|--------|---------|
+| Tool call | `process_message` | `memory.set_explicit_compress(room_id)` | Set flag, return ack |
+| Post-reply | `main.rs` | `compress_room_if_needed(room_id)` | Checks flag, triggers compression |
+| Post-reply | `MemoryManager` | `needs_compression(room_id)` | Includes `explicit_compress` |
+| Post-reply | `MemoryManager` | `check_and_archive(room_id, true)` | Extract all messages |
+| Post-reply | `MemoryManager` | `prune_archived(room_id, count)` | Clear Layer 1 |
+| Post-reply | `MemoryManager` | `set_summary(room_id, Some(...))` | Cache new summary |
+| Post-reply | `MemoryManager` | `clear_pressure_flags(room_id)` | Clears all flags incl. explicit |
+| Post-reply | `KnowledgeManager` | `load_index(webdav, wd)` | Get entry list for LLM |
+| Post-reply | `KnowledgeManager` | `review_priorities(webdav, wd, used)` | Promote/decay entries |
+| Post-reply | WebDAV | `write_file_with_fallback(path, bytes)` | Persist summary.md |
 
 The tool is registered in `ToolRegistry` at startup when WebDAV is configured.
 It is a **stub tool** — its `execute()` is never called in the main code path.

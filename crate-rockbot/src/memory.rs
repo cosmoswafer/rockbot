@@ -132,6 +132,8 @@ pub struct MemoryManager {
     token_pressure: HashSet<String>,
     /// Per-room flag: byte pressure detected (set during context assembly, checked after reply)
     byte_pressure: HashSet<String>,
+    /// Per-room flag: user explicitly requested compression (set during process_message, checked after reply)
+    explicit_compress: HashSet<String>,
 }
 
 /// Hardcoded max messages in context window (replaces configurable max_history_size)
@@ -154,6 +156,7 @@ impl MemoryManager {
             persist_interval_secs,
             token_pressure: HashSet::new(),
             byte_pressure: HashSet::new(),
+            explicit_compress: HashSet::new(),
         }
     }
 
@@ -218,13 +221,24 @@ impl MemoryManager {
         self.byte_pressure.contains(room_id)
     }
 
+    pub fn set_explicit_compress(&mut self, room_id: &str) {
+        self.explicit_compress.insert(room_id.to_string());
+    }
+
+    pub fn has_explicit_compress(&self, room_id: &str) -> bool {
+        self.explicit_compress.contains(room_id)
+    }
+
     pub fn needs_compression(&self, room_id: &str) -> bool {
-        self.has_token_pressure(room_id) || self.has_byte_pressure(room_id)
+        self.has_token_pressure(room_id)
+            || self.has_byte_pressure(room_id)
+            || self.has_explicit_compress(room_id)
     }
 
     pub fn clear_pressure_flags(&mut self, room_id: &str) {
         self.token_pressure.remove(room_id);
         self.byte_pressure.remove(room_id);
+        self.explicit_compress.remove(room_id);
     }
 
     pub fn prune_archived(&mut self, room_id: &str, count: usize) {
@@ -502,6 +516,7 @@ impl MemoryManager {
         self.dirty_snapshots.remove(room_id);
         self.token_pressure.remove(room_id);
         self.byte_pressure.remove(room_id);
+        self.explicit_compress.remove(room_id);
         self.rooms.remove(room_id)
     }
 

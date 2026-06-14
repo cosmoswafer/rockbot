@@ -400,27 +400,20 @@ impl AgentHarness {
                                 tool_call.function.arguments.clone()
                             };
 
-                            // compress_memory must call harness.compress_room_full()
-                            // directly because the harness lock is already held
-                            // (tools cannot re-acquire the same Arc<Mutex<>>).
+                            // compress_memory sets a flag for post-reply
+                            // execution. Running compression now would clear
+                            // the conversation history the LLM needs to
+                            // generate a coherent reply.
                             let tool_result = if tool_call.function.name == "compress_memory" {
                                 let call_id = crate::validated::NonEmptyString::try_new(tool_call.id.clone())
                                     .expect("non-empty tool call id from provider");
-                                match self.compress_room_full(room_id).await {
-                                    Ok(summary) => crate::tool::ToolResult {
-                                        call_id,
-                                        name: crate::validated::NonEmptyString::try_new("compress_memory".to_string())
-                                            .expect("non-empty tool name"),
-                                        is_error: false,
-                                        content: summary,
-                                    },
-                                    Err(e) => crate::tool::ToolResult {
-                                        call_id,
-                                        name: crate::validated::NonEmptyString::try_new("compress_memory".to_string())
-                                            .expect("non-empty tool name"),
-                                        is_error: true,
-                                        content: format!("Tool execution error: {}", e),
-                                    },
+                                self.memory.set_explicit_compress(room_id);
+                                crate::tool::ToolResult {
+                                    call_id,
+                                    name: crate::validated::NonEmptyString::try_new("compress_memory".to_string())
+                                        .expect("non-empty tool name"),
+                                    is_error: false,
+                                    content: "Memory compression scheduled. Reply to the user first — compression will execute after your reply is sent.".to_string(),
                                 }
                             } else {
                                 self.tools
@@ -858,7 +851,9 @@ impl AgentHarness {
         if !needs_compress {
             return Ok(());
         }
-        self.compress_room_inner(room_id, false).await
+        // explicit_compress flag triggers force=true (full compression, not half)
+        let force = self.memory.has_explicit_compress(room_id);
+        self.compress_room_inner(room_id, force).await
     }
 
     /// Force-compress all Layer 1 messages (user-triggered, synchronous)
