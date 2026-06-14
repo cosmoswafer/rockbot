@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use base64::Engine;
 use serde::Deserialize;
-use tracing::debug;
+use tracing::{debug, warn};
 use webdav::{WebDavClient, WebDavPath};
 
 use crate::error::{Result, RockBotError};
@@ -46,17 +46,13 @@ impl WebDavTool {
         debug!("webdav read: {}", full);
 
         // Dummy data gate: never expose real secrets.toml to the LLM.
-        // Even if the LLM uses path traversal (../../secrets.toml),
-        // only dummy placeholder values are returned.
+        // Reads the actual file, replaces all values with "abcd", and
+        // returns the sanitized version. Host and key names are preserved
+        // so the LLM sees consistent metadata without real credentials.
         let file_name = path.rsplit('/').next().unwrap_or(path);
         if file_name == "secrets.toml" {
             debug!("Sanitizing secrets.toml read — returning dummy data to LLM");
-            return Ok(r#"[[secrets]]
-host = "localhost"
-key = "placeholder"
-value = "abcd"
-"#
-            .to_string());
+            return self.sanitize_secrets_toml().await;
         }
 
         if is_image_extension(path) {
@@ -204,6 +200,36 @@ value = "abcd"
             full,
             if exists { "exists" } else { "not found" }
         ))
+    }
+
+    async fn sanitize_secrets_toml(&self) -> Result<String> {
+        match self.client.read_file_to_string("secrets.toml").await {
+            Ok(content) => {
+                let mut table: toml::Table = toml::from_str(&content).map_err(|e| {
+                    RockBotError::Provider(format!("Failed to parse secrets.toml for sanitization: {e}"))
+                })?;
+                if let Some(toml::Value::Array(entries)) = table.get_mut("secrets") {
+                    for entry in entries.iter_mut() {
+                        if let toml::Value::Table(t) = entry {
+                            t.insert("value".into(), toml::Value::String("abcd".into()));
+                        }
+                    }
+                }
+                let sanitized = toml::to_string(&table).map_err(|e| {
+                    RockBotError::Provider(format!("Failed to serialize sanitized secrets.toml: {e}"))
+                })?;
+                let entry_count = table.get("secrets")
+                    .and_then(|v| v.as_array())
+                    .map(|a| a.len())
+                    .unwrap_or(0);
+                debug!("Returned sanitized secrets.toml ({} entr{})", entry_count, if entry_count == 1 { "y" } else { "ies" });
+                Ok(sanitized)
+            }
+            Err(e) => {
+                warn!("Could not read secrets.toml for sanitization: {e}");
+                Ok("[[secrets]]\nhost = \"unknown\"\nkey = \"placeholder\"\nvalue = \"abcd\"\n".to_string())
+            }
+        }
     }
 }
 

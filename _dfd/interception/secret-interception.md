@@ -29,10 +29,13 @@ internal mapping.
 
 ### Non-Functional Requirements
 
-- **UUID opacity**: At load time, every `SecretEntry` is assigned a v4 UUID.
-  The LLM references secrets by UUID only — key names, host names, and values
-  are stripped from the LLM-visible context. Even if the LLM enumerates all
-  known secrets, it learns nothing about what they are for.
+- **UUID opacity**: At load time, every `SecretEntry` is assigned a
+  **deterministic** UUIDv5 derived from `{host}:{key}`. The same secret
+  always produces the same UUID across messages and restarts — no
+  regeneration churn. The LLM references secrets by UUID only; host
+  names and values are **never** present in LLM-visible context. Key
+  labels are shown alongside UUIDs for disambiguation (e.g., same-host
+  token vs. webhook secret) but do not reveal the target host.
 - **Host-scoped secrets**: Each UUID is bound to a host. When `web_fetch`
   targets `https://site-a.com`, only UUIDs scoped to that host are resolved.
   A UUID for `https://site-b.com` passed in a request to `https://site-a.com`
@@ -45,14 +48,16 @@ internal mapping.
   not exist, or the file fails to parse, the tool arguments pass through
   unchanged. Secret interception is never a hard dependency.
 - **No caching across batches**: Secrets are loaded once per tool-call batch
-  within `process_message()`, not cached across agent turns. UUIDs are
-  regenerated on every load — they are not persisted to disk.
+  within `process_message()`, not cached across agent turns. This ensures
+  updated secrets (added/removed in `secrets.toml`) take effect on the next
+  message without restart. UUIDs are deterministic (UUIDv5) so stable
+  across loads — no UUID churn in conversation history.
 - **Single-pass replacement**: Resolved secret values are not re-scanned for
   `secret:` references — no recursive expansion.
 
 ## 2. Diagram
 
-### 2a. Happy Flow — UUID Generation + Host-Scoped Injection
+### 2a. Happy Flow — UUIDv5 Generation + Host-Scoped Injection
 
 ```mermaid
 flowchart TD
@@ -60,10 +65,10 @@ flowchart TD
     LOAD(LoadSecretsFromWebDav)
     DAV[(NextCloud WebDAV)]
     TOML[(secrets.toml<br/>host + key + value per entry)]
-    GEN["Generate UUID<br/>(v4) per entry"]
-    ENTRIES[(ResolvedSecrets<br/>Vec<ResolvedSecret><br/>uuid, host, value)]
-    INJECT["Inject UUID list<br/>into system prompt<br/>as opaque tokens"]
-    PROMPT[System Prompt<br/>'Available secrets:<br/>secret:uuid1, secret:uuid2']
+    GEN["Generate UUIDv5<br/>(host:key) per entry<br/>deterministic → stable<br/>across messages"]
+    ENTRIES[(ResolvedSecrets<br/>Vec<ResolvedSecret><br/>uuid, key, host, value)]
+    INJECT["Inject UUID + key labels<br/>into system prompt<br/>'secret:uuid (key_label)'"]
+    PROMPT[System Prompt<br/>'Available secrets:<br/>secret:uuid1 (gitea_token)<br/>secret:uuid2 (github_pat)']
     CALL["web_fetch ToolCall<br/>url, headers, body, body_json<br/>(contains secret:uuid)"]
     EXTRACT_HOST[Extract host from url arg]
     FILTER(FilterSecretsByHost<br/>match host → uuid:value map)
@@ -77,9 +82,9 @@ flowchart TD
     DAV -->|"file content"| TOML
     TOML -->|"Vec<SecretEntry>"| GEN
     GEN -->|"uuid assigned"| ENTRIES
-    ENTRIES -->|"uuid list"| INJECT
-    INJECT -->|"opaque tokens"| PROMPT
-    PROMPT -->|"LLM sees only UUIDs"| CALL
+    ENTRIES -->|"uuid + key array"| INJECT
+    INJECT -->|"labeled tokens"| PROMPT
+    PROMPT -->|"LLM sees: UUID + purpose label"| CALL
     CALL -->|"raw arguments"| EXTRACT_HOST
     EXTRACT_HOST -->|"host string"| FILTER
     ENTRIES -->|"all entries"| FILTER
@@ -122,15 +127,15 @@ flowchart TD
     UUID_MISS -->|"keep original secret:uuid"| PASS
 ```
 
-### 2c. UUID Generation on Load
+### 2c. UUIDv5 Generation on Load (Deterministic)
 
 ```mermaid
 flowchart LR
-    TOML["secrets.toml<br/>host=k, value=v"]
+    TOML["secrets.toml<br/>host + key + value"]
     PARSE[Parse TOML → Vec<SecretEntry>]
-    UUID["uuid::Uuid::new_v4()<br/>per entry"]
-    MAP["ResolvedSecret<br/>{ uuid, host, value }"]
-    REGISTRY["SecretRegistry<br/>Vec<ResolvedSecret><br/>used for host filter<br/>and uuid→value lookup"]
+    UUID["uuid::Uuid::new_v5(UUID_NAMESPACE,<br/>format!('{}:{}', host, key))<br/>deterministic per entry"]
+    MAP["ResolvedSecret<br/>{ uuid, key, host, value }"]
+    REGISTRY["SecretRegistry<br/>Vec<ResolvedSecret><br/>stable UUIDs across<br/>messages and restarts"]
 
     TOML --> PARSE
     PARSE --> UUID
@@ -187,15 +192,19 @@ flowchart TD
     LLM[LLM issues webdav read<br/>path: ../../secrets.toml]
     TOOL[WebDavTool::do_read]
     CHECK{Filename is<br/>secrets.toml?}
+    READ["Read real secrets.toml<br/>from WebDAV root<br/>(direct client call)"]
+    PARSE[Parse TOML → replace<br/>all value fields with abcd]
     DAV[(NextCloud WebDAV)]
     REAL[Return real content<br/>to harness loader only]
-    DUMMY["Return dummy TOML<br/>all values = 'abcd'<br/>to LLM"]
-    LLM_OUT["LLM receives<br/>dummy placeholders<br/>— no real credentials"]
+    DUMMY["Return sanitized TOML<br/>host + key preserved<br/>all values = 'abcd'<br/>to LLM"]
+    LLM_OUT["LLM receives<br/>consistent key/host metadata<br/>but no real credentials"]
 
     LLM --> TOOL
     TOOL --> CHECK
-    CHECK -->|"yes (LLM read attempt)"| DUMMY
+    CHECK -->|"yes (LLM read attempt)"| READ
     CHECK -->|"no (normal file)"| DAV
+    READ --> PARSE
+    PARSE --> DUMMY
     DUMMY --> LLM_OUT
 ```
 
@@ -218,16 +227,17 @@ human-readable admin label — the LLM **never** sees it.
 | `key`   | `String` | Admin label — LLM never observes this field    |
 | `value` | `String` | The actual secret value (token, API key, etc.)  |
 
-### `ResolvedSecret` (in-memory, after UUID generation)
+### `ResolvedSecret` (in-memory, after UUIDv5 generation)
 
-Built at load time. The `uuid` is a fresh v4 UUID generated on every
-`load_secrets_from_webdav` call — never persisted.
+Built at load time. The `uuid` is deterministic — UUIDv5 of
+`"{host}:{key}"` — so the same secret always receives the same
+opaque reference across messages, rooms, and bot restarts.
 
 | Field   | Type     | Notes                                          |
 |---------|----------|------------------------------------------------|
-| `uuid`  | `uuid::Uuid` | Opaque reference — the only identifier the LLM sees |
+| `uuid`  | `uuid::Uuid` | Deterministic UUIDv5 of `host:key` — stable across sessions |
 | `host`  | `String` | Target host the secret is bound to              |
-| `key`   | `String` | Admin label (internal only, for log messages)    |
+| `key`   | `String` | Admin label — shown alongside UUID in system prompt for disambiguation. Not usable as a secret reference. |
 | `value` | `String` | The actual secret value                          |
 
 ### `HostSecretMap`
@@ -255,22 +265,30 @@ only sees `secret:<uuid>` in system prompt and tool arguments.
 
 ### System Prompt Injection (LLM-Visible)
 
-The harness injects available UUIDs into the system prompt as opaque tokens.
-The LLM sees only the UUID references — no host or key names:
+The harness injects available secret references into the system prompt.
+Each line shows the UUID (the only valid reference token) plus the `key`
+label for disambiguation. Host names and values are **never** included:
 
 ```
-Available API secrets:
-- secret:550e8400-e29b-41d4-a716-446655440000
-- secret:6ba7b810-9dad-11d1-80b4-00c04fd430c8
+Available API secrets (use secret:<UUID> to authenticate):
+- secret:a1b2c3d4-e5f6-4789-a0b1-c2d3e4f56789 (gitea_token)
+- secret:e5f6a7b8-c9d0-41e1-f2a3-b4c5d6e7f890 (github_pat)
+- secret:c9d0e1f2-a3b4-45c5-d6e7-f8a9b0c1d2e3 (gitea_webhook_secret)
 ```
+
+The LLM uses the UUID in `web_fetch` arguments; the key label is
+informational only and not a valid reference token.
 
 ### Secret Reference Format (LLM-Visible)
 
 Any string value in the `web_fetch` arguments JSON — URL, query parameters,
 headers, raw `body`, and nested `body_json` values — may contain
-`secret:<uuid>` where `<uuid>` is a standard v4 UUID hex string
+`secret:<uuid>` where `<uuid>` is a standard UUID hex string
 (`xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`). The `secret:<uuid>` token is
 replaced in-place, preserving surrounding text.
+
+**Note:** The `key` label is not a valid reference — `secret:gitea_token`
+will NOT be resolved. Only `secret:<uuid>` tokens are recognized.
 
 ### Injection Points (All Fields Subject to Replacement)
 
@@ -285,10 +303,11 @@ replaced in-place, preserving surrounding text.
 
 | Field     | Input                                                     | HostSecretMap (host-matched)   | Output                                |
 |-----------|-----------------------------------------------------------|--------------------------------|---------------------------------------|
-| url       | `"https://api.example.com/v1?token=secret:550e8400-..."`  | `{"550e8400-...": "sk-xyz"}`   | `"https://api.example.com/v1?token=sk-xyz"` |
-| headers   | `"Bearer secret:550e8400-e29b-41d4-a716-446655440000"`   | `{"550e8400-...": "real"}`     | `"Bearer real"`                       |
-| body      | `"{\"auth\":\"secret:6ba7b810-...\"}"`                   | `{"6ba7b810-...": "abc123"}`   | `"{\"auth\":\"abc123\"}"`             |
-| body_json | `{"pat": "secret:6ba7b810-9dad-11d1-80b4-00c04fd430c8"}` | `{"6ba7b810-...": "ghp-xyz"}`  | `{"pat": "ghp-xyz"}`                  |
+| url       | `"https://api.example.com/v1?token=secret:a1b2c3d4-..."`  | `{"a1b2c3d4-...": "sk-xyz"}`  | `"https://api.example.com/v1?token=sk-xyz"` |
+| headers   | `"Bearer secret:a1b2c3d4-e5f6-4789-a0b1-c2d3e4f56789"`  | `{"a1b2c3d4-...": "real"}`    | `"Bearer real"`                       |
+| body      | `"{\"auth\":\"secret:e5f6a7b8-...\"}"`                   | `{"e5f6a7b8-...": "abc123"}`  | `"{\"auth\":\"abc123\"}"`             |
+| body_json | `{"pat": "secret:c9d0e1f2-a3b4-45c5-d6e7-f8a9b0c1d2e3"}`| `{"c9d0e1f2-...": "ghp-xyz"}` | `{"pat": "ghp-xyz"}`                  |
+| (any)     | `"secret:gitea_token"`                                   | (key labels not resolved)      | `"secret:gitea_token"` (passthrough)   |
 | (any)     | `"secret:00000000-0000-0000-0000-000000000000"`          | (no match)                     | `"secret:00000000-..."` (passthrough)  |
 
 ### Host Matching Rules
@@ -310,9 +329,9 @@ arguments pass through unchanged.
 
 | Function | Location | Role |
 |----------|----------|------|
-| `load_secrets_from_webdav` | `harness.rs` | Async: reads `secrets.toml` from WebDAV root, parses TOML, generates a v4 `uuid::Uuid` for each entry, returns `Option<Vec<ResolvedSecret>>` |
-| `build_secret_uuids_prompt` | `harness.rs` | Sync: takes `&[ResolvedSecret]`, formats `secret:<uuid>` tokens for system prompt injection. Key and host names are **not** included. |
+| `load_secrets_from_webdav` | `harness.rs` | Async: reads `secrets.toml` from WebDAV root, parses TOML, generates a deterministic UUIDv5 (`namespace + host:key`) for each entry, returns `Option<Vec<ResolvedSecret>>` |
+| `build_secret_uuids_prompt` | `harness.rs` | Sync: takes `&[ResolvedSecret]`, formats `secret:<uuid> (key_label)` lines for system prompt injection. Host and value are **not** included. |
 | `filter_secrets_by_host` | `harness.rs` | Sync: extracts host from web_fetch URL arg, filters `Vec<ResolvedSecret>` by matching `host` field, returns `Option<HashMap<String, String>>` (uuid_string → value) |
-| `resolve_secret_refs_deep` | `harness.rs` | Sync: parses arguments JSON, walks all string values recursively (url, headers, body, body_json leaf strings), replaces `secret:<uuid>` in each using the host-filtered map |
+| `resolve_secret_refs_deep` | `harness.rs` | Sync: parses arguments JSON, walks all string values recursively (url, headers, body, body_json leaf strings), replaces `secret:<uuid>` in each using the host-filtered map. Key labels (`secret:gitea_token`) are NOT resolved — only UUIDs. |
 | `replace_secret_refs` | `harness.rs` | Sync: single-pass string replacement of `secret:<uuid>` tokens against the host-filtered map. Called by `resolve_secret_refs_deep` for each string value. UUID format: `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` (hex chars + hyphens). |
 | `sanitize_secrets_for_llm` | `tools/webdav.rs` | Sync: if a webdav tool `read` resolves to the root `secrets.toml`, returns a TOML string with all `value` fields replaced by `"abcd"`; real file content is never returned to the LLM |
