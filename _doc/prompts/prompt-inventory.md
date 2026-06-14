@@ -9,7 +9,7 @@ All prompts and prompt-adjacent strings in the Rust codebase, organized by what 
 **File:** `crate-rockbot/src/harness.rs:20-42`
 **Constant:** `DEFAULT_SYSTEM_PROMPT`
 **Sent to:** AI provider as the `system` role message in `ChatRequest.messages`
-**Used via:** `build_system_prompt()` (line 594) → `MemoryManager::build_context()` → prepended as first message in context
+**Used via:** `build_system_prompt()` (line 619) → `MemoryManager::build_context()` → prepended as first message in context
 
 Note: `{name}`, `{max_context_mb}`, and `{max_iterations}` are replaced at runtime with config values via `build_system_prompt()`.
 
@@ -95,7 +95,7 @@ User attachments are already visible to you — only use this tool for images at
 ```
 
 ### 3e. `webdav`
-**File:** `crate-rockbot/src/tools/webdav.rs:215-223`
+**File:** `crate-rockbot/src/tools/webdav.rs:229-237`
 ```
 Manage files on remote WebDAV storage (NextCloud). Each room has its own file space —
 paths are automatically scoped. Actions: read (get file content), write (create/overwrite
@@ -136,25 +136,27 @@ Provide the full soul.md content using this template:
 ```
 
 ### 3i. `save_knowledge`
-**File:** `crate-rockbot/src/tools/save_knowledge.rs:31-35`
+**File:** `crate-rockbot/src/tools/save_knowledge.rs:31-36`
 ```
-Save a piece of knowledge (skill, secret, or note) for future reference. Use this when the user says 'remember', 'learn', or shares important information worth persisting. Each entry gets a .md file and is indexed for contextual retrieval.
+Save a piece of knowledge for future reference. Use this when the user says 'remember', 'learn', or shares important information worth persisting. Each entry gets a .md file and is indexed for contextual retrieval.
 ```
 
 ### 3j. `forget_knowledge`
-**File:** `crate-rockbot/src/tools/forget_knowledge.rs:25-28`
+**File:** `crate-rockbot/src/tools/forget_knowledge.rs:25-29`
 ```
-Remove a previously saved knowledge entry. Provide the topic title of the entry to delete. The .md file is deleted and the entry is removed from the knowledge index.
+Remove a previously saved knowledge entry. Provide the topic title of the entry to delete.
+The .md file is deleted and the entry is removed from the knowledge index.
 ```
 
 ### 3k. `recall_knowledge`
 **File:** `crate-rockbot/src/tools/recall_knowledge.rs:25-29`
 ```
-Search the knowledge index for entries matching a query. If no query is given, returns all stored knowledge entries. Matches by topic title, when_useful description, and tags.
+Search the knowledge index for entries matching a query. If no query is given,
+returns all stored knowledge entries. Matches by topic title, when_useful description, and tags.
 ```
 
 ### 3l. `compress_memory`
-**File:** `crate-rockbot/src/tools/compress_memory.rs:36-41`
+**File:** `crate-rockbot/src/tools/compress_memory.rs:37-42`
 ```
 Compress all current conversation messages into a memory summary. The LLM will distill all messages into at most 10 bullet points saved as summary.md. After compression, the chat history is cleared to zero — only the summary remains. Use when the user says !compress, !memory, or explicitly asks to save memory.
 ```
@@ -182,12 +184,12 @@ Compress all current conversation messages into a memory summary. The LLM will d
 | `web_fetch.rs` | 728 | `web_fetch` | `verify` | Perform a web search to cross-verify content (default: false) |
 | `vision.rs` | 138 | `vision` | `url` | URL of the image to fetch (public web or WebDAV file) |
 | `vision.rs` | 142 | `vision` | `prompt` | Optional prompt for the LLM to use when analyzing this image |
-| `webdav.rs` | 231-233 | `webdav` | `action` | The WebDAV operation to perform |
-| `webdav.rs` | 236 | `webdav` | `room_id` | Room ID for scoping the operation (injected automatically if omitted) |
-| `webdav.rs` | 240 | `webdav` | `path` | File or directory path relative to the room root |
-| `webdav.rs` | 244 | `webdav` | `content` | File content to write (required for 'write' action) |
-| `webdav.rs` | 249 | `webdav` | `oldString` | Exact text to find and replace (required for 'edit' action, must be unique in the file) |
-| `webdav.rs` | 253 | `webdav` | `newString` | Replacement text (required for 'edit' action) |
+| `webdav.rs` | 245-247 | `webdav` | `action` | The WebDAV operation to perform |
+| `webdav.rs` | 250 | `webdav` | `room_id` | Room ID for scoping the operation (injected automatically if omitted) |
+| `webdav.rs` | 254 | `webdav` | `path` | File or directory path relative to the room root |
+| `webdav.rs` | 258 | `webdav` | `content` | File content to write (required for 'write' action) |
+| `webdav.rs` | 263 | `webdav` | `oldString` | Exact text to find and replace (required for 'edit' action, must be unique in the file) |
+| `webdav.rs` | 267 | `webdav` | `newString` | Replacement text (required for 'edit' action) |
 | `calendar.rs` | 251 | `calendar` | `action` | Calendar operation to perform |
 | `calendar.rs` | 255 | `calendar` | `start` | Start of date range in ISO 8601 UTC (e.g. 20260601T000000Z). Used by list_events. |
 | `calendar.rs` | 259 | `calendar` | `end` | End of date range in ISO 8601 UTC. Used by list_events. |
@@ -200,17 +202,16 @@ Compress all current conversation messages into a memory summary. The LLM will d
 | `calendar.rs` | 287 | `calendar` | `rrule` | Optional recurrence rule in RFC 5545 format (e.g. FREQ=WEEKLY;BYDAY=MO). |
 | `calendar.rs` | 291 | `calendar` | `reminder_minutes` | Optional reminder in minutes before event (e.g. 15). |
 | `image_gen.rs` | 149 | `image_gen` | `prompt` | Text description of the image to generate |
-| `image_gen.rs` | 153 | `image_gen` | `aspect_ratio` | Aspect ratio for the generated image as W:H (e.g. '16:9', '2:3', '1:1'). If omitted, the server default aspect ratio is used. |
+| `image_gen.rs` | 153 | `image_gen` | `aspect_ratio` | Aspect ratio for the generated image as W:H (e.g. '16:9', '2:3', '1:1') |
 | `image_gen.rs` | 157 | `image_gen` | `room_id` | Room ID for image storage (injected automatically if omitted) |
 | `image_gen.rs` | 162 | `image_gen` | `image_urls` | Reference image URLs for editing (auto-injected from user attachments) |
-| `edit_soul.rs` | 67 | `edit_soul` | `content` | Full soul.md content following the template: # Soul Memory\\n\\n- My name is Name ✨\\n- ...\\n- ..." |
+| `edit_soul.rs` | 67 | `edit_soul` | `content` | Full soul.md content following the template: # Soul Memory\\n\\n- My name is Name ✨\\n- ...\\n- ... |
 | `edit_soul.rs` | 71 | `edit_soul` | `webdav_dir` | Room WebDAV directory key (injected automatically) |
-| `save_knowledge.rs` | 45-46 | `save_knowledge` | `category` | Knowledge category: skill (procedural/how-to), secret (credential/sensitive), note (factual info) |
-| `save_knowledge.rs` | 50 | `save_knowledge` | `topic` | Short title or topic for the entry (e.g. 'DB API', 'Build Commands') |
-| `save_knowledge.rs` | 54 | `save_knowledge` | `content` | Markdown body of the knowledge entry |
-| `save_knowledge.rs` | 58-59 | `save_knowledge` | `when_useful` | Describe the situation that makes this knowledge relevant, used for automatic retrieval (e.g. 'when calling the database API') |
-| `save_knowledge.rs` | 63 | `save_knowledge` | `tags` | Comma-separated keywords for search (e.g. 'api, database, python') |
-| `save_knowledge.rs` | 68 | `save_knowledge` | `priority` | Knowledge priority: P0 (highest, always recalled), P1 (high, default), P2 (medium), P3 (low). Higher priority means more frequently recalled. |
+| `save_knowledge.rs` | 44 | `save_knowledge` | `topic` | Short title or topic for the entry (e.g. 'DB API', 'Build Commands') |
+| `save_knowledge.rs` | 48 | `save_knowledge` | `content` | Markdown body of the knowledge entry |
+| `save_knowledge.rs` | 52-53 | `save_knowledge` | `when_useful` | Describe the situation that makes this knowledge relevant, used for automatic retrieval (e.g. 'when calling the database API') |
+| `save_knowledge.rs` | 57 | `save_knowledge` | `tags` | Comma-separated keywords for search (e.g. 'api, database, python') |
+| `save_knowledge.rs` | 62 | `save_knowledge` | `priority` | Knowledge priority: P0 (highest, always recalled), P1 (high, default), P2 (medium), P3 (low). Higher priority means more frequently recalled. |
 | `forget_knowledge.rs` | 37 | `forget_knowledge` | `topic` | Title or topic of the knowledge entry to delete |
 | `recall_knowledge.rs` | 37-38 | `recall_knowledge` | `query` | Topic or keyword to search for in knowledge entries. Leave empty to retrieve all entries. |
 | `compress_memory.rs` | 49 | `compress_memory` | `webdav_dir` | Room WebDAV directory key (injected automatically) |
@@ -230,38 +231,58 @@ Compress all current conversation messages into a memory summary. The LLM will d
 
 ## 6. Vision Image Interception (harness internal)
 
-**File:** `crate-rockbot/src/harness.rs:696-759`
+**File:** `crate-rockbot/src/harness.rs:721-779`
 
 Two methods for bridging vision tool results across turns:
 
-### 6a. `cache_vision_images` (line 696)
+### 6a. `cache_vision_images` (line 721)
 Parses markdown image tags (`![name](data:mime/type;base64,...)`) from the vision tool result and caches them in `image_pool`. Called in `process_tool_response` after a `vision` tool call completes.
 
-### 6b. `inject_vision_images` (line 728)
+### 6b. `inject_vision_images` (line 753)
 On the next context build, drains the `image_pool` and injects the cached data URIs into the conversation as a synthesized user message: `"The requested image(s) is/are visible below:\nAttached: ![photo1.png](photo1.png) ..."`. Called from `process_message` before each AI request.
 
 This enables the LLM to use vision results for image editing — the vision tool fetches an image, the harness caches it, and on the next turn the image is available for `image_gen` editing via the `image_urls` auto-injection mechanism.
 
 ---
 
-## 7. Fallback / Error Messages (returned to RocketChat user)
+## 7. Fallback / Error Messages (returned to RocketChat user or as tool results)
 
-**File:** `crate-rockbot/src/harness.rs`
+### 7a. Agent loop fallbacks (harness.rs)
 
 | Line | Condition | Text |
 |------|-----------|------|
 | 259 | Max agent iterations exceeded | `I'm sorry, I got stuck in a loop. Could you rephrase your request?` |
-| 473 | AI returned empty text (stored in history) | `(no response)` |
-| 480 | AI returned empty text (user-facing) | `I processed your request but received an empty response.` |
-| 493 | AI returned no text at all | `I received a response but it was empty. Please try again.` |
-| 503-541 | Context length exceeded | Compresses history + hard-truncation retry (one attempt); if still exceeded, falls through to generic error below |
-| 548-556 | AI provider error (dynamic) | `I encountered an error: {e}. Please try again.` |
+| 447 | compress_memory intercepted (delayed) | `Memory compression scheduled. Reply to the user first — compression will execute after your reply is sent.` |
+| 522 | AI returned empty text (stored in history) | `(no response)` |
+| 529 | AI returned empty text (user-facing) | `I processed your request but received an empty response.` |
+| 546 | AI returned no text at all | `I received a response but it was empty. Please try again.` |
+| 556-598 | Context length exceeded | Compresses history + hard-truncation retry (one attempt); if still exceeded, falls through to generic error below |
+| 599-600 | AI provider error (dynamic) | `I encountered an error: {e}. Please try again.` |
+| 872 | Compression completed | `Memory compressed. Summary:\n\n{summary}` |
 
-**File:** `crate-rockbot/src/main.rs`
+### 7b. Tool result errors (tool.rs)
 
 | Line | Condition | Text |
 |------|-----------|------|
-| 555 | Outer catch-all for message processing | `Error processing message: {e}` |
+| 118 | Tool `execute()` returns Err | `Tool execution error: {e}` |
+| 125 | LLM requests unknown tool | `Unknown tool: {tool_name}` |
+
+### 7c. Tool-specific errors
+
+| File | Line | Condition | Text |
+|------|------|-----------|------|
+| `web_search.rs` | 77-78 | No Exa API key configured | `web_search requires an Exa API key. Configure it in [tools.exa] section of config.toml.` |
+| `web_search.rs` | 145 | Exa returns 401 | `Exa search failed: invalid API key (401). Check your EXA_API_KEY env var or [tools.exa] config.` |
+| `web_search.rs` | 165 | Exa response missing results array | `Exa returned no results array` |
+| `web_search.rs` | 168 | Exa returns empty results | `No search results found.` |
+| `recall_knowledge.rs` | 56 (via knowledge.rs:362) | No knowledge entries in room | `No knowledge entries found for this room.` |
+| `knowledge.rs` | 370 | Recall query matches nothing | `No knowledge entry found matching '{query}'.` |
+
+### 7d. Main loop error (main.rs)
+
+| Line | Condition | Text |
+|------|-----------|------|
+| 554-555 | process_message returns Err | `Error processing message: {e}` |
 
 ---
 
@@ -301,21 +322,31 @@ The LLM includes `image_key` in its reply markdown. The agent loop (main.rs:452-
 ## 9. Memory / Context Prompts (sent to AI provider as system messages)
 
 ### 9a. Soul memory prefix
-**File:** `crate-rockbot/src/memory.rs:262-265`
+**File:** `crate-rockbot/src/memory.rs:276-279`
 **Type:** Dynamic — loaded from WebDAV `memory/soul.md`
 ```
 [Core memory — permanent preferences, identity, and facts]
 {content from soul.md}
 ```
-Injected as a second system message when soul content is non-empty.
+Injected as a second system message when soul content is non-empty. Truncated at `max_soul_chars` with a `[truncated]` marker appended.
 
 ### 9b. Knowledge context (from WebDAV knowledge index)
-**File:** `crate-rockbot/src/memory.rs:269-273`
-**Type:** Dynamic — loaded by `AgentHarness::refresh_knowledge_context()` and stored in `MemoryManager.knowledge`
+**File:** `crate-rockbot/src/memory.rs:283-288`
+**Type:** Dynamic — loaded by `AgentHarness::refresh_knowledge_context()` (harness.rs:1252)
+and stored in `MemoryManager.knowledge`. Individual entries formatted as:
+```
+[Knowledge: {title}]
+{body}
+```
+Entries joined with `\n---\n` separator and wrapped as:
+```
+[Knowledge — automatically recalled for this conversation]
+{joined entries}
+```
 Injected as a system message when relevant knowledge entries exist for the room. Fetched on each `process_message` call before building context (harness.rs:224).
 
 ### 9c. Conversation summary
-**File:** `crate-rockbot/src/memory.rs:276-284`
+**File:** `crate-rockbot/src/memory.rs:290-296`
 **Type:** Dynamic — loaded from WebDAV `memory/summary.md`
 ```
 [Recent conversation summary]
@@ -327,7 +358,7 @@ Injected as a system message when a summary exists (stored and loaded from `memo
 
 ## 10. Compress-for-Summary Prompt (sent to AI provider)
 
-**File:** `crate-rockbot/src/harness.rs:960-976` (`compress_for_summary`)
+**File:** `crate-rockbot/src/harness.rs:987-1017` (`compress_for_summary`)
 **Role:** `user` (one-shot completion, no tools)
 **Purpose:** Generates a bullet-point memory summary from archived conversation messages. Called by `compress_room_inner()` to create/update `summary.md`. Also used in tests.
 
@@ -351,7 +382,11 @@ Only list knowledge entries that were actually relevant to this conversation.
 {joined message texts, each truncated to 300 chars, max 20 messages}
 ```
 
-**Fallback (line 990):** If AI summarization fails:
+**Sub-templates:**
+- Existing summary header (line 984): `\n## Existing Summary\n{summary}`
+- Knowledge entries reference (lines 972-979): section heading `\n## Knowledge Entries (identify which were relevant)\n` + `- \`{filename}\` — {when_useful}\n` per entry (max 30)
+
+**Fallback (line 1017):** If AI summarization fails or no user messages:
 ```
 {messages.len()} messages compressed
 ```
@@ -361,12 +396,12 @@ Only list knowledge entries that were actually relevant to this conversation.
 ## 11. WebDAV Storage Templates (not AI prompts)
 
 ### 11a. Summary file (write_summary_md)
-**File:** `crate-rockbot/src/harness.rs:1004-1021`
+**File:** `crate-rockbot/src/harness.rs:1031-1047`
 **Stored at:** `{room_dir}memory/summary.md`
 Content is the LLM-generated summary text (bullet-point format from section 10). Written as raw bytes via WebDAV.
 
 ### 11b. Soul memory file
-**File:** `crate-rockbot/src/tools/edit_soul.rs:48-59` (description), `:78` (execute)
+**File:** `crate-rockbot/src/tools/edit_soul.rs:48-59` (description), `:39` (path)
 **Stored at:** `{room_dir}memory/soul.md`
 ```
 # Soul Memory
@@ -378,14 +413,76 @@ Content is the LLM-generated summary text (bullet-point format from section 10).
 ```
 edit_soul performs a full replace — it overwrites the entire soul.md with the content provided by the LLM.
 
-### 11c. Snapshot file (persistence)
-**File:** `crate-rockbot/src/memory.rs:439-465`
+### 11c. Knowledge entry .md file
+**File:** `crate-rockbot/src/knowledge.rs:228-231`
+**Stored at:** `{room_dir}knowledge/{filename}.md`
+```
+# {topic}
+
+**When Useful:** {when_useful}
+**Tags:** {tags}
+**Created:** {timestamp}
+**Updated:** {timestamp}
+
+{content}
+```
+
+### 11d. Snapshot file (persistence)
+**File:** `crate-rockbot/src/memory.rs:458` (schema version string)
 **Stored at:** `{room_dir}memory/snapshot.json`
 JSON snapshot of room state (messages, soul, summary, archive_seq). Schema version `rockbot-snapshot/1`. Cached read on restore, rebuilt on dirty flag.
 
+### 11e. WebDAV tool result templates (webdav.rs)
+| Line | Template | Example |
+|------|----------|---------|
+| 69-71 | Image read | `![{name}](data:{mime};base64,{data})` |
+| 87 | Write success | `Written {bytes} bytes to {path}` |
+| 137-141 | Edit success | `Edited {path}: replaced 1 occurrence ({bytes} bytes written)` |
+| 158-166 | Directory listing | `Contents of '{dir}':\n\n  {DIR/FILE}  {size}  {date}  {name}` |
+| 158 | Empty directory | `Directory '{dir}' is empty.` |
+| 181 | Mkdir success | `Directory created: {path}` |
+| 191 | Delete success | `Deleted: {path}` |
+| 202-206 | Exists check | `Path '{path}': exists` / `not found` |
+
+### 11f. Secrets sanitization (webdav.rs:52-59)
+When the LLM attempts to read `secrets.toml` via the webdav tool, dummy placeholder data is returned:
+```toml
+[[secrets]]
+host = "localhost"
+key = "placeholder"
+value = "abcd"
+```
+
+### 11g. Knowledge recall templates
+| File | Line | Template |
+|------|------|----------|
+| `knowledge.rs` | 228-231 | `.md` body format (see 11c) |
+| `knowledge.rs` | 355-357 | `[Knowledge: {title}]\n{body}` (recalled entry) |
+| `knowledge.rs` | 362 | `No knowledge entries found for this room.` |
+| `knowledge.rs` | 370 | `No knowledge entry found matching '{query}'.` |
+| `save_knowledge.rs` | 89-92 | `Knowledge saved: [{topic}] {topic}` |
+| `forget_knowledge.rs` | 54 | `Knowledge entry '{topic}' deleted.` |
+| `knowledge.rs` | 258-259 | `Knowledge entry '{topic}' not found.` |
+
 ---
 
-## 12. RocketChat Debug Binary Messages
+## 12. Calendar / CalDAV Result Templates (webdav.rs — not AI prompts)
+
+| File | Lines | Template |
+|------|-------|----------|
+| `calendar.rs` | 107-133 | `Event: {summary}\n  UID: {uid}\n  When: {start} to {end}\n` (+ optional description, location, recurrence, reminder lines) |
+| `calendar.rs` | 136-155 | `Todo: {summary}\n  UID: {uid}\n  Status: {status}\n` (+ optional description, due date, priority) |
+| `calendar.rs` | 321 | `No events found between {start} and {end}.` |
+| `calendar.rs` | 323-326 | `{count} event(s) between {start} and {end}:\n\n` |
+| `calendar.rs` | 360 | `Event created with UID: {uid}` |
+| `calendar.rs` | 378 | `Event updated: {uid}` |
+| `calendar.rs` | 388 | `Event deleted: {uid}` |
+| `calendar.rs` | 399 | `No todos found.` |
+| `calendar.rs` | 401 | `{count} todo(s):\n\n` |
+
+---
+
+## 13. RocketChat Debug Binary Messages
 
 **File:** `crate-rocketchat/src/main.rs`
 
@@ -400,8 +497,32 @@ JSON snapshot of room state (messages, soul, summary, archive_seq). Schema versi
 
 | Line | Purpose | Template |
 |------|---------|----------|
-| 58-61 | Code-block reply wrapper | `` ```\n{text}\n``` `` |
+| 58-61 | Code-block reply wrapper | `` ```{text}``` `` |
 | 123 | Bot mention pattern for detection | `@{username}` (constructor of `RocketChatClient`, stored in `bot_name` field) |
+
+---
+
+## 14. Miscellaneous Prompt-Adjacent Strings
+
+| File | Line | Purpose | Text |
+|------|------|---------|------|
+| `harness.rs` | 769 | Vision image injection | `The requested image{s are/is} visible below:\nAttached: {labels}` |
+| `harness.rs` | 872 | Compression result | `Memory compressed. Summary:\n\n{summary}` |
+| `memory.rs` | 271 | Soul truncation marker | `[truncated]` (appended to soul memory when over char limit) |
+| `memory.rs` | 550-552 | Context truncation marker | `[...truncated]` (appended to truncated message texts) |
+| `memory.rs` | 581 | Image stripping placeholder | `[image]` (replaces image parts in non-latest messages) |
+| `provider/deepseek.rs` | 71 | DeepSeek image placeholder | `[image]` (replaces image data URIs, DeepSeek lacks vision) |
+| `tools/web_fetch.rs` | 526 | Web fetch truncation | `...(truncated)` (appended when content exceeds 10000 chars) |
+| `tools/web_fetch.rs` | 373 | Saved-to note | `\n\nSaved to WebDAV: {path}` |
+| `tools/web_fetch.rs` | 365,377 | Related sources header | `\n\n## Related Sources\n\n` |
+| `tools/web_fetch.rs` | 460-473 | Related source entry | `{idx}. **{title}**\n   URL: {url}\n   {snippet}\n\n` |
+| `image_cache.rs` | 65 | Cached image markdown | `![{description}]({url})` |
+| `main.rs` | 460-464 | Generated image attachment | `\n\n![Generated image]({share_url})` |
+| `provider/fal.rs` | 307 | Upload filename | `rockbot-{timestamp}.{ext}` |
+| `harness.rs` | 1561-1572 | WebDAV dir naming | `d-{room_id}` (DM) or `r-{room_id}` (channel) |
+| `edit_soul.rs` | 34 | Soul update confirmation | `Soul memory updated.` |
+| `knowledge.rs` | 153 | Knowledge index version | `rockbot-knowledge/1` |
+| `memory.rs` | 458 | Snapshot schema version | `rockbot-snapshot/1` |
 
 ---
 
@@ -414,14 +535,16 @@ JSON snapshot of room state (messages, soul, summary, archive_seq). Schema versi
 | 3a-l | **Tool descriptions** — teach AI what tools do | 12 files in `tools/` | AI provider (tool definitions) | Static |
 | 4 | **Tool param descriptions** — describe JSON fields | 12 files in `tools/` | AI provider (tool schema) | Static |
 | 5 | **Default vision prompt** — fallback | `harness.rs:199` | Harness internal | Static |
-| 6 | **Vision image interception** — bridge vision→image_gen | `harness.rs:696-759` | Harness internal | Dynamic |
-| 7 | **Fallback messages** — error/loop handling | `harness.rs:259-556`, `main.rs:555` | RocketChat user | Partially |
+| 6 | **Vision image interception** — bridge vision→image_gen | `harness.rs:721-779` | Harness internal | Dynamic |
+| 7 | **Fallback/error messages** — loop/tool/API errors | `harness.rs:259-600`, `tool.rs:118-125`, `main.rs:555`, 6 tool files | RocketChat user / tool results | Partially |
 | 8 | **Image gen request body** — image provider API | `types.rs:349-358`, `fal.rs:82,292`, `openrouter.rs:411` | image provider API | Dynamic |
-| 9a | **Soul memory prefix** | `memory.rs:262-265` | AI provider (`system` role) | Dynamic |
-| 9b | **Knowledge context** | `memory.rs:269-273` | AI provider (`system` role) | Dynamic |
-| 9c | **Conversation summary** | `memory.rs:276-284` | AI provider (`system` role) | Dynamic |
-| 10 | **Compress-for-summary** — creates bullet-point memory summary | `harness.rs:960-976` | AI provider (one-shot) | Dynamic |
-| 11a-c | **WebDAV storage templates** — summary, soul, snapshot | `harness.rs:1004-1021`, `edit_soul.rs:48-59,78`, `memory.rs:439-465` | WebDAV storage | Dynamic |
-| 12 | **Debug binary messages** | `rocketchat/main.rs:39-68`, `client.rs:58-123` | RocketChat / console | Dynamic |
+| 9a | **Soul memory prefix** | `memory.rs:276-279` | AI provider (`system` role) | Dynamic |
+| 9b | **Knowledge context** | `memory.rs:283-288` | AI provider (`system` role) | Dynamic |
+| 9c | **Conversation summary** | `memory.rs:290-296` | AI provider (`system` role) | Dynamic |
+| 10 | **Compress-for-summary** — creates bullet-point memory summary | `harness.rs:987-1017` | AI provider (one-shot) | Dynamic |
+| 11a-g | **WebDAV / knowledge storage templates** | `harness.rs`, `edit_soul.rs`, `knowledge.rs`, `memory.rs`, `webdav.rs` | WebDAV storage / tool results | Dynamic |
+| 12 | **Calendar result templates** | `calendar.rs` | AI provider (tool results) | Dynamic |
+| 13 | **Debug binary messages** | `rocketchat/main.rs:39-68`, `client.rs:58-123` | RocketChat / console | Dynamic |
+| 14 | **Miscellaneous** — placeholders, markers, path templates | 18 entries across 8 files | Various | Mixed |
 
 (End of file)
