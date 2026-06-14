@@ -482,7 +482,7 @@ Knowledge entries are injected between soul and summary (see
 | Compression check  | `memory.check_and_archive()`       | Returns oldest half if Layer 1 overflowed           |
 | AI compress        | `compress_for_summary()`           | Calls AI provider with oldest messages + existing summary.md; returns ≤10 bullets + used knowledge entries |
 | Write summary      | `write_summary_md()`               | PUTs `summary.md` to WebDAV (full replace)          |
-| Knowledge review   | `review_knowledge_priorities_for_room()`| Promotes used entries, decays unused (see knowledge-priority.md) |
+| Knowledge review   | `review_knowledge_priorities_for_room()`| Promotes used entries one level, decays unused (see knowledge-priority.md) |
 | Prune Layer 1      | `memory.prune_archived()`          | Removes compressed messages from buffer             |
 | Room init          | `restore_history()`                | Cache-first: reads snapshot.json, falls back to individual files |
 | Soul edit          | `edit_soul()` tool                 | Writes soul.md, updates in-memory, marks snapshot dirty |

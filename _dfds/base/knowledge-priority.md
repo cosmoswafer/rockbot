@@ -40,7 +40,7 @@ flowchart TD
     TICK{More entries?}
     NEXT[Next IndexEntry]
     IS_USED{"Entry in<br/>used filenames?"}
-    PROMOTE["Promote Entry<br/>P0 + set last_promoted_at = now"]
+    PROMOTE["Promote One Level<br/>P3→P2, P2→P1, P1→P0<br/>set last_promoted_at = now"]
     CHECK_DAYS{"Days since<br/>last_promoted_at"}
     DECAY["Decay Priority<br/>see 2b state diagram"]
     CHANGED{Priority Changed?}
@@ -96,34 +96,34 @@ stateDiagram-v2
         stale : promoted >7 days ago or never
     }
 
+    P1 --> P0 : promoted\n(used in compression)
+    P2 --> P1 : promoted\n(used in compression)
+    P3 --> P2 : promoted\n(used in compression)
+
+    P0 --> P0 : promoted again\n(stays P0)
     P0 --> P1 : 1 day passes\n(no promotion)
     P1 --> P2 : 3 days pass\n(no promotion)
     P2 --> P3 : 7 days pass\n(no promotion)
     P3 --> P3 : stays stale\nuntil promoted
-
-    P0 --> P0 : promoted again
-    P1 --> P0 : promoted
-    P2 --> P0 : promoted
-    P3 --> P0 : promoted
 ```
 
 **Transition table**:
 
-| Current | Promoted (now) | 0-1 day since | 1-3 days since | 3-7 days since | >7 days since |
-| ------- | -------------- | ------------- | -------------- | -------------- | ------------- |
-| **P0**  | → P0           | —             | → P1           | → P2           | → P3          |
-| **P1**  | → P0           | —             | —              | → P2           | → P3          |
-| **P2**  | → P0           | —             | —              | —              | → P3          |
-| **P3**  | → P0           | —             | —              | —              | → P3          |
+| Current | Promoted (used now) | 0-1 day since | 1-3 days since | 3-7 days since | >7 days since |
+| ------- | ------------------- | ------------- | -------------- | -------------- | ------------- |
+| **P0**  | → P0                | → P1          | → P2           | → P3           | → P3          |
+| **P1**  | → P0                | —             | → P2           | → P3           | → P3          |
+| **P2**  | → P1                | —             | —              | → P3           | → P3          |
+| **P3**  | → P2                | —             | —              | —              | → P3          |
 
 **Rules**:
 - **P0** = promoted within the last day — always recalled in context
 - **P1** = promoted within 3 days — default for new entries — strong recall
 - **P2** = promoted within 7 days — moderate recall
 - **P3** = promoted >7 days ago or never — baseline
-- **Promotion always jumps to P0** — no incremental steps up
+- **Promotion is one step up per compression cycle** — P3→P2, P2→P1, P1→P0. P0 stays P0 if used again. No instant jumps.
 - **Decay is one step per threshold crossing** — P0→P1 after 1 day, P1→P2 after 3 days, P2→P3 after 7 days
-- **No rate limiting** — deletion of old daily summaries removed the need for it
+- **No rate limiting**
 - **New entries default to P1** — they haven't been promoted but aren't stale
 
 ### 2d. LLM Identification of Used Entries (Compression)

@@ -333,8 +333,9 @@ This covers all five image sources for editing:
 After each compression cycle (which produces `summary.md` from overflowed
 Layer 1 messages), the harness calls `review_knowledge_priorities_for_room()`
 with the list of knowledge entry filenames that the LLM identified as relevant
-to the compressed conversation. Used entries are promoted to P0; unused entries
-decay based on days since their last promotion. See
+to the compressed conversation. Used entries are promoted one level; unused
+entries decay based on days since their last promotion. P0 requires consistent
+daily use — entries climb one step per compression cycle. See
 [Knowledge Priority Algorithm](base/knowledge-priority.md).
 
 ```mermaid
@@ -342,7 +343,7 @@ flowchart TD
     COMPRESS["compress_room_if_needed()<br/>(after write_summary_md)"]
     LLM_USED["LLM-identified<br/>used entry filenames"]
     REVIEW["review_knowledge_priorities_for_room()"]
-    PROMOTE["Promote used → P0<br/>Decay unused by recency"]
+    PROMOTE["Promote Used One Level<br/>Decay Unused by Recency"]
     DAV[(NextCloud WebDAV)]
     MARK["Mark Snapshot Dirty"]
 
