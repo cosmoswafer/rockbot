@@ -344,11 +344,12 @@ and §2b2 above.
 
 | Procedure | Trigger | Scope | History Effect |
 |-----------|---------|-------|----------------|
-| **Auto** | Token/byte pressure flags (post-reply) | Oldest half of L1 | Summarizes oldest half → writes `summary.md` → prunes compressed messages |
+| **Auto** | Token/byte pressure flags (post-reply) or `ContextLengthExceeded` retry (inline) | Oldest half of L1 | Summarizes oldest half → writes `summary.md` → prunes compressed messages |
 | **Manual** | User `!compress` / explicit (post-reply) | ALL of L1 | Summarizes all messages → writes `summary.md` → prunes all → history at zero |
 
 Both call `compress_for_summary()`, which uses `text_content()` to extract
-messages for the LLM prompt.
+messages for the LLM prompt. See [agent-harness.md §2i2](agent-harness.md#2i2-context-length-exceeded-retry--provider-triggered-compression)
+for the `ContextLengthExceeded` retry flow.
 
 ### Design Note: Images Are Silently Dropped
 

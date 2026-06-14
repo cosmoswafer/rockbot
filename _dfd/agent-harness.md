@@ -405,16 +405,16 @@ room gets full LLM compression after reply delivery.
 
 When the AI provider returns a `ContextLengthExceeded` error (HTTP 400 with
 "context length" or "maximum context" in the error message), the harness
-performs aggressive memory compression and retries the request once. This
-is a provider-initiated recovery path that complements the proactive
-`trim_context` byte-check.
+runs the auto compression pipeline (`compress_room_inner(force=false)`) and
+retries the request once. This is a provider-initiated recovery path that
+complements the proactive `trim_context` byte-check.
 
 ```mermaid
 flowchart TD
     AI[AiProvider]
     CHECK{ContextLengthExceeded?}
-    COMPRESS["CompressHistoryForRetry<br/>(strip images + prune to 6 msgs)"]
-    REBUILD["HardTruncate<br/>(keep system prefix + last 2 msgs)"]
+    COMPRESS["CompressRoomInner<br/>(LLM summarize + prune oldest half)"]
+    TRIM["HardTruncate<br/>(keep system prefix + last 2 msgs)"]
     RETRY["Retry LLM Call"]
     FALLBACK["SendErrorFallback<br/>(already compressed once)"]
     REPLY[BotReply]
@@ -423,24 +423,23 @@ flowchart TD
     CHECK -->|"yes (first time)"| COMPRESS
     CHECK -->|"yes (already compressed)"| FALLBACK
     CHECK -->|"no (other error)"| FALLBACK
-    COMPRESS -->|"stripped history"| REBUILD
-    REBUILD -->|"rebuilt messages"| RETRY
+    COMPRESS -->|"summary.md written,<br/>oldest half pruned"| TRIM
+    TRIM -->|"rebuilt messages"| RETRY
     RETRY --> AI
     FALLBACK --> REPLY
 ```
 
-**Aggressive compression** (`compress_history_for_retry`): 
-1. Strips all `ContentPart::ImageUrl` parts from every message except the last
-   one, converting them to `[image]` text placeholders
-2. Prunes chat history to the last 6 messages to reduce text token load
+**Compression** (`compress_room_inner`): same auto procedure as described in
+[Memory Compression §2b](base/memory-compression.md#2b-compression-deep-dive) —
+LLM summarization of oldest half of Layer 1, write `summary.md` to WebDAV,
+prune compressed messages from history.
 
-Then rebuilds context with `max_history: Some(4)` and applies **hard truncation**
-(no LLM summarization — that call would also exceed context if it included the
-oversized text): keep system/front-matter messages at the front, and only the
-last 2 conversation messages at the end. After hard truncation, **per-message
-content truncation** caps each remaining conversation message at 200K chars to
-handle cases where individual tool results or user pastes are themselves
-enormous.
+After compression, rebuilds context with `max_history: Some(4)` and applies
+**hard truncation**: keep system/front-matter messages at the front, and
+only the last 2 conversation messages at the end. After hard truncation,
+**per-message content truncation** caps each remaining conversation message
+at 200K chars to handle cases where individual tool results or user pastes
+are themselves enormous.
 
 **Retry limit**: compression is attempted at most once per call. If the
 provider still returns `ContextLengthExceeded` after compression, the

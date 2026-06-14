@@ -522,11 +522,9 @@ impl AgentHarness {
                                 "Context length exceeded for room {}, compressing memory and retrying",
                                 room_id
                             );
-                            self.compress_history_for_retry(room_id);
+                            let _ = self.compress_room_inner(room_id, false).await;
                             context_compressed = true;
                             // Rebuild with minimal history then hard-truncate
-                            // (no LLM summarization — that call would also hit
-                            // the context limit if we include the oversized text).
                             messages = self
                                 .memory
                                 .build_context(room_id, &system_prompt, Some(4), None);
@@ -578,32 +576,6 @@ impl AgentHarness {
     fn append_to_history(&mut self, room_id: &str, msg: ChatMessage) {
         if let Some(room) = self.memory.get_mut(room_id) {
             room.history.append(msg);
-        }
-    }
-
-    /// Aggressively compress conversation history for a room by stripping all
-    /// images from every message except the last one, then pruning to the last
-    /// 6 messages. Called when the provider returns a ContextLengthExceeded
-    /// error to make space before retrying.
-    fn compress_history_for_retry(&mut self, room_id: &str) {
-        if let Some(room) = self.memory.get_mut(room_id) {
-            let before_len = room.history.messages.len();
-            let len = room.history.messages.len();
-            for (i, msg) in room.history.messages.iter_mut().enumerate() {
-                if i == len - 1 {
-                    continue; // preserve last message's images (current request)
-                }
-                *msg = strip_images_from_message(msg.clone());
-            }
-            // Prune to last 6 messages to reduce text token load
-            if room.history.messages.len() > 6 {
-                let prune_count = room.history.messages.len() - 6;
-                room.history.prune_first(prune_count);
-            }
-            debug!(
-                "compress_history_for_retry room={}: stripped images (kept last), pruned {} -> {} messages",
-                room_id, before_len, room.history.messages.len()
-            );
         }
     }
 
@@ -2349,114 +2321,6 @@ chat = "mock-model"
 
         assert!(result.is_ok());
         assert!(harness.current_image_urls().is_empty());
-    }
-
-    // ----- compress_history_for_retry tests (agent-harness.md §2i2) -----
-
-    #[test]
-    fn test_compress_history_for_retry_strips_images_from_non_last_messages() {
-        let config = make_test_config();
-        let provider = Box::new(MockProvider::new(vec![]));
-        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
-
-        // Populate room with 4 messages, some with images
-        harness.memory_mut().get_or_create("room1", "general", "", false);
-        harness.append_to_history("room1", ChatMessage::user("msg1"));
-        harness.append_to_history(
-            "room1",
-            ChatMessage::user_with_images("msg2 with image", vec!["data:image/png;base64,aaa".into()]),
-        );
-        harness.append_to_history("room1", ChatMessage::assistant("reply1"));
-        harness.append_to_history(
-            "room1",
-            ChatMessage::user_with_images("msg4 last", vec!["data:image/png;base64,zzz".into()]),
-        );
-
-        harness.compress_history_for_retry("room1");
-
-        let room = harness.memory().get("room1").unwrap();
-        let msgs = &room.history.messages;
-        assert_eq!(msgs.len(), 4, "4 msgs → no pruning needed (under 6)");
-
-        // Last message preserves images
-        match &msgs[3].content {
-            MessageContent::Multipart(parts) => {
-                assert!(parts.iter().any(|p| matches!(p, ContentPart::ImageUrl { .. })));
-            }
-            _ => panic!("Last message should be multipart"),
-        }
-
-        // Messages 0 (text), 2 (assistant text) should be unchanged plain text
-        match &msgs[0].content {
-            MessageContent::Text(t) => assert_eq!(t, "msg1"),
-            _ => panic!("Plain text msg0 should stay as Text"),
-        }
-        // Message 1 (multipart with image) should be stripped to [image] text
-        match &msgs[1].content {
-            MessageContent::Text(t) => {
-                assert!(t.contains("[image]"), "msg1 should have [image] placeholder: got '{t}'");
-            }
-            _ => panic!("msg1 should be stripped to Text"),
-        }
-        match &msgs[2].content {
-            MessageContent::Text(t) => assert_eq!(t, "reply1"),
-            _ => panic!("Plain text msg2 should stay as Text"),
-        }
-        let config = make_test_config();
-        let provider = Box::new(MockProvider::new(vec![]));
-        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
-
-        harness.memory_mut().get_or_create("room1", "general", "", false);
-        for i in 0..10 {
-            harness.append_to_history("room1", ChatMessage::user(format!("msg{}", i)));
-        }
-
-        harness.compress_history_for_retry("room1");
-
-        let room = harness.memory().get("room1").unwrap();
-        assert_eq!(room.history.messages.len(), 6, "Should prune to last 6 messages");
-        // Last message should still be msg9
-        assert_eq!(
-            room.history.messages[5].text_content().unwrap(),
-            "msg9"
-        );
-    }
-
-    #[test]
-    fn test_compress_history_for_retry_keeps_last_image_when_pruning() {
-        let config = make_test_config();
-        let provider = Box::new(MockProvider::new(vec![]));
-        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
-
-        harness.memory_mut().get_or_create("room1", "general", "", false);
-        for i in 0..7 {
-            harness.append_to_history("room1", ChatMessage::user(format!("msg{}", i)));
-        }
-        // Last message has images
-        harness.append_to_history(
-            "room1",
-            ChatMessage::user_with_images(
-                "last with image",
-                vec!["data:image/png;base64,last".into()],
-            ),
-        );
-
-        harness.compress_history_for_retry("room1");
-
-        let room = harness.memory().get("room1").unwrap();
-        assert_eq!(room.history.messages.len(), 6);
-
-        // Last message should still have its images
-        let last = &room.history.messages[5];
-        match &last.content {
-            MessageContent::Multipart(parts) => {
-                assert!(
-                    parts.iter().any(|p| matches!(p, ContentPart::ImageUrl { .. })),
-                    "Last message should retain images after compression"
-                );
-            }
-            _ => panic!("Last message should be multipart after compression"),
-        }
     }
 
     // ----- ContextLengthExceeded retry tests (agent-harness.md §2i2) -----
