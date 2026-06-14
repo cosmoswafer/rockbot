@@ -62,6 +62,12 @@ pub struct ModelConfig {
     pub max_context_bytes: BoundedUsize,
     #[serde(default = "default_max_attachment_bytes")]
     pub max_attachment_bytes: u64,
+    #[serde(default = "default_model_context_length")]
+    pub model_context_length: u32,
+}
+
+fn default_model_context_length() -> u32 {
+    131072
 }
 
 #[derive(Debug, Clone, Deserialize)]

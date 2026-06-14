@@ -121,6 +121,7 @@ to make data flow violations compile-time errors rather than runtime surprises:
 | `_dfds/base/rocketchat-rest.md` | rocketchat (`rest.rs`), `harness.rs` | — |
 | `_dfds/base/ai-provider.md` | `provider/mod.rs`, `provider/deepseek.rs`, `provider/openrouter.rs`, `provider/fal.rs` | `types.rs` |
 | `_dfds/base/memory.md` | `memory.rs` | `harness.rs`, webdav crate |
+| `_dfds/base/memory-compression.md` | `harness.rs` (`compress_room_if_needed`, `compress_for_summary`, `write_summary_md`, `load_summary`, `truncate_and_summarize`) | `memory.rs`, `knowledge.rs`, `config.rs` |
 | `_dfds/base/knowledge.md` | `knowledge.rs` | `tools/save_knowledge.rs`, `tools/forget_knowledge.rs`, `tools/recall_knowledge.rs` |
 | `_dfds/base/knowledge-priority.md` | `knowledge.rs` | `harness.rs`, `memory.rs` |
 | `_dfds/agent-loop.md` | `main.rs` | `harness.rs`, `config.rs` |

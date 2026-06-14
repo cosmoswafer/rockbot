@@ -105,8 +105,9 @@ flowchart TD
 | `max_soul_chars`       | `BoundedUsize` | Layer 3 max chars for soul.md content (default 2000); validated 1..=100_000_000 |
 | `memory_ttl_secs`      | `u64`          | Room idle timeout — snapshot to WebDAV then evict (default 300)|
 | `persist_interval_secs`| `u64`          | Snapshot persist timer interval (default 60)                  |
-| `max_context_bytes`    | `BoundedUsize` | Max byte size for context (default 4MB ≈ 1M tokens). Triggers proactive inline summarization and image-stripping when exceeded. Validated 1..=100_000_000 |
+| `max_context_bytes`    | `BoundedUsize` | Max byte size for context (default 4MB ≈ 1M tokens). Triggers inline summarization and image-stripping when exceeded. Validated 1..=100_000_000 |
 | `max_attachment_bytes` | `u64`          | Max size of a single attachment in bytes (default 25_000_000) |
+| `model_context_length` | `u32`          | Model's max context window in tokens (default 131072). 90% threshold triggers background compression after LLM calls when usage nears limit. |
 
 #### `ProviderConfig`
 

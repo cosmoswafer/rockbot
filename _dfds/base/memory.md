@@ -16,37 +16,30 @@ the system falls back to reading individual files.
 | Layer | Name | Storage | Limit | Contents |
 |-------|------|---------|-------|----------|
 | 1 | **Chat History** | In-memory only | `max_text_length` chars, `max_history_messages` msgs | Raw `Vec<ChatMessage>` — the current working window |
-| 2 | **Compressed Memory** | WebDAV `summary.md` | ≤10 bullet points | AI-compressed key facts distilled from overflowed Layer 1 messages |
+| 2 | **Compressed Memory** | WebDAV `summary.md` | ≤10 bullet points | AI-compressed key facts distilled from overflowed Layer 1 messages. See [Memory Compression](memory-compression.md) for full compression pipeline. |
 | 3 | **Soul** | WebDAV `soul.md` file | `max_soul_chars` chars | Persistent core memory editable by user via chat |
 
-Compression replaces the old daily-summary model. Instead of accumulating
-per-date `.md` files on a schedule, a single `summary.md` is produced
-incrementally: when Layer 1 overflows (char count or context byte limit),
-the oldest half is fed to the LLM alongside the existing `summary.md` (if
-any). The LLM returns a **replacement** `summary.md` — at most 10 bullet
-points — that merges old and new knowledge into a single condensed file.
-Compressed messages are then pruned from Layer 1.
-
-Compression runs in the background after the bot reply is delivered (not on
-a timer). The same LLM call also identifies which knowledge entries were
-relevant to the compressed conversation, feeding the [Knowledge Priority
-Algorithm](knowledge-priority.md).
+Compression moves overflowed Layer 1 messages into Layer 2. The full
+compression pipeline — including triggers (char count, byte limit, token
+near-limit), LLM prompt structure, knowledge entry identification, and the
+three-trigger decision flow — is documented in
+[Memory Compression](memory-compression.md).
 
 - Upstream: [Configuration Management](config.md) provides `ModelConfig`
   (`max_text_length`, `max_history_size`, `max_soul_chars`,
-  `memory_ttl_secs`, `persist_interval_secs`, `max_context_bytes`)
+  `memory_ttl_secs`, `persist_interval_secs`, `max_context_bytes`,
+  `model_context_length`)
 - Upstream: [Agent Harness](../agent-harness.md) triggers
   `compress_room_if_needed` after each message, `persist_room_snapshots` on a
   periodic timer, `restore_history` on room init, and handles `edit_soul` tool
   calls
+- Downstream: [Memory Compression](memory-compression.md) — full compression
+  pipeline (triggers, LLM prompt, parse, write, knowledge review)
 - Downstream: WebDAV crate (`WebDavClient`, `WebDavPath`) persists
   `summary.md`, snapshots, and `soul.md`
-- Downstream: [AI Provider](ai-provider.md) generates compressed memory from
-  overflowed chat history and identifies relevant knowledge entries
-- Downstream: [Knowledge Management](knowledge.md) is a separate system for
+- Downstream: [AI Provider](ai-provider.md) executes compression prompts
+- Downstream: [Knowledge Management](knowledge.md) — separate system for
   categorized skill/secret/note entries (not part of the three-layer memory)
-- Downstream: [Knowledge Priority Algorithm](knowledge-priority.md) consumes
-  LLM-identified knowledge usage from compression cycles
 
 ## 2. Diagram
 
@@ -89,52 +82,8 @@ for Layer 1 and TTL-based room eviction.
 
 ### 2b. Compression Flow — Layer 1 → Layer 2 (Overflow)
 
-Triggered **after the bot reply has been delivered to the user**, running
-silently in the background so there is no delay between user request and
-bot response. Compression fires when `char_count > max_text_length`
-**or** before the next LLM call when serialized context bytes exceed
-`max_context_bytes`. The oldest half of Layer 1 is compressed into a
-replacement `summary.md` of at most 10 bullet points. The same LLM call
-identifies which knowledge entries were used — feeding the priority algorithm.
-
-```mermaid
-flowchart TD
-    L1[(Layer 1<br/>Chat History)]
-    CHECK{"char_count > max_text_length<br/>OR context_bytes > max_context_bytes"}
-    EXISTING[Existing summary.md]
-    AI[AiProvider]
-    COMPRESS["LLM Compress<br/>oldest half + existing summary.md<br/>→ ≤10 bullet points"]
-    USED["Knowledge Entries Used<br/>(entry filenames)"]
-    SUMMARY[New summary.md]
-    WRITE[PUT summary.md]
-    WEBDAV[(NextCloud WebDAV)]
-    PRIORITY[(Knowledge Priority<br/>review_knowledge_priorities)]
-    PRUNE[Prune Compressed Messages]
-
-    L1 -->|"char_count, bytes"| CHECK
-    CHECK -->|"yes: oldest half"| COMPRESS
-    WEBDAV -->|"GET summary.md (if exists)"| EXISTING
-    EXISTING -->|"existing bullets (or empty)"| COMPRESS
-    COMPRESS -->|"compress + identify prompt"| AI
-    AI -->|"summary.md bullets + used entries"| COMPRESS
-    COMPRESS -->|"≤10 bullet points"| SUMMARY
-    COMPRESS -->|"Vec of entry filenames"| USED
-    SUMMARY -->|"PUT summary.md"| WEBDAV
-    USED --> PRIORITY
-    PRIORITY --> PRUNE
-    PRUNE -->|"prune compressed from Layer 1"| L1
-```
-
-Compression is a **replace** operation: the LLM receives the existing
-`summary.md` content plus the oldest half of overflowed messages, and
-produces a fresh `summary.md` that distills both into at most 10 bullet
-points. No per-date files accumulate. No scheduled timer.
-
-**Fallback**: if the LLM call fails, compression is skipped (messages
-stay in Layer 1, prune is skipped). The byte-limit trigger also drives
-the existing `truncate_and_summarize` inline mechanism (see agent-harness.md
-§2i) which operates on the in-memory context for the current LLM call
-without persisting to WebDAV.
+Full compression pipeline (triggers, LLM prompt, parse, write, knowledge review)
+is documented in [Memory Compression](memory-compression.md).
 
 ### 2c. Persist & Evict Flow — Timer
 
@@ -434,7 +383,8 @@ Fields from `ModelConfig` in [Configuration Management](config.md):
 | `max_soul_chars`       | `usize` | 2000    | Layer 3 max chars for soul.md content              |
 | `memory_ttl_secs`      | `u64`   | 300     | Room idle timeout — evict from memory (after snapshot persisted) |
 | `persist_interval_secs`| `u64`   | 60      | How often the timer writes dirty snapshots to WebDAV |
-| `max_context_bytes`    | `usize` | 4_000_000 | Max byte size for context (triggers proactive compression and image-stripping when exceeded) |
+| `max_context_bytes`    | `usize` | 4_000_000 | Max byte size for context (triggers inline summarization + flags for compression) |
+| `model_context_length` | `u32`   | 131072  | Model's max context tokens; 90% threshold triggers post-LLM compression |
 
 Note: removed `max_summary_chars` and `summary_days` — no longer needed since
 Layer 2 is a single `summary.md` capped at 10 bullet points by LLM instruction.
@@ -447,8 +397,9 @@ Layer 2 is a single `summary.md` capped at 10 bullet points by LLM instruction.
 | ------------------- | ----------------------------- | ------------------------------ | ------------------------------------------------------------ | --------------------------------------------- |
 | **Timer persist**   | `maintenance_tick()` (Phase 1) | Every `persist_interval_secs`  | `dirty_snapshots` is non-empty                               | Build full snapshot (L1+L2+L3), PUT `snapshot.json`, clear dirty flag |
 | **Timer evict**     | `maintenance_tick()` (Phase 2) | Every `persist_interval_secs`  | Room has ≥ 1 message AND `last_activity > 0` AND `now - last_activity > memory_ttl_secs` | Persist snapshot if dirty, then remove room from `HashMap` |
-| **Compression**     | `compress_room_if_needed()`    | After reply delivered (background)  | `char_count > max_text_length` AND `messages.len() > 4`      | LLM-compress oldest half + existing summary.md → new summary.md (≤10 bullets), identify used knowledge entries, prune L1, mark snapshot dirty, call `review_knowledge_priorities_for_room()` |
-| **Context overflow**| `truncate_and_summarize()`     | Before each LLM call           | Serialized context bytes > `max_context_bytes`               | Inline summarization of middle messages (see agent-harness.md §2i). Optionally also writes result to summary.md. |
+| **Compression**     | `compress_room_if_needed()`    | After reply delivered (background)  | `char_count > max_text_length` AND `messages.len() > 4`      | See [Memory Compression](memory-compression.md) |
+| **Token pressure**  | `check_token_pressure()`       | After each LLM response          | `usage.total_tokens > model_context_length * 0.9`           | See [Memory Compression](memory-compression.md) |
+| **Context overflow**| `truncate_and_summarize()`     | Before each LLM call           | Serialized context bytes > `max_context_bytes`               | Inline summarization; see [Memory Compression](memory-compression.md §2d) |
 | **Room init**       | `restore_history()`            | Once per room, on first message| Room not in memory (fresh or evicted)                        | Load snapshot (cache-first), fall back to individual files |
 | **Soul edit**       | `edit_soul()` tool             | On user request                | LLM invokes `edit_soul` tool                                 | Write `soul.md`, update in-memory soul, mark snapshot dirty |
 | **Touch activity**  | `process_message()`            | On every incoming message      | Room exists in memory                                        | Update `last_activity` timestamp to prevent eviction |
@@ -473,17 +424,17 @@ context in this order:
 Knowledge entries are injected between soul and summary (see
 [Knowledge Management](knowledge.md)).
 
-### Compression Lifecycle (harness.rs)
+### Compression Lifecycle
+
+See [Memory Compression](memory-compression.md) for the full compression
+pipeline — triggers, LLM prompt structure, knowledge entry identification,
+and the three-trigger decision flow (char overflow, byte overflow, token
+near-limit).
 
 | Step               | Harness method                     | Notes                                              |
 | ------------------ | ---------------------------------- | -------------------------------------------------- |
 | Timer persist      | `maintenance_tick()` (Phase 1)     | Called every `persist_interval_secs`; writes dirty snapshot.json |
 | Timer evict        | `maintenance_tick()` (Phase 2)     | Called every `persist_interval_secs`; persists snapshot then removes stale rooms |
-| Compression check  | `memory.check_and_archive()`       | Returns oldest half if Layer 1 overflowed           |
-| AI compress        | `compress_for_summary()`           | Calls AI provider with oldest messages + existing summary.md; returns ≤10 bullets + used knowledge entries |
-| Write summary      | `write_summary_md()`               | PUTs `summary.md` to WebDAV (full replace)          |
-| Knowledge review   | `review_knowledge_priorities_for_room()`| Promotes used entries one level, decays unused (see knowledge-priority.md) |
-| Prune Layer 1      | `memory.prune_archived()`          | Removes compressed messages from buffer             |
 | Room init          | `restore_history()`                | Cache-first: reads snapshot.json, falls back to individual files |
 | Soul edit          | `edit_soul()` tool                 | Writes soul.md, updates in-memory, marks snapshot dirty |
 | Touch activity     | `process_message()`                | Updates `last_activity` on every incoming message   |

@@ -17,7 +17,8 @@ manages per-room memory, and persists everything to WebDAV.
   resolution and alias message sending (production path for bot replies)
 - Downstream: [AI Provider](base/ai-provider.md) handles chat completion requests
 - Downstream: [Memory Management](base/memory.md) manages per-room conversation history,
-  compression (threshold-based, produces summary.md), snapshot persist, and TTL-based room eviction
+  compression (threshold-based, produces summary.md — see [Memory Compression](base/memory-compression.md)),
+  snapshot persist, and TTL-based room eviction
 - Downstream: [WebDAV Tool](tools/webdav.md) persists image assets
 
 ## 2. Diagram
