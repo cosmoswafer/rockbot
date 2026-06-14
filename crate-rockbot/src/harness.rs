@@ -317,6 +317,11 @@ impl AgentHarness {
                         let mut altered_soul = false;
                         let mut altered_knowledge = false;
                         let secrets = load_secrets_from_webdav(self.webdav.as_ref()).await;
+                        if secrets.is_some() {
+                            debug!("Secrets loaded from WebDAV for tool execution batch");
+                        } else {
+                            debug!("No secrets available for tool execution batch");
+                        }
 
                         for tool_call in &result.tool_calls {
                             debug!(
@@ -357,6 +362,8 @@ impl AgentHarness {
                                         // (e.g. NextCloud share links) so text-only
                                         // models can edit images without needing vision.
                                         if !self.current_image_urls.is_empty() {
+                                            debug!("Auto-injecting {} message image URL(s) into image_gen args",
+                                                self.current_image_urls.len());
                                             let existing = obj
                                                 .get("image_urls")
                                                 .and_then(|v| v.as_array())
@@ -390,15 +397,25 @@ impl AgentHarness {
                             } else if tool_call.function.name == "web_fetch" {
                                 match &secrets {
                                     Some(entries) if !entries.is_empty() => {
+                                        debug!("Intercepting web_fetch call {} — secret resolution active ({} entries loaded)",
+                                            tool_call.id, entries.len());
                                         let host_map = filter_secrets_by_host(entries, &tool_call.function.arguments);
                                         match host_map {
                                             Some(ref map) if !map.is_empty() => {
-                                                resolve_secret_refs_deep(&tool_call.function.arguments, map)
+                                                let resolved = resolve_secret_refs_deep(&tool_call.function.arguments, map);
+                                                debug!("Secret resolution complete for web_fetch call {}", tool_call.id);
+                                                resolved
                                             }
-                                            _ => tool_call.function.arguments.clone(),
+                                            _ => {
+                                                debug!("No matching secrets for web_fetch call {} — passing arguments through", tool_call.id);
+                                                tool_call.function.arguments.clone()
+                                            }
                                         }
                                     }
-                                    _ => tool_call.function.arguments.clone(),
+                                    _ => {
+                                        debug!("No secrets loaded — passing web_fetch call {} through unchanged", tool_call.id);
+                                        tool_call.function.arguments.clone()
+                                    }
                                 }
                             } else if tool_call.function.name == "webdav"
                                 || tool_call.function.name == "edit_soul"
@@ -451,6 +468,7 @@ impl AgentHarness {
                             );
 
                             if tool_call.function.name == "vision" && !tool_result.is_error {
+                                debug!("vision call {} completed — caching images for room {}", tool_call.id, room_id);
                                 self.cache_vision_images(room_id, &tool_result.content);
                             }
 
@@ -459,6 +477,7 @@ impl AgentHarness {
                             }
 
                             if tool_call.function.name == "image_gen" && !tool_result.is_error {
+                                debug!("image_gen call {} completed — queuing for post-reply upload", tool_call.id);
                                 image_ids_this_turn.push(tool_call.id.clone());
                             }
 
@@ -517,6 +536,10 @@ impl AgentHarness {
                             iterations,
                         );
                         self.last_image_ids = image_ids_this_turn;
+                        if !self.last_image_ids.is_empty() {
+                            debug!("Carrying {} generated image(s) for post-reply upload: {:?}",
+                                self.last_image_ids.len(), self.last_image_ids);
+                        }
                         return Ok(Some(reply));
                     }
 
@@ -1399,6 +1422,11 @@ fn inject_image_urls_from_refs(
         }
     }
     if !injected.is_empty() {
+        debug!("Image interception: injecting {} image URL(s) into image_gen args (sources: attachments={}, pool={}, agent-provided={})",
+            injected.len(),
+            refs.iter().filter(|r| prompt_lower.contains(&r.title.to_lowercase())).count(),
+            if let Some(pool) = image_pool { pool.get(room_id).map(|v| v.len()).unwrap_or(0) } else { 0 },
+            args.get("image_urls").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0));
         args["image_urls"] = serde_json::Value::Array(injected);
     }
     serde_json::to_string(&args).unwrap_or_else(|_| arguments.to_string())
@@ -1420,7 +1448,10 @@ fn replace_secret_refs(value: &str, secrets: &HashMap<String, String>) -> String
         }
         let key = &after_prefix[..key_end];
         match secrets.get(key) {
-            Some(secret_value) => result.push_str(secret_value),
+            Some(secret_value) => {
+                debug!("Resolved secret ref for key '{}'", key);
+                result.push_str(secret_value);
+            }
             None => {
                 warn!("Secret key '{}' not found in secrets.toml", key);
                 result.push_str("secret:");
@@ -1444,7 +1475,10 @@ fn filter_secrets_by_host(entries: &[SecretEntry], args_json: &str) -> Option<Ha
             let port = parsed.port().map(|p| format!(":{p}")).unwrap_or_default();
             format!("{scheme}://{hostname}{port}")
         }
-        Err(_) => return None,
+        Err(e) => {
+            warn!("Failed to parse URL in web_fetch args for secret host matching: {e}");
+            return None;
+        }
     };
 
     let map: HashMap<String, String> = entries
@@ -1454,8 +1488,12 @@ fn filter_secrets_by_host(entries: &[SecretEntry], args_json: &str) -> Option<Ha
         .collect();
 
     if map.is_empty() {
+        debug!("No secrets configured for host '{}'", host);
         None
     } else {
+        debug!("Resolved {} secret(s) for host '{}': {:?}",
+            map.len(), host,
+            map.keys().collect::<Vec<_>>());
         Some(map)
     }
 }
@@ -1494,8 +1532,16 @@ async fn load_secrets_from_webdav(webdav: Option<&WebDavClient>) -> Option<Vec<S
     let client = webdav?;
     match client.read_file_to_string("secrets.toml").await {
         Ok(content) => match toml::from_str::<SecretsToml>(&content) {
-            Ok(parsed) if !parsed.secrets.is_empty() => Some(parsed.secrets),
-            Ok(_) => None,
+            Ok(parsed) if !parsed.secrets.is_empty() => {
+                debug!("Loaded {} secret(s) from WebDAV (hosts: {:?})",
+                    parsed.secrets.len(),
+                    parsed.secrets.iter().map(|e| e.host.as_str()).collect::<std::collections::HashSet<_>>());
+                Some(parsed.secrets)
+            }
+            Ok(_) => {
+                debug!("secrets.toml loaded but contains no entries — skipping interception");
+                None
+            }
             Err(e) => {
                 warn!("Failed to parse secrets.toml: {e}");
                 None
