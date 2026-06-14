@@ -6,6 +6,7 @@ config.toml
 .aider*
 .env
 .agents/deno.lock
+node_modules/
 
 tmp/
 
