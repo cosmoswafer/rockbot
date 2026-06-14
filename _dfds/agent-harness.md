@@ -328,35 +328,38 @@ This covers all five image sources for editing:
 - WebDAV-read images (via `image_pool` name match, same pipeline as vision)
 - DDP message URLs with image content types (via `current_image_urls` — auto-injected without prompt matching)
 
-### 2h. Daily Summary Review — Knowledge Retrieval Ordering
+### 2h. Memory Compression + Knowledge Priority Review
 
-After each daily summary write (archive) and during periodic maintenance, the
-harness calls `review_knowledge_priorities()` which iterates over all rooms
-but delegates to `KnowledgeManager::review_priorities()` — currently a no-op
-that returns `Ok(false)`.
-Knowledge retrieval uses `match_relevant()` which scores entries by keyword
-overlap against `when_useful`, `tags`, and filename-derived title. Priority-based
-scoring was removed when the knowledge index was simplified.
+After each compression cycle (which produces `summary.md` from overflowed
+Layer 1 messages), the harness calls `review_knowledge_priorities_for_room()`
+with the list of knowledge entry filenames that the LLM identified as relevant
+to the compressed conversation. Used entries are promoted to P0; unused entries
+decay based on days since their last promotion. See
+[Knowledge Priority Algorithm](base/knowledge-priority.md).
 
 ```mermaid
 flowchart TD
-    ARCHIVE["archive_room_if_needed()<br/>(after upsert_daily_summary)"]
-    TIMER["Maintenance Timer<br/>(every persist_interval_secs)"]
-    REVIEW["review_knowledge_priorities()<br/>(no-op)"]
-    SKIP["(no action)"]
+    COMPRESS["compress_room_if_needed()<br/>(after write_summary_md)"]
+    LLM_USED["LLM-identified<br/>used entry filenames"]
+    REVIEW["review_knowledge_priorities_for_room()"]
+    PROMOTE["Promote used → P0<br/>Decay unused by recency"]
+    DAV[(NextCloud WebDAV)]
+    MARK["Mark Snapshot Dirty"]
 
-    ARCHIVE -->|"post-archive trigger"| REVIEW
-    TIMER -->|"periodic trigger"| REVIEW
-    REVIEW --> SKIP
+    COMPRESS -->|"used filenames"| LLM_USED
+    LLM_USED --> REVIEW
+    REVIEW --> PROMOTE
+    PROMOTE -->|"PUT index.json"| DAV
+    PROMOTE --> MARK
 ```
 
 ### 2i. Inline Context Overflow — truncate_and_summarize
 
 Before each LLM call, the harness checks if the total JSON byte size of the
 messages exceeds `max_context_bytes`. If so, it summarises older messages
-inline — replacing them with a concise AI-generated summary — without
-touching WebDAV. This is a separate mechanism from the Layer 1→Layer 2
-archive (which writes daily summaries to WebDAV).
+inline — replacing them with a concise AI-generated summary — for the current
+LLM call. This is a separate lightweight mechanism from the Layer 1→Layer 2
+compression (which writes `summary.md` to WebDAV and prunes history).
 
 ```mermaid
 flowchart TD

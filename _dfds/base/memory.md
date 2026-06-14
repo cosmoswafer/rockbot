@@ -2,14 +2,13 @@
 
 ## 1. Purpose
 
-Three-layer per-room conversation memory, each layer progressively condensed
-from the one before. Rooms stay in memory while actively communicating and are
-evicted after a configurable idle TTL — the snapshot is persisted to WebDAV
-before eviction, then restored on next interaction.
+Three-layer per-room conversation memory. Rooms stay in memory while actively
+communicating and are evicted after a configurable idle TTL — the snapshot is
+persisted to WebDAV before eviction, then restored on next interaction.
 
 All layers are loaded on room init and injected into the agent context as
 system messages. On restore, a single cached `snapshot.json` is read first
-(containing all three layers). Individual files (`soul.md`, `summaries/*.md`)
+(containing all three layers). Individual files (`soul.md`, `summary.md`)
 serve as the source of truth — the snapshot is a performance cache, rebuilt
 incrementally whenever any layer changes. If the snapshot is missing or stale,
 the system falls back to reading individual files.
@@ -17,33 +16,37 @@ the system falls back to reading individual files.
 | Layer | Name | Storage | Limit | Contents |
 |-------|------|---------|-------|----------|
 | 1 | **Chat History** | In-memory only | `max_text_length` chars, `max_history_messages` msgs | Raw `Vec<ChatMessage>` — the current working window |
-| 2 | **Daily Summaries** | WebDAV `.md` files | `max_summary_chars` total, 3-day rolling window | AI-summarized daily digests of overflowed Layer 1 messages |
+| 2 | **Compressed Memory** | WebDAV `summary.md` | ≤10 bullet points | AI-compressed key facts distilled from overflowed Layer 1 messages |
 | 3 | **Soul** | WebDAV `soul.md` file | `max_soul_chars` chars | Persistent core memory editable by user via chat |
 
-Archive is a single flow: messages accumulate in Layer 1. When Layer 1 exceeds
-`max_text_length` chars, the oldest half is AI-summarized into today's Layer 2
-daily summary. Summaries older than `summary_days` (default 3 days) are
-deleted. The archived messages are pruned from Layer 1. The raw conversation
-state is also periodically saved to WebDAV as a crash-recovery checkpoint.
+Compression replaces the old daily-summary model. Instead of accumulating
+per-date `.md` files on a schedule, a single `summary.md` is produced
+incrementally: when Layer 1 overflows (char count or context byte limit),
+the oldest half is fed to the LLM alongside the existing `summary.md` (if
+any). The LLM returns a **replacement** `summary.md` — at most 10 bullet
+points — that merges old and new knowledge into a single condensed file.
+Compressed messages are then pruned from Layer 1.
 
-Layer 3 (soul) is permanent — the user can rewrite the bot's identity,
-preferences, and facts through normal conversation (e.g. "update my soul to
-say I prefer short answers"). The agent overwrites the entire `soul.md` file
-via the `edit_soul` tool (full replace, no sectional editing).
+Compression runs in the background after the bot reply is delivered (not on
+a timer). The same LLM call also identifies which knowledge entries were
+relevant to the compressed conversation, feeding the [Knowledge Priority
+Algorithm](knowledge-priority.md).
 
 - Upstream: [Configuration Management](config.md) provides `ModelConfig`
-  (`max_text_length`, `max_history_size`, `max_summary_chars`, `max_soul_chars`,
-  `summary_days`)
+  (`max_text_length`, `max_history_size`, `max_soul_chars`,
+  `memory_ttl_secs`, `persist_interval_secs`, `max_context_bytes`)
 - Upstream: [Agent Harness](../agent-harness.md) triggers
-  `archive_room_if_needed` after each message, `persist_room_snapshots` on a
+  `compress_room_if_needed` after each message, `persist_room_snapshots` on a
   periodic timer, `restore_history` on room init, and handles `edit_soul` tool
   calls
-- Downstream: WebDAV crate (`WebDavClient`, `WebDavPath`) persists daily
-  summaries, snapshots, and `soul.md`
-- Downstream: [AI Provider](ai-provider.md) generates daily summaries from
-  overflowed chat history
+- Downstream: WebDAV crate (`WebDavClient`, `WebDavPath`) persists
+  `summary.md`, snapshots, and `soul.md`
+- Downstream: [AI Provider](ai-provider.md) generates compressed memory from
+  overflowed chat history and identifies relevant knowledge entries
 - Downstream: [Knowledge Management](knowledge.md) is a separate system for
   categorized skill/secret/note entries (not part of the three-layer memory)
+- Downstream: [Knowledge Priority Algorithm](knowledge-priority.md) consumes
+  LLM-identified knowledge usage from compression cycles
 
 ## 2. Diagram
 
@@ -51,12 +54,12 @@ via the `edit_soul` tool (full replace, no sectional editing).
 
 On each interaction, data from all three layers is retrieved (with
 configurable limits) and injected into the agent context. Write flows
-(archive, persist, soul edit) are shown in separate sub-diagrams.
+(compression, persist, soul edit) are shown in separate sub-diagrams.
 
 ```mermaid
 flowchart TD
     L3[(Layer 3<br/>Soul)]
-    L2[(Layer 2<br/>Daily Summaries)]
+    L2[(Layer 2<br/>Compressed Memory)]
     WEBDAV[(NextCloud WebDAV)]
     L1[(Layer 1<br/>Chat History)]
     KNOWLEDGE[(Knowledge<br/>Entries)]
@@ -64,8 +67,8 @@ flowchart TD
 
     subgraph "Load from stores"
         L3 -->|"truncated to max_soul_chars"| SOUL_OUT[Soul Content]
-        WEBDAV -->|"last summary_days"| L2
-        L2 -->|"newest first"| SUM_OUT[Summary Texts]
+        WEBDAV -->|"GET summary.md"| L2
+        L2 -->|"≤10 bullet points"| SUM_OUT[Compressed Memory Text]
         L1 -->|"last max_history_size"| HIST_OUT[History Messages]
     end
 
@@ -73,56 +76,74 @@ flowchart TD
     KNOWLEDGE -->|"1.5 inject"| BUILD
     SUM_OUT -->|"2. inject"| BUILD
     HIST_OUT -->|"3. inject"| BUILD
-    BUILD -->|"soul + summaries + history"| CONTEXT[Agent Context]
+    BUILD -->|"soul + compressed memory + history"| CONTEXT[Agent Context]
 
     MSG[Incoming Message] -->|"append"| L1
 ```
 
 Layer 1 is populated by incoming messages. Layer 2 is populated by the
-[Archive Flow](#2b-archive-flow--layer-1--layer-2-threshold). Layer 3 is
+[Compression Flow](#2b-compression-flow--layer-1--layer-2-overflow). Layer 3 is
 populated by the [Soul Editing](#2d-happy-flow--soul-editing) tool. The
 [Persist & Evict Flow](#2c-persist--evict-flow--timer) provides crash recovery
 for Layer 1 and TTL-based room eviction.
 
-### 2b. Archive Flow — Layer 1 → Layer 2 (Threshold)
+### 2b. Compression Flow — Layer 1 → Layer 2 (Overflow)
+
+Triggered **after the bot reply has been delivered to the user**, running
+silently in the background so there is no delay between user request and
+bot response. Compression fires when `char_count > max_text_length`
+**or** before the next LLM call when serialized context bytes exceed
+`max_context_bytes`. The oldest half of Layer 1 is compressed into a
+replacement `summary.md` of at most 10 bullet points. The same LLM call
+identifies which knowledge entries were used — feeding the priority algorithm.
 
 ```mermaid
 flowchart TD
     L1[(Layer 1<br/>Chat History)]
-    CHECK{"char_count > max_text_length<br/>AND messages.len() > 4"}
+    CHECK{"char_count > max_text_length<br/>OR context_bytes > max_context_bytes"}
+    EXISTING[Existing summary.md]
     AI[AiProvider]
-    SUMMARIZE(AI-Summarize Oldest Half)
-    TODAY[Today's Summary .md]
-    MERGE[Merge with Existing]
-    WRITE[PUT summary .md]
+    COMPRESS["LLM Compress<br/>oldest half + existing summary.md<br/>→ ≤10 bullet points"]
+    USED[Knowledge Entries Used<br/>(entry filenames)]
+    SUMMARY[New summary.md]
+    WRITE[PUT summary.md]
     WEBDAV[(NextCloud WebDAV)]
-    AGE{Summary > summary_days?}
-    DELETE[DELETE Old Summaries]
-    PRUNE[Prune Archived Messages]
+    PRIORITY[(Knowledge Priority<br/>review_knowledge_priorities)]
+    PRUNE[Prune Compressed Messages]
 
-    L1 -->|"char_count, messages"| CHECK
-    CHECK -->|"yes: oldest half"| SUMMARIZE
-    SUMMARIZE -->|"summarize prompt"| AI
-    AI -->|"summary text"| SUMMARIZE
-    SUMMARIZE -->|"{date} raw summary"| TODAY
-    WEBDAV -->|"read existing"| MERGE
-    MERGE -->|"merged into single ## section"| WRITE
-    WRITE -->|"PUT summaries/{date}.md"| WEBDAV
-    MERGE --> PRUNE
-    PRUNE -->|"prune_from_layer1"| L1
-    WEBDAV -->|"list summaries/"| AGE
-    AGE -->|"yes"| DELETE
-    DELETE -->|"DELETE old .md"| WEBDAV
+    L1 -->|"char_count, bytes"| CHECK
+    CHECK -->|"yes: oldest half"| COMPRESS
+    WEBDAV -->|"GET summary.md (if exists)"| EXISTING
+    EXISTING -->|"existing bullets (or empty)"| COMPRESS
+    COMPRESS -->|"compress + identify prompt"| AI
+    AI -->|"summary.md bullets + used entries"| COMPRESS
+    COMPRESS -->|"≤10 bullet points"| SUMMARY
+    COMPRESS -->|"Vec of entry filenames"| USED
+    SUMMARY -->|"PUT summary.md"| WEBDAV
+    USED --> PRIORITY
+    PRIORITY --> PRUNE
+    PRUNE -->|"prune compressed from Layer 1"| L1
 ```
+
+Compression is a **replace** operation: the LLM receives the existing
+`summary.md` content plus the oldest half of overflowed messages, and
+produces a fresh `summary.md` that distills both into at most 10 bullet
+points. No per-date files accumulate. No scheduled timer.
+
+**Fallback**: if the LLM call fails, compression is skipped (messages
+stay in Layer 1, prune is skipped). The byte-limit trigger also drives
+the existing `truncate_and_summarize` inline mechanism (see agent-harness.md
+§2i) which operates on the in-memory context for the current LLM call
+without persisting to WebDAV.
 
 ### 2c. Persist & Evict Flow — Timer
 
 A single periodic timer handles both crash-recovery snapshot persistence and
-TTL-based eviction. The snapshot caches all three layers (chat history, daily
-summaries, soul) for single-read restore. After persisting, rooms idle longer
-than `memory_ttl_secs` are saved and removed from the in-memory map.
+TTL-based eviction. The snapshot caches all three layers (chat history,
+compressed memory, soul) for single-read restore. After persisting, rooms idle
+longer than `memory_ttl_secs` are saved and removed from the in-memory map.
 
-When any layer changes (soul edit, summary write, archive), the snapshot is
+When any layer changes (soul edit, summary write, compression), the snapshot is
 marked dirty and rebuilt on the next timer tick — writes are coalesced to
 avoid thrashing WebDAV.
 
@@ -130,7 +151,7 @@ avoid thrashing WebDAV.
 flowchart TD
     TIMER[Evict Timer]
     L1[(Layer 1<br/>Chat History)]
-    L2[(Layer 2<br/>Daily Summaries)]
+    L2[(Layer 2<br/>Compressed Memory)]
     L3[(Layer 3<br/>Soul)]
     WEBDAV[(NextCloud WebDAV)]
     LOAD_ROOM{More Rooms?}
@@ -197,8 +218,7 @@ flowchart TD
     NEED_L2{Need Layer 2?}
     NEED_L3{Need Layer 3?}
     GET_SOUL["GET soul.md"]
-    LIST_SUM["PROPFIND summaries/"]
-    LOAD_FILES["GET each .md"]
+    GET_SUMMARY["GET summary.md"]
     INJECT[Inject into<br/>MemoryManager]
 
     INIT --> GET_SNAP
@@ -211,26 +231,20 @@ flowchart TD
     CHECK -->|"partial"| NEED_L2
 
     NEED_L2 -->|"GET soul.md"| GET_SOUL
-    NEED_L2 -->|"PROPFIND summaries/"| LIST_SUM
+    NEED_L2 -->|"GET summary.md"| GET_SUMMARY
     GET_SOUL --> DAV
-    LIST_SUM --> DAV
+    GET_SUMMARY --> DAV
     DAV -->|"soul content or 404"| INJECT
-    DAV -->|"all summaries"| FILTER
-    FILTER[Filter Last summary_days Days<br/>+ max 10 files]
-    FILTER --> LOAD_FILES
-    LOAD_FILES -->|"GET each .md"| DAV
-    DAV -->|"summary texts"| INJECT
+    DAV -->|"summary.md or 404"| INJECT
 
     RESTORED --> INJECT
-    INJECT -->|"soul + summaries + history"| CTX[Agent Context]
+    INJECT -->|"soul + summary + history"| CTX[Agent Context]
 ```
-
-> **Note:** The diagram shows parallel branches for loading `soul.md` and summaries. The current implementation loads them sequentially — summaries first, then soul (and knowledge after soul) — rather than issuing concurrent WebDAV requests.
 
 Knowledge entries are also restored during room init — see [Knowledge Management](knowledge.md).
 
 Key properties:
-- **Single read on cache hit**: one `GET snapshot.json` replaces 3+ WebDAV round trips
+- **Single read on cache hit**: one `GET snapshot.json` replaces 3 WebDAV round trips
 - **Graceful degradation**: if snapshot is missing or partial, falls back to individual file reads
 - **No snapshot blocking**: if snapshot write fails, the system continues operating — next timer tick retries
 
@@ -239,12 +253,12 @@ Key properties:
 ```mermaid
 flowchart TD
     AI[AiProvider]
-    L2_WRITE[Write Daily Summary]
+    L2_WRITE[Write summary.md]
     SOUL_WRITE[Write soul.md]
     SNAP_WRITE[Write snapshot.json]
     DAV[(NextCloud WebDAV)]
     LOAD[Load on Room Init]
-    FALLBACK["Skip Archiving<br/>(prune skipped)"]
+    FALLBACK["Skip Compression<br/>(prune skipped)"]
     WARN[Warn + Continue]
     RETRY[Retry Next Tick]
 
@@ -271,15 +285,15 @@ flowchart TD
     L1_B[(Layer 1<br/>In-Memory)]
     SNAP_A[(snapshot.json)]
     SNAP_B[(snapshot.json)]
-    L2_A[(Layer 2<br/>summaries/*.md)]
-    L2_B[(Layer 2<br/>summaries/*.md)]
+    L2_A[(Layer 2<br/>summary.md)]
+    L2_B[(Layer 2<br/>summary.md)]
     L3_A[(Layer 3<br/>soul.md)]
     L3_B[(Layer 3<br/>soul.md)]
 
     ROOM_A --> L1_A
     ROOM_B --> L1_B
-    L1_A -->|"overflow → archive"| L2_A
-    L1_B -->|"overflow → archive"| L2_B
+    L1_A -->|"overflow → compress"| L2_A
+    L1_B -->|"overflow → compress"| L2_B
     L1_A -->|"timer → persist"| SNAP_A
     L1_B -->|"timer → persist"| SNAP_B
     SNAP_A --> DAV_A
@@ -305,32 +319,31 @@ One file per room. Caches all three layers for single-read restore.
 | `room_id`          | `NonEmptyString`        | RocketChat room UUID                                   |
 | `messages`         | `Vec<ChatMessage>`      | Raw Layer 1 messages (in-memory buffer)                |
 | `char_count`       | `usize`                 | Running Layer 1 character count                        |
-| `archive_seq`      | `u64`                   | Next archive sequence number                           |
+| `archive_seq`      | `u64`                   | Compression sequence number (monotonic, for staleness checks) |
 | `soul`             | `Option<String>`        | Layer 3: full soul.md content (None if no soul)       |
-| `daily_summaries`  | `Vec<DailySummary>`     | Layer 2: cached daily summaries                       |
+| `summary`          | `Option<String>`        | Layer 2: compressed summary.md content (None if no summary) |
 | `updated_at`       | `String`                | ISO 8601 timestamp of last write                       |
 
-Rebuilt whenever any layer is modified (soul edit, summary write, archive).
+Rebuilt whenever any layer is modified (soul edit, compression write).
 Written on the periodic persist timer (coalesced — not on every individual
 change). Source of truth for each layer remains its dedicated file
-(`soul.md`, `summaries/*.md`).
+(`soul.md`, `summary.md`).
 
 ### `MemoryManager`
 
 | Field                  | Type                         | Notes                                    |
 | ---------------------- | ---------------------------- | ---------------------------------------- |
 | `rooms`                | `HashMap<String, RoomState>` | Per-room state map                       |
-| `max_chars`            | `usize`                      | Archive threshold (max_text_length)      |
+| `max_chars`            | `usize`                      | Compression threshold (max_text_length)  |
 | `max_history_messages` | `usize`                      | Layer 1 message count limit for context  |
-| `max_summary_chars`    | `usize`                      | Layer 2 total chars across loaded summaries |
-| `summary_days`         | `u32`                        | Layer 2 retention window (default 3)     |
 | `max_soul_chars`       | `usize`                      | Layer 3 max chars for soul.md content    |
-| `daily_summaries`      | `HashMap<String, Vec<DailySummary>>` | Layer 2 in-memory cache           |
+| `summaries`            | `HashMap<String, Option<String>>` | Layer 2 in-memory cache: room_id → summary.md content |
 | `souls`                | `HashMap<String, SoulMemory>`| Layer 3 in-memory cache                  |
 | `dirty_snapshots`      | `HashSet<String>`            | Room IDs needing snapshot rebuild        |
 | `knowledge`            | `HashMap<String, String>`    | Pre-formatted knowledge system messages per room |
 | `persist_interval_secs`| `u64`                        | Timer interval for writing snapshots (default 60) |
-| `max_context_bytes`    | `usize`                      | Byte limit that triggers proactive inline summarization and image-stripping (default 4MB ≈ 1M tokens). Matches typical model context limits to prevent token overflow before the provider rejects the request. |
+| `max_context_bytes`    | `usize`                      | Byte limit that triggers proactive compression and image-stripping (default 4MB ≈ 1M tokens). Matches typical model context limits to prevent token overflow before the provider rejects the request. |
+| `summary_count`       | `HashMap<String, u32>`       | Per-room count of compression cycles (for rate-limiting) |
 
 ### `RoomState`
 
@@ -350,18 +363,35 @@ change). Source of truth for each layer remains its dedicated file
 | `room_id`          | `String`           | Owning room identifier               |
 | `messages`         | `Vec<ChatMessage>` | In-memory message buffer             |
 | `char_count`       | `usize`            | Running character count              |
-| `archive_seq`      | `u64`              | Next archive sequence number         |
+| `archive_seq`      | `u64`              | Compression sequence number          |
 
-### `DailySummary` (Layer 2)
+### `CompressedMemory` (Layer 2)
 
-A single `.md` file stored at `{root}/{webdav_dir}/memory/summaries/{YYYY-MM-DD}.md`.
+A single file stored at `{root}/{webdav_dir}/memory/summary.md`.
 
-| Field      | Type     | Notes                                  |
-| ---------- | -------- | -------------------------------------- |
-| `date`     | `NonEmptyString` | `"YYYY-MM-DD"` ISO 8601 date (validated) |
-| `summary`  | `String` | AI-generated digest of that day's chat |
-| `msg_count`| `usize`  | Number of messages summarized          |
-| `char_count`| `usize` | Chars of the summary text             |
+```rust
+struct CompressedMemory {
+    room_id: NonEmptyString,
+    content: String,        // Markdown bullet list, ≤10 items
+    archive_seq: u64,       // Captures which compression cycle produced this
+    updated_at: String,     // ISO 8601
+}
+```
+
+The `content` is a flat bullet list — each line starts with `- `. The
+first line is a header (`# Memory Summary`), followed by at most 10 bullet
+points. The LLM is instructed to produce this format directly.
+
+Example:
+```markdown
+# Memory Summary
+
+- User prefers short, direct answers without explanations
+- Project X uses Rust with async-tokio runtime
+- Database credentials are stored in 1Password, not in code
+- The deployment target is x86_64-unknown-linux-musl
+- User dislikes Python type hints
+```
 
 ### `SoulMemory` (Layer 3)
 
@@ -390,10 +420,7 @@ Memory is stored per-room under the prefixed `webdav_dir` key (see
 {root}/{webdav_dir}/memory/
 ├── snapshot.json               # Timer-based crash-recovery checkpoint
 ├── soul.md                     # Layer 3: permanent core memory
-├── summaries/                  # Layer 2: daily AI summaries
-│   ├── 2026-06-08.md
-│   ├── 2026-06-09.md
-│   └── 2026-06-10.md
+├── summary.md                  # Layer 2: AI-compressed memory (≤10 bullet points)
 ```
 
 ## 4. Configuration
@@ -402,16 +429,15 @@ Fields from `ModelConfig` in [Configuration Management](config.md):
 
 | Field                  | Type    | Default | Notes                                              |
 | ---------------------- | ------- | ------- | -------------------------------------------------- |
-| `max_text_length`      | `usize` | 50000   | Archive threshold — triggers Layer 1 → Layer 2     |
+| `max_text_length`      | `usize` | 50000   | Compression threshold — triggers Layer 1 → Layer 2 when char_count exceeds this |
 | `max_history_size`     | `usize` | 18      | Layer 1 max messages in context                    |
-| `max_summary_chars`    | `usize` | 8000    | Layer 2 total chars across loaded summaries         |
 | `max_soul_chars`       | `usize` | 2000    | Layer 3 max chars for soul.md content              |
-| `summary_days`         | `u32`   | 3       | Layer 2 retention window (days)                    |
 | `memory_ttl_secs`      | `u64`   | 300     | Room idle timeout — evict from memory (after snapshot persisted) |
 | `persist_interval_secs`| `u64`   | 60      | How often the timer writes dirty snapshots to WebDAV |
-| `max_context_bytes`    | `usize` | 4_000_000 | Max byte size for context (triggers proactive inline summarization and image-stripping when exceeded) |
+| `max_context_bytes`    | `usize` | 4_000_000 | Max byte size for context (triggers proactive compression and image-stripping when exceeded) |
 
-Note: `set_daily_summaries()` (memory.rs:350) applies a hard cap of `.take(10)` summary files regardless of `max_summary_chars`.
+Note: removed `max_summary_chars` and `summary_days` — no longer needed since
+Layer 2 is a single `summary.md` capped at 10 bullet points by LLM instruction.
 
 ## 5. Integration with Agent Harness
 
@@ -420,12 +446,12 @@ Note: `set_daily_summaries()` (memory.rs:350) applies a hard cap of `.take(10)` 
 | Trigger             | Method                        | Frequency                      | Condition                                                    | Action                                        |
 | ------------------- | ----------------------------- | ------------------------------ | ------------------------------------------------------------ | --------------------------------------------- |
 | **Timer persist**   | `maintenance_tick()` (Phase 1) | Every `persist_interval_secs`  | `dirty_snapshots` is non-empty                               | Build full snapshot (L1+L2+L3), PUT `snapshot.json`, clear dirty flag |
-| **Knowledge review**| `maintenance_tick()` (Phase 1.5)| Every `persist_interval_secs`  | After snapshot flush, before eviction                        | Call `review_knowledge_priorities()` per room (currently a no-op in KnowledgeManager) |
 | **Timer evict**     | `maintenance_tick()` (Phase 2) | Every `persist_interval_secs`  | Room has ≥ 1 message AND `last_activity > 0` AND `now - last_activity > memory_ttl_secs` | Persist snapshot if dirty, then remove room from `HashMap` |
-| **Archive**         | `archive_room_if_needed()`    | After every message response   | `char_count > max_text_length` AND `messages.len() > 4`      | AI-summarize oldest half → daily `.md`, prune L1, mark snapshot dirty, then call `review_knowledge_priorities_for_room()` |
-| **Room init**       | `restore_history()`           | Once per room, on first message| Room not in memory (fresh or evicted)                        | Load snapshot (cache-first), fall back to individual files |
-| **Soul edit**       | `edit_soul()` tool            | On user request                | LLM invokes `edit_soul` tool                                 | Write `soul.md`, update in-memory soul, mark snapshot dirty |
-| **Touch activity**  | `process_message()`           | On every incoming message      | Room exists in memory                                        | Update `last_activity` timestamp to prevent eviction |
+| **Compression**     | `compress_room_if_needed()`    | After reply delivered (background)  | `char_count > max_text_length` AND `messages.len() > 4`      | LLM-compress oldest half + existing summary.md → new summary.md (≤10 bullets), identify used knowledge entries, prune L1, mark snapshot dirty, call `review_knowledge_priorities_for_room()` |
+| **Context overflow**| `truncate_and_summarize()`     | Before each LLM call           | Serialized context bytes > `max_context_bytes`               | Inline summarization of middle messages (see agent-harness.md §2i). Optionally also writes result to summary.md. |
+| **Room init**       | `restore_history()`            | Once per room, on first message| Room not in memory (fresh or evicted)                        | Load snapshot (cache-first), fall back to individual files |
+| **Soul edit**       | `edit_soul()` tool             | On user request                | LLM invokes `edit_soul` tool                                 | Write `soul.md`, update in-memory soul, mark snapshot dirty |
+| **Touch activity**  | `process_message()`            | On every incoming message      | Room exists in memory                                        | Update `last_activity` timestamp to prevent eviction |
 
 ### Tool: `edit_soul`
 
@@ -440,26 +466,25 @@ context in this order:
 
 ```
 1. soul.md content      (Layer 3 — truncated to max_soul_chars)
-2. daily summaries      (Layer 2 — last summary_days, newest first)
+2. summary.md content   (Layer 2 — ≤10 bullet points)
 3. chat history         (Layer 1 — last max_history_size messages)
 ```
 
-Knowledge entries are injected between soul and summaries (see
+Knowledge entries are injected between soul and summary (see
 [Knowledge Management](knowledge.md)).
 
-### Archival Lifecycle (harness.rs)
+### Compression Lifecycle (harness.rs)
 
 | Step               | Harness method                     | Notes                                              |
 | ------------------ | ---------------------------------- | -------------------------------------------------- |
 | Timer persist      | `maintenance_tick()` (Phase 1)     | Called every `persist_interval_secs`; writes dirty snapshot.json |
 | Timer evict        | `maintenance_tick()` (Phase 2)     | Called every `persist_interval_secs`; persists snapshot then removes stale rooms |
-| Archive check      | `memory.check_and_archive()`       | Returns oldest half if Layer 1 overflowed           |
-| AI summarize       | `summarize_for_archive()`          | Calls AI provider with oldest messages              |
-| Merge daily        | `upsert_daily_summary()`           | Reads today's `.md`, merges summaries into single `##` section, writes back. Caller (`archive_room_if_needed`) marks snapshot dirty after successful merge. |
-| Prune Layer 1      | `memory.prune_archived()`          | Removes archived messages from buffer               |
-| Age out summaries  | `delete_old_summaries()`           | Deletes `.md` older than `summary_days`             |
-| Knowledge review   | `review_knowledge_priorities_for_room()`| Called by `archive_room_if_needed()` after age-out (currently a no-op in KnowledgeManager) |
+| Compression check  | `memory.check_and_archive()`       | Returns oldest half if Layer 1 overflowed           |
+| AI compress        | `compress_for_summary()`           | Calls AI provider with oldest messages + existing summary.md; returns ≤10 bullets + used knowledge entries |
+| Write summary      | `write_summary_md()`               | PUTs `summary.md` to WebDAV (full replace)          |
+| Knowledge review   | `review_knowledge_priorities_for_room()`| Promotes used entries, decays unused (see knowledge-priority.md) |
+| Prune Layer 1      | `memory.prune_archived()`          | Removes compressed messages from buffer             |
 | Room init          | `restore_history()`                | Cache-first: reads snapshot.json, falls back to individual files |
 | Soul edit          | `edit_soul()` tool                 | Writes soul.md, updates in-memory, marks snapshot dirty |
 | Touch activity     | `process_message()`                | Updates `last_activity` on every incoming message   |
-| Context injection  | `MemoryManager::build_context()`   | Prepend soul + summaries before history             |
+| Context injection  | `MemoryManager::build_context()`   | Prepend soul + summary + history                    |

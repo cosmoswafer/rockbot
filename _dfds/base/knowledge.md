@@ -59,8 +59,8 @@ agent fetch additional entries on demand during the agent loop.
 - Downstream: [AI Provider](ai-provider.md) synthesizes knowledge entries from
   user instructions via `save_knowledge` tool calls
 - Downstream: `BuildContext` receives injected knowledge as system messages
-- Downstream: [Knowledge Priority Algorithm](knowledge-priority.md) adaptively recalculates entry
-  priorities based on daily summary mentions
+- Downstream: [Knowledge Priority Algorithm](knowledge-priority.md) updates entry
+  priorities based on LLM-identified usage during memory compression
 
 ## 2. Diagram
 
@@ -258,16 +258,20 @@ denormalized into the index for fast retrieval without reading every `.md` file.
 
 ```rust
 enum KnowledgePriority {
-    P0, // used every day in latest 3-day window — always loaded
-    P1, // used ≥ 1 in latest 3-day window — strong boost (+5)
-    P2, // not used in latest 7 days (1st cycle) OR new entry — moderate boost (+2)
-    P3, // not used for 2+ consecutive cycles — baseline (+0)
+    P0, // promoted within last 1 day — always loaded (regardless of keyword overlap)
+    P1, // promoted within 3 days — strong boost (+5 score)
+    P2, // promoted within 7 days — moderate boost (+2 score)
+    P3, // promoted >7 days ago or never — baseline (+0)
 }
 ```
 
-**Priority**: the `priority` field is stored in `.md` frontmatter for
-informational purposes but is no longer used in retrieval decisions.
-Retrieval is ordered by keyword overlap score (descending).
+**Priority**: the `priority` field is stored in `.md` frontmatter and in
+`index.json`'s `IndexEntry`. Priority is updated by the
+[Knowledge Priority Algorithm](knowledge-priority.md) during memory
+compression — when the LLM generates `summary.md` it simultaneously identifies
+which knowledge entries were relevant to the compressed conversation. Priority
+affects retrieval: P0 entries are always loaded; P1-P3 get score bonuses added
+to keyword overlap scores.
 
 ### `KnowledgeCategory`
 

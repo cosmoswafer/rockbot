@@ -102,9 +102,7 @@ flowchart TD
 | `max_history_size`     | `BoundedUsize` | Max conversation turns (default 18); validated 1..=100_000_000 |
 | `max_text_length`      | `BoundedUsize` | Layer 1 overflow threshold chars (default 50000); validated 1..=100_000_000 |
 | `max_iterations`       | `u32`          | Max agent loop iterations (default 28)                         |
-| `max_summary_chars`    | `BoundedUsize` | Layer 2 max chars across loaded summaries (default 8000); validated 1..=100_000_000 |
 | `max_soul_chars`       | `BoundedUsize` | Layer 3 max chars for soul.md content (default 2000); validated 1..=100_000_000 |
-| `summary_days`         | `u32`          | Layer 2 retention window in days (default 3)                  |
 | `memory_ttl_secs`      | `u64`          | Room idle timeout — snapshot to WebDAV then evict (default 300)|
 | `persist_interval_secs`| `u64`          | Snapshot persist timer interval (default 60)                  |
 | `max_context_bytes`    | `BoundedUsize` | Max byte size for context (default 4MB ≈ 1M tokens). Triggers proactive inline summarization and image-stripping when exceeded. Validated 1..=100_000_000 |

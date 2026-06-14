@@ -1,86 +1,77 @@
 # Knowledge Priority Algorithm
 
-> **Deprecated** — The knowledge index was replaced with `filename` + `when_useful` + `tags` (see [Knowledge Management](knowledge.md)). Priority recalculation no longer runs (`review_priorities` is a no-op). This DFD is preserved for historical reference.
+## 1. Purpose
 
-## 1. Purpose (historical)
+Defines the **LLM-driven priority promotion algorithm** that runs during memory
+compression. When the LLM compresses overflowed Layer 1 messages into
+`summary.md`, it simultaneously identifies which knowledge entries were relevant
+to the compressed conversation. Used entries are promoted; unused entries decay
+based on recency of their last promotion.
 
-Defines the **adaptive priority recalculation** algorithm that runs during daily
-summary review. Knowledge entries are re-evaluated against their mention
-presence in the latest 3 daily summaries, promoting frequently-used entries
-and progressively degrading stale ones. A "cycle" means any consecutive 3-day
-sliding window — not a calendar week.
+No periodic timer. Priority changes only happen during compression cycles —
+when the LLM generates `summary.md` it simultaneously identifies used entries.
 
-New entries default to **P1** (not P2).
-
-This DFD is referenced by [Knowledge Management](knowledge.md) for data
-structures and by [Agent Harness](../agent-harness.md) for the daily summary
-review trigger.
-
-- Upstream: [Agent Harness](../agent-harness.md) — triggers priority
-  recalculation after daily summary creation during archive review
-- Upstream: [Memory Management](memory.md) — provides daily summaries
-  (Layer 2) as the mention source
-- Upstream: [Knowledge Management](knowledge.md) — defines `IndexEntry`,
-  `KnowledgePriority` enum, and WebDAV storage for `index.json`
-- Downstream: WebDAV crate — reads daily summaries, reads/writes `index.json`
+- Upstream: [Memory Management](memory.md) — compression cycles feed used
+  entry filenames to this algorithm
+- Upstream: [Knowledge Management](knowledge.md) — defines `IndexEntry`
+  and `KnowledgePriority` enum
+- Upstream: [Agent Harness](../agent-harness.md) — triggers
+  `review_knowledge_priorities_for_room()` after each compression cycle (when
+  `summary.md` is generated)
+- Downstream: WebDAV crate — reads/writes `index.json` with updated priority
+  and `last_promoted_at` fields
 
 ## 2. Diagram
 
-### 2a. Priority Recalculation Flow
+### 2a. Priority Promotion Flow — Compression Cycle
+
+During memory compression, the LLM identifies which knowledge entries were
+relevant to the conversation being compressed. These entries get promoted.
+All other entries in the same room are checked for decay (promotion recency).
 
 ```mermaid
 flowchart TD
-    START[Daily Summary Review Trigger]
-    ROOM["Per-Room<br/>(webdav_dir)"]
-    LOAD_SUMS["Harness Provides<br/>Latest 3-Day Summaries<br/>(from in-memory cache)"]
+    COMPRESS["Compression Cycle<br/>(compress_room_if_needed)"]
+    LLM_OUT["LLM Output<br/>summary.md bullets + used entry filenames"]
     DAV[(NextCloud WebDAV)]
     LOAD_IDX["Load knowledge/index.json"]
     EMPTY{Any knowledge<br/>entries?}
     DONE[Done]
     TICK{More entries?}
     NEXT[Next IndexEntry]
-    SCAN["Scan Summaries for<br/>Entry Mentions<br/>(title + tags + when_useful keywords)"]
-    COUNT["Count Days Mentioned<br/>= day_count (0-3)"]
-    NEW_PRIO{"Compute New Priority<br/>(see 2b state diagram)"}
+    IS_USED{"Entry in<br/>used filenames?"}
+    PROMOTE["Promote Entry<br/>P0 + set last_promoted_at = now"]
+    CHECK_DAYS{"Days since<br/>last_promoted_at"}
+    DECAY["Decay Priority<br/>see 2b state diagram"]
     CHANGED{Priority Changed?}
-    DEGRADE{"Is Degradation?<br/>(new &gt; current, higher ord = worse)"}
-    RATE_CHECK{"last_degraded_at<br/>same calendar day?"}
-    RATE_SKIP[Skip — Rate Limited<br/>At most 1 degrade/day]
-    MARK_DIRTY[Update Entry Priority<br/>+ set last_degraded_at]
     WRITE_IDX["Write Updated index.json"]
     SKIP[Skip]
 
-    START --> ROOM
-    ROOM -->|"room webdav_dir + summaries"| LOAD_IDX
+    COMPRESS -->|"used entry filenames"| LLM_OUT
+    LLM_OUT -->|"room webdav_dir"| LOAD_IDX
     LOAD_IDX -->|"GET knowledge/index.json"| DAV
     DAV -->|"IndexEntry list"| EMPTY
     EMPTY -->|"no entries"| DONE
     EMPTY -->|"yes"| TICK
     TICK -->|"next entry"| NEXT
     TICK -->|"no more"| WRITE_IDX
-    NEXT -->|"entry filename, tags, when_useful"| SCAN
-    LOAD_SUMS -.->|"summary texts passed by caller"| SCAN
-    SCAN -->|"per-day match bool"| COUNT
-    COUNT -->|"day_count + current priority"| NEW_PRIO
-    NEW_PRIO --> CHANGED
-    CHANGED -->|"yes"| DEGRADE
+    NEXT --> IS_USED
+    IS_USED -->|"yes"| PROMOTE
+    IS_USED -->|"no"| CHECK_DAYS
+    PROMOTE --> CHANGED
+    CHECK_DAYS -->|"compute new priority"| DECAY
+    DECAY --> CHANGED
+    CHANGED -->|"yes: update last_promoted_at"| TICK
     CHANGED -->|"no"| SKIP
-    DEGRADE -->|"yes — degrading"| RATE_CHECK
-    DEGRADE -->|"no — promoting"| MARK_DIRTY
-    RATE_CHECK -->|"yes — allowed"| MARK_DIRTY
-    RATE_CHECK -->|"no — blocked"| RATE_SKIP
-    MARK_DIRTY -->|"updated entry"| TICK
-    RATE_SKIP --> TICK
     SKIP --> TICK
     WRITE_IDX -->|"PUT knowledge/index.json"| DAV
     WRITE_IDX --> DONE
 ```
 
-### 2b. Priority State Diagram
+### 2b. Priority State Diagram — Recency-Based Decay
 
-Priority transitions depend on the **day_count** (number of days in the latest
-3-day window where the entry is mentioned) and the entry's **current priority**.
-New entries always start at **P1** (default).
+Priority is determined solely by the time since `last_promoted_at`. By default,
+new entries start at P1.
 
 ```mermaid
 stateDiagram-v2
@@ -89,133 +80,112 @@ stateDiagram-v2
     [*] --> P1 : new entry
 
     state P0 {
-        [*] --> used_every_day
-        used_every_day : day_count == 3
+        [*] --> promoted_today
+        promoted_today : promoted within 1 day
     }
     state P1 {
-        [*] --> mentioned_or_new
-        mentioned_or_new : day_count ≥ 1
+        [*] --> recent
+        recent : promoted within 3 days
     }
     state P2 {
-        [*] --> degraded_once
-        degraded_once : day_count == 0\n(from P1)
+        [*] --> aging
+        aging : promoted within 7 days
     }
     state P3 {
         [*] --> stale
-        stale : day_count == 0\n(2nd cycle no-mention)
+        stale : promoted >7 days ago or never
     }
 
-    P0 --> P0 : day_count == 3\n(stay P0)
-    P0 --> P1 : day_count ≥ 1,\nday_count < 3
-    P0 --> P1 : day_count == 0
+    P0 --> P1 : 1 day passes\n(no promotion)
+    P1 --> P2 : 3 days pass\n(no promotion)
+    P2 --> P3 : 7 days pass\n(no promotion)
+    P3 --> P3 : stays stale\nuntil promoted
 
-    P1 --> P0 : day_count == 3
-    P1 --> P1 : day_count ≥ 1
-    P1 --> P2 : day_count == 0\n(1st cycle no-mention)
-
-    P2 --> P1 : day_count ≥ 1
-    P2 --> P3 : day_count == 0\n(2nd cycle no-mention)
-
-    P3 --> P1 : day_count ≥ 1
-    P3 --> P3 : day_count == 0\n(stay stale)
+    P0 --> P0 : promoted again
+    P1 --> P0 : promoted
+    P2 --> P0 : promoted
+    P3 --> P0 : promoted
 ```
 
 **Transition table**:
 
-| Current | day_count == 3 | day_count ≥ 1 (but < 3) | day_count == 0 |
-| ------- | -------------- | ----------------------- | -------------- |
-| **P0**  | → P0           | → P1                    | → P1           |
-| **P1**  | → P0           | → P1                    | → P2           |
-| **P2**  | → P1           | → P1                    | → P3           |
-| **P3**  | → P1           | → P1                    | → P3           |
+| Current | Promoted (now) | 0-1 day since | 1-3 days since | 3-7 days since | >7 days since |
+| ------- | -------------- | ------------- | -------------- | -------------- | ------------- |
+| **P0**  | → P0           | —             | → P1           | → P2           | → P3          |
+| **P1**  | → P0           | —             | —              | → P2           | → P3          |
+| **P2**  | → P0           | —             | —              | —              | → P3          |
+| **P3**  | → P0           | —             | —              | —              | → P3          |
 
 **Rules**:
-- **P0** = recalled every day (3/3) — always recalled in context
-- **P1** = recalled at least once in 3 days — default for new entries
-- **P2** = not recalled in latest 3-day cycle (1st no-mention) — degradation from P1
-- **P3** = not recalled for two consecutive cycles — stale, can still recover
-- Promotion: any mention ≥1 day promotes P1/P2/P3 to at least P1; 3/3 promotes to P0
-- Degradation: one step per cycle — P0→P1, P1→P2, P2→P3. Max one step down per review.
-- **Rate limit**: degradation is capped at **once per calendar day** — if
-  `last_degraded_at` is from today's date, the degradation is skipped and
-  the current priority is kept. Promotions are never rate-limited and clear
-  `last_degraded_at`.
+- **P0** = promoted within the last day — always recalled in context
+- **P1** = promoted within 3 days — default for new entries — strong recall
+- **P2** = promoted within 7 days — moderate recall
+- **P3** = promoted >7 days ago or never — baseline
+- **Promotion always jumps to P0** — no incremental steps up
+- **Decay is one step per threshold crossing** — P0→P1 after 1 day, P1→P2 after 3 days, P2→P3 after 7 days
+- **No rate limiting** — deletion of old daily summaries removed the need for it
+- **New entries default to P1** — they haven't been promoted but aren't stale
 
-### 2c. Mention Matching Logic
+### 2d. LLM Identification of Used Entries (Compression)
+
+During compression, the LLM is given the list of knowledge entries
+(filenames + when_useful descriptions) alongside the overflowed messages.
+The prompt instructs the LLM to:
+1. Produce a `summary.md` with ≤10 bullet points
+2. List filenames of knowledge entries that were relevant to the conversation
 
 ```mermaid
 flowchart TD
-    ENTRY["IndexEntry<br/>(title, tags, when_useful)"]
-    EXTRACT["Extract Keywords<br/>title tokens + when_useful tokens + tags"]
-    SUMS["Daily Summary Texts<br/>(latest 3 days)"]
-    DAY0["Day 0 (today)"]
-    DAY1["Day 1"]
-    DAY2["Day 2"]
-    MATCH_DAY{"Day Summary<br/>Matches Entry?"}
-    COUNT["day_count<br/>= days matched (0-3)"]
+    ENTRIES["Knowledge Entries<br/>(filename + when_useful)"]
+    MESSAGES["Overflowed Messages<br/>(oldest half of Layer 1)"]
+    EXISTING["Existing summary.md<br/>(or empty)"]
+    AI[AiProvider]
+    PROMPT["Compression Prompt<br/>summary + identify used entries"]
+    OUTPUT["Structured Output<br/>summary bullets + used filenames"]
 
-    ENTRY --> EXTRACT
-    EXTRACT -->|"keyword set"| MATCH_DAY
-    SUMS --> DAY0
-    SUMS --> DAY1
-    SUMS --> DAY2
-    DAY0 --> MATCH_DAY
-    DAY1 --> MATCH_DAY
-    DAY2 --> MATCH_DAY
-    MATCH_DAY -->|"per-day match result"| COUNT
+    ENTRIES --> PROMPT
+    MESSAGES --> PROMPT
+    EXISTING --> PROMPT
+    PROMPT -->|"one-shot, tools=off"| AI
+    AI -->|"parseable response"| OUTPUT
+    OUTPUT -->|"bullets → summary.md"| WRITE[PUT summary.md]
+    OUTPUT -->|"filenames → priority"| PROMOTE[Promote Used Entries]
 ```
 
-A day is a **mention** if the daily summary text contains any entry keyword
-(filename-derived title tokens, `when_useful` tokens, or tag tokens — tokens > 2 characters,
-case-insensitive, split on non-alphanumeric boundaries). Simple boolean
-`contains()` per keyword; no fuzzy matching.
+The LLM response is parsed to extract:
+- **Summary bullets**: lines starting with `- ` after a `# Memory Summary` header
+- **Used entries**: a JSON array or comma-separated list of filenames in a
+  designated section (e.g. `## Used Knowledge`)
 
-**Missing summaries**: if fewer than 3 summaries exist (young rooms, early
-operation), missing days count as **not mentioned**. This naturally produces
-lower priorities for rooms without a full 3-day history. A room with only
-1 summary has day_count ≤ 1.
-
-### 2d. Trigger — Daily Summary Review
+### 2e. Trigger — Compression Cycle Only
 
 ```mermaid
 flowchart TD
-    ARCHIVE["archive_room_if_needed()"]
-    TIMER["Maintenance Timer<br/>(every persist_interval_secs)"]
-    REVIEW["Daily Summary Review<br/>= Recalculate Priorities"]
-    RECALC["Priority Recalculation<br/>(section 2a)"]
+    COMPRESS["compress_room_if_needed()"]
+    REVIEW["review_knowledge_priorities_for_room()"]
     MARK["Harness Marks<br/>Snapshot Dirty"]
 
-    ARCHIVE -->|"after upsert_daily_summary"| REVIEW
-    TIMER -->|"phase: knowledge review"| REVIEW
-    REVIEW -->|"per room"| RECALC
-    RECALC -->|"index.json written,<br/>returns changed bool"| MARK
+    COMPRESS -->|"after write_summary_md"| REVIEW
+    REVIEW -->|"promotions/decays applied"| MARK
 ```
-
-The priority recalculation runs at two points:
-
-1. **After archive** — immediately after `upsert_daily_summary()` writes a new
-   daily summary
-2. **Periodic maintenance** — during the periodic timer tick, alongside
-   snapshot persistence and room eviction, to ensure stale entries degrade
-   even on inactive days
 
 ## 3. Data Structures
 
-### IndexEntry Priority Field
+### IndexEntry Priority Fields
 
 | Field             | Type               | Notes                                                       |
 | ----------------- | ------------------ | ----------------------------------------------------------- |
 | `priority`        | `KnowledgePriority` | Updated by this algorithm; **default for new entries is P1** |
-| `last_degraded_at`| `String` (ISO 8601) | Timestamp of last degradation; used to enforce ≤1 degrade/day |
+| `last_promoted_at`| `Option<String>` (ISO 8601) | Timestamp of last promotion; `None` means never promoted |
 
 ### KnowledgePriority
 
 ```rust
 enum KnowledgePriority {
-    P0, // used every day (day_count == 3) — always recalled
-    P1, // used ≥ 1 in latest 3 days — default for new entries — strong recall (+5)
-    P2, // not used in latest 3 days (1st no-mention) — moderate recall (+2)
-    P3, // not used for 2+ consecutive cycles — baseline (+0)
+    P0, // promoted within last 1 day — always recalled
+    P1, // promoted within 3 days — default for new entries — strong recall (+5)
+    P2, // promoted within 7 days — moderate recall (+2)
+    P3, // promoted >7 days ago or never — baseline (+0)
 }
 ```
 
@@ -232,54 +202,57 @@ progressively weaker score bonuses.
 
 ## 4. Configuration
 
-No dedicated config keys. The algorithm reuses:
+No dedicated config keys. The algorithm relies on timestamps (system clock)
+to compute days since last promotion. No `summary_days` dependency since the
+algorithm no longer reads daily summaries.
 
-| Key            | Source                 | Default | Used for                                  |
-| -------------- | ---------------------- | ------- | ----------------------------------------- |
-| `summary_days` | `[rocketchat.model]`   | 3       | Summary retention window; algorithm reads latest 3 days for mention counting |
+| Key            | Source                 | Used for                                  |
+| -------------- | ---------------------- | ----------------------------------------- |
+| *(none)*       | System clock           | Computing days since `last_promoted_at`   |
 
 ## 5. Integration with Other Subsystems
 
 ### With Agent Harness
 
-The harness calls `review_knowledge_priorities()` at two points:
-1. **Post-archive**: after `upsert_daily_summary()` completes
-2. **Periodic maintenance**: during `maintenance_tick()`, after snapshot
-   persistence and before room eviction
+The harness calls priority functions at one point:
+1. **Post-compression**: after `write_summary_md()` completes
 
 ### With Knowledge Management
 
 - Reads `index.json` for current entry metadata and priority
 - Writes updated `index.json` with recalculated priorities
 - New entries default to **P1**
+- Priority affects retrieval: P0 always loaded, P1-3 get score bonuses
 
 ### With Memory Management
 
-- Reads daily summaries from Layer 2 (`summaries/{date}.md`)
+- The compression cycle provides the used entry filenames via LLM output
 - Marks snapshots dirty when `index.json` is rewritten
 
 ### Error Handling
 
 ```mermaid
 flowchart TD
-    RECALC[Priority Recalculation]
+    COMPRESS[Compression Cycle]
     DAV[(NextCloud WebDAV)]
     ERR_IDX{index.json<br/>read fails?}
-    ERR_SUMS{summary<br/>read fails?}
+    ERR_LLM{LLM output<br/>parse fails?}
     ERR_WRITE{index.json<br/>write fails?}
     SKIP[Skip Room — Retry Next Cycle]
-    WARN["Warn + Continue<br/>(missing days = not mentioned)"]
+    WARN["Warn + Continue<br/>(no priority changes)"]
     DONE[Done]
 
-    RECALC -->|"GET index.json"| ERR_IDX
+    COMPRESS -->|"GET index.json"| ERR_IDX
     ERR_IDX -->|"404 / parse error"| SKIP
-    ERR_IDX -->|"ok"| ERR_SUMS
-    ERR_SUMS -->|"summary missing"| WARN
-    ERR_SUMS -->|"ok"| ERR_WRITE
-    ERR_WRITE -->|"PUT failed"| WARN
-    ERR_WRITE -->|"ok"| DONE
+    ERR_IDX -->|"ok"| COMPRESS
+    COMPRESS -.->|"used filenames parse fails"| ERR_LLM
+    ERR_LLM -->|"warn, no promotions"| WARN
+    WARN --> DONE
+    COMPRESS -.->|"PUT index.json fails"| ERR_WRITE
+    ERR_WRITE -->|"warn, priority deferred"| WARN
 ```
 
-If summaries are missing for a room, missing days count as "not mentioned" and
-degrade accordingly. If `index.json` is missing, the room is skipped (no
-entries to evaluate).
+If the LLM fails to produce parseable used-entry filenames, no entries are
+promoted for that cycle. The summary.md write is independent — it proceeds
+regardless of the knowledge identification outcome. If `index.json` is missing,
+the room is skipped (no entries to evaluate).

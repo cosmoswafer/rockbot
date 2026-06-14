@@ -17,7 +17,7 @@ manages per-room memory, and persists everything to WebDAV.
   resolution and alias message sending (production path for bot replies)
 - Downstream: [AI Provider](base/ai-provider.md) handles chat completion requests
 - Downstream: [Memory Management](base/memory.md) manages per-room conversation history,
-  archive (threshold-based daily compress), snapshot persist, and TTL-based room eviction
+  compression (threshold-based, produces summary.md), snapshot persist, and TTL-based room eviction
 - Downstream: [WebDAV Tool](tools/webdav.md) persists image assets
 
 ## 2. Diagram
@@ -36,8 +36,8 @@ flowchart TD
     LOOP(AgentLoop)
     DIRTY(MarkSnapshotDirty)
     SNAPSHOT(FlushSnapshots)
-    ARCHIVE(CompressDaily)
-    EVICT_ROOMS(EvictStaleRooms)
+    ARCHIVE(CompressMemory)
+
     CFG[(AppConfig)]
     HISTORY[(ConversationHistory)]
     TOOLS[(ToolRegistry)]
@@ -58,15 +58,15 @@ flowchart TD
     LOOP -->|"bot reply"| RC
     LOOP -->|"reply produced<br/>(every response)"| DIRTY
     DIRTY -->|"dirty flag"| ROOMS
-    LOOP -->|"new message"| ARCHIVE
-    ARCHIVE -->|"summary prompt"| AI
-    AI -->|"summary text"| ARCHIVE
+    RC -->|"reply delivered"| ARCHIVE
+    ARCHIVE -->|"compress + identify prompt"| AI
+    AI -->|"summary.md + used knowledge"| ARCHIVE
     ARCHIVE -->|"also marks dirty"| DIRTY
     ARCHIVE -->|"pruned history"| HISTORY
     LOOP -->|"updated room state"| ROOMS
     TIMER -->|"every persist_interval_secs"| SNAPSHOT
     ROOMS -->|"dirty rooms"| SNAPSHOT
-    SNAPSHOT -->|"snapshot.json<br/>(history + summaries + soul)"| DAV
+    SNAPSHOT -->|"snapshot.json<br/>(history + summary + soul)"| DAV
     TIMER -->|"every persist_interval_secs"| EVICT_ROOMS
     ROOMS -->|"all rooms"| EVICT_ROOMS
     EVICT_ROOMS -->|"snapshot.json for stale rooms"| DAV
@@ -104,7 +104,7 @@ flowchart TD
 
 On graceful shutdown (SIGINT, SIGTERM, normal WS close, or max reconnect retries), the bot:
 1. Aborts the periodic maintenance timer to prevent races on the harness mutex.
-2. Acquires the harness lock and calls `flush_all_snapshots()`, which iterates every dirty room (soul/knowledge/daily-summary changes), builds a `PersistSnapshot`, serializes to JSON, and uploads `snapshot.json` to WebDAV via `write_file_with_fallback`.
+2. Acquires the harness lock and calls `flush_all_snapshots()`, which iterates every dirty room (soul/knowledge/summary changes), builds a `PersistSnapshot`, serializes to JSON, and uploads `snapshot.json` to WebDAV via `write_file_with_fallback`.
 
 Typing indicator failures are non-critical: if `sender.typing()` returns an error (e.g. WebSocket disconnected), the heartbeat task silently catches it and stops refreshing. The main agent loop is unaffected — it continues processing and sends the reply without typing cleanup.
 
@@ -133,7 +133,7 @@ flowchart TD
     DAV -->|"WebDAV client"| LOOP
 ```
 
-Note: History loading is lazy — each room's archives (summaries, soul, knowledge) are restored on first message per room via `restore_history()`, not eagerly at startup. No batch restore occurs at boot time.
+Note: History loading is lazy — each room's memory (summary, soul, knowledge) is restored on first message per room via `restore_history()`, not eagerly at startup. No batch restore occurs at boot time.
 
 ### 2d. Typing Indicator Heartbeat
 
