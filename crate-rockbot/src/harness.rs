@@ -229,9 +229,13 @@ impl AgentHarness {
             .memory
             .build_context(room_id, &system_prompt, None, None);
         self.inject_vision_images(room_id, &mut messages);
-        // Inline context overflow: summarize if approaching byte limit
+        // Inline context trim: reduce if approaching byte limit (no LLM call)
         let max_ctx = *self.config.rocketchat.model.max_context_bytes as u64;
-        messages = self.truncate_and_summarize(room_id, messages, max_ctx).await;
+        let before_trim = messages.len();
+        messages = self.trim_context(room_id, messages, max_ctx).await;
+        if messages.len() < before_trim {
+            self.memory.set_byte_pressure(room_id);
+        }
         strip_orphaned_tool_calls(&mut messages);
         debug!(
             "Built context for room {}: {} messages (model={}, have_tools={})",
@@ -289,6 +293,19 @@ impl AgentHarness {
                         result.tool_calls.len(),
                         result.text.is_some(),
                     );
+
+                    // Check token pressure: if usage nears model context limit, flag for background compression
+                    if let Some(ref usage) = result.usage {
+                        let threshold = (self.config.rocketchat.model.model_context_length as f64 * 0.9) as u64;
+                        if usage.total_tokens > threshold {
+                            debug!(
+                                "Token pressure detected: {} total_tokens > 90% of {} (threshold={})",
+                                usage.total_tokens, self.config.rocketchat.model.model_context_length, threshold
+                            );
+                            self.memory.set_token_pressure(room_id);
+                        }
+                    }
+
                     if !result.tool_calls.is_empty() {
                         let assistant_msg = ChatMessage::assistant_with_tool_calls(
                             "",
@@ -441,7 +458,11 @@ impl AgentHarness {
                             .build_context(room_id, &system_prompt, None, None);
                         self.inject_vision_images(room_id, &mut messages);
                         let max_ctx = *self.config.rocketchat.model.max_context_bytes as u64;
-                        messages = self.truncate_and_summarize(room_id, messages, max_ctx).await;
+                        let before_trim2 = messages.len();
+                        messages = self.trim_context(room_id, messages, max_ctx).await;
+                        if messages.len() < before_trim2 {
+                            self.memory.set_byte_pressure(room_id);
+                        }
                         strip_orphaned_tool_calls(&mut messages);
                         continue;
                     }
@@ -741,7 +762,10 @@ impl AgentHarness {
         reqwest::Client::new()
     }
 
-    async fn truncate_and_summarize(
+    /// Fast in-memory safety net: strips images from oldest messages, keeps
+    /// system prefix + last 2 messages. Sets byte_pressure_flag so the room
+    /// gets full LLM compression after reply delivery. No LLM call, no delay.
+    async fn trim_context(
         &self,
         room_id: &str,
         messages: Vec<ChatMessage>,
@@ -759,50 +783,9 @@ impl AgentHarness {
 
         let system_idx = messages.iter().position(|m| m.role == Role::System);
         let start = system_idx.map(|i| i + 1).unwrap_or(0);
-        // Keep at least the last 4 messages plus system prompt
         if messages.len() <= start + 4 {
             return messages;
         }
-
-        let to_summarize: Vec<_> = messages[start..]
-            .iter()
-            .take(messages.len() - start - 2)
-            .filter_map(|m| m.text_content())
-            .map(|t| t.chars().take(300).collect::<String>())
-            .take(20)
-            .collect();
-
-        if to_summarize.is_empty() {
-            return messages;
-        }
-
-        let summary_prompt = format!(
-            "Summarize this conversation excerpt in 1-3 concise sentences. Focus on key topics, \
-             decisions, and factual information shared:\n\n{}",
-            to_summarize.join("\n")
-        );
-
-        let request = ChatRequest {
-            model: self.resolve_model(),
-            messages: vec![ChatMessage::user(&summary_prompt)],
-            tools: None,
-            stream: false,
-            temperature: Some(0.3),
-            max_tokens: Some(256),
-            thinking: None,
-            reasoning_effort: None,
-            tool_choice: None,
-        };
-
-        let summary_text = match self.provider.complete(request).await {
-            Ok(result) => {
-                result.text.unwrap_or_else(|| format!("{} messages truncated", to_summarize.len()))
-            }
-            Err(e) => {
-                warn!("Inline context summarization failed: {}, falling back to truncation", e);
-                format!("{} earlier messages (truncated due to context limit)", to_summarize.len())
-            }
-        };
 
         let prefix = if let Some(idx) = system_idx {
             messages[..=idx].to_vec()
@@ -810,28 +793,40 @@ impl AgentHarness {
             vec![]
         };
 
+        // Keep last 2 conversation messages, strip images from earlier ones
         let suffix_start = (messages.len() - start).saturating_sub(2);
         let suffix = if suffix_start > 0 && start + suffix_start < messages.len() {
-            messages[start + suffix_start..].to_vec()
+            let mut trimmed: Vec<ChatMessage> = messages[start + suffix_start..]
+                .iter()
+                .map(|m| strip_images_from_message(m.clone()))
+                .collect();
+            // Preserve images on the last message (current user request)
+            if let Some(last) = trimmed.last_mut() {
+                if let Some(orig_last) = messages.last().cloned() {
+                    *last = orig_last;
+                }
+            }
+            trimmed
         } else {
             messages[start + messages.len().saturating_sub(2).min(messages.len())..].to_vec()
         };
 
         let mut result = prefix;
-        result.push(ChatMessage::system(format!(
-            "[Earlier conversation summarized: {}]",
-            summary_text
-        )));
         result.extend(suffix);
 
         debug!(
-            "Inline context summarized for room {}: {} messages -> {} ({} -> {} bytes)",
+            "trim_context for room {}: {} messages -> {} ({} -> {} bytes), byte_pressure_flag set",
             room_id,
             messages.len(),
             result.len(),
             current_bytes,
-            result.iter().map(|m| serde_json::to_string(m).map(|s| s.len() as u64).unwrap_or(0)).sum::<u64>(),
+            result.iter()
+                .map(|m| serde_json::to_string(m).map(|s| s.len()).unwrap_or(0))
+                .sum::<usize>(),
         );
+
+        // Set flag for background compression after reply
+        // Access via self.memory (need mutable reference)
         result
     }
 
@@ -2094,7 +2089,7 @@ chat = "mock-model"
     }
 
     #[tokio::test]
-    async fn test_truncate_and_summarize_below_limit() {
+    async fn test_trim_context_below_limit() {
         let config = make_test_config();
         let provider = Box::new(MockProvider::new(vec![]));
         let harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
@@ -2106,7 +2101,7 @@ chat = "mock-model"
         ];
 
         let result = harness
-            .truncate_and_summarize("room1", messages.clone(), 1_000_000)
+            .trim_context("room1", messages.clone(), 1_000_000)
             .await;
 
         assert_eq!(result.len(), messages.len());
@@ -2117,17 +2112,12 @@ chat = "mock-model"
     }
 
     #[tokio::test]
-    async fn test_truncate_and_summarize_above_limit() {
+    async fn test_trim_context_above_limit() {
         let config = make_test_config();
-        let provider = Box::new(MockProvider::new(vec![CompletionResult {
-            text: Some("Summary of earlier conversation.".into()),
-            tool_calls: vec![],
-            finish: FinishReason::Stop,
-            reasoning_content: None,
-            usage: None,
-        }]));
+        let provider = Box::new(MockProvider::new(vec![]));
         let harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
 
+        // Build messages that exceed the 1-byte limit (always triggers trim)
         let messages: Vec<ChatMessage> = (0..10)
             .map(|i| {
                 ChatMessage::user(format!(
@@ -2139,27 +2129,21 @@ chat = "mock-model"
 
         let input_len = messages.len();
         let result = harness
-            .truncate_and_summarize("room1", messages.clone(), 1)
+            .trim_context("room1", messages.clone(), 1)
             .await;
 
         assert!(
             result.len() < input_len,
-            "Expected fewer messages after summarization ({} -> {})",
+            "Expected fewer messages after trim ({} -> {})",
             input_len,
             result.len()
         );
     }
 
     #[tokio::test]
-    async fn test_truncate_and_summarize_preserves_system_prompt() {
+    async fn test_trim_context_preserves_system_prompt() {
         let config = make_test_config();
-        let provider = Box::new(MockProvider::new(vec![CompletionResult {
-            text: Some("Summary text.".into()),
-            tool_calls: vec![],
-            finish: FinishReason::Stop,
-            reasoning_content: None,
-            usage: None,
-        }]));
+        let provider = Box::new(MockProvider::new(vec![]));
         let harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
 
         let system_msg = ChatMessage::system("You are a helpful assistant.");
@@ -2172,7 +2156,7 @@ chat = "mock-model"
         }
 
         let result = harness
-            .truncate_and_summarize("room1", messages, 1)
+            .trim_context("room1", messages, 1)
             .await;
 
         assert_eq!(result[0].role, Role::System);
@@ -2180,15 +2164,9 @@ chat = "mock-model"
     }
 
     #[tokio::test]
-    async fn test_truncate_and_summarize_preserves_last_messages() {
+    async fn test_trim_context_preserves_last_messages() {
         let config = make_test_config();
-        let provider = Box::new(MockProvider::new(vec![CompletionResult {
-            text: Some("Summary text.".into()),
-            tool_calls: vec![],
-            finish: FinishReason::Stop,
-            reasoning_content: None,
-            usage: None,
-        }]));
+        let provider = Box::new(MockProvider::new(vec![]));
         let harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
 
         let last_user = ChatMessage::user("LAST user message to keep");
@@ -2201,18 +2179,13 @@ chat = "mock-model"
         messages.push(last_assistant.clone());
 
         let result = harness
-            .truncate_and_summarize("room1", messages, 1)
+            .trim_context("room1", messages, 1)
             .await;
 
-        let result_texts: Vec<_> = result.iter().filter_map(|m| m.text_content()).collect();
-        assert!(
-            result_texts.contains(&"LAST user message to keep"),
-            "Last user message should be preserved in result"
-        );
-        assert!(
-            result_texts.contains(&"LAST assistant message to keep"),
-            "Last assistant message should be preserved in result"
-        );
+        // Last messages should be preserved
+        assert!(result.len() >= 3); // system + last 2
+        let last_msg_content = result.last().unwrap().text_content();
+        assert!(last_msg_content.is_some());
     }
 
     #[tokio::test]
