@@ -183,8 +183,11 @@ stateful-tools list alongside `webdav`, `edit_soul`, `save_knowledge`, etc.
 ### Execution path
 
 When the LLM returns a `compress_memory` tool call, `process_message()` does
-**not** call `execute_by_name()` for this tool. Instead it directly invokes
-`self.compress_room_full(room_id)` on the harness, which already holds the
-exclusive `&mut` reference. This is safe because the harness lock is held by
-the caller (`main.rs`) for the duration of `process_message()`. The tool's
-own `execute()` returns an error if called directly.
+**not** call `execute_by_name()` for this tool. Instead it sets
+`explicit_compress` flag on the room and returns a lightweight acknowledgment
+as the tool result. The LLM then generates a natural reply using the full
+context. After the reply is delivered (in `main.rs`), `compress_room_if_needed()`
+detects the flag and runs full compression (`force=true`).
+
+The tool's own `execute()` is never reached in production — it exists solely
+for LLM registration. Calling it directly returns an error.

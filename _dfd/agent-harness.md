@@ -140,11 +140,14 @@ Stateless tools (web search, fetch, datetime, etc.) receive raw arguments
 without room context. The `ToolRegistry` maps tool names to implementations;
 calls are dispatched generically via `execute_by_name()`.
 
-**Exception**: `compress_memory` is intercepted before `execute_by_name()` and
-executed directly on `&mut self` (`self.compress_room_full(room_id)`) because
-the harness lock is already held by the caller. The tool's own `execute()` is
-a stub that returns an error — this avoids a deadlock from re-acquiring the
-same `Arc<Mutex<AgentHarness>>`.
+**Exception**: `compress_memory` is intercepted before `execute_by_name()`.
+Instead of running compression synchronously (which would clear history
+mid-conversation), it sets an `explicit_compress` flag on the room. Actual
+compression runs post-reply via `compress_room_if_needed()` with `force=true`. The
+tool's own `execute()` is a stub that returns an error — this avoids both
+the deadlock from re-acquiring `Arc<Mutex<AgentHarness>>` and the data loss
+from clearing history while the LLM is still generating a reply. See
+[memory-compression.md §2b2](base/memory-compression.md#2b2-explicit-compression--compress_memory-tool) for the full flow.
 
 ```mermaid
 flowchart TD
@@ -153,7 +156,7 @@ flowchart TD
     ROOM_CTX[(RoomState<br/>room_id + webdav_dir)]
     REG[(ToolRegistry)]
     COMPRESS{compress_memory?}
-    DIRECT["Call compress_room_full()<br/>directly on &mut self"]
+    SET_FLAG["Set explicit_compress<br/>flag (post-reply)"]
     EXEC(ExecuteToolByName)
     RESULT[ToolResult]
 
@@ -161,10 +164,10 @@ flowchart TD
     ROOM_CTX -->|"room_id + webdav_dir"| INJECT
     INJECT -->|"stateful: enriched args"| COMPRESS
     INJECT -->|"stateless: raw args"| COMPRESS
-    COMPRESS -->|"yes (no re-lock)"| DIRECT
+    COMPRESS -->|"yes (set flag, return ack)"| SET_FLAG
     COMPRESS -->|"no"| EXEC
     REG -->|"tool implementations"| EXEC
-    DIRECT -->|"formatted result"| RESULT
+    SET_FLAG -->|"lightweight result"| RESULT
     EXEC -->|"formatted result"| RESULT
 ```
 
