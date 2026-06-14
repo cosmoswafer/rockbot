@@ -52,7 +52,7 @@ impl WebDavTool {
         let file_name = path.rsplit('/').next().unwrap_or(path);
         if file_name == "secrets.toml" {
             debug!("Sanitizing secrets.toml read — returning dummy data to LLM");
-            return self.sanitize_secrets_toml().await;
+            return self.sanitize_secrets_toml(dir_key).await;
         }
 
         if is_image_extension(path) {
@@ -202,8 +202,9 @@ impl WebDavTool {
         ))
     }
 
-    async fn sanitize_secrets_toml(&self) -> Result<String> {
-        match self.client.read_file_to_string("secrets.toml").await {
+    async fn sanitize_secrets_toml(&self, dir_key: &str) -> Result<String> {
+        let path = self.room_path(dir_key, "secrets.toml")?;
+        match self.client.read_file_to_string(&path).await {
             Ok(content) => {
                 let mut table: toml::Table = toml::from_str(&content).map_err(|e| {
                     RockBotError::Provider(format!("Failed to parse secrets.toml for sanitization: {e}"))

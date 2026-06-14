@@ -316,7 +316,8 @@ impl AgentHarness {
 
                         let mut altered_soul = false;
                         let mut altered_knowledge = false;
-                        let secrets = load_secrets_from_webdav(self.webdav.as_ref()).await;
+                        let wd = compute_webdav_dir(room_name, room_fname, is_dm);
+                        let secrets = load_secrets_from_webdav(self.webdav.as_ref(), &wd).await;
                         if secrets.is_some() {
                             debug!("Secrets loaded from WebDAV for tool execution batch");
                         } else {
@@ -1559,9 +1560,10 @@ fn resolve_json_value(value: &mut serde_json::Value, secrets: &HashMap<String, S
     }
 }
 
-async fn load_secrets_from_webdav(webdav: Option<&WebDavClient>) -> Option<Vec<ResolvedSecret>> {
+async fn load_secrets_from_webdav(webdav: Option<&WebDavClient>, room_dir: &str) -> Option<Vec<ResolvedSecret>> {
     let client = webdav?;
-    match client.read_file_to_string("secrets.toml").await {
+    let path = format!("{room_dir}/secrets.toml");
+    match client.read_file_to_string(&path).await {
         Ok(content) => match toml::from_str::<SecretsToml>(&content) {
             Ok(parsed) if !parsed.secrets.is_empty() => {
                 let resolved: Vec<ResolvedSecret> = parsed.secrets.into_iter().map(|e| {
@@ -2779,7 +2781,7 @@ chat = "mock-model"
         let mock_server = MockServer::start().await;
 
         Mock::given(method("GET"))
-            .and(path("/secrets.toml"))
+            .and(path("/test-room/secrets.toml"))
             .respond_with(ResponseTemplate::new(200).set_body_string(
                 r#"[[secrets]]
 host = "https://example.com"
@@ -2797,7 +2799,7 @@ value = "sk-xyz"
 
         let client = WebDavClient::new(mock_server.uri(), "test", "pass")
             .expect("valid webdav client");
-        let secrets = load_secrets_from_webdav(Some(&client)).await;
+        let secrets = load_secrets_from_webdav(Some(&client), "test-room").await;
 
         assert!(secrets.is_some(), "secrets should be loaded");
         let entries = secrets.unwrap();
@@ -2818,7 +2820,7 @@ value = "sk-xyz"
         let mock_server = MockServer::start().await;
         let client = WebDavClient::new(mock_server.uri(), "test", "pass")
             .expect("valid webdav client");
-        let secrets = load_secrets_from_webdav(Some(&client)).await;
+        let secrets = load_secrets_from_webdav(Some(&client), "test-room").await;
         assert!(secrets.is_none(), "should return None when file not found");
     }
 
@@ -2830,7 +2832,7 @@ value = "sk-xyz"
         let mock_server = MockServer::start().await;
 
         Mock::given(method("GET"))
-            .and(path("/secrets.toml"))
+            .and(path("/test-room/secrets.toml"))
             .respond_with(ResponseTemplate::new(200).set_body_string(format!(
                 r#"[[secrets]]
 host = "{}"
@@ -2851,7 +2853,7 @@ value = "real_gitea_token_123"
 
         let client = WebDavClient::new(mock_server.uri(), "test", "pass")
             .expect("valid webdav client");
-        let entries = load_secrets_from_webdav(Some(&client)).await.unwrap();
+        let entries = load_secrets_from_webdav(Some(&client), "test-room").await.unwrap();
         let secret_uuid = &entries[0].uuid;
 
         let args = serde_json::json!({

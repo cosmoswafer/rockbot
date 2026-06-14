@@ -2,7 +2,7 @@
 
 ## 1. Purpose
 
-The harness loads `secrets.toml` from WebDAV, generates a unique **UUID**
+The harness loads `secrets.toml` from the **room-level** WebDAV directory, generates a unique **UUID**
 for each entry, and builds an internal `UUID → (host, value)` mapping.
 The LLM **never** sees host names, key names, or real values — it only
 sees opaque UUID references (`secret:<uuid>`). When a `web_fetch` tool
@@ -102,7 +102,7 @@ flowchart TD
     LOAD(LoadSecretsFromWebDav)
     DAV[(NextCloud WebDAV)]
     NO_DAV[Skip: No WebDAV]
-    NOT_FOUND[Skip: File not found]
+    NOT_FOUND[Skip: File not found<br/>in room directory]
     PARSE_ERR[Warn: TOML parse error]
     EMPTY[Skip: Empty secrets table]
     GEN["Generate UUID<br/>per entry"]
@@ -112,6 +112,7 @@ flowchart TD
     UUID_MISS[Warn: UUID not found]
     PASS[Passthrough: original value]
 
+    LOAD -->|"GET {room_dir}/secrets.toml"| DAV
     LOAD -.->|"webdav is None"| NO_DAV
     LOAD -.->|"NotFound error"| NOT_FOUND
     LOAD -.->|"invalid TOML"| PARSE_ERR
@@ -189,10 +190,10 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    LLM[LLM issues webdav read<br/>path: ../../secrets.toml]
+    LLM[LLM issues webdav read<br/>path: secrets.toml]
     TOOL[WebDavTool::do_read]
     CHECK{Filename is<br/>secrets.toml?}
-    READ["Read real secrets.toml<br/>from WebDAV root<br/>(direct client call)"]
+    READ["Read real secrets.toml<br/>from room WebDAV path<br/>(client call via room_path)"]
     PARSE[Parse TOML → replace<br/>all value fields with abcd]
     DAV[(NextCloud WebDAV)]
     REAL[Return real content<br/>to harness loader only]
@@ -212,7 +213,7 @@ flowchart TD
 
 ### `SecretsToml` (on-disk TOML root)
 
-Stored at WebDAV root path `secrets.toml`. The `key` field is a
+Stored at the room's WebDAV directory as `{room_dir}/secrets.toml`. The `key` field is a
 human-readable admin label — the LLM **never** sees it.
 
 | Field     | Type               | Notes                                    |
@@ -329,7 +330,7 @@ arguments pass through unchanged.
 
 | Function | Location | Role |
 |----------|----------|------|
-| `load_secrets_from_webdav` | `harness.rs` | Async: reads `secrets.toml` from WebDAV root, parses TOML, generates a deterministic UUIDv5 (`namespace + host:key`) for each entry, returns `Option<Vec<ResolvedSecret>>` |
+| `load_secrets_from_webdav` | `harness.rs` | Async: reads `{room_dir}/secrets.toml` from WebDAV, parses TOML, generates a deterministic UUIDv5 (`namespace + host:key`) for each entry, returns `Option<Vec<ResolvedSecret>>` |
 | `build_secret_uuids_prompt` | `harness.rs` | Sync: takes `&[ResolvedSecret]`, formats `secret:<uuid> (key_label)` lines for system prompt injection. Host and value are **not** included. |
 | `filter_secrets_by_host` | `harness.rs` | Sync: extracts host from web_fetch URL arg, filters `Vec<ResolvedSecret>` by matching `host` field, returns `Option<HashMap<String, String>>` (uuid_string → value) |
 | `resolve_secret_refs_deep` | `harness.rs` | Sync: parses arguments JSON, walks all string values recursively (url, headers, body, body_json leaf strings), replaces `secret:<uuid>` in each using the host-filtered map. Key labels (`secret:gitea_token`) are NOT resolved — only UUIDs. |
