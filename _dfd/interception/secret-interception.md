@@ -17,8 +17,9 @@ exfiltrated, the `secret:<uuid>` references are worthless without the
 internal mapping.
 
 - Upstream: [Agent Harness](../agent/agent-harness.md) runs the interception inside
-  `process_message()` — secrets are loaded once per tool-call batch, UUIDs
-  are generated, and replacement happens before `execute_by_name()` dispatch
+  `process_message()` — secrets are loaded upfront before the first LLM call,
+  UUIDs are injected into the system prompt, and replacement happens before
+  `execute_by_name()` dispatch
 - Upstream: [WebDAV Tool](../tools/webdav.md) provides the `read_file_to_string`
   transport for loading `secrets.toml`
 - Downstream: [Web Fetch](../tools/web-fetch.md) receives the modified arguments with
@@ -45,8 +46,11 @@ internal mapping.
   only dummy placeholder values (`abcd`), never real credentials. This is
   enforced at the WebDAV-tool boundary.
 - **Graceful degradation**: When WebDAV is not configured, `secrets.toml` does
-  not exist, or the file fails to parse, the tool arguments pass through
-  unchanged. Secret interception is never a hard dependency.
+  not exist, or the file fails to parse, the system prompt is built without the
+  UUID section and tool arguments pass through unchanged. The LLM may fall back
+  to reading `secrets.toml` via the WebDAV tool, but the dummy data gate
+  returns only sanitized values (`abcd`). Secret interception is never a hard
+  dependency.
 - **No caching across batches**: Secrets are loaded once per tool-call batch
   within `process_message()`, not cached across agent turns. This ensures
   updated secrets (added/removed in `secrets.toml`) take effect on the next
@@ -59,16 +63,23 @@ internal mapping.
 
 ### 2a. Happy Flow — UUIDv5 Generation + Host-Scoped Injection
 
+Secrets are loaded **once per message**, before the first LLM call, and
+injected into the system prompt so the LLM sees `secret:<UUID>` references
+from the start.
+
 ```mermaid
 flowchart TD
     AGENT[Agent Harness<br/>process_message]
+    WDIR["Compute room WebDAV dir<br/>r-{room_name}"]
     LOAD(LoadSecretsFromWebDav)
     DAV[(NextCloud WebDAV)]
     TOML[(secrets.toml<br/>host + key + value per entry)]
     GEN["Generate UUIDv5<br/>(host:key) per entry<br/>deterministic → stable<br/>across messages"]
     ENTRIES[(ResolvedSecrets<br/>Vec<ResolvedSecret><br/>uuid, key, host, value)]
-    INJECT["Inject UUID + key labels<br/>into system prompt<br/>'secret:uuid (key_label)'"]
-    PROMPT[System Prompt<br/>'Available secrets:<br/>secret:uuid1 (gitea_token)<br/>secret:uuid2 (github_pat)']
+    INJECT["Append UUID + key labels<br/>to system prompt<br/>'secret:uuid (key_label)'"]
+    BUILD["Build system prompt<br/>DEFAULT_SYSTEM_PROMPT<br/>+ UUID references"]
+    PROMPT[System Prompt (LLM-visible)<br/>'... Available API secrets ...<br/>secret:uuid1 (gitea_token)<br/>secret:uuid2 (github_pat)']
+    LLM[LLM call<br/>model sees UUID references<br/>in system prompt + history]
     CALL["web_fetch ToolCall<br/>url, headers, body, body_json<br/>(contains secret:uuid)"]
     EXTRACT_HOST[Extract host from url arg]
     FILTER(FilterSecretsByHost<br/>match host → uuid:value map)
@@ -77,14 +88,17 @@ flowchart TD
     EXEC(ExecuteByName)
     FETCH[WebFetchTool]
 
-    AGENT -->|"tool_calls non-empty"| LOAD
-    LOAD -->|"GET secrets.toml"| DAV
+    AGENT --> WDIR
+    WDIR -->|"{room_dir}"| LOAD
+    LOAD -->|"GET {room_dir}/secrets.toml"| DAV
     DAV -->|"file content"| TOML
     TOML -->|"Vec<SecretEntry>"| GEN
     GEN -->|"uuid assigned"| ENTRIES
     ENTRIES -->|"uuid + key array"| INJECT
-    INJECT -->|"labeled tokens"| PROMPT
-    PROMPT -->|"LLM sees: UUID + purpose label"| CALL
+    INJECT -->|"labeled tokens"| BUILD
+    BUILD -->|"system prompt"| PROMPT
+    PROMPT -->|"LLM sees: UUID + purpose label"| LLM
+    LLM -->|"tool_calls with secret:uuid"| CALL
     CALL -->|"raw arguments"| EXTRACT_HOST
     EXTRACT_HOST -->|"host string"| FILTER
     ENTRIES -->|"all entries"| FILTER
@@ -99,12 +113,15 @@ flowchart TD
 
 ```mermaid
 flowchart TD
+    SUB(process_message)
     LOAD(LoadSecretsFromWebDav)
     DAV[(NextCloud WebDAV)]
     NO_DAV[Skip: No WebDAV]
     NOT_FOUND[Skip: File not found<br/>in room directory]
     PARSE_ERR[Warn: TOML parse error]
     EMPTY[Skip: Empty secrets table]
+    BUILD("Build system prompt<br/>without UUID section<br/>(no secrets available)")
+    LLM("LLM call<br/>no secret:uuid tokens<br/>in system prompt")
     GEN["Generate UUID<br/>per entry"]
     FILTER(FilterSecretsByHost)
     NO_HOST[Skip: No secrets for target host]
@@ -112,15 +129,18 @@ flowchart TD
     UUID_MISS[Warn: UUID not found]
     PASS[Passthrough: original value]
 
+    SUB --> LOAD
     LOAD -->|"GET {room_dir}/secrets.toml"| DAV
     LOAD -.->|"webdav is None"| NO_DAV
     LOAD -.->|"NotFound error"| NOT_FOUND
     LOAD -.->|"invalid TOML"| PARSE_ERR
     LOAD -.->|"secrets table empty"| EMPTY
-    NO_DAV -->|"return None"| PASS
-    NOT_FOUND -->|"return None"| PASS
-    PARSE_ERR -->|"return None"| PASS
-    EMPTY -->|"return None"| PASS
+    NO_DAV -->|"return None"| BUILD
+    NOT_FOUND -->|"return None"| BUILD
+    PARSE_ERR -->|"return None"| BUILD
+    EMPTY -->|"return None"| BUILD
+    BUILD -->|"no UUID section"| LLM
+    LLM -->|"LLM uses non-UUID values<br/>or reads dummy data from webdav"| PASS
     GEN -->|"uuid assigned"| FILTER
     FILTER -.->|"host not in any entry"| NO_HOST
     NO_HOST -->|"return None"| PASS
@@ -330,8 +350,9 @@ arguments pass through unchanged.
 
 | Function | Location | Role |
 |----------|----------|------|
-| `load_secrets_from_webdav` | `harness.rs` | Async: reads `{room_dir}/secrets.toml` from WebDAV, parses TOML, generates a deterministic UUIDv5 (`namespace + host:key`) for each entry, returns `Option<Vec<ResolvedSecret>>` |
-| `build_secret_uuids_prompt` | `harness.rs` | Sync: takes `&[ResolvedSecret]`, formats `secret:<uuid> (key_label)` lines for system prompt injection. Host and value are **not** included. |
+| `load_secrets_from_webdav` | `harness.rs` | Async: reads `{room_dir}/secrets.toml` from WebDAV, parses TOML, generates a deterministic UUIDv5 (`namespace + host:key`) for each entry, returns `Option<Vec<ResolvedSecret>>`. Called **upfront** in `process_message()` before the first LLM call. |
+| `build_secret_uuids_prompt` | `harness.rs` | Sync: takes `&[ResolvedSecret]`, formats `secret:<uuid> (key_label)` lines for system prompt injection. Host and value are **not** included. Called by `build_system_prompt_with_secrets()`. |
+| `build_system_prompt_with_secrets` | `harness.rs` | Sync: calls `build_system_prompt()` then appends `build_secret_uuids_prompt` output. When no secrets are loaded, falls back to plain `build_system_prompt()`. |
 | `filter_secrets_by_host` | `harness.rs` | Sync: extracts host from web_fetch URL arg, filters `Vec<ResolvedSecret>` by matching `host` field, returns `Option<HashMap<String, String>>` (uuid_string → value) |
 | `resolve_secret_refs_deep` | `harness.rs` | Sync: parses arguments JSON, walks all string values recursively (url, headers, body, body_json leaf strings), replaces `secret:<uuid>` in each using the host-filtered map. Key labels (`secret:gitea_token`) are NOT resolved — only UUIDs. |
 | `replace_secret_refs` | `harness.rs` | Sync: single-pass string replacement of `secret:<uuid>` tokens against the host-filtered map. Called by `resolve_secret_refs_deep` for each string value. UUID format: `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` (hex chars + hyphens). |

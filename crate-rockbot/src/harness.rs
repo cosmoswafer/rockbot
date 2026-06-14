@@ -214,13 +214,17 @@ impl AgentHarness {
 
         self.memory.mark_snapshot_dirty(room_id);
 
-        let system_prompt = self.build_system_prompt();
+        let wd = compute_webdav_dir(room_name, room_fname, is_dm);
+        let secrets = load_secrets_from_webdav(self.webdav.as_ref(), &wd).await;
+        let system_prompt = match &secrets {
+            Some(s) => self.build_system_prompt_with_secrets(s),
+            None => self.build_system_prompt(),
+        };
         let tool_defs = self.tools.definitions();
         let have_tools = !tool_defs.is_empty();
 
         let model = self.resolve_model();
 
-        let wd = compute_webdav_dir(room_name, room_fname, is_dm);
         if let Err(e) = self.refresh_knowledge_context(room_id, &wd).await {
             warn!("Failed to refresh knowledge context: {}", e);
         }
@@ -316,13 +320,6 @@ impl AgentHarness {
 
                         let mut altered_soul = false;
                         let mut altered_knowledge = false;
-                        let wd = compute_webdav_dir(room_name, room_fname, is_dm);
-                        let secrets = load_secrets_from_webdav(self.webdav.as_ref(), &wd).await;
-                        if secrets.is_some() {
-                            debug!("Secrets loaded from WebDAV for tool execution batch");
-                        } else {
-                            debug!("No secrets available for tool execution batch");
-                        }
 
                         for tool_call in &result.tool_calls {
                             debug!(
@@ -625,6 +622,12 @@ impl AgentHarness {
             .replace("{name}", name)
             .replace("{max_context_mb}", &format!("{max_ctx:.1}"))
             .replace("{max_iterations}", &max_iter.to_string())
+    }
+
+    fn build_system_prompt_with_secrets(&self, secrets: &[ResolvedSecret]) -> String {
+        let base = self.build_system_prompt();
+        let uuid_prompt = build_secret_uuids_prompt(secrets);
+        format!("{base}{uuid_prompt}")
     }
 
     fn resolve_model(&self) -> String {
