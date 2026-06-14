@@ -267,8 +267,9 @@ enum KnowledgePriority {
 }
 ```
 
-**Priority**: the `priority` field is stored in `.md` frontmatter and in
-`index.json`'s `IndexEntry`. Priority is updated by the
+**Priority**: the `priority` field lives exclusively in `index.json`'s `IndexEntry` —
+not in `.md` file frontmatter. This keeps `.md` files as pure user-editable
+knowledge content. Priority is updated by the
 [Knowledge Priority Algorithm](knowledge-priority.md) during memory
 compression — when the LLM generates `summary.md` it simultaneously identifies
 which knowledge entries were relevant to the compressed conversation. Priority
@@ -287,13 +288,14 @@ enum KnowledgeCategory {
 
 ### Markdown Entry Format
 
-Each `.md` file uses a simple structure with optional frontmatter:
+Each `.md` file uses a simple structure with optional frontmatter.
+Priority and promotion timestamps are **index-only** — they do not appear in
+`.md` files, keeping them purely user-editable knowledge content.
 
 ```markdown
 # {title}
 
 **Category:** {category}
-**Priority:** {P0 | P1 | P2 | P3}
 **When Useful:** {when_useful}
 **Tags:** {tag1}, {tag2}
 **Created:** {created_at}
