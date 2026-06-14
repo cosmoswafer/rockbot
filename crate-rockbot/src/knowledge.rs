@@ -9,26 +9,6 @@ use crate::utils::now_iso_string;
 use crate::validated::NonEmptyString;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum KnowledgeCategory {
-    #[serde(rename = "skill")]
-    Skill,
-    #[serde(rename = "secret")]
-    Secret,
-    #[serde(rename = "note")]
-    Note,
-}
-
-impl std::fmt::Display for KnowledgeCategory {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            KnowledgeCategory::Skill => write!(f, "skill"),
-            KnowledgeCategory::Secret => write!(f, "secret"),
-            KnowledgeCategory::Note => write!(f, "note"),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[derive(Default)]
 pub enum KnowledgePriority {
     #[serde(rename = "P0")]
@@ -88,7 +68,6 @@ pub struct KnowledgeIndex {
 pub struct KnowledgeEntry {
     pub id: String,
     pub room_id: String,
-    pub category: KnowledgeCategory,
     pub title: String,
     pub content: String,
     pub when_useful: String,
@@ -100,7 +79,6 @@ pub struct KnowledgeEntry {
 /// Parsed tool arguments for save_knowledge — typed boundary for "parse, don't validate".
 #[derive(Debug, Clone, Deserialize)]
 pub struct SaveKnowledgeParams {
-    pub category: KnowledgeCategory,
     pub topic: NonEmptyString,
     pub content: NonEmptyString,
     pub when_useful: NonEmptyString,
@@ -207,7 +185,6 @@ impl KnowledgeManager {
     pub async fn save_entry(
         webdav: &WebDavClient,
         webdav_dir: &str,
-        category: &KnowledgeCategory,
         topic: &str,
         content: &str,
         when_useful: &str,
@@ -215,7 +192,7 @@ impl KnowledgeManager {
         priority: &KnowledgePriority,
     ) -> Result<()> {
         let now = now_iso_string();
-        let slug = format!("{}_{}", category, Self::slugify(topic));
+        let slug = Self::slugify(topic);
         let filename = format!("{}.md", slug);
 
         // Update index first — the index is the source of truth
@@ -249,8 +226,8 @@ impl KnowledgeManager {
         }
 
         let md_body = format!(
-            "# {}\n\n**Category:** {}\n**When Useful:** {}\n**Tags:** {}\n**Created:** {}\n**Updated:** {}\n\n{}",
-            topic, category, when_useful, tags.join(", "), now, now, content
+            "# {}\n\n**When Useful:** {}\n**Tags:** {}\n**Created:** {}\n**Updated:** {}\n\n{}",
+            topic, when_useful, tags.join(", "), now, now, content
         );
 
         webdav
@@ -525,19 +502,12 @@ mod tests {
     }
 
     #[test]
-    fn test_knowledge_category_display() {
-        assert_eq!(KnowledgeCategory::Skill.to_string(), "skill");
-        assert_eq!(KnowledgeCategory::Secret.to_string(), "secret");
-        assert_eq!(KnowledgeCategory::Note.to_string(), "note");
-    }
-
-    #[test]
     fn test_match_relevant_finds_by_title() {
         let index = KnowledgeIndex {
             version: "rockbot-knowledge/1".into(),
             room_id: "r-test".into(),
             entries: vec![IndexEntry {
-                filename: "note_build.md".into(),
+                filename: "build.md".into(),
                 when_useful: "When building cargo projects".into(),
                 priority: KnowledgePriority::P1, last_promoted_at: None,
             }],
@@ -546,7 +516,7 @@ mod tests {
         let matches =
             KnowledgeManager::match_relevant(&index, &["how do I build this cargo project"]);
         assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].filename, "note_build.md");
+        assert_eq!(matches[0].filename, "build.md");
     }
 
     #[test]
@@ -555,7 +525,7 @@ mod tests {
             version: "rockbot-knowledge/1".into(),
             room_id: "r-test".into(),
             entries: vec![IndexEntry {
-                filename: "skill_api.md".into(),
+                filename: "api.md".into(),
                 when_useful: "When working with database APIs".into(),
                 priority: KnowledgePriority::P1, last_promoted_at: None,
             }],
@@ -564,7 +534,7 @@ mod tests {
         let matches =
             KnowledgeManager::match_relevant(&index, &["how do I connect to the database?"]);
         assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].filename, "skill_api.md");
+        assert_eq!(matches[0].filename, "api.md");
     }
 
     #[test]
@@ -573,7 +543,7 @@ mod tests {
             version: "rockbot-knowledge/1".into(),
             room_id: "r-test".into(),
             entries: vec![IndexEntry {
-                filename: "note_contact.md".into(),
+                filename: "contact.md".into(),
                 when_useful: "When someone asks about office hours or support phone numbers".into(),
                 priority: KnowledgePriority::P1, last_promoted_at: None,
             }],
@@ -582,7 +552,7 @@ mod tests {
         let matches =
             KnowledgeManager::match_relevant(&index, &["what are your office hours?"]);
         assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].filename, "note_contact.md");
+        assert_eq!(matches[0].filename, "contact.md");
     }
 
     #[test]
@@ -591,7 +561,7 @@ mod tests {
             version: "rockbot-knowledge/1".into(),
             room_id: "r-test".into(),
             entries: vec![IndexEntry {
-                filename: "skill_api.md".into(),
+                filename: "api.md".into(),
                 when_useful: "When working with REST APIs".into(),
                 priority: KnowledgePriority::P1, last_promoted_at: None,
             }],

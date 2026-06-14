@@ -45,6 +45,20 @@ impl WebDavTool {
         let full = self.room_path(dir_key, path);
         debug!("webdav read: {}", full);
 
+        // Dummy data gate: never expose real secrets.toml to the LLM.
+        // Even if the LLM uses path traversal (../../secrets.toml),
+        // only dummy placeholder values are returned.
+        let file_name = path.rsplit('/').next().unwrap_or(path);
+        if file_name == "secrets.toml" {
+            debug!("Sanitizing secrets.toml read — returning dummy data to LLM");
+            return Ok(r#"[[secrets]]
+host = "localhost"
+key = "placeholder"
+value = "abcd"
+"#
+            .to_string());
+        }
+
         if is_image_extension(path) {
             let bytes = self
                 .client

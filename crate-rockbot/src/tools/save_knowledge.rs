@@ -29,7 +29,7 @@ impl Tool for SaveKnowledgeTool {
     }
 
     fn description(&self) -> &str {
-        "Save a piece of knowledge (skill, secret, or note) for future reference. \
+        "Save a piece of knowledge for future reference. \
          Use this when the user says 'remember', 'learn', or shares important \
          information worth persisting. Each entry gets a .md file and is indexed \
          for contextual retrieval."
@@ -39,12 +39,6 @@ impl Tool for SaveKnowledgeTool {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "category": {
-                    "type": "string",
-                    "enum": ["skill", "secret", "note"],
-                    "description": "Knowledge category: skill (procedural/how-to), \
-                                    secret (credential/sensitive), note (factual info)"
-                },
                 "topic": {
                     "type": "string",
                     "description": "Short title or topic for the entry (e.g. 'DB API', 'Build Commands')"
@@ -68,7 +62,7 @@ impl Tool for SaveKnowledgeTool {
                     "description": "Knowledge priority: P0 (highest, always recalled), P1 (high, default), P2 (medium), P3 (low). Higher priority means more frequently recalled."
                 }
             },
-            "required": ["category", "topic", "content", "when_useful"]
+            "required": ["topic", "content", "when_useful"]
         })
     }
 
@@ -84,7 +78,6 @@ impl Tool for SaveKnowledgeTool {
         KnowledgeManager::save_entry(
             &self.webdav,
             webdav_dir,
-            &params.category,
             &params.topic,
             &params.content,
             &params.when_useful,
@@ -94,8 +87,8 @@ impl Tool for SaveKnowledgeTool {
         .await?;
 
         Ok(format!(
-            "Knowledge saved: [{}/{}] {}",
-            params.category, params.topic.as_str(), params.topic.as_str()
+            "Knowledge saved: [{}] {}",
+            params.topic.as_str(), params.topic.as_str()
         ))
     }
 }
@@ -113,30 +106,18 @@ mod tests {
 
         let params = tool.parameters();
         assert_eq!(params["type"], "object");
-        let cats = params["properties"]["category"]["enum"].as_array().unwrap();
-        assert!(cats.contains(&serde_json::json!("skill")));
-        assert!(cats.contains(&serde_json::json!("secret")));
-        assert!(cats.contains(&serde_json::json!("note")));
+        let required = params["required"].as_array().unwrap();
+        assert!(required.contains(&serde_json::json!("topic")));
+        assert!(required.contains(&serde_json::json!("content")));
+        assert!(required.contains(&serde_json::json!("when_useful")));
     }
 
     #[tokio::test]
-    async fn test_execute_missing_category() {
+    async fn test_execute_missing_fields() {
         let webdav = webdav::WebDavClient::new("https://example.com", "user", "pass").unwrap();
         let tool = SaveKnowledgeTool::new(webdav);
         let result = tool.execute(r#"{}"#).await;
         assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_execute_invalid_category() {
-        let webdav = webdav::WebDavClient::new("https://example.com", "user", "pass").unwrap();
-        let tool = SaveKnowledgeTool::new(webdav);
-        let result = tool
-            .execute(r#"{"category": "invalid", "topic": "test", "content": "x", "when_useful": "always", "webdav_dir": "r-test"}"#)
-            .await;
-        assert!(result.is_err(), "Expected error for invalid category, got: {result:?}");
-        let err_str = result.unwrap_err().to_string();
-        assert!(err_str.contains("category") || err_str.contains("invalid"), "Unexpected error: {err_str}");
     }
 
     #[test]

@@ -8,19 +8,11 @@ WebDAV-backed tools.
 ## 1. Purpose
 
 Persistent per-room knowledge stored as `.md` files on WebDAV with a JSON
-index for situational retrieval. Three categories cover everything the agent
-needs to remember:
-
-| Category | Description | Example |
-|----------|-------------|---------|
-| `skill`  | Procedural — how to accomplish a task | How to call the database API via `web_fetch` |
-| `secret` | Credential — a sensitive value shared by the user | An API key or access token |
-| `note`   | Factual — a piece of information to remember | A driver's contact number |
-
-Each entry lives in its own `.md` file. The `index.json` file lists every
-entry with a `when_useful` field — a short description of the situation that
-makes this knowledge relevant. This serves as a retrieval trigger so the
-agent only loads knowledge that matches the current conversation.
+index for situational retrieval. Each entry lives in its own `.md` file
+named `{slug}.md`. The `index.json` file lists every entry with a
+`when_useful` field — a short description of the situation that makes this
+knowledge relevant. This serves as a retrieval trigger so the agent only
+loads knowledge that matches the current conversation.
 
 ### Write triggers
 
@@ -34,12 +26,12 @@ call in two scenarios:
 
 Magic words recognized by the system prompt:
 
-| Magic word | Category hint | Example |
-|------------|---------------|---------|
-| `!remember` | Generic — lets the AI infer category | `!remember that I prefer Python over JavaScript` |
-| `!note` | Generic — lets the AI infer category | `!note the prod server IP is 10.0.0.5` |
-| `!save` | Generic — lets the AI infer category | `!save that I prefer Python over JavaScript` |
-| `!forget` | Maps to `forget_knowledge` tool | `!forget the old database instructions` |
+| Magic word  | Maps to | Example |
+|-------------|---------|---------|
+| `!remember` | `save_knowledge` | `!remember that I prefer Python over JavaScript` |
+| `!note`     | `save_knowledge` | `!note the prod server IP is 10.0.0.5` |
+| `!save`     | `save_knowledge` | `!save that I prefer Python over JavaScript` |
+| `!forget`   | `forget_knowledge` tool | `!forget the old database instructions` |
 
 No frequency-based or periodic background extraction is planned.
 
@@ -71,7 +63,6 @@ flowchart TD
     USER[User Message]
     AI[AiProvider]
     TOOL[save_knowledge Tool]
-    CATEGORIZE[Categorize Entry]
     MD[Write .md File]
     IDX_PARSE[Parse index.json]
     IDX_UPDATE[Update Index Entry]
@@ -81,13 +72,12 @@ flowchart TD
 
     USER -->|"!remember / !note / !save / natural chat"| AI
     AI -->|"tool_call: save_knowledge"| TOOL
-    TOOL -->|"category + topic + content + when_useful"| CATEGORIZE
-    CATEGORIZE -->|"index metadata"| IDX_PARSE
+    TOOL -->|"topic + content + when_useful"| IDX_PARSE
     DAV -->|"existing index.json"| IDX_PARSE
     IDX_PARSE -->|"parsed index"| IDX_UPDATE
     IDX_UPDATE -->|"updated entries"| IDX_SER
     IDX_SER -->|"PUT index.json (committed first)"| DAV
-    CATEGORIZE -->|"markdown body"| MD
+    TOOL -->|"markdown body"| MD
     MD -->|"PUT .md file (after index committed)"| DAV
     TOOL -->|"triggers context refresh"| CTX_REFRESH[refresh_knowledge_context]
 ```
@@ -147,23 +137,18 @@ The `save_knowledge` tool writes the index first, then the `.md` file after the 
 flowchart TD
     CALL[ToolCall: save_knowledge]
     PARSE[Parse Arguments]
-    CATEGORY{Category?}
     SLUG[Generate Filename Slug]
     FORMAT[Format .md Content]
     MD_BODY[Markdown Body]
-    EXISTING{Entry Already<br/>Exists?}
-    OVERWRITE[Overwrite .md]
-    NEW_FILE[Create New .md]
     READ_IDX[Read index.json]
     UPSERT[Upsert Index Entry]
     PUT_MD[PUT .md to WebDAV]
     PUT_IDX[PUT index.json to WebDAV]
     DAV[(NextCloud WebDAV)]
 
-    CALL -->|"category, topic, content, when_useful, priority"| PARSE
-    PARSE -->|"validated args"| CATEGORY
-    CATEGORY -->|"skill | secret | note"| SLUG
-    SLUG -->|"{category}_{slug}.md"| FORMAT
+    CALL -->|"topic, content, when_useful, priority"| PARSE
+    PARSE -->|"validated args"| SLUG
+    SLUG -->|"{slug}.md"| FORMAT
     FORMAT -->|"frontmatter + body"| MD_BODY
     MD_BODY --> READ_IDX
     DAV -->|"GET knowledge/index.json"| READ_IDX
@@ -213,14 +198,13 @@ flowchart TD
 
 ### `KnowledgeEntry`
 
-A single `.md` file stored at `{root}/{webdav_dir}/knowledge/{category}_{slug}.md`.
+A single `.md` file stored at `{root}/{webdav_dir}/knowledge/{slug}.md`.
 `webdav_dir` is the type-prefixed room key (`r-`/`d-` prefix, see [rocketchat.md](rocketchat.md)).
 
 | Field        | Type             | Notes                                     |
 | ------------ | ---------------- | ----------------------------------------- |
-| `id`         | `String`         | Unique slug, e.g. `skill_db_api`          |
+| `id`         | `String`         | Unique slug, e.g. `db_api`                |
 | `room_id`    | `String`         | WebDAV directory key (`r-general`, `d-alice`, etc.) |
-| `category`   | `KnowledgeCategory` | `skill`, `secret`, or `note`           |
 | `title`      | `String`         | Human-readable title                      |
 | `content`    | `String`         | Full markdown body                        |
 | `when_useful`| `String`         | Situation description for retrieval       |
@@ -242,7 +226,7 @@ Machine-readable JSON file at `{root}/{webdav_dir}/knowledge/index.json`.
 
 | Field         | Type               | Notes                                          |
 | ------------- | ------------------ | ---------------------------------------------- |
-| `filename`    | `String`           | `{category}_{slug}.md` — unique key and display identifier. Validates `min_length = 1` via `serde_valid`. |
+| `filename`    | `String`           | `{slug}.md` — unique key and display identifier. Validates `min_length = 1` via `serde_valid`. |
 | `when_useful` | `String`           | Situation description (retrieval trigger). Defaults to `""` (serde default). |
 | `priority`    | `KnowledgePriority`| Current priority level. Updated by compression cycles; default for new entries is `P1`. |
 | `last_promoted_at` | `Option<String>` | ISO 8601 timestamp of last promotion; `None` if never promoted. Used for recency-based decay. |
@@ -250,8 +234,7 @@ Machine-readable JSON file at `{root}/{webdav_dir}/knowledge/index.json`.
 The `filename` doubles as the display key — `display_title()` strips the `.md`
 suffix. Knowledge context is formatted as `[Knowledge: {display_title}]\n{body}`
 in system messages. Retrieval matching uses keyword overlap against
-`when_useful` and the filename-derived title. Tags and category exist
-only in the `.md` file metadata — `when_useful`, `priority`, and
+`when_useful` and the filename-derived title. `when_useful`, `priority`, and
 `last_promoted_at` are denormalized into the index for fast retrieval
 and priority updates without reading every `.md` file.
 
@@ -275,16 +258,6 @@ which knowledge entries were relevant to the compressed conversation. Priority
 affects retrieval: P0 entries are always loaded; P1-P3 get score bonuses added
 to keyword overlap scores.
 
-### `KnowledgeCategory`
-
-```rust
-enum KnowledgeCategory {
-    Skill,   // procedural: how to do something
-    Secret,  // credential: api key, token, password
-    Note,    // factual: contact info, preference, reminder
-}
-```
-
 ### Markdown Entry Format
 
 Each `.md` file uses a simple structure with optional frontmatter.
@@ -294,7 +267,6 @@ Priority and promotion timestamps are **index-only** — they do not appear in
 ```markdown
 # {title}
 
-**Category:** {category}
 **When Useful:** {when_useful}
 **Tags:** {tag1}, {tag2}
 **Created:** {created_at}
@@ -308,9 +280,9 @@ Priority and promotion timestamps are **index-only** — they do not appear in
 ```
 {root}/{webdav_dir}/knowledge/
 ├── index.json
-├── skill_db_api.md
-├── secret_openai_key.md
-├── note_driver_contact.md
+├── db_api.md
+├── openai_key.md
+├── driver_contact.md
 └── ...
 ```
 
@@ -318,9 +290,9 @@ Examples:
 
 ```
 rockbot/r-general/knowledge/index.json
-rockbot/r-general/knowledge/skill_db_api.md
-rockbot/d-alice/knowledge/secret_github_token.md
-rockbot/r-project-x/knowledge/note_build_commands.md
+rockbot/r-general/knowledge/db_api.md
+rockbot/d-alice/knowledge/github_token.md
+rockbot/r-project-x/knowledge/build_commands.md
 ```
 
 ## 4. Integration with Agent Harness
@@ -331,7 +303,6 @@ Registered in `ToolRegistry`. Parameters:
 
 | Parameter     | Type     | Required | Description                                      |
 | ------------- | -------- | -------- | ------------------------------------------------ |
-| `category`    | `string` | Yes      | `"skill"`, `"secret"`, or `"note"`               |
 | `topic`       | `string` | Yes      | Short title for the entry                        |
 | `content`     | `string` | Yes      | Markdown body                                    |
 | `when_useful` | `string` | Yes      | Situation description (retrieval trigger)        |

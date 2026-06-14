@@ -1,6 +1,6 @@
 use std::env;
 
-use rockbot::knowledge::{IndexEntry, KnowledgeCategory, KnowledgeIndex, KnowledgeManager, KnowledgePriority};
+use rockbot::knowledge::{IndexEntry, KnowledgeIndex, KnowledgeManager, KnowledgePriority};
 use webdav::WebDavClient;
 
 fn get_webdav_client() -> Option<WebDavClient> {
@@ -65,7 +65,6 @@ async fn test_knowledge_save_and_read_index() {
     KnowledgeManager::save_entry(
         &client,
         webdav_dir,
-        &KnowledgeCategory::Note,
         "Real test entry topic",
         "## Content\n\nThis is a real test entry body.",
         "When you need to test knowledge persistence",
@@ -95,7 +94,6 @@ async fn test_knowledge_save_and_read_index() {
 
     // Check filename shape
     assert!(entry.filename.ends_with(".md"), "filename should end with .md");
-    assert!(entry.filename.starts_with("note_"), "should be a note category entry");
     assert!(
         entry.filename.contains("real_test_entry"),
         "filename should contain slugified topic"
@@ -159,7 +157,6 @@ async fn test_knowledge_match_relevant_with_new_fields() {
     KnowledgeManager::save_entry(
         &client,
         webdav_dir,
-        &KnowledgeCategory::Skill,
         "Build Cargo Project",
         "Run `cargo build --release` to build.",
         "When asked about building Rust projects or compiling code",
@@ -172,7 +169,6 @@ async fn test_knowledge_match_relevant_with_new_fields() {
     KnowledgeManager::save_entry(
         &client,
         webdav_dir,
-        &KnowledgeCategory::Note,
         "Office Phone Number",
         "Call 555-0199 for support.",
         "When asked about contact info or phone numbers",

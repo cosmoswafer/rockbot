@@ -389,8 +389,14 @@ impl AgentHarness {
                                 args
                             } else if tool_call.function.name == "web_fetch" {
                                 match &secrets {
-                                    Some(map) if !map.is_empty() => {
-                                        inject_secrets_into_headers(&tool_call.function.arguments, map)
+                                    Some(entries) if !entries.is_empty() => {
+                                        let host_map = filter_secrets_by_host(entries, &tool_call.function.arguments);
+                                        match host_map {
+                                            Some(ref map) if !map.is_empty() => {
+                                                resolve_secret_refs_deep(&tool_call.function.arguments, map)
+                                            }
+                                            _ => tool_call.function.arguments.clone(),
+                                        }
                                     }
                                     _ => tool_call.function.arguments.clone(),
                                 }
@@ -1332,9 +1338,16 @@ struct CachedImage {
 }
 
 #[derive(Debug, serde::Deserialize)]
+struct SecretEntry {
+    host: String,
+    key: String,
+    value: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
 struct SecretsToml {
     #[serde(default)]
-    secrets: HashMap<String, String>,
+    secrets: Vec<SecretEntry>,
 }
 
 fn inject_room_context(arguments: &str, room_id: &str, webdav_dir: &str) -> String {
@@ -1420,28 +1433,64 @@ fn replace_secret_refs(value: &str, secrets: &HashMap<String, String>) -> String
     result
 }
 
-fn inject_secrets_into_headers(arguments: &str, secrets: &HashMap<String, String>) -> String {
-    let mut args: serde_json::Value =
-        serde_json::from_str(arguments).unwrap_or(serde_json::json!({}));
-    let headers = match args.get_mut("headers").and_then(|v| v.as_object_mut()) {
-        Some(obj) => obj,
-        None => return arguments.to_string(),
-    };
-    for (_header_name, header_value) in headers.iter_mut() {
-        let value_str = match header_value.as_str() {
-            Some(s) => s,
-            None => continue,
-        };
-        if !value_str.contains("secret:") {
-            continue;
+fn filter_secrets_by_host(entries: &[SecretEntry], args_json: &str) -> Option<HashMap<String, String>> {
+    let args: serde_json::Value = serde_json::from_str(args_json).ok()?;
+    let url_str = args.get("url")?.as_str()?;
+
+    let host = match url::Url::parse(url_str) {
+        Ok(parsed) => {
+            let scheme = parsed.scheme();
+            let hostname = parsed.host_str()?;
+            let port = parsed.port().map(|p| format!(":{p}")).unwrap_or_default();
+            format!("{scheme}://{hostname}{port}")
         }
-        let resolved = replace_secret_refs(value_str, secrets);
-        *header_value = serde_json::Value::String(resolved);
+        Err(_) => return None,
+    };
+
+    let map: HashMap<String, String> = entries
+        .iter()
+        .filter(|e| e.host == host)
+        .map(|e| (e.key.clone(), e.value.clone()))
+        .collect();
+
+    if map.is_empty() {
+        None
+    } else {
+        Some(map)
     }
-    serde_json::to_string(&args).unwrap_or_else(|_| arguments.to_string())
 }
 
-async fn load_secrets_from_webdav(webdav: Option<&WebDavClient>) -> Option<HashMap<String, String>> {
+fn resolve_secret_refs_deep(args_json: &str, secrets: &HashMap<String, String>) -> String {
+    let mut args: serde_json::Value =
+        serde_json::from_str(args_json).unwrap_or(serde_json::json!({}));
+
+    resolve_json_value(&mut args, secrets);
+
+    serde_json::to_string(&args).unwrap_or_else(|_| args_json.to_string())
+}
+
+fn resolve_json_value(value: &mut serde_json::Value, secrets: &HashMap<String, String>) {
+    match value {
+        serde_json::Value::String(s) => {
+            if s.contains("secret:") {
+                *s = replace_secret_refs(s, secrets);
+            }
+        }
+        serde_json::Value::Object(obj) => {
+            for v in obj.values_mut() {
+                resolve_json_value(v, secrets);
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for v in arr.iter_mut() {
+                resolve_json_value(v, secrets);
+            }
+        }
+        _ => {}
+    }
+}
+
+async fn load_secrets_from_webdav(webdav: Option<&WebDavClient>) -> Option<Vec<SecretEntry>> {
     let client = webdav?;
     match client.read_file_to_string("secrets.toml").await {
         Ok(content) => match toml::from_str::<SecretsToml>(&content) {
@@ -2555,11 +2604,11 @@ chat = "mock-model"
     }
 
     #[test]
-    fn test_inject_secrets_into_headers_simple() {
+    fn test_resolve_secret_refs_deep_headers() {
         let mut secrets = HashMap::new();
         secrets.insert("gitea_token".to_string(), "abc123".to_string());
         let args = r#"{"url":"https://example.com","headers":{"Authorization":"token secret:gitea_token"}}"#;
-        let result = inject_secrets_into_headers(args, &secrets);
+        let result = resolve_secret_refs_deep(args, &secrets);
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(
             parsed["headers"]["Authorization"].as_str().unwrap(),
@@ -2568,30 +2617,57 @@ chat = "mock-model"
     }
 
     #[test]
-    fn test_inject_secrets_into_headers_multiple_headers() {
+    fn test_resolve_secret_refs_deep_url() {
+        let mut secrets = HashMap::new();
+        secrets.insert("api_key".to_string(), "sk-xyz".to_string());
+        let args = r#"{"url":"https://api.example.com/v1?token=secret:api_key"}"#;
+        let result = resolve_secret_refs_deep(args, &secrets);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(
+            parsed["url"].as_str().unwrap(),
+            "https://api.example.com/v1?token=sk-xyz"
+        );
+    }
+
+    #[test]
+    fn test_resolve_secret_refs_deep_body() {
+        let mut secrets = HashMap::new();
+        secrets.insert("token".to_string(), "abc123".to_string());
+        let args = r#"{"url":"https://example.com","body":"auth=secret:token"}"#;
+        let result = resolve_secret_refs_deep(args, &secrets);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["body"].as_str().unwrap(), "auth=abc123");
+    }
+
+    #[test]
+    fn test_resolve_secret_refs_deep_body_json() {
+        let mut secrets = HashMap::new();
+        secrets.insert("gh_pat".to_string(), "ghp-xyz".to_string());
+        let args = r#"{"url":"https://example.com","body_json":{"pat":"secret:gh_pat"}}"#;
+        let result = resolve_secret_refs_deep(args, &secrets);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["body_json"]["pat"].as_str().unwrap(), "ghp-xyz");
+    }
+
+    #[test]
+    fn test_resolve_secret_refs_deep_multiple() {
         let mut secrets = HashMap::new();
         secrets.insert("tok".to_string(), "real_tok".to_string());
         secrets.insert("key2".to_string(), "val2".to_string());
-        let args = r#"{"headers":{"Authorization":"Bearer secret:tok","X-Custom":"secret:key2"}}"#;
-        let result = inject_secrets_into_headers(args, &secrets);
+        let args = r#"{"url":"https://api.example.com?key=secret:key2","headers":{"Authorization":"Bearer secret:tok"},"body":"param=secret:key2"}"#;
+        let result = resolve_secret_refs_deep(args, &secrets);
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["headers"]["Authorization"].as_str().unwrap(), "Bearer real_tok");
-        assert_eq!(parsed["headers"]["X-Custom"].as_str().unwrap(), "val2");
+        assert_eq!(parsed["url"].as_str().unwrap(), "https://api.example.com?key=val2");
+        assert_eq!(parsed["body"].as_str().unwrap(), "param=val2");
     }
 
     #[test]
-    fn test_inject_secrets_into_headers_no_headers() {
-        let secrets = HashMap::new();
-        let args = r#"{"url":"https://example.com"}"#;
-        assert_eq!(inject_secrets_into_headers(args, &secrets), args);
-    }
-
-    #[test]
-    fn test_inject_secrets_into_headers_no_secret_refs() {
+    fn test_resolve_secret_refs_deep_no_secret_refs() {
         let mut secrets = HashMap::new();
         secrets.insert("key".to_string(), "value".to_string());
-        let args = r#"{"headers":{"Content-Type":"application/json"}}"#;
-        let result = inject_secrets_into_headers(args, &secrets);
+        let args = r#"{"headers":{"Content-Type":"application/json"},"url":"https://example.com"}"#;
+        let result = resolve_secret_refs_deep(args, &secrets);
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(
             parsed["headers"]["Content-Type"].as_str().unwrap(),
@@ -2600,15 +2676,13 @@ chat = "mock-model"
     }
 
     #[test]
-    fn test_inject_secrets_into_headers_empty_secrets_map() {
+    fn test_resolve_secret_refs_deep_empty_secrets() {
         let secrets = HashMap::new();
-        let args = r#"{"headers":{"Authorization":"secret:tok"}}"#;
-        let result = inject_secrets_into_headers(args, &secrets);
+        let args = r#"{"headers":{"Authorization":"secret:tok"},"url":"https://x.com?k=secret:val"}"#;
+        let result = resolve_secret_refs_deep(args, &secrets);
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
-        assert_eq!(
-            parsed["headers"]["Authorization"].as_str().unwrap(),
-            "secret:tok"
-        );
+        assert_eq!(parsed["headers"]["Authorization"].as_str().unwrap(), "secret:tok");
+        assert_eq!(parsed["url"].as_str().unwrap(), "https://x.com?k=secret:val");
     }
 
     #[tokio::test]
@@ -2621,7 +2695,16 @@ chat = "mock-model"
         Mock::given(method("GET"))
             .and(path("/secrets.toml"))
             .respond_with(ResponseTemplate::new(200).set_body_string(
-                "[secrets]\ngitea_token = \"abc123\"\ngithub_api_key = \"sk-xyz\"\n",
+                r#"[[secrets]]
+host = "https://example.com"
+key = "gitea_token"
+value = "abc123"
+
+[[secrets]]
+host = "https://example.com"
+key = "github_api_key"
+value = "sk-xyz"
+"#,
             ))
             .mount(&mock_server)
             .await;
@@ -2631,9 +2714,13 @@ chat = "mock-model"
         let secrets = load_secrets_from_webdav(Some(&client)).await;
 
         assert!(secrets.is_some(), "secrets should be loaded");
-        let map = secrets.unwrap();
-        assert_eq!(map.get("gitea_token").unwrap(), "abc123");
-        assert_eq!(map.get("github_api_key").unwrap(), "sk-xyz");
+        let entries = secrets.unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].host, "https://example.com");
+        assert_eq!(entries[0].key, "gitea_token");
+        assert_eq!(entries[0].value, "abc123");
+        assert_eq!(entries[1].key, "github_api_key");
+        assert_eq!(entries[1].value, "sk-xyz");
     }
 
     #[tokio::test]
@@ -2656,9 +2743,14 @@ chat = "mock-model"
 
         Mock::given(method("GET"))
             .and(path("/secrets.toml"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(
-                "[secrets]\ngitea_token = \"real_gitea_token_123\"\n",
-            ))
+            .respond_with(ResponseTemplate::new(200).set_body_string(format!(
+                r#"[[secrets]]
+host = "{}"
+key = "gitea_token"
+value = "real_gitea_token_123"
+"#,
+                mock_server.uri()
+            )))
             .mount(&mock_server)
             .await;
 
@@ -2671,7 +2763,7 @@ chat = "mock-model"
 
         let client = WebDavClient::new(mock_server.uri(), "test", "pass")
             .expect("valid webdav client");
-        let secrets = load_secrets_from_webdav(Some(&client)).await.unwrap();
+        let entries = load_secrets_from_webdav(Some(&client)).await.unwrap();
 
         let args = serde_json::json!({
             "url": format!("{}/api/test", mock_server.uri()),
@@ -2682,7 +2774,8 @@ chat = "mock-model"
         })
         .to_string();
 
-        let resolved_args = inject_secrets_into_headers(&args, &secrets);
+        let host_map = filter_secrets_by_host(&entries, &args).unwrap();
+        let resolved_args = resolve_secret_refs_deep(&args, &host_map);
         let parsed: serde_json::Value = serde_json::from_str(&resolved_args).unwrap();
         assert_eq!(
             parsed["headers"]["Authorization"].as_str().unwrap(),
@@ -2692,5 +2785,58 @@ chat = "mock-model"
         let tool = WebFetchTool::with_webdav(client);
         let result = tool.execute(&resolved_args).await.unwrap();
         assert!(result.contains("authorized"), "web_fetch should succeed with resolved secret, got: {result}");
+    }
+
+    #[test]
+    fn test_filter_secrets_by_host_matches() {
+        let entries = vec![
+            SecretEntry {
+                host: "https://example.com".into(),
+                key: "tok".into(),
+                value: "abc".into(),
+            },
+            SecretEntry {
+                host: "https://other.com".into(),
+                key: "other_tok".into(),
+                value: "xyz".into(),
+            },
+        ];
+        let args = r#"{"url":"https://example.com/api"}"#;
+        let map = filter_secrets_by_host(&entries, args).unwrap();
+        assert_eq!(map.len(), 1);
+        assert_eq!(map.get("tok").unwrap(), "abc");
+        assert!(map.get("other_tok").is_none());
+    }
+
+    #[test]
+    fn test_filter_secrets_by_host_no_match() {
+        let entries = vec![SecretEntry {
+            host: "https://example.com".into(),
+            key: "tok".into(),
+            value: "abc".into(),
+        }];
+        let args = r#"{"url":"https://other.com/api"}"#;
+        assert!(filter_secrets_by_host(&entries, args).is_none());
+    }
+
+    #[test]
+    fn test_filter_secrets_by_host_multiple_same_host() {
+        let entries = vec![
+            SecretEntry {
+                host: "https://example.com".into(),
+                key: "tok1".into(),
+                value: "abc".into(),
+            },
+            SecretEntry {
+                host: "https://example.com".into(),
+                key: "tok2".into(),
+                value: "def".into(),
+            },
+        ];
+        let args = r#"{"url":"https://example.com/api"}"#;
+        let map = filter_secrets_by_host(&entries, args).unwrap();
+        assert_eq!(map.len(), 2);
+        assert_eq!(map.get("tok1").unwrap(), "abc");
+        assert_eq!(map.get("tok2").unwrap(), "def");
     }
 }

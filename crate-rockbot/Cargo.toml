@@ -21,6 +21,7 @@ webdav = { path = "../crate-webdav" }
 rocketchat = { path = "../crate-rocketchat" }
 base64 = "0.22"
 regex = "1"
+url = "2"
 serde_valid = "0.18"
 validator = { version = "0.20", features = ["derive"] }
 
