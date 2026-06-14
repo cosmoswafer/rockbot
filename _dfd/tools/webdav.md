@@ -7,20 +7,26 @@ read/write/list/mkdir/delete with per-room directory isolation. Each room gets
 its own subtree created proactively on first use. Room names use type prefixes
 (`r-` for channels, `d-` for DMs) to prevent collisions.
 
-### 1a. Transparent Path Isolation
+### 1a. Room-Scoped Path Isolation with Sanitization
 
 All WebDAV operations are **automatically scoped** to the room's dedicated
-directory. The isolation is structural — no path-sanitization needed:
+directory. Isolation is enforced at two layers:
 
-1. The harness computes `webdav_dir` from `(room_name, room_fname, is_dm)` — prefixed `r-` for channels, `d-` for DMs, preferring friendly name over slug — e.g. `r-general`
-2. `inject_room_context()` adds both `room_id` and `webdav_dir` to tool call
-   arguments before execution — the LLM cannot override either
-3. Every tool constructs paths via `WebDavPath` methods (`room_path`,
-   `room_dir`, `memory_dir`, `image_path`, etc.) — all prepend the
-   `webdav_dir` key, keeping operations scoped to the room's subtree
-4. The `WebDavClient`'s `base_url` (e.g.
+1. **Structural**: The harness computes `webdav_dir` from `(room_name, room_fname, is_dm)` — prefixed `r-` for channels, `d-` for DMs, preferring friendly name over slug — e.g. `r-general`. `inject_room_context()` adds both `room_id` and `webdav_dir` to tool call arguments before execution — the LLM cannot override either.
+2. **Sanitization (defense-in-depth)**: Every LLM-supplied `path` passes through
+   a validation step before being joined with the room directory. The sanitizer
+   rejects:
+   - **Path traversal** — any segment equal to `..` (e.g. `foo/../bar`, `../../secrets.toml`)
+   - **Absolute paths** — paths starting with `/` after trimming (would resolve relative to the WebDAV root, bypassing the room scope)
+   - **Current-dir confusion** — standalone `.` segments are stripped during normalization (e.g. `./foo` → `foo`)
+   - **Redundant separators** — consecutive `/` are collapsed (e.g. `foo//bar` → `foo/bar`)
+
+   The sanitized path is then joined to the room-scoped prefix, producing a
+   final path guaranteed to stay within the room's subtree.
+
+3. The `WebDavClient`'s `base_url` (e.g.
    `https://nc.example.com/remote.php/dav/files/user/clawspaces/`) provides
-   the root; paths are joined to form the full URL
+   the server root; the room-scoped path is appended to form the full URL.
 
 **This DFD serves as the canonical documentation for the webdav crate and tool.
 Other tool DFDs that use WebDAV (edit_soul, save_knowledge, calendar,
@@ -43,6 +49,7 @@ image_gen, web_fetch) reference this layer instead of repeating it.**
 flowchart TD
     CALLER[Calling Subsystem]
     CFG[(WebDavConfig)]
+    SANITIZE(SanitizePath)
     RESOLVE(ResolvePath)
     READ(ReadFile)
     WRITE(WriteFile)
@@ -55,7 +62,8 @@ flowchart TD
     HTTP(HttpClient)
     NC[(NextCloud WebDAV)]
 
-    CALLER -->|"path + operation"| RESOLVE
+    CALLER -->|"raw path + operation"| SANITIZE
+    SANITIZE -->|"sanitized path (see 2e)"| RESOLVE
     CALLER -.->|"room on first use"| ENSURE
     CFG -->|"root + credentials"| RESOLVE
     CFG -.->|"root + credentials"| ENSURE
@@ -175,6 +183,51 @@ flowchart TD
     DM_SARU --> WSP_SARU
 ```
 
+### 2e. Path Sanitization Checkpoint (Security)
+
+Every LLM-supplied `path` passes through a validation checkpoint before
+being joined with the room directory. This is a non-functional requirement
+(security boundary) applied at the `WebDavPath::room_path()` and
+`WebDavPath::image_path()` entry points. The harness-injected `webdav_dir`
+is trusted (computed server-side from room metadata, not LLM-controlled).
+
+```mermaid
+flowchart TD
+    RAW[Raw path from LLM]
+    TRIM(TrimWhitespace)
+    DETECT_DOTS{Contains '..'?}
+    REJECT_TRAVERSE[Reject: PathTraversal]
+    DETECT_ABS{Starts with '/'?}
+    REJECT_ABS[Reject: PathEscape]
+    STRIP_DOTS(Strip standalone '.' segments)
+    COLLAPSE_SLASH(Collapse multiple '/')
+    TRIM_SEP(Trim leading/trailing '/')
+    VALID{Remaining path non-empty?}
+    DEFAULT_ROOT[Accept: root dir '']
+    JOIN(Join {room_id}/{path})
+    FINAL[Sanitized room-scoped path]
+
+    RAW --> TRIM
+    TRIM --> DETECT_DOTS
+    DETECT_DOTS -->|"yes"| REJECT_TRAVERSE
+    DETECT_DOTS -->|"no"| DETECT_ABS
+    DETECT_ABS -->|"yes"| REJECT_ABS
+    DETECT_ABS -->|"no"| STRIP_DOTS
+    STRIP_DOTS --> COLLAPSE_SLASH
+    COLLAPSE_SLASH --> TRIM_SEP
+    TRIM_SEP --> VALID
+    VALID -->|"empty"| DEFAULT_ROOT
+    VALID -->|"has content"| JOIN
+    DEFAULT_ROOT --> FINAL
+    JOIN --> FINAL
+```
+
+**Implementation note**: The `url::Url::parse()` call in `full_url()` does
+not normalize `../` segments — they pass through unchanged to the server
+(unlike a browser which would resolve them client-side). The sanitization
+must therefore happen at the `WebDavPath` layer, before the path reaches
+`full_url()`.
+
 ## 3. Data Structures
 
 #### `WebDavClient`
@@ -202,14 +255,26 @@ as `r-森林生態` or `d-saru`. The harness computes `webdav_dir` preferring
 `room_fname` (the friendly display name) over `room_name` (the ASCII slug);
 the raw RocketChat room UUID is never used as a path segment.
 
-| Method                   | Returns  | Notes                                       |
-| ------------------------ | -------- | ------------------------------------------- |
-| `memory_dir(key)`        | `String` | `/{root}/{key}/memory/`                      |
-| `room_path(key, file)`   | `String` | `/{root}/{key}/{file_path}`                 |
-| `image_dir(key)`         | `String` | `/{root}/{key}/images/`                     |
-| `workspace_dir(key)`     | `String` | `/{root}/{key}/workspace/`                  |
-| `image_path(key, name)`  | `String` | `/{root}/{key}/images/{name}`               |
-| `parent_path(path)`      | `String` | Strips last path segment                    |
+`room_path()` and `image_path()` validate the caller-supplied path
+component, rejecting traversal attempts before joining with the room prefix.
+
+| Method                     | Returns         | Notes                                       |
+| -------------------------- | --------------- | ------------------------------------------- |
+| `sanitize_subpath(raw)`    | `Result<String>` | Validates and normalizes a path component (see 2e). Rejects `..`, absolute paths. Strips `.`, collapses `//`. |
+| `memory_dir(key)`          | `String`         | `/{root}/{key}/memory/`                     |
+| `room_path(key, file)`     | `Result<String>` | Sanitizes `file`, then joins: `/{root}/{key}/{file}` |
+| `image_dir(key)`           | `String`         | `/{root}/{key}/images/`                     |
+| `workspace_dir(key)`       | `String`         | `/{root}/{key}/workspace/`                  |
+| `image_path(key, name)`    | `Result<String>` | Sanitizes `name`, then joins: `/{root}/{key}/images/{name}` |
+| `parent_path(path)`        | `String`         | Strips last path segment                    |
+| `config_backup_path(filename)` | `String`     | `/{root}/config/{filename}`                 |
+
+#### `WebDavError::PathTraversal`
+
+| Field    | Type     | Notes                                      |
+| -------- | -------- | ------------------------------------------ |
+| `path`   | `String` | The raw path that was rejected             |
+| `reason` | `String` | Human-readable reason (e.g. "contains '..' segment", "absolute path not allowed") |
 
 ## 4. NextCloud API Reference
 
