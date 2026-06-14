@@ -1998,8 +1998,6 @@ fn test_webdav_tool_webdav_dir_not_in_llm_schema() {
 #[test]
 fn test_memory_rapid_messages_no_loss() {
     let mut mm = rockbot::memory::MemoryManager::new(
-        10000, // max_chars
-        50,    // max_history
         2000,  // max_soul_chars
         60,    // persist_interval_secs
         0,     // max_context_bytes (disabled)
@@ -2051,7 +2049,7 @@ fn test_memory_rapid_messages_no_loss() {
 #[test]
 fn test_memory_load_snapshot_with_soul_and_summaries_no_conflict() {
     let mut mm = rockbot::memory::MemoryManager::new(
-        10000, 50, 2000, 60, 0,
+        2000, 60, 0,
     );
 
     let room_id = "snapshot-test";
@@ -2107,7 +2105,7 @@ fn test_memory_load_snapshot_with_soul_and_summaries_no_conflict() {
 #[test]
 fn test_memory_snapshot_repeated_builds_no_data_loss() {
     let mut mm = rockbot::memory::MemoryManager::new(
-        10000, 50, 2000, 60, 0,
+        2000, 60, 0,
     );
 
     let room_id = "repeated-snap";
@@ -2161,7 +2159,7 @@ fn test_memory_snapshot_repeated_builds_no_data_loss() {
 #[test]
 fn test_memory_multi_room_no_cross_contamination() {
     let mut mm = rockbot::memory::MemoryManager::new(
-        10000, 50, 2000, 60, 0,
+        2000, 60, 0,
     );
 
     let room1 = mm.get_or_create("r1", "channel-a", "Channel A", false);

@@ -99,13 +99,11 @@ flowchart TD
 | ---------------------- | -------------- | ------------------------------------------------------------- |
 | `default_provider`     | `ProviderName` | Must match a `[[chat_providers]].name`; non-empty validated newtype |
 | `default_model`        | `String`       | Model alias key in provider's models map                      |
-| `max_history_size`     | `BoundedUsize` | Max conversation turns (default 18); validated 1..=100_000_000 |
-| `max_text_length`      | `BoundedUsize` | Layer 1 overflow threshold chars (default 50000); validated 1..=100_000_000 |
 | `max_iterations`       | `u32`          | Max agent loop iterations (default 28)                         |
 | `max_soul_chars`       | `BoundedUsize` | Layer 3 max chars for soul.md content (default 2000); validated 1..=100_000_000 |
 | `memory_ttl_secs`      | `u64`          | Room idle timeout — snapshot to WebDAV then evict (default 300)|
 | `persist_interval_secs`| `u64`          | Snapshot persist timer interval (default 60)                  |
-| `max_context_bytes`    | `BoundedUsize` | Max byte size for context (default 4MB ≈ 1M tokens). Triggers inline summarization and image-stripping when exceeded. Validated 1..=100_000_000 |
+| `max_context_bytes`    | `BoundedUsize` | Max byte size for context (default 4MB ≈ 1M tokens). Triggers inline trim and image-stripping when exceeded. Validated 1..=100_000_000 |
 | `max_attachment_bytes` | `u64`          | Max size of a single attachment in bytes (default 25_000_000) |
 | `model_context_length` | `u32`          | Model's max context window in tokens (default 1_000_000). 90% threshold triggers background compression after LLM calls when usage nears limit. |
 

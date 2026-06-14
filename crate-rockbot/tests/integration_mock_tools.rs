@@ -880,7 +880,7 @@ fn test_conversation_history_oldest_messages() {
 
 #[test]
 fn test_memory_manager_new() {
-    let mgr = MemoryManager::new(50000, 18, 5000, 60, 4_000_000);
+    let mgr = MemoryManager::new(5000, 60, 4_000_000);
     assert_eq!(mgr.persist_interval_secs, 60);
     assert_eq!(mgr.max_soul_chars, 5000);
 }

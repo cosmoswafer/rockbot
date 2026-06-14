@@ -63,10 +63,8 @@ impl AgentHarness {
         webdav: Option<WebDavClient>,
         image_cache: Arc<ImageCache>,
     ) -> Self {
-        let max_chars = *config.rocketchat.model.max_text_length;
-        let max_history = *config.rocketchat.model.max_history_size;
-        let max_iterations = config.rocketchat.model.max_iterations;
         let max_soul_chars = *config.rocketchat.model.max_soul_chars;
+        let max_iterations = config.rocketchat.model.max_iterations;
         let persist_interval = config.rocketchat.model.persist_interval_secs;
         let max_context_bytes = *config.rocketchat.model.max_context_bytes;
         let max_attachment_bytes = config.rocketchat.model.max_attachment_bytes;
@@ -74,7 +72,7 @@ impl AgentHarness {
         Self {
             config,
             provider,
-            memory: MemoryManager::new(max_chars, max_history, max_soul_chars, persist_interval, max_context_bytes),
+            memory: MemoryManager::new(max_soul_chars, persist_interval, max_context_bytes),
             tools: ToolRegistry::new(),
             webdav,
             rest_client: None,
@@ -377,6 +375,7 @@ impl AgentHarness {
                                 || tool_call.function.name == "forget_knowledge"
                                 || tool_call.function.name == "recall_knowledge"
                                 || tool_call.function.name == "calendar"
+                                || tool_call.function.name == "compress_memory"
                             {
                                 let wd = compute_webdav_dir(room_name, room_fname, is_dm);
                                 inject_room_context(&tool_call.function.arguments, room_id, &wd)
@@ -837,7 +836,22 @@ impl AgentHarness {
     }
 
     pub async fn compress_room_if_needed(&mut self, room_id: &str) -> Result<()> {
-        let needs_compress = self.memory.check_and_archive(room_id);
+        let needs_compress = self.memory.needs_compression(room_id);
+        if !needs_compress {
+            return Ok(());
+        }
+        self.compress_room_inner(room_id, false).await
+    }
+
+    /// Force-compress all Layer 1 messages (user-triggered, synchronous)
+    pub async fn compress_room_full(&mut self, room_id: &str) -> Result<String> {
+        self.compress_room_inner(room_id, true).await?;
+        let summary = self.memory.get_summary(room_id).unwrap_or("").to_string();
+        Ok(format!("Memory compressed. Summary:\n\n{}", summary))
+    }
+
+    async fn compress_room_inner(&mut self, room_id: &str, force: bool) -> Result<()> {
+        let needs_compress = self.memory.check_and_archive(room_id, force);
         if let Some((rid, msgs)) = needs_compress {
             if let Some(ref webdav_client) = self.webdav {
                 let count = msgs.len();
@@ -872,7 +886,6 @@ impl AgentHarness {
                 }
 
                 if summary_ok {
-                    // Mark snapshot dirty
                     self.memory.mark_snapshot_dirty(&rid);
 
                     // Review knowledge priorities with LLM-identified used entries
@@ -880,7 +893,6 @@ impl AgentHarness {
                         webdav_client, &wd, &used_filenames,
                     ).await {
                         if changed {
-                            // Refresh knowledge context
                             if let Ok(text) = self.load_knowledge_for_room(webdav_client, &rid, &wd).await {
                                 if !text.is_empty() {
                                     self.memory.set_knowledge(&rid, text);
@@ -893,7 +905,9 @@ impl AgentHarness {
                     // Update in-memory summary cache
                     self.memory.set_summary(&rid, Some(summary_text));
 
+                    // Clear pressure flags after compression
                     self.memory.prune_archived(&rid, count);
+                    self.memory.clear_pressure_flags(&rid);
                 }
             } else {
                 debug!(
@@ -1736,14 +1750,19 @@ chat = "mock-model"
         for i in 0..10 {
             room.history.append(ChatMessage::user(format!("msg {}", i)));
         }
+        // Set byte_pressure_flag to trigger compression
+        harness.memory_mut().set_byte_pressure("room1");
 
         let result = harness.compress_room_if_needed("room1").await;
         assert!(result.is_ok());
+        // History should be pruned (5 messages: oldest half of 10)
+        let remaining = harness.memory().get("room1").map(|r| r.history.messages.len());
+        assert_eq!(remaining, Some(5));
     }
 
     #[test]
     fn test_check_and_archive_returns_seq() {
-        let mut mgr = MemoryManager::new(50, 12, 2000, 60, 30_000_000);
+        let mut mgr = MemoryManager::new(2000, 60, 30_000_000);
         let room = mgr.get_or_create("room1", "general", "", false);
         for i in 0..10 {
             room.history.append(ChatMessage::user(format!(
@@ -1752,10 +1771,11 @@ chat = "mock-model"
             )));
         }
 
-        let result = mgr.check_and_archive("room1");
+        let result = mgr.check_and_archive("room1", false);
+        assert!(result.is_some(), "Should archive with 10 messages (>4)");
         if let Some((rid, msgs)) = result {
             assert_eq!(rid, "room1");
-            assert!(!msgs.is_empty());
+            assert_eq!(msgs.len(), 5, "Should return oldest half (5 of 10)");
         }
     }
 

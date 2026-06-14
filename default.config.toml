@@ -55,8 +55,6 @@ default_image_size_tier = "4K"
 [rocketchat.model]
 default_provider = "openrouter"
 default_model = "gpt"
-max_history_size = 18
-max_text_length = 50000
 max_iterations = 21
 max_soul_chars = 5000
 memory_ttl_secs = 600

@@ -12,8 +12,9 @@ use rockbot::image_cache::ImageCache;
 use rockbot::provider::{AiProvider, DeepSeekProvider, FalAiProvider, ImageProvider, OpenRouterImageProvider, OpenRouterProvider};
 use rockbot::tool::ToolRegistry;
 use rockbot::tools::{
-    CalendarTool, DateTimeTool, EditSoulTool, ForgetKnowledgeTool, ImageGenTool,
-    RecallKnowledgeTool, SaveKnowledgeTool, VisionTool, WebDavTool, WebFetchTool, WebSearchTool,
+    CalendarTool, CompressMemoryTool, DateTimeTool, EditSoulTool, ForgetKnowledgeTool,
+    ImageGenTool, RecallKnowledgeTool, SaveKnowledgeTool, VisionTool, WebDavTool, WebFetchTool,
+    WebSearchTool,
 };
 use rockbot::utils::strip_markdown_image_id;
 
@@ -263,6 +264,12 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
 
     harness = harness.with_tools(tool_registry);
     let harness = Arc::new(Mutex::new(harness));
+
+    // Register compress_memory tool (needs Arc<Mutex<AgentHarness>>)
+    {
+        let mut h = harness.lock().await;
+        h.register_tool(Box::new(CompressMemoryTool::new(harness.clone())));
+    }
 
     info!("Bot initialized. Starting RocketChat connection...");
 

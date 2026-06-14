@@ -121,8 +121,6 @@ impl RoomState {
 #[derive(Debug)]
 pub struct MemoryManager {
     rooms: HashMap<String, RoomState>,
-    max_chars: usize,
-    max_history_messages: usize,
     pub max_soul_chars: usize,
     max_context_bytes: usize,
     summaries: HashMap<String, Option<String>>,
@@ -130,20 +128,23 @@ pub struct MemoryManager {
     knowledge: HashMap<String, String>,
     dirty_snapshots: HashSet<String>,
     pub persist_interval_secs: u64,
+    /// Per-room flag: token pressure detected (set during LLM call, checked after reply)
+    token_pressure: HashSet<String>,
+    /// Per-room flag: byte pressure detected (set during context assembly, checked after reply)
+    byte_pressure: HashSet<String>,
 }
+
+/// Hardcoded max messages in context window (replaces configurable max_history_size)
+const MAX_CONTEXT_MESSAGES: usize = 30;
 
 impl MemoryManager {
     pub fn new(
-        max_chars: usize,
-        max_history_messages: usize,
         max_soul_chars: usize,
         persist_interval_secs: u64,
         max_context_bytes: usize,
     ) -> Self {
         Self {
             rooms: HashMap::new(),
-            max_chars,
-            max_history_messages,
             max_soul_chars,
             max_context_bytes,
             summaries: HashMap::new(),
@@ -151,6 +152,8 @@ impl MemoryManager {
             knowledge: HashMap::new(),
             dirty_snapshots: HashSet::new(),
             persist_interval_secs,
+            token_pressure: HashSet::new(),
+            byte_pressure: HashSet::new(),
         }
     }
 
@@ -179,18 +182,49 @@ impl MemoryManager {
         self.rooms.get_mut(room_id)
     }
 
-    pub fn check_and_archive(&mut self, room_id: &str) -> Option<(String, Vec<ChatMessage>)> {
+    pub fn check_and_archive(&mut self, room_id: &str, force: bool) -> Option<(String, Vec<ChatMessage>)> {
         let room = self.rooms.get(room_id)?;
-        if room.history.needs_archive(self.max_chars) {
-            let to_archive = room
-                .history
-                .oldest_messages(room.history.messages.len() / 2);
-            let messages: Vec<ChatMessage> = to_archive.to_vec();
-            let room_id = room.room_id.clone();
-            Some((room_id, messages))
-        } else {
-            None
+        if room.history.messages.len() <= 4 && !force {
+            return None;
         }
+        // Always take oldest half unless forced to take all
+        let take_count = if force {
+            room.history.messages.len()
+        } else {
+            room.history.messages.len() / 2
+        };
+        if take_count == 0 {
+            return None;
+        }
+        let to_archive = room.history.oldest_messages(take_count);
+        let messages: Vec<ChatMessage> = to_archive.to_vec();
+        let room_id = room.room_id.clone();
+        Some((room_id, messages))
+    }
+
+    pub fn set_token_pressure(&mut self, room_id: &str) {
+        self.token_pressure.insert(room_id.to_string());
+    }
+
+    pub fn set_byte_pressure(&mut self, room_id: &str) {
+        self.byte_pressure.insert(room_id.to_string());
+    }
+
+    pub fn has_token_pressure(&self, room_id: &str) -> bool {
+        self.token_pressure.contains(room_id)
+    }
+
+    pub fn has_byte_pressure(&self, room_id: &str) -> bool {
+        self.byte_pressure.contains(room_id)
+    }
+
+    pub fn needs_compression(&self, room_id: &str) -> bool {
+        self.has_token_pressure(room_id) || self.has_byte_pressure(room_id)
+    }
+
+    pub fn clear_pressure_flags(&mut self, room_id: &str) {
+        self.token_pressure.remove(room_id);
+        self.byte_pressure.remove(room_id);
     }
 
     pub fn prune_archived(&mut self, room_id: &str, count: usize) {
@@ -206,7 +240,7 @@ impl MemoryManager {
         max_history: Option<usize>,
         extra_context: Option<Vec<ChatMessage>>,
     ) -> Vec<ChatMessage> {
-        let limit = max_history.unwrap_or(self.max_history_messages);
+        let limit = max_history.unwrap_or(MAX_CONTEXT_MESSAGES);
         let mut messages = Vec::new();
         messages.push(ChatMessage::system(system_prompt));
         let mut has_soul = false;
@@ -466,6 +500,8 @@ impl MemoryManager {
         self.souls.remove(room_id);
         self.knowledge.remove(room_id);
         self.dirty_snapshots.remove(room_id);
+        self.token_pressure.remove(room_id);
+        self.byte_pressure.remove(room_id);
         self.rooms.remove(room_id)
     }
 
@@ -708,7 +744,7 @@ mod tests {
 
     #[test]
     fn test_memory_manager_get_or_create() {
-        let mut mgr = MemoryManager::new(1000, 12, 2000, 60, 30_000_000);
+        let mut mgr = MemoryManager::new(2000, 60, 30_000_000);
         let room = mgr.get_or_create("room1", "general", "", false);
         assert_eq!(room.room_id, "room1");
         assert_eq!(room.room_name, "general");
@@ -722,7 +758,7 @@ mod tests {
 
     #[test]
     fn test_memory_manager_build_context() {
-        let mut mgr = MemoryManager::new(1000, 3, 2000, 60, 30_000_000);
+        let mut mgr = MemoryManager::new(2000, 60, 30_000_000);
         let room = mgr.get_or_create("room1", "general", "", false);
         for i in 0..5 {
             room.history
@@ -730,16 +766,15 @@ mod tests {
         }
 
         let ctx = mgr.build_context("room1", "You are helpful", None, None);
-        assert_eq!(ctx.len(), 4);
+        assert_eq!(ctx.len(), 6, "1 system + 5 history (max is 30)");
         assert_eq!(ctx[0].role, Role::System);
-        assert_eq!(ctx[1].text_content(), Some("msg 2"));
-        assert_eq!(ctx[2].text_content(), Some("msg 3"));
-        assert_eq!(ctx[3].text_content(), Some("msg 4"));
+        assert_eq!(ctx[1].text_content(), Some("msg 0"));
+        assert_eq!(ctx[5].text_content(), Some("msg 4"));
     }
 
     #[test]
     fn test_memory_manager_build_context_nonexistent_room() {
-        let mgr = MemoryManager::new(1000, 12, 2000, 60, 30_000_000);
+        let mgr = MemoryManager::new(2000, 60, 30_000_000);
         let ctx = mgr.build_context("nonexistent", "prompt", None, None);
         assert_eq!(ctx.len(), 1);
     }
@@ -774,7 +809,7 @@ mod tests {
 
     #[test]
     fn test_build_context_with_dm_name() {
-        let mut mgr = MemoryManager::new(1000, 12, 2000, 60, 30_000_000);
+        let mut mgr = MemoryManager::new(2000, 60, 30_000_000);
         let room = mgr.get_or_create("dm-xyz", "alice", "", true);
         assert_eq!(room.room_name, "alice");
         assert!(room.is_dm);
@@ -921,7 +956,7 @@ mod tests {
 
     #[test]
     fn test_self_display_name_regex_match() {
-        let mut mm = MemoryManager::new(1000, 12, 2000, 60, 30_000_000);
+        let mut mm = MemoryManager::new(2000, 60, 30_000_000);
         let soul = SoulMemory {
             room_id: NonEmptyString::try_new("r-test".to_string()).unwrap(),
             content: "# Soul Memory\n\n- My name is 香菜 🌿\n- foo".into(),
@@ -933,7 +968,7 @@ mod tests {
 
     #[test]
     fn test_self_display_name_no_myname() {
-        let mut mm = MemoryManager::new(1000, 12, 2000, 60, 30_000_000);
+        let mut mm = MemoryManager::new(2000, 60, 30_000_000);
         let soul = SoulMemory {
             room_id: NonEmptyString::try_new("r-test".to_string()).unwrap(),
             content: "零夢\n\n- foo".into(),

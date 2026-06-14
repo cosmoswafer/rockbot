@@ -15,7 +15,7 @@ the system falls back to reading individual files.
 
 | Layer | Name | Storage | Limit | Contents |
 |-------|------|---------|-------|----------|
-| 1 | **Chat History** | In-memory only | `max_text_length` chars, `max_history_messages` msgs | Raw `Vec<ChatMessage>` — the current working window |
+| 1 | **Chat History** | In-memory only | Hardcoded cap on messages | Raw `Vec<ChatMessage>` — the current working window |
 | 2 | **Compressed Memory** | WebDAV `summary.md` | ≤10 bullet points | AI-compressed key facts distilled from overflowed Layer 1 messages. See [Memory Compression](memory-compression.md) for full compression pipeline. |
 | 3 | **Soul** | WebDAV `soul.md` file | `max_soul_chars` chars | Persistent core memory editable by user via chat |
 
@@ -378,12 +378,10 @@ Fields from `ModelConfig` in [Configuration Management](config.md):
 
 | Field                  | Type    | Default | Notes                                              |
 | ---------------------- | ------- | ------- | -------------------------------------------------- |
-| `max_text_length`      | `usize` | 50000   | Compression threshold — triggers Layer 1 → Layer 2 when char_count exceeds this |
-| `max_history_size`     | `usize` | 18      | Layer 1 max messages in context                    |
 | `max_soul_chars`       | `usize` | 2000    | Layer 3 max chars for soul.md content              |
 | `memory_ttl_secs`      | `u64`   | 300     | Room idle timeout — evict from memory (after snapshot persisted) |
 | `persist_interval_secs`| `u64`   | 60      | How often the timer writes dirty snapshots to WebDAV |
-| `max_context_bytes`    | `usize` | 4_000_000 | Max byte size for context (triggers inline summarization + flags for compression) |
+| `max_context_bytes`    | `usize` | 4_000_000 | Max byte size for context (triggers inline trim + flags for compression) |
 | `model_context_length` | `u32`   | 1_000_000 | Model's max context tokens; 90% threshold triggers post-LLM compression |
 
 Note: removed `max_summary_chars` and `summary_days` — no longer needed since
@@ -397,7 +395,7 @@ Layer 2 is a single `summary.md` capped at 10 bullet points by LLM instruction.
 | ------------------- | ----------------------------- | ------------------------------ | ------------------------------------------------------------ | --------------------------------------------- |
 | **Timer persist**   | `maintenance_tick()` (Phase 1) | Every `persist_interval_secs`  | `dirty_snapshots` is non-empty                               | Build full snapshot (L1+L2+L3), PUT `snapshot.json`, clear dirty flag |
 | **Timer evict**     | `maintenance_tick()` (Phase 2) | Every `persist_interval_secs`  | Room has ≥ 1 message AND `last_activity > 0` AND `now - last_activity > memory_ttl_secs` | Persist snapshot if dirty, then remove room from `HashMap` |
-| **Compression**     | `compress_room_if_needed()`    | After reply delivered (background)  | Checks all three flags (char overflow, token pressure, byte pressure) | See [Memory Compression](memory-compression.md) |
+| **Compression**     | `compress_room_if_needed()`    | After reply delivered (background)  | Checks flags (token pressure, byte pressure) | See [Memory Compression](memory-compression.md) |
 | **Safety net**      | `trim_context()`               | Before each LLM call           | `context_bytes > max_context_bytes`                              | Inline trim only; sets byte_pressure_flag. See [Memory Compression](memory-compression.md §2d) |
 | **Room init**       | `restore_history()`            | Once per room, on first message| Room not in memory (fresh or evicted)                        | Load snapshot (cache-first), fall back to individual files |
 | **Soul edit**       | `edit_soul()` tool             | On user request                | LLM invokes `edit_soul` tool                                 | Write `soul.md`, update in-memory soul, mark snapshot dirty |

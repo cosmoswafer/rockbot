@@ -46,10 +46,6 @@ pub struct ServerConfig {
 pub struct ModelConfig {
     pub default_provider: ProviderName,
     pub default_model: String,
-    #[serde(default = "default_max_history_size")]
-    pub max_history_size: BoundedUsize,
-    #[serde(default = "default_max_text_length")]
-    pub max_text_length: BoundedUsize,
     #[serde(default = "default_max_iterations")]
     pub max_iterations: u32,
     #[serde(default = "default_max_soul_chars")]
@@ -136,14 +132,6 @@ impl Default for ImageModelConfig {
 
 fn default_max_iterations() -> u32 {
     28
-}
-
-fn default_max_history_size() -> BoundedUsize {
-    BoundedUsize::try_new(18).expect("hardcoded default")
-}
-
-fn default_max_text_length() -> BoundedUsize {
-    BoundedUsize::try_new(50000).expect("hardcoded default")
 }
 
 fn default_max_soul_chars() -> BoundedUsize {
