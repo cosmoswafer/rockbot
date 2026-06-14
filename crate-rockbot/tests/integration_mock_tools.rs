@@ -880,9 +880,8 @@ fn test_conversation_history_oldest_messages() {
 
 #[test]
 fn test_memory_manager_new() {
-    let mgr = MemoryManager::new(50000, 18, 10000, 3, 5000, 60, 4_000_000);
+    let mgr = MemoryManager::new(50000, 18, 5000, 60, 4_000_000);
     assert_eq!(mgr.persist_interval_secs, 60);
-    assert_eq!(mgr.summary_days, 3);
     assert_eq!(mgr.max_soul_chars, 5000);
 }
 
@@ -895,7 +894,7 @@ fn test_persist_snapshot_serialization() {
         char_count: 5,
         archive_seq: 0,
         soul: Some("# Soul\n\n- My name is Bot ✨".into()),
-        daily_summaries: vec![],
+        summary: None,
         updated_at: "2026-06-13T00:00:00Z".to_string(),
     };
 
@@ -972,7 +971,7 @@ async fn test_harness_constructs_and_registers_tools() {
 
     // Verify memory
     let mem = harness.memory();
-    assert_eq!(mem.summary_days, 3);
+    assert_eq!(mem.max_soul_chars, 5000);
 }
 
 #[tokio::test]
@@ -1068,8 +1067,6 @@ fn make_test_config(webdav_url: &str) -> rockbot::config::AppConfig {
                 default_model: "mock-model".into(),
                 max_history_size: BoundedUsize::try_new(12).unwrap(),
                 max_text_length: BoundedUsize::try_new(50000).unwrap(),
-                max_summary_chars: BoundedUsize::try_new(5000).unwrap(),
-                summary_days: 3,
                 max_soul_chars: BoundedUsize::try_new(5000).unwrap(),
                 max_iterations: 5,
                 persist_interval_secs: 60,

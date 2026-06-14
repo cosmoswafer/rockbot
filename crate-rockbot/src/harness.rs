@@ -11,11 +11,11 @@ use crate::error::Result;
 use crate::error::RockBotError;
 use crate::image_cache::ImageCache;
 use crate::knowledge::KnowledgeManager;
-use crate::memory::{DailySummary, MemoryManager, SoulMemory, strip_images_from_message, strip_orphaned_tool_calls, truncate_message_content};
+use crate::memory::{MemoryManager, SoulMemory, strip_images_from_message, strip_orphaned_tool_calls, truncate_message_content};
 use crate::provider::AiProvider;
 use crate::tool::ToolRegistry;
 use crate::types::{ChatMessage, ChatRequest, Role};
-use crate::utils::{now_iso_string, today_iso_date};
+use crate::utils::now_iso_string;
 
 const DEFAULT_SYSTEM_PROMPT: &str = "\
 You are {name}, a helpful AI assistant running on a RocketChat server. \
@@ -66,8 +66,6 @@ impl AgentHarness {
         let max_chars = *config.rocketchat.model.max_text_length;
         let max_history = *config.rocketchat.model.max_history_size;
         let max_iterations = config.rocketchat.model.max_iterations;
-        let max_summary_chars = *config.rocketchat.model.max_summary_chars;
-        let summary_days = config.rocketchat.model.summary_days;
         let max_soul_chars = *config.rocketchat.model.max_soul_chars;
         let persist_interval = config.rocketchat.model.persist_interval_secs;
         let max_context_bytes = *config.rocketchat.model.max_context_bytes;
@@ -76,7 +74,7 @@ impl AgentHarness {
         Self {
             config,
             provider,
-            memory: MemoryManager::new(max_chars, max_history, max_summary_chars, summary_days, max_soul_chars, persist_interval, max_context_bytes),
+            memory: MemoryManager::new(max_chars, max_history, max_soul_chars, persist_interval, max_context_bytes),
             tools: ToolRegistry::new(),
             webdav,
             rest_client: None,
@@ -838,12 +836,11 @@ impl AgentHarness {
         result
     }
 
-    pub async fn archive_room_if_needed(&mut self, room_id: &str) -> Result<()> {
-        let needs_archive = self.memory.check_and_archive(room_id);
-        if let Some((rid, msgs)) = needs_archive {
+    pub async fn compress_room_if_needed(&mut self, room_id: &str) -> Result<()> {
+        let needs_compress = self.memory.check_and_archive(room_id);
+        if let Some((rid, msgs)) = needs_compress {
             if let Some(ref webdav_client) = self.webdav {
                 let count = msgs.len();
-                let summary = self.summarize_for_archive(&msgs).await;
 
                 let wd = {
                     let room = self.memory.get(&rid);
@@ -853,42 +850,54 @@ impl AgentHarness {
                     compute_webdav_dir(rn, rf, dm)
                 };
 
-                // Layer 2: write daily .md summary
-                let char_count = msgs
-                    .iter()
-                    .filter_map(|m| m.text_content())
-                    .map(|t| t.chars().count())
-                    .sum();
-                let summary_ok = self.upsert_daily_summary(webdav_client, &wd, &summary, count, char_count).await.is_ok();
+                // Load existing summary.md and knowledge entries
+                let existing_summary = {
+                    let path = self.memory.summary_path(&wd);
+                    webdav_client.read_file_to_string(&path).await.ok()
+                };
+
+                // Load knowledge index to give LLM context
+                let knowledge_entries = match crate::knowledge::KnowledgeManager::load_index(webdav_client, &wd).await {
+                    Ok(idx) => idx.entries,
+                    Err(_) => Vec::new(),
+                };
+
+                // LLM compress: summary + identify used knowledge
+                let (summary_text, used_filenames) = self.compress_for_summary(&msgs, existing_summary.as_deref(), &knowledge_entries).await;
+
+                // Write summary.md
+                let summary_ok = self.write_summary_md(webdav_client, &wd, &summary_text).await.is_ok();
                 if !summary_ok {
-                    warn!("Failed to write daily summary, skipping prune");
+                    warn!("Failed to write summary.md, skipping prune");
                 }
 
                 if summary_ok {
-                    // Mark snapshot dirty after Layer 2 write
+                    // Mark snapshot dirty
                     self.memory.mark_snapshot_dirty(&rid);
 
-                    // Refresh in-memory summaries cache so priority review sees fresh data
-                    if let Ok(fresh) = self.load_daily_summaries(webdav_client, &wd).await {
-                        self.memory.set_daily_summaries(&rid, fresh);
+                    // Review knowledge priorities with LLM-identified used entries
+                    if let Ok(changed) = crate::knowledge::KnowledgeManager::review_priorities(
+                        webdav_client, &wd, &used_filenames,
+                    ).await {
+                        if changed {
+                            // Refresh knowledge context
+                            if let Ok(text) = self.load_knowledge_for_room(webdav_client, &rid, &wd).await {
+                                if !text.is_empty() {
+                                    self.memory.set_knowledge(&rid, text);
+                                }
+                            }
+                            self.memory.mark_snapshot_dirty(&rid);
+                        }
                     }
 
-                    // Age out old summaries
-                    let summary_days = self.memory.summary_days;
-                    if let Err(e) = self.delete_old_summaries(webdav_client, &wd, summary_days).await {
-                        warn!("Failed to clean up old summaries: {}", e);
-                    }
+                    // Update in-memory summary cache
+                    self.memory.set_summary(&rid, Some(summary_text));
 
                     self.memory.prune_archived(&rid, count);
-
-                    // Review knowledge priorities after daily summary write
-                    if self.review_knowledge_priorities_for_room(webdav_client, &wd).await {
-                        self.memory.mark_snapshot_dirty(&rid);
-                    }
                 }
             } else {
                 debug!(
-                    "No WebDAV client, truncating instead of archiving for room {}",
+                    "No WebDAV client, truncating instead of compressing for room {}",
                     rid
                 );
                 let count = msgs.len();
@@ -898,106 +907,14 @@ impl AgentHarness {
         Ok(())
     }
 
-    async fn upsert_daily_summary(
+    async fn compress_for_summary(
         &self,
-        webdav: &WebDavClient,
-        webdav_dir: &str,
-        new_summary: &str,
-        msg_count: usize,
-        char_count: usize,
-    ) -> Result<()> {
-        let today = today_iso_date();
-        let path = format!("{}memory/summaries/{}.md", WebDavPath::new("").room_dir(webdav_dir), today);
-
-        let folder = format!("{}memory/summaries/", WebDavPath::new("").room_dir(webdav_dir));
-        if let Err(e) = webdav.ensure_directory_all(&folder).await {
-            warn!("Failed to ensure summaries directory {}: {}", folder, e);
-        }
-
-        let content = match webdav.read_file_to_string(&path).await {
-            Ok(existing) => {
-                // Merge into a single ## section for today
-                let old_summary = extract_latest_summary(&existing);
-                let (old_msg, old_chars) = parse_summary_header(&existing);
-                let merged = if old_summary.is_empty() || old_summary == new_summary {
-                    new_summary.to_string()
-                } else {
-                    format!("{}\n\n{}", old_summary, new_summary)
-                };
-                let total_msgs = old_msg + msg_count;
-                let total_chars = old_chars + char_count;
-                let title = format!("# Daily Summaries — {}\n\n", webdav_dir);
-                format!(
-                    "{}## {} ({} messages, {} chars)\n{}\n",
-                    title, today, total_msgs, total_chars, merged
-                )
-            }
-            Err(_) => {
-                let title = format!("# Daily Summaries — {}\n\n", webdav_dir);
-                let header = format!(
-                    "## {} ({} messages, {} chars)\n{}\n",
-                    today, msg_count, char_count, new_summary
-                );
-                format!("{}{}", title, header)
-            }
-        };
-
-        webdav
-            .write_file_with_fallback(&path, content.as_bytes().to_vec())
-            .await
-            .map_err(|e| crate::error::RockBotError::Provider(format!("Daily summary write failed: {e}")))?;
-
-        debug!(
-            "Upserted daily summary at {} ({} messages, {} chars)",
-            path, msg_count, char_count
-        );
-        Ok(())
-    }
-
-    async fn delete_old_summaries(
-        &self,
-        webdav: &WebDavClient,
-        webdav_dir: &str,
-        max_days: u32,
-    ) -> Result<()> {
-        let folder = format!("{}memory/summaries/", WebDavPath::new("").room_dir(webdav_dir));
-        let entries = match webdav.list_directory(&folder).await {
-            Ok(e) => e,
-            Err(_) => {
-                debug!("No summaries directory yet at {}", folder);
-                return Ok(());
-            }
-        };
-
-        let today = {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default();
-            (now.as_secs() / 86400) as i64
-        };
-
-        for entry in &entries {
-            if entry.is_dir || !entry.name.ends_with(".md") {
-                continue;
-            }
-            let date_str = entry.name.trim_end_matches(".md");
-            if let Some(days) = crate::memory::date_to_days(date_str) {
-                if today - days > max_days as i64 {
-                    let path = format!("{}{}", folder, entry.name);
-                    if let Err(e) = webdav.delete(&path).await {
-                        warn!("Failed to delete old summary {}: {}", path, e);
-                    } else {
-                        debug!("Deleted old daily summary: {}", path);
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
-    async fn summarize_for_archive(&self, messages: &[ChatMessage]) -> String {
+        messages: &[ChatMessage],
+        existing_summary: Option<&str>,
+        knowledge_entries: &[crate::knowledge::IndexEntry],
+    ) -> (String, Vec<String>) {
         if messages.is_empty() {
-            return String::new();
+            return (String::new(), Vec::new());
         }
 
         let user_msgs: Vec<String> = messages
@@ -1009,12 +926,42 @@ impl AgentHarness {
             .collect();
 
         if user_msgs.is_empty() {
-            return format!("{} messages archived", messages.len());
+            return (format!("{} messages compressed", messages.len()), Vec::new());
         }
 
+        // Build knowledge entries reference for LLM
+        let mut knowledge_ref = String::new();
+        if !knowledge_entries.is_empty() {
+            knowledge_ref.push_str("\n## Knowledge Entries (identify which were relevant)\n");
+            for entry in knowledge_entries.iter().take(30) {
+                knowledge_ref.push_str(&format!(
+                    "- `{}` — {}\n",
+                    entry.filename,
+                    entry.when_useful
+                ));
+            }
+        }
+
+        let existing_block = existing_summary
+            .filter(|s| !s.is_empty())
+            .map(|s| format!("\n## Existing Summary\n{}", s))
+            .unwrap_or_default();
+
         let prompt = format!(
-            "Summarize this conversation excerpt in 1-3 concise sentences. Focus on key topics, \
-             decisions, and factual information shared:\n\n{}",
+            "Compress this conversation excerpt into at most 10 bullet points for a memory summary.\n\
+             Focus on key facts, decisions, user preferences, and persistent information.\n\
+             Output format:\n\
+             # Memory Summary\n\n\
+             - bullet point 1\n\
+             - bullet point 2\n\
+             ...\n\n\
+             ## Used Knowledge\n\
+             - filename1.md\n\
+             - filename2.md\n\n\
+             Only list knowledge entries that were actually relevant to this conversation.\n\
+             {}\n\
+             ## Conversation\n{}\n",
+            existing_block,
             user_msgs.join("\n")
         );
 
@@ -1024,31 +971,43 @@ impl AgentHarness {
             tools: None,
             stream: false,
             temperature: Some(0.3),
-            max_tokens: Some(256),
+            max_tokens: Some(512),
             thinking: None,
             reasoning_effort: None,
             tool_choice: None,
         };
 
+        let default_summary = format!("{} messages compressed", messages.len());
+
         match self.provider.complete(request).await {
-            Ok(result) => result.text.unwrap_or_else(|| {
-                format!("{} messages archived", messages.len())
-            }),
+            Ok(result) => {
+                let text = result.text.unwrap_or_else(|| default_summary.clone());
+                parse_compression_output(&text, &default_summary)
+            }
             Err(e) => {
-                warn!("AI summarization failed, using fallback: {}", e);
-                let preview_parts: Vec<String> = messages
-                    .iter()
-                    .take(5)
-                    .filter_map(|m| m.text_content())
-                    .map(|t| if t.len() > 80 { let end = t.char_indices().map(|(i, _)| i).nth(80).unwrap_or(t.len()); format!("{}...", &t[..end]) } else { t.to_string() })
-                    .collect();
-                if preview_parts.is_empty() {
-                    format!("{} messages archived", messages.len())
-                } else {
-                    format!("{} messages: {}", messages.len(), preview_parts.join(" | "))
-                }
+                warn!("AI compression failed, using fallback: {}", e);
+                (default_summary, Vec::new())
             }
         }
+    }
+
+    async fn write_summary_md(
+        &self,
+        webdav: &WebDavClient,
+        webdav_dir: &str,
+        summary: &str,
+    ) -> Result<()> {
+        let path = self.memory.summary_path(webdav_dir);
+        let folder = format!("{}memory/", WebDavPath::new("").room_dir(webdav_dir));
+        if let Err(e) = webdav.ensure_directory_all(&folder).await {
+            warn!("Failed to ensure memory directory {}: {}", folder, e);
+        }
+        webdav
+            .write_file_with_fallback(&path, summary.as_bytes().to_vec())
+            .await
+            .map_err(|e| crate::error::RockBotError::Provider(format!("summary.md write failed: {e}")))?;
+        debug!("Wrote summary.md at {}", path);
+        Ok(())
     }
 
     pub async fn restore_history(
@@ -1068,7 +1027,7 @@ impl AgentHarness {
         // Cache-first: try snapshot.json for single-read restore
         let snap_path = format!("{}memory/snapshot.json", WebDavPath::new("").room_dir(&wd));
         let mut got_soul = false;
-        let mut got_summaries = false;
+        let mut got_summary = false;
 
         if let Ok(content) = webdav_client.read_file_to_string(&snap_path).await {
             if let Ok(snapshot) = serde_json::from_str::<crate::memory::PersistSnapshot>(&content) {
@@ -1076,10 +1035,10 @@ impl AgentHarness {
                 if snapshot.schema.as_str() == "rockbot-snapshot/1" {
                     self.memory.restore_snapshot(&snapshot);
                     got_soul = snapshot.soul.is_some();
-                    got_summaries = !snapshot.daily_summaries.is_empty();
+                    got_summary = snapshot.summary.is_some();
                     debug!(
-                        "Restored snapshot for room {} (soul={}, summaries={})",
-                        room_name, got_soul, got_summaries
+                        "Restored snapshot for room {} (soul={}, summary={})",
+                        room_name, got_soul, got_summary
                     );
                 } else {
                     warn!(
@@ -1091,22 +1050,18 @@ impl AgentHarness {
         }
 
         // Fallback: load individual files for any missing layers
-        if !got_summaries {
-            match self.load_daily_summaries(webdav_client, &wd).await {
-                Ok(summaries) if !summaries.is_empty() => {
-                    debug!(
-                        "Loaded {} daily summaries for room {}",
-                        summaries.len(),
-                        room_name
-                    );
-                    self.memory.set_daily_summaries(room_id, summaries);
+        if !got_summary {
+            match self.load_summary(webdav_client, &wd).await {
+                Ok(Some(summary)) => {
+                    debug!("Loaded summary.md for room {}", room_name);
+                    self.memory.set_summary(room_id, Some(summary));
                 }
-                Ok(_) => {
-                    debug!("No daily summaries found for room {}", room_name);
+                Ok(None) => {
+                    debug!("No summary.md found for room {}", room_name);
                 }
                 Err(e) => {
                     warn!(
-                        "Failed to load daily summaries for room {}: {}",
+                        "Failed to load summary.md for room {}: {}",
                         room_name, e
                     );
                 }
@@ -1148,48 +1103,25 @@ impl AgentHarness {
         }
     }
 
-    async fn load_daily_summaries(
+    async fn load_summary(
         &self,
         webdav: &WebDavClient,
         webdav_dir: &str,
-    ) -> Result<Vec<DailySummary>> {
-        let folder = format!("{}memory/summaries/", WebDavPath::new("").room_dir(webdav_dir));
-        let entries = match webdav.list_directory(&folder).await {
-            Ok(e) => e,
-            Err(_) => {
-                debug!("No summaries directory yet at {} (loading daily summaries)", folder);
-                return Ok(Vec::new());
-            }
-        };
-
-        let mut summaries = Vec::new();
-        for entry in entries {
-            if entry.is_dir || !entry.name.ends_with(".md") {
-                continue;
-            }
-            let date_str = entry.name.trim_end_matches(".md");
-            let path = format!("{}{}", folder, entry.name);
-            match webdav.read_file_to_string(&path).await {
-                Ok(content) => {
-                    let summary_text = extract_latest_summary(&content);
-                    let (msg_count, char_count) = parse_summary_header(&content);
-                    if !summary_text.is_empty() {
-                        summaries.push(DailySummary {
-                            date: crate::validated::NonEmptyString::try_new(date_str.to_string()).expect("date must be non-empty"),
-                            summary: summary_text,
-                            msg_count,
-                            char_count,
-                        });
-                    }
+    ) -> Result<Option<String>> {
+        let path = self.memory.summary_path(webdav_dir);
+        match webdav.read_file_to_string(&path).await {
+            Ok(content) => {
+                if content.trim().is_empty() {
+                    Ok(None)
+                } else {
+                    Ok(Some(content))
                 }
-                Err(e) => {
-                    warn!("Failed to read daily summary {}: {}", path, e);
-                }
+            }
+            Err(e) => {
+                debug!("No summary.md at {} yet: {}", path, e);
+                Ok(None)
             }
         }
-
-        summaries.sort_by(|a, b| a.date.cmp(&b.date));
-        Ok(summaries)
     }
 
     async fn load_soul(
@@ -1316,7 +1248,7 @@ impl AgentHarness {
 
             if snapshot.messages.is_empty()
                 && snapshot.soul.is_none()
-                && snapshot.daily_summaries.is_empty()
+                && snapshot.summary.is_none()
             {
                 self.memory.clear_dirty(room_id);
                 continue;
@@ -1357,53 +1289,6 @@ impl AgentHarness {
         }
     }
 
-    async fn review_knowledge_priorities_for_room(
-        &self,
-        webdav: &WebDavClient,
-        webdav_dir: &str,
-    ) -> bool {
-        let summaries = self.memory.get_daily_summaries(webdav_dir);
-        match KnowledgeManager::review_priorities(webdav, webdav_dir, summaries).await {
-            Ok(changed) => changed,
-            Err(e) => {
-                warn!(
-                    "Failed to review knowledge priorities for {}: {}",
-                    webdav_dir, e
-                );
-                false
-            }
-        }
-    }
-
-    async fn review_knowledge_priorities(&mut self) {
-        let Some(webdav) = self.webdav.as_ref() else {
-            return;
-        };
-        let room_ids = self.memory.room_ids();
-        for rid in room_ids {
-            let summaries = self.memory.get_daily_summaries(&rid);
-            let wd = {
-                let room = self.memory.get(&rid);
-                let (rn, rf, dm) = room
-                    .map(|r| (r.room_name.as_str(), r.room_fname.as_str(), r.is_dm))
-                    .unwrap_or((rid.as_str(), "", false));
-                compute_webdav_dir(rn, rf, dm)
-            };
-            match KnowledgeManager::review_priorities(webdav, &wd, summaries).await {
-                Ok(true) => {
-                    self.memory.mark_snapshot_dirty(&rid);
-                }
-                Ok(false) => {}
-                Err(e) => {
-                    warn!(
-                        "Failed to review knowledge priorities for {}: {}",
-                        wd, e
-                    );
-                }
-            }
-        }
-    }
-
     pub async fn maintenance_tick(&mut self, memory_ttl_secs: u64) {
         // Phase 1: persist dirty snapshots
         if self.webdav.is_some() {
@@ -1412,9 +1297,6 @@ impl AgentHarness {
                 debug!("maintenance_tick: flushing {} dirty snapshot(s)", dirty_count);
             }
             self.flush_all_snapshots().await;
-
-            // Phase 1.5: review knowledge priorities
-            self.review_knowledge_priorities().await;
         }
 
         // Phase 2: evict stale rooms
@@ -1508,37 +1390,35 @@ fn compute_webdav_dir(room_name: &str, room_fname: &str, is_dm: bool) -> String 
     }
 }
 
-fn extract_latest_summary(daily_md: &str) -> String {
-    // Extracts the most recent summary section (last ## header block)
-    let sections: Vec<&str> = daily_md.split("\n## ").collect();
-    if let Some(last) = sections.last() {
-        let lines: Vec<&str> = last.lines().collect();
-        if lines.len() > 1 {
-            return lines[1..].join("\n").trim().to_string();
-        }
-    }
-    String::new()
-}
+fn parse_compression_output(output: &str, default_summary: &str) -> (String, Vec<String>) {
+    // Split at "## Used Knowledge" marker
+    let (summary_part, used_part) = if let Some(pos) = output.find("## Used Knowledge") {
+        let s = &output[..pos];
+        let u = &output[pos + "## Used Knowledge".len()..];
+        (s.trim(), u.trim())
+    } else {
+        (output.trim(), "")
+    };
 
-fn parse_summary_header(daily_md: &str) -> (usize, usize) {
-    for line in daily_md.lines() {
-        if line.starts_with("## ") && line.contains("messages") {
-            let msg_count = line
-                .split('(')
-                .nth(1)
-                .and_then(|s| s.split(" messages").next())
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(0);
-            let char_count = line
-                .split(" messages, ")
-                .nth(1)
-                .and_then(|s| s.split(" chars").next())
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(0);
-            return (msg_count, char_count);
-        }
-    }
-    (0, 0)
+    let summary = if summary_part.is_empty() {
+        default_summary.to_string()
+    } else {
+        summary_part.to_string()
+    };
+
+    let used: Vec<String> = used_part
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim().trim_start_matches('-').trim();
+            if trimmed.ends_with(".md") && !trimmed.is_empty() {
+                Some(trimmed.to_string())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    (summary, used)
 }
 
 #[cfg(test)]
@@ -1611,8 +1491,6 @@ default_model = "chat"
 max_history_size = 12
 max_text_length = 50000
 max_iterations = 8
-max_summary_chars = 8000
-summary_days = 7
 
 [[chat_providers]]
 name = "mock"
@@ -1847,7 +1725,7 @@ chat = "mock-model"
     }
 
     #[tokio::test]
-    async fn test_archive_room_if_needed_no_webdav() {
+    async fn test_compress_room_if_needed_no_webdav() {
         let config = make_test_config();
         let provider = Box::new(MockProvider::new(vec![]));
         let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
@@ -1859,13 +1737,13 @@ chat = "mock-model"
             room.history.append(ChatMessage::user(format!("msg {}", i)));
         }
 
-        let result = harness.archive_room_if_needed("room1").await;
+        let result = harness.compress_room_if_needed("room1").await;
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_check_and_archive_returns_seq() {
-        let mut mgr = MemoryManager::new(50, 12, 8000, 7, 2000, 60, 30_000_000);
+        let mut mgr = MemoryManager::new(50, 12, 2000, 60, 30_000_000);
         let room = mgr.get_or_create("room1", "general", "", false);
         for i in 0..10 {
             room.history.append(ChatMessage::user(format!(
@@ -1891,8 +1769,9 @@ chat = "mock-model"
             ChatMessage::user("Hello, I need help with something"),
             ChatMessage::assistant("Sure, what do you need?"),
         ];
-        let summary = harness.summarize_for_archive(&msgs).await;
-        assert!(summary.starts_with("2 messages:"));
+        let (summary, used) = harness.compress_for_summary(&msgs, None, &[]).await;
+        assert!(summary.contains("2 messages"));
+        assert!(used.is_empty());
     }
 
     #[test]

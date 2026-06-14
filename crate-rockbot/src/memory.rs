@@ -20,19 +20,10 @@ pub struct PersistSnapshot {
     pub archive_seq: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub soul: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[validate]
-    pub daily_summaries: Vec<DailySummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
     #[validate(min_length = 1)]
     pub updated_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
-pub struct DailySummary {
-    pub date: NonEmptyString,
-    pub summary: String,
-    pub msg_count: usize,
-    pub char_count: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -132,11 +123,9 @@ pub struct MemoryManager {
     rooms: HashMap<String, RoomState>,
     max_chars: usize,
     max_history_messages: usize,
-    pub max_summary_chars: usize,
-    pub summary_days: u32,
     pub max_soul_chars: usize,
     max_context_bytes: usize,
-    daily_summaries: HashMap<String, Vec<DailySummary>>,
+    summaries: HashMap<String, Option<String>>,
     souls: HashMap<String, SoulMemory>,
     knowledge: HashMap<String, String>,
     dirty_snapshots: HashSet<String>,
@@ -147,8 +136,6 @@ impl MemoryManager {
     pub fn new(
         max_chars: usize,
         max_history_messages: usize,
-        max_summary_chars: usize,
-        summary_days: u32,
         max_soul_chars: usize,
         persist_interval_secs: u64,
         max_context_bytes: usize,
@@ -157,11 +144,9 @@ impl MemoryManager {
             rooms: HashMap::new(),
             max_chars,
             max_history_messages,
-            max_summary_chars,
-            summary_days,
             max_soul_chars,
             max_context_bytes,
-            daily_summaries: HashMap::new(),
+            summaries: HashMap::new(),
             souls: HashMap::new(),
             knowledge: HashMap::new(),
             dirty_snapshots: HashSet::new(),
@@ -226,7 +211,7 @@ impl MemoryManager {
         messages.push(ChatMessage::system(system_prompt));
         let mut has_soul = false;
         let mut has_knowledge = false;
-        let mut summary_count = 0usize;
+        let mut has_summary = false;
 
         if let Some(soul) = self.souls.get(room_id) {
             if !soul.content.is_empty() {
@@ -254,20 +239,14 @@ impl MemoryManager {
             }
         }
 
-        let summaries = self.daily_summaries.get(room_id).map(|v| v.as_slice()).unwrap_or(&[]);
-        if !summaries.is_empty() {
-            summary_count = summaries.len();
-            let mut summary_text = String::from("[Recent conversation summaries]\n");
-            let mut total = 0usize;
-            for s in summaries.iter().rev() {
-                let line = format!("## {} ({} messages)\n{}\n\n", s.date.as_str(), s.msg_count, s.summary);
-                if total + line.len() > self.max_summary_chars {
-                    break;
-                }
-                total += line.len();
-                summary_text.push_str(&line);
+        if let Some(Some(summary)) = self.summaries.get(room_id) {
+            if !summary.is_empty() {
+                has_summary = true;
+                messages.push(ChatMessage::system(format!(
+                    "[Recent conversation summary]\n{}",
+                    summary
+                )));
             }
-            messages.push(ChatMessage::system(&summary_text));
         }
 
         if let Some(room) = self.rooms.get(room_id) {
@@ -300,11 +279,11 @@ impl MemoryManager {
 
         let history_count = messages.iter().filter(|m| m.role != crate::types::Role::System).count();
         debug!(
-            "build_context room={}: total={} system_msgs={} history_msgs={} soul={} knowledge={} summaries={}",
+            "build_context room={}: total={} system_msgs={} history_msgs={} soul={} knowledge={} summary={}",
             room_id, messages.len(),
             messages.iter().filter(|m| m.role == crate::types::Role::System).count(),
             history_count,
-            has_soul, has_knowledge, summary_count,
+            has_soul, has_knowledge, has_summary,
         );
 
         // Enforce max_context_bytes: drop oldest images until under limit.
@@ -348,30 +327,16 @@ impl MemoryManager {
         self.rooms.len()
     }
 
-    pub fn daily_summaries_dir(&self, webdav_dir: &str) -> String {
-        format!("{}memory/summaries/", WebDavPath::new("").room_dir(webdav_dir))
+    pub fn summary_path(&self, webdav_dir: &str) -> String {
+        format!("{}memory/summary.md", WebDavPath::new("").room_dir(webdav_dir))
     }
 
-    pub fn set_daily_summaries(&mut self, room_id: &str, summaries: Vec<DailySummary>) {
-        let recent: Vec<DailySummary> = summaries
-            .into_iter()
-            .filter(|s| self.is_summary_recent(&s.date))
-            .take(10)
-            .collect();
-        self.daily_summaries.insert(room_id.to_string(), recent);
+    pub fn set_summary(&mut self, room_id: &str, summary: Option<String>) {
+        self.summaries.insert(room_id.to_string(), summary);
     }
 
-    pub fn get_daily_summaries(&self, room_id: &str) -> &[DailySummary] {
-        // Return empty slice if not loaded yet (graceful, not a panic)
-        self.daily_summaries.get(room_id).map(|v| v.as_slice()).unwrap_or(&[])
-    }
-
-    fn is_summary_recent(&self, date: &str) -> bool {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
-        let now_days = (now.as_secs() / 86400) as i64;
-        let date_days = date_to_days(date);
-        date_days.map(|d| now_days - d < self.summary_days as i64).unwrap_or(false)
+    pub fn get_summary(&self, room_id: &str) -> Option<&str> {
+        self.summaries.get(room_id)?.as_deref()
     }
 
     pub fn set_soul(&mut self, room_id: &str, soul: SoulMemory) {
@@ -448,7 +413,7 @@ impl MemoryManager {
             char_count: room.history.char_count,
             archive_seq: room.history.archive_seq,
             soul: None,
-            daily_summaries: Vec::new(),
+            summary: None,
             updated_at,
         };
 
@@ -458,8 +423,8 @@ impl MemoryManager {
             }
         }
 
-        if let Some(summaries) = self.daily_summaries.get(room_id) {
-            snapshot.daily_summaries = summaries.clone();
+        if let Some(summary) = self.summaries.get(room_id) {
+            snapshot.summary = summary.clone();
         }
 
         Some(snapshot)
@@ -486,12 +451,9 @@ impl MemoryManager {
             self.souls.insert(room_key, soul);
         }
 
-        if !snapshot.daily_summaries.is_empty() {
+        if let Some(ref summary_content) = snapshot.summary {
             let room_key: String = snapshot.room_id.to_string();
-            self.daily_summaries.insert(
-                room_key,
-                snapshot.daily_summaries.clone(),
-            );
+            self.summaries.insert(room_key, Some(summary_content.clone()));
         }
     }
 
@@ -500,7 +462,7 @@ impl MemoryManager {
     }
 
     pub fn evict_room(&mut self, room_id: &str) -> Option<RoomState> {
-        self.daily_summaries.remove(room_id);
+        self.summaries.remove(room_id);
         self.souls.remove(room_id);
         self.knowledge.remove(room_id);
         self.dirty_snapshots.remove(room_id);
@@ -528,26 +490,6 @@ impl MemoryManager {
             room.touch();
         }
     }
-}
-
-pub fn date_to_days(date: &str) -> Option<i64> {
-    let parts: Vec<&str> = date.split('-').collect();
-    if parts.len() != 3 {
-        return None;
-    }
-    let y: i64 = parts[0].parse().ok()?;
-    let m: i64 = parts[1].parse().ok()?;
-    let d: i64 = parts[2].parse().ok()?;
-    if !(1..=12).contains(&m) || !(1..=31).contains(&d) {
-        return None;
-    }
-    let m = if m <= 2 { m + 12 } else { m };
-    let y = if m > 12 { y - 1 } else { y };
-    let era = (if y >= 0 { y } else { y - 399 }) / 400;
-    let yoe = (y - era * 400) as u64;
-    let doy = (153 * (m as u64 - 3) + 2) / 5 + d as u64 - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    Some(era * 146097 + doe as i64 - 719468)
 }
 
 pub(crate) fn truncate_message_content(msg: &mut ChatMessage, max_chars: usize) {
@@ -766,7 +708,7 @@ mod tests {
 
     #[test]
     fn test_memory_manager_get_or_create() {
-        let mut mgr = MemoryManager::new(1000, 12, 8000, 7, 2000, 60, 30_000_000);
+        let mut mgr = MemoryManager::new(1000, 12, 2000, 60, 30_000_000);
         let room = mgr.get_or_create("room1", "general", "", false);
         assert_eq!(room.room_id, "room1");
         assert_eq!(room.room_name, "general");
@@ -780,7 +722,7 @@ mod tests {
 
     #[test]
     fn test_memory_manager_build_context() {
-        let mut mgr = MemoryManager::new(1000, 3, 8000, 7, 2000, 60, 30_000_000);
+        let mut mgr = MemoryManager::new(1000, 3, 2000, 60, 30_000_000);
         let room = mgr.get_or_create("room1", "general", "", false);
         for i in 0..5 {
             room.history
@@ -797,7 +739,7 @@ mod tests {
 
     #[test]
     fn test_memory_manager_build_context_nonexistent_room() {
-        let mgr = MemoryManager::new(1000, 12, 8000, 7, 2000, 60, 30_000_000);
+        let mgr = MemoryManager::new(1000, 12, 2000, 60, 30_000_000);
         let ctx = mgr.build_context("nonexistent", "prompt", None, None);
         assert_eq!(ctx.len(), 1);
     }
@@ -832,7 +774,7 @@ mod tests {
 
     #[test]
     fn test_build_context_with_dm_name() {
-        let mut mgr = MemoryManager::new(1000, 12, 8000, 7, 2000, 60, 30_000_000);
+        let mut mgr = MemoryManager::new(1000, 12, 2000, 60, 30_000_000);
         let room = mgr.get_or_create("dm-xyz", "alice", "", true);
         assert_eq!(room.room_name, "alice");
         assert!(room.is_dm);
@@ -979,7 +921,7 @@ mod tests {
 
     #[test]
     fn test_self_display_name_regex_match() {
-        let mut mm = MemoryManager::new(1000, 12, 8000, 7, 2000, 60, 30_000_000);
+        let mut mm = MemoryManager::new(1000, 12, 2000, 60, 30_000_000);
         let soul = SoulMemory {
             room_id: NonEmptyString::try_new("r-test".to_string()).unwrap(),
             content: "# Soul Memory\n\n- My name is 香菜 🌿\n- foo".into(),
@@ -991,7 +933,7 @@ mod tests {
 
     #[test]
     fn test_self_display_name_no_myname() {
-        let mut mm = MemoryManager::new(1000, 12, 8000, 7, 2000, 60, 30_000_000);
+        let mut mm = MemoryManager::new(1000, 12, 2000, 60, 30_000_000);
         let soul = SoulMemory {
             room_id: NonEmptyString::try_new("r-test".to_string()).unwrap(),
             content: "零夢\n\n- foo".into(),

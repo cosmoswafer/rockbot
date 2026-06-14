@@ -45,7 +45,7 @@ fn get_webdav_client() -> Option<WebDavClient> {
 }
 
 /// Verify the full save → index read → retrieve cycle with the new
-/// IndexEntry shape (filename + when_useful + tags, no updated_at).
+/// IndexEntry shape (filename + when_useful + priority + last_promoted_at).
 #[tokio::test]
 #[ignore]
 async fn test_knowledge_save_and_read_index() {
@@ -85,8 +85,8 @@ async fn test_knowledge_save_and_read_index() {
     eprintln!("Index entries ({}) :", index.entries.len());
     for entry in &index.entries {
         eprintln!(
-            "  filename={} when_useful={} tags={:?}",
-            entry.filename, entry.when_useful, entry.tags
+            "  filename={} when_useful={} priority={:?}",
+            entry.filename, entry.when_useful, entry.priority
         );
     }
 
@@ -107,9 +107,9 @@ async fn test_knowledge_save_and_read_index() {
         "when_useful should be populated in index"
     );
     assert_eq!(
-        entry.tags,
-        vec!["testing".to_string(), "real".to_string(), "integration".to_string()],
-        "tags should be populated in index"
+        entry.priority,
+        KnowledgePriority::P1,
+        "priority should default to P1"
     );
 
     // Verify index.json is valid JSON on disk
@@ -122,7 +122,7 @@ async fn test_knowledge_save_and_read_index() {
     let raw_entry = &parsed["entries"][0];
     assert!(raw_entry.get("filename").is_some(), "raw JSON must have filename");
     assert!(raw_entry.get("when_useful").is_some(), "raw JSON must have when_useful");
-    assert!(raw_entry.get("tags").is_some(), "raw JSON must have tags");
+    assert!(raw_entry.get("priority").is_some(), "raw JSON must have priority");
 
     // recall_entry should find it
     let result = KnowledgeManager::recall_entry(&client, webdav_dir, "test")
@@ -140,7 +140,7 @@ async fn test_knowledge_save_and_read_index() {
     client.delete(&dir).await.ok();
 }
 
-/// Verify match_relevant() uses when_useful and tags for scoring.
+/// Verify match_relevant() uses when_useful for scoring.
 #[tokio::test]
 #[ignore]
 async fn test_knowledge_match_relevant_with_new_fields() {
@@ -191,7 +191,7 @@ async fn test_knowledge_match_relevant_with_new_fields() {
         KnowledgeManager::match_relevant(&index, &["what is the phone number for the office?"]);
     eprintln!("Phone match results:");
     for m in &matches {
-        eprintln!("  {}  when_useful={}  tags={:?}", m.filename, m.when_useful, m.tags);
+        eprintln!("  {}  when_useful={}  priority={:?}", m.filename, m.when_useful, m.priority);
     }
     assert!(
         matches.iter().any(|e| e.filename.contains("phone")),
@@ -202,7 +202,7 @@ async fn test_knowledge_match_relevant_with_new_fields() {
     let matches = KnowledgeManager::match_relevant(&index, &["how do I compile this Rust code?"]);
     eprintln!("Rust match results:");
     for m in &matches {
-        eprintln!("  {}  when_useful={}  tags={:?}", m.filename, m.when_useful, m.tags);
+        eprintln!("  {}  when_useful={}  priority={:?}", m.filename, m.when_useful, m.priority);
     }
     assert!(
         matches.iter().any(|e| e.filename.contains("build")),
@@ -223,7 +223,6 @@ async fn test_knowledge_match_relevant_with_new_fields() {
             version: String::new(),
             room_id: webdav_dir.to_string(),
             entries: vec![],
-            updated: String::new(),
         });
     for entry in &index_for_cleanup.entries {
         let md_path = format!("{}{}", dir, entry.filename);
@@ -241,7 +240,8 @@ fn test_knowledge_module_is_public() {
     let _entry = IndexEntry {
         filename: "test.md".into(),
         when_useful: "test situation".into(),
-        tags: vec!["test".into()],
+        priority: KnowledgePriority::P1,
+        last_promoted_at: None,
     };
     assert_eq!(_entry.display_title(), "test");
 }

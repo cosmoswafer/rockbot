@@ -2000,8 +2000,6 @@ fn test_memory_rapid_messages_no_loss() {
     let mut mm = rockbot::memory::MemoryManager::new(
         10000, // max_chars
         50,    // max_history
-        5000,  // max_summary_chars
-        7,     // summary_days
         2000,  // max_soul_chars
         60,    // persist_interval_secs
         0,     // max_context_bytes (disabled)
@@ -2048,12 +2046,12 @@ fn test_memory_rapid_messages_no_loss() {
     }
 }
 
-/// Verifies that snapshot loading (history + daily_summaries + soul)
+/// Verifies that snapshot loading (history + summary + soul)
 /// doesn't conflict with in-memory state when all three are loaded together.
 #[test]
 fn test_memory_load_snapshot_with_soul_and_summaries_no_conflict() {
     let mut mm = rockbot::memory::MemoryManager::new(
-        10000, 50, 5000, 7, 2000, 60, 0,
+        10000, 50, 2000, 60, 0,
     );
 
     let room_id = "snapshot-test";
@@ -2066,22 +2064,9 @@ fn test_memory_load_snapshot_with_soul_and_summaries_no_conflict() {
     };
     mm.set_soul(room_id, soul);
 
-    // Pre-populate daily summaries
-    let summaries = vec![
-        rockbot::memory::DailySummary {
-            date: NonEmptyString::try_new("2026-06-10".to_string()).unwrap(),
-            summary: "User asked about Rust macros".to_string(),
-            msg_count: 5,
-            char_count: 200,
-        },
-        rockbot::memory::DailySummary {
-            date: NonEmptyString::try_new("2026-06-09".to_string()).unwrap(),
-            summary: "User asked about Docker".to_string(),
-            msg_count: 3,
-            char_count: 150,
-        },
-    ];
-    mm.set_daily_summaries(room_id, summaries);
+    // Pre-populate summary (compressed memory)
+    let summary_text = "# Memory Summary\n\n- User asked about Rust macros\n- User asked about Docker".to_string();
+    mm.set_summary(room_id, Some(summary_text));
 
     // Add messages to history
     let room = mm.get_or_create(room_id, "snaproom", "SnapRoom", false);
@@ -2095,7 +2080,7 @@ fn test_memory_load_snapshot_with_soul_and_summaries_no_conflict() {
     let snap = snap.unwrap();
     assert_eq!(snap.messages.len(), 2, "Snapshot should have both messages");
     assert_eq!(snap.soul.as_deref(), Some("# Soul Memory\n\n- My name is TestBot\n- likes Rust"));
-    assert_eq!(snap.daily_summaries.len(), 2, "Should have both summaries");
+    assert!(snap.summary.is_some(), "Should have summary");
 
     // Verify all data is consistent (soul, summaries, history coexist)
     let ctx = mm.build_context(room_id, "You are a helpful bot.", None, None);
@@ -2108,12 +2093,12 @@ fn test_memory_load_snapshot_with_soul_and_summaries_no_conflict() {
     });
     assert!(has_soul, "Context should include soul content");
 
-    // Verify summaries are in context
-    let has_summaries = ctx.iter().any(|m| {
+    // Verify summary is in context
+    let has_summary = ctx.iter().any(|m| {
         let c = format!("{:?}", m.content);
         c.contains("Rust macros") || c.contains("Docker")
     });
-    assert!(has_summaries, "Context should include daily summaries");
+    assert!(has_summary, "Context should include summary.md content");
 }
 
 /// Tests that concurrent snapshot builds and memory mutations
@@ -2122,7 +2107,7 @@ fn test_memory_load_snapshot_with_soul_and_summaries_no_conflict() {
 #[test]
 fn test_memory_snapshot_repeated_builds_no_data_loss() {
     let mut mm = rockbot::memory::MemoryManager::new(
-        10000, 50, 5000, 7, 2000, 60, 0,
+        10000, 50, 2000, 60, 0,
     );
 
     let room_id = "repeated-snap";
@@ -2176,7 +2161,7 @@ fn test_memory_snapshot_repeated_builds_no_data_loss() {
 #[test]
 fn test_memory_multi_room_no_cross_contamination() {
     let mut mm = rockbot::memory::MemoryManager::new(
-        10000, 50, 5000, 7, 2000, 60, 0,
+        10000, 50, 2000, 60, 0,
     );
 
     let room1 = mm.get_or_create("r1", "channel-a", "Channel A", false);
@@ -2193,13 +2178,8 @@ fn test_memory_multi_room_no_cross_contamination() {
         updated_at: String::new(),
     });
 
-    // Set summaries in room2
-    mm.set_daily_summaries("r2", vec![rockbot::memory::DailySummary {
-        date: NonEmptyString::try_new("2026-06-10".to_string()).unwrap(),
-        summary: "Room2 daily".to_string(),
-        msg_count: 1,
-        char_count: 10,
-    }]);
+    // Set summary in room2
+    mm.set_summary("r2", Some("# Memory Summary\n\n- Room2 daily\n".to_string()));
 
     // Build context for each room - should not cross-contaminate
     let ctx1 = mm.build_context("r1", "You are a bot.", None, None);

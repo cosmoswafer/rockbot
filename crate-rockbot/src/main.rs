@@ -525,7 +525,7 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                                         }
                                     }
                                 }
-                                if let Err(e) = h.archive_room_if_needed(&msg.room_id).await {
+                                if let Err(e) = h.compress_room_if_needed(&msg.room_id).await {
                                     warn!("Memory archiving failed: {}", e);
                                 }
                             }
@@ -534,7 +534,7 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                                 if let Err(e) = sender.typing(false, &username).await {
                                     warn!("Failed to stop typing indicator: {}", e);
                                 }
-                                if let Err(e) = h.archive_room_if_needed(&msg.room_id).await {
+                                if let Err(e) = h.compress_room_if_needed(&msg.room_id).await {
                                     warn!("Memory archiving failed: {}", e);
                                 }
                             }
@@ -549,7 +549,7 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                                     .await {
                                     warn!("Failed to send error reply: {}", re);
                                 }
-                                if let Err(e) = h.archive_room_if_needed(&msg.room_id).await {
+                                if let Err(e) = h.compress_room_if_needed(&msg.room_id).await {
                                     warn!("Memory archiving failed: {}", e);
                                 }
                             }

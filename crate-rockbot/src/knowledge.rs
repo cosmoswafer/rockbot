@@ -5,7 +5,6 @@ use tracing::{debug, warn};
 use webdav::{WebDavClient, WebDavError, WebDavPath};
 
 use crate::error::Result;
-use crate::memory::DailySummary;
 use crate::utils::now_iso_string;
 use crate::validated::NonEmptyString;
 
@@ -64,7 +63,9 @@ pub struct IndexEntry {
     #[serde(default)]
     pub when_useful: String,
     #[serde(default)]
-    pub tags: Vec<String>,
+    pub priority: KnowledgePriority,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_promoted_at: Option<String>,
 }
 
 impl IndexEntry {
@@ -81,7 +82,6 @@ pub struct KnowledgeIndex {
     pub room_id: String,
     #[validate]
     pub entries: Vec<IndexEntry>,
-    pub updated: String,
 }
 
 #[derive(Debug, Clone)]
@@ -175,7 +175,6 @@ impl KnowledgeManager {
                     version: "rockbot-knowledge/1".into(),
                     room_id: webdav_dir.to_string(),
                     entries: Vec::new(),
-                    updated: String::new(),
                 })
             }
             Err(e) => {
@@ -184,6 +183,24 @@ impl KnowledgeManager {
                 )))
             }
         }
+    }
+
+    pub async fn save_index(
+        webdav: &WebDavClient,
+        webdav_dir: &str,
+        index: &KnowledgeIndex,
+    ) -> Result<()> {
+        let path = Self::index_path(webdav_dir);
+        let json = serde_json::to_vec(index).map_err(|e| {
+            crate::error::RockBotError::Provider(format!("Failed to serialize knowledge index: {e}"))
+        })?;
+        let folder = format!("{}knowledge/", WebDavPath::new("").room_dir(webdav_dir));
+        if let Err(e) = webdav.ensure_directory_all(&folder).await {
+            warn!("Failed to ensure knowledge directory {}: {}", folder, e);
+        }
+        webdav.write_file_with_fallback(&path, json).await.map_err(|e| {
+            crate::error::RockBotError::Provider(format!("Failed to write knowledge index: {e}"))
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -205,15 +222,14 @@ impl KnowledgeManager {
         let mut index = Self::load_index(webdav, webdav_dir).await?;
         if let Some(existing) = index.entries.iter_mut().find(|e| e.filename == filename) {
             existing.when_useful = when_useful.to_string();
-            existing.tags = tags.to_vec();
         } else {
             index.entries.push(IndexEntry {
                 filename: filename.clone(),
                 when_useful: when_useful.to_string(),
-                tags: tags.to_vec(),
+                priority: priority.clone(),
+                last_promoted_at: None,
             });
         }
-        index.updated = now.clone();
 
         let index_body = serde_json::to_string_pretty(&index).map_err(|e| {
             crate::error::RockBotError::Provider(format!("Failed to serialize knowledge index: {e}"))
@@ -270,7 +286,6 @@ impl KnowledgeManager {
         index.entries.retain(|e| {
             !e.filename.to_lowercase().contains(&topic_slug)
         });
-        index.updated = now_iso_string();
 
         let index_body = serde_json::to_string_pretty(&index).map_err(|e| {
             crate::error::RockBotError::Provider(format!("Failed to serialize knowledge index: {e}"))
@@ -329,11 +344,6 @@ impl KnowledgeManager {
                     }
                     if when_lower.contains(kw.as_str()) {
                         score += 1;
-                    }
-                    for tag in &entry.tags {
-                        if tag.to_lowercase().contains(kw.as_str()) {
-                            score += 1;
-                        }
                     }
                 }
                 if score > 0 {
@@ -409,12 +419,79 @@ impl KnowledgeManager {
     }
 
     pub async fn review_priorities(
-        _webdav: &WebDavClient,
-        _webdav_dir: &str,
-        _summaries: &[DailySummary],
+        webdav: &WebDavClient,
+        webdav_dir: &str,
+        used_filenames: &[String],
     ) -> Result<bool> {
-        Ok(false)
+        let mut index = match Self::load_index(webdav, webdav_dir).await {
+            Ok(i) => i,
+            Err(_) => return Ok(false),
+        };
+        if index.entries.is_empty() {
+            return Ok(false);
+        }
+
+        let now = now_iso_string();
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let used_set: HashSet<&str> = used_filenames.iter().map(|s| s.as_str()).collect();
+        let mut changed = false;
+
+        for entry in &mut index.entries {
+            let was_priority = entry.priority.clone();
+            if used_set.contains(entry.filename.as_str()) {
+                // Promote one level
+                entry.priority = match entry.priority {
+                    KnowledgePriority::P3 => KnowledgePriority::P2,
+                    KnowledgePriority::P2 => KnowledgePriority::P1,
+                    KnowledgePriority::P1 => KnowledgePriority::P0,
+                    KnowledgePriority::P0 => KnowledgePriority::P0,
+                };
+                entry.last_promoted_at = Some(now.clone());
+            } else {
+                // Decay based on recency
+                if let Some(ref promoted_at) = entry.last_promoted_at {
+                    let promoted_secs = parse_iso_to_secs(promoted_at).unwrap_or(0);
+                    let days_since = (now_secs.saturating_sub(promoted_secs)) / 86400;
+                    entry.priority = match (entry.priority.clone(), days_since) {
+                        (KnowledgePriority::P0, d) if d >= 1 => KnowledgePriority::P1,
+                        (KnowledgePriority::P1, d) if d >= 3 => KnowledgePriority::P2,
+                        (KnowledgePriority::P2, d) if d >= 7 => KnowledgePriority::P3,
+                        (p, _) => p,
+                    };
+                }
+            }
+            if entry.priority != was_priority {
+                changed = true;
+            }
+        }
+
+        if changed {
+            Self::save_index(webdav, webdav_dir, &index).await?;
+        }
+        Ok(changed)
     }
+}
+
+fn parse_iso_to_secs(iso: &str) -> Option<u64> {
+    // Simple parser for "YYYY-MM-DD" format to epoch days
+    let parts: Vec<&str> = iso.split('-').collect();
+    if parts.len() < 3 { return None; }
+    let y: i64 = parts[0].parse().ok()?;
+    let m: u32 = parts[1].parse().ok()?;
+    let d: u32 = parts[2].parse().ok()?;
+    if m < 1 || m > 12 || d < 1 || d > 31 { return None; }
+    // Use the same algorithm as old date_to_days
+    let m = if m <= 2 { m + 12 } else { m };
+    let y = if m > 12 { y - 1 } else { y };
+    let era = (if y >= 0 { y } else { y - 399 }) / 400;
+    let yoe = (y - era * 400) as u64;
+    let doy: u64 = (153 * (m as u64 - 3) + 2) / 5 + d as u64 - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days: i64 = era * 146097 + doe as i64 - 719468;
+    Some((days as u64) * 86400)
 }
 
 #[cfg(test)]
@@ -455,9 +532,8 @@ mod tests {
             entries: vec![IndexEntry {
                 filename: "note_build.md".into(),
                 when_useful: "When building cargo projects".into(),
-                tags: vec!["rust".into()],
+                priority: KnowledgePriority::P1, last_promoted_at: None,
             }],
-            updated: String::new(),
         };
 
         let matches =
@@ -467,16 +543,15 @@ mod tests {
     }
 
     #[test]
-    fn test_match_relevant_finds_by_tag() {
+    fn test_match_relevant_finds_by_when_useful_keyword() {
         let index = KnowledgeIndex {
             version: "rockbot-knowledge/1".into(),
             room_id: "r-test".into(),
             entries: vec![IndexEntry {
                 filename: "skill_api.md".into(),
-                when_useful: "random situation".into(),
-                tags: vec!["database".into(), "api".into()],
+                when_useful: "When working with database APIs".into(),
+                priority: KnowledgePriority::P1, last_promoted_at: None,
             }],
-            updated: String::new(),
         };
 
         let matches =
@@ -493,9 +568,8 @@ mod tests {
             entries: vec![IndexEntry {
                 filename: "note_contact.md".into(),
                 when_useful: "When someone asks about office hours or support phone numbers".into(),
-                tags: vec![],
+                priority: KnowledgePriority::P1, last_promoted_at: None,
             }],
-            updated: String::new(),
         };
 
         let matches =
@@ -512,9 +586,8 @@ mod tests {
             entries: vec![IndexEntry {
                 filename: "skill_api.md".into(),
                 when_useful: "When working with REST APIs".into(),
-                tags: vec!["http".into()],
+                priority: KnowledgePriority::P1, last_promoted_at: None,
             }],
-            updated: String::new(),
         };
 
         let matches = KnowledgeManager::match_relevant(

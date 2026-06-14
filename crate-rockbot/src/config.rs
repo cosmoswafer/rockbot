@@ -52,10 +52,6 @@ pub struct ModelConfig {
     pub max_text_length: BoundedUsize,
     #[serde(default = "default_max_iterations")]
     pub max_iterations: u32,
-    #[serde(default = "default_summary_days")]
-    pub summary_days: u32,
-    #[serde(default = "default_max_summary_chars")]
-    pub max_summary_chars: BoundedUsize,
     #[serde(default = "default_max_soul_chars")]
     pub max_soul_chars: BoundedUsize,
     #[serde(default = "default_persist_interval_secs")]
@@ -142,14 +138,6 @@ fn default_max_history_size() -> BoundedUsize {
 
 fn default_max_text_length() -> BoundedUsize {
     BoundedUsize::try_new(50000).expect("hardcoded default")
-}
-
-fn default_summary_days() -> u32 {
-    3
-}
-
-fn default_max_summary_chars() -> BoundedUsize {
-    BoundedUsize::try_new(8000).expect("hardcoded default")
 }
 
 fn default_max_soul_chars() -> BoundedUsize {
