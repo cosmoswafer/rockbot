@@ -16,7 +16,7 @@ standard harness mechanisms are present:
 |-------------|----------|---------|
 | **Tools**   | Full     | Abstract tool calling via `ToolRegistry` — individual tools each have their own DFD |
 | **Context** | Full     | Per-room conversation history buffer, summarization, archive loading — see [Memory Management](base/memory.md); plus iteration limits, room state routing, system prompt assembly |
-| **Knowledge** | Full     | `save_knowledge`, `forget_knowledge`, `recall_knowledge`; retrieval via keyword-matching against `when_useful` + `tags` + filename — see [Knowledge Management](base/knowledge.md) |
+| **Knowledge** | Full     | `save_knowledge`, `forget_knowledge`, `recall_knowledge`; retrieval via keyword-matching against `when_useful` + filename — see [Knowledge Management](base/knowledge.md) |
 
 Intentionally absent — not needed for rockbot's scope:
 

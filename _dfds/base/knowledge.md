@@ -245,16 +245,15 @@ Machine-readable JSON file at `{root}/{webdav_dir}/knowledge/index.json`.
 | ------------- | ------------------ | ---------------------------------------------- |
 | `filename`    | `String`           | `{category}_{slug}.md` — unique key and display identifier. Validates `min_length = 1` via `serde_valid`. |
 | `when_useful` | `String`           | Situation description (retrieval trigger). Defaults to `""` (serde default). |
-| `tags`        | `Vec<String>`      | Searchable keywords. Defaults to `[]` (serde default). |
 | `priority`    | `KnowledgePriority`| Current priority level. Updated by compression cycles; default for new entries is `P1`. |
 | `last_promoted_at` | `Option<String>` | ISO 8601 timestamp of last promotion; `None` if never promoted. Used for recency-based decay. |
 
 The `filename` doubles as the display key — `display_title()` strips the `.md`
 suffix. Knowledge context is formatted as `[Knowledge: {display_title}]\n{body}`
 in system messages. Retrieval matching uses keyword overlap against
-`when_useful`, `tags`, and the filename-derived title. Category and title
-exist only in the `.md` file metadata — `when_useful`, `tags`, `priority`,
-and `last_promoted_at` are denormalized into the index for fast retrieval
+`when_useful` and the filename-derived title. Tags and category exist
+only in the `.md` file metadata — `when_useful`, `priority`, and
+`last_promoted_at` are denormalized into the index for fast retrieval
 and priority updates without reading every `.md` file.
 
 ### `KnowledgePriority`
