@@ -43,7 +43,7 @@ keyword overlap). Matching entries' `.md` files are downloaded and injected
 into `BuildContext` as system messages. A `recall_knowledge` tool lets the
 agent fetch additional entries on demand during the agent loop.
 
-- Upstream: [Agent Harness](../agent-harness.md) detects `save_knowledge` tool
+- Upstream: [Agent Harness](../agent/agent-harness.md) detects `save_knowledge` tool
   calls and loads knowledge on room init
 - Upstream: [Configuration Management](config.md) provides WebDAV access
   (knowledge is always enabled when WebDAV is configured)

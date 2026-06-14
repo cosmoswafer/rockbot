@@ -5,13 +5,13 @@
 Three tools for per-room knowledge management on WebDAV — `save_knowledge`
 creates `.md` entries with a JSON index, `forget_knowledge` removes entries,
 and `recall_knowledge` searches and retrieves stored knowledge. All three
-share the same storage backend documented in [Knowledge Management](../base/knowledge.md).
+share the same storage backend documented in [Knowledge Management](../knowledge/knowledge.md).
 
-- Upstream: [Configuration Management](../base/config.md) provides WebDAV
+- Upstream: [Configuration Management](../infra/config.md) provides WebDAV
   credentials (knowledge is always enabled when WebDAV is configured)
-- Upstream: [Agent Harness](../agent-harness.md) registers and invokes all
+- Upstream: [Agent Harness](../agent/agent-harness.md) registers and invokes all
   three tools during the agent loop
-- Downstream: [Knowledge Management](../base/knowledge.md) defines the
+- Downstream: [Knowledge Management](../knowledge/knowledge.md) defines the
   storage format, index structure, and directory layout
 - Downstream: [WebDAV Tool](webdav.md) performs GET/PUT/DELETE operations
   on `knowledge/` directory files
@@ -182,7 +182,7 @@ flowchart TD
 
 ## 3. Data Structures
 
-All data structures are shared with [Knowledge Management](../base/knowledge.md#3-data-structures).
+All data structures are shared with [Knowledge Management](../knowledge/knowledge.md#3-data-structures).
 
 #### SaveKnowledgeParams
 

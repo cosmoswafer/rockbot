@@ -13,14 +13,14 @@ to `https://site-b.com`.
 This enables the LLM to authenticate against external APIs (Gitea, GitHub,
 etc.) without exposing API tokens in the conversation history or LLM context.
 
-- Upstream: [Agent Harness](../agent-harness.md) runs the interception inside
+- Upstream: [Agent Harness](../agent/agent-harness.md) runs the interception inside
   `process_message()` — secrets are loaded once per tool-call batch and
   injected before `execute_by_name()` dispatch
 - Upstream: [WebDAV Tool](webdav.md) provides the `read_file_to_string`
   transport for loading `secrets.toml`
 - Downstream: [Web Fetch](web-fetch.md) receives the modified arguments with
   all `secret:<key>` references resolved — the tool is unaware of the interception
-- Downstream: [AI Provider](../base/ai-provider.md) never observes real secret
+- Downstream: [AI Provider](../ai/ai-provider.md) never observes real secret
   values — only the `secret:<key>` references appear in the conversation
   history
 

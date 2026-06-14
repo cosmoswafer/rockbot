@@ -12,18 +12,18 @@ The tool uses the same LLM compression prompt as background compression but
 with `force=true`, extracting all messages instead of half. Knowledge priority
 is also reviewed: entries used in the conversation are promoted.
 
-- Upstream: [Agent Harness](../agent-harness.md) dispatches the tool call with
+- Upstream: [Agent Harness](../agent/agent-harness.md) dispatches the tool call with
   room context (`room_id` + `webdav_dir`) auto-injected
-- Upstream: [AI Provider](../base/ai-provider.md) executes the compression
+- Upstream: [AI Provider](../ai/ai-provider.md) executes the compression
   prompt (one-shot, no tools) and returns token usage
-- Upstream: [Memory Management](../base/memory.md) provides Layer 1 messages
+- Upstream: [Memory Management](../memory/memory.md) provides Layer 1 messages
   and stores the resulting `summary.md`
-- Upstream: [Knowledge Management](../base/knowledge.md) provides the entry
+- Upstream: [Knowledge Management](../knowledge/knowledge.md) provides the entry
   list for LLM relevance identification
 - Downstream: WebDAV crate persists `summary.md`
-- Downstream: [Knowledge Priority Algorithm](../base/knowledge-priority.md)
+- Downstream: [Knowledge Priority Algorithm](../knowledge/knowledge-priority.md)
   receives LLM-identified used entry filenames
-- Downstream: [Memory Compression](../base/memory-compression.md) — shares the
+- Downstream: [Memory Compression](../memory/memory-compression.md) — shares the
   same `compress_for_summary` prompt and `write_summary_md` path
 
 ## 2. Diagram

@@ -17,9 +17,9 @@ different rooms are fully isolated.
 > fetches todos without time-range filtering. The DFD diagrams show date
 > range for todos as aspirational/planned behavior.
 
-- Upstream: [Configuration Management](../base/config.md) provides `WebDavConfig`
+- Upstream: [Configuration Management](../infra/config.md) provides `WebDavConfig`
   (server URL, credentials)
-- Downstream: [Agent Harness](../agent-harness.md) injects `room_id` + `webdav_dir`
+- Downstream: [Agent Harness](../agent/agent-harness.md) injects `room_id` + `webdav_dir`
   into calendar tool arguments. `room_id` is used as the cache key in
   `room_calendars`, while `webdav_dir` names the per-room calendar
   (auto-created on first use)

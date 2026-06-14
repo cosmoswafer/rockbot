@@ -91,7 +91,7 @@ The message text contains a reference label like `Attached: ![apple.png](apple.p
 The actual pixels are embedded as `ContentPart::ImageUrl { url: "data:..." }` in
 the same message.
 
-**Provider-level handling** (see [ai-provider.md §2c](../base/ai-provider.md#2c-vision-payload-deep-dive)):
+**Provider-level handling** (see [ai-provider.md §2c](../ai/ai-provider.md#2c-vision-payload-deep-dive)):
 - **Vision-capable providers** (OpenRouter): multipart messages with `ImageUrl`
   parts pass through unchanged — the LLM sees the actual image pixels.
 - **Text-only providers** (DeepSeek): `ImageUrl` parts are stripped from every

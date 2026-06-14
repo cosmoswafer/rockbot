@@ -237,7 +237,7 @@ most recent — replacing them with `[image]` placeholders via
 `strip_message_images()` at the provider layer. This is a provider-level
 concern separate from memory compression; the harness always embeds images
 in `ChatMessage` regardless of the provider. See
-[ai-provider.md §2c](../base/ai-provider.md#2c-vision-payload-deep-dive).
+[ai-provider.md §2c](../ai/ai-provider.md#2c-vision-payload-deep-dive).
 
 ### 2f. Per-Room State Routing
 

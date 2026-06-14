@@ -11,7 +11,7 @@ and payload formatting. Supports both base64 data URIs and remote URLs via
 response parsing is not implemented — all responses are consumed as full JSON.
 
 - Upstream: [Configuration Management](config.md) provides `AiConfig`
-- Downstream: [Agent Harness](../agent-harness.md) calls `complete()` with `ChatRequest`
+- Downstream: [Agent Harness](../agent/agent-harness.md) calls `complete()` with `ChatRequest`
   (message history + tool definitions) and returns `CompletionResult`
 - Downstream: [Image Gen Tool](../tools/image-gen.md) calls `generate_image()` via
   `ImageProvider` trait, implemented by `FalAiProvider` and `OpenRouterImageProvider`

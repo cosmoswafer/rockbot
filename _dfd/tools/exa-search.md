@@ -7,11 +7,11 @@ returning token-efficient highlights or full page text from search results.
 Supports domain filtering, date ranges, content categories (company, people,
 research papers, news), and deep research modes with structured output.
 
-- Upstream: [Configuration Management](../base/config.md) provides `ToolsConfig`
+- Upstream: [Configuration Management](../infra/config.md) provides `ToolsConfig`
   containing `exa_api_key`
-- Upstream: [Agent Harness](../agent-harness.md) invokes search as a tool during
+- Upstream: [Agent Harness](../agent/agent-harness.md) invokes search as a tool during
   the agent loop, passing a natural-language query
-- Downstream: [AI Provider](../base/ai-provider.md) consumes returned `highlights`
+- Downstream: [AI Provider](../ai/ai-provider.md) consumes returned `highlights`
   and `text` as context for chat completions
 
 ## 2. Diagram

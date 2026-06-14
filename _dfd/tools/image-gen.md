@@ -9,11 +9,11 @@ with a prompt and optional parameters; the tool delegates to the provider,
 writes to WebDAV, stores to the cache, and returns a minimal result
 (`{ok, webdav_path, image_key}`) so the LLM context stays lightweight.
 
-- Upstream: [Agent Harness](../agent-harness.md) injects `room_id`, `webdav_dir`,
+- Upstream: [Agent Harness](../agent/agent-harness.md) injects `room_id`, `webdav_dir`,
   and `image_cache_key` (call_id) into tool args before invoking `execute_by_name()`
-- Upstream: [Image Injection Pipeline](../agent-harness.md#2i-generated-image-upload--injection-pipeline)
+- Upstream: [Image Injection Pipeline](../agent/agent-harness.md#2i-generated-image-upload--injection-pipeline)
   retrieves the image from ImageCache by key and uploads it as a RocketChat attachment
-- Downstream: [Image Provider](../base/ai-provider.md) — `FalAiProvider` (CDN-hosted URLs)
+- Downstream: [Image Provider](../ai/ai-provider.md) — `FalAiProvider` (CDN-hosted URLs)
   and `OpenRouterImageProvider` (inline base64) implement `generate_image() -> Vec<u8>`
 - Downstream: WebDAV crate persists image assets
 - Shared: `ImageCache` (`image_cache.rs`) is the central store keyed by call_id
@@ -142,7 +142,7 @@ When the LLM calls `image_gen` for editing (with `image_urls` in the
 arguments), the harness intercepts the call at `inject_image_urls_from_refs()`
 (`harness.rs:1475`) and enriches the arguments with image URLs from four
 converging sources. The full merge logic is in
-[Image Interception](../image-interception.md#2d-image-editing--inject_image_urls_from_refs).
+[Image Interception](../interception/image-interception.md#2d-image-editing--inject_image_urls_from_refs).
 
 ```mermaid
 flowchart TD

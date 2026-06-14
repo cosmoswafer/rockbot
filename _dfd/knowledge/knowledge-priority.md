@@ -15,7 +15,7 @@ when the LLM generates `summary.md` it simultaneously identifies used entries.
   entry filenames to this algorithm
 - Upstream: [Knowledge Management](knowledge.md) — defines `IndexEntry`
   and `KnowledgePriority` enum
-- Upstream: [Agent Harness](../agent-harness.md) — triggers
+- Upstream: [Agent Harness](../agent/agent-harness.md) — triggers
   `review_knowledge_priorities_for_room()` after each compression cycle (when
   `summary.md` is generated)
 - Downstream: WebDAV crate — reads/writes `index.json` with updated priority

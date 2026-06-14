@@ -14,16 +14,16 @@ from chat — create issues, query resources, or interact with webhooks.
 
 - Upstream: [Exa Search](exa-search.md) provides the verification search when
   `verify` is enabled and an Exa API key is configured
-- Upstream: [Configuration Management](../base/config.md) supplies the
+- Upstream: [Configuration Management](../infra/config.md) supplies the
   `exa_api_key` for the optional verify flow
-- Upstream: [Agent Harness](../agent-harness.md) invokes web_fetch as a tool
+- Upstream: [Agent Harness](../agent/agent-harness.md) invokes web_fetch as a tool
   during the agent loop, passing a URL and format selector
 - Upstream: [WebDAV Tool](webdav.md) provides file read/write for `file_from_webdav`
   and `save_to_webdav` body source/sink
 - Upstream: [Secret Interception](secret-interception.md) transparently
   replaces `secret:<key>` references in header values with actual secrets
   from `secrets.toml` on WebDAV before the tool sees the arguments
-- Downstream: [AI Provider](../base/ai-provider.md) consumes the returned content
+- Downstream: [AI Provider](../ai/ai-provider.md) consumes the returned content
   (plain text, markdown, or structured JSON) as context for chat completions
 
 ### Non-Functional Requirements

@@ -8,7 +8,7 @@ week calendar view, week number, or all combined. A pure computation
 tool with no external dependencies. Supports calendar-style date queries
 like "what day of the week is next Friday?" and week-number lookups.
 
-- Upstream: [Agent Harness](../agent-harness.md) invokes `DateTimeTool` with an
+- Upstream: [Agent Harness](../agent/agent-harness.md) invokes `DateTimeTool` with an
   optional format selector and query parameters
 
 ## 2. Diagram

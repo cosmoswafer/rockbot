@@ -24,12 +24,12 @@ extracted by regex `My name is (.+)` from that first item. Keep it under 32
 characters. Additional items follow the same flat list format with no
 sub-headings.
 
-- Upstream: [Configuration Management](../base/config.md) provides WebDAV
+- Upstream: [Configuration Management](../infra/config.md) provides WebDAV
   credentials for file access
-- Upstream: [Agent Harness](../agent-harness.md) invokes `EditSoulTool` with
+- Upstream: [Agent Harness](../agent/agent-harness.md) invokes `EditSoulTool` with
   the full soul content
 - Downstream: [WebDAV Tool](webdav.md) performs the PUT operation
-- Downstream: [Memory Management](../base/memory.md) — soul.md lives alongside
+- Downstream: [Memory Management](../memory/memory.md) — soul.md lives alongside
   other per-room memory archives under `{room}/memory/`
 
 ## 2. Diagram

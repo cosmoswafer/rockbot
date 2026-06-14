@@ -16,7 +16,7 @@ are forwarded to the agent.
 
 - Upstream: [Configuration Management](config.md) provides configuration
   (typed `RocketChatConfig` deserialized from TOML via `serde`)
-- Downstream: [Agent Harness](../agent-harness.md) receives filtered `IncomingMessage`
+- Downstream: [Agent Harness](../agent/agent-harness.md) receives filtered `IncomingMessage`
   structs via async callback; sends replies through `MessageSender::reply()`
 
 ## 2. Diagram

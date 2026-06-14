@@ -29,7 +29,7 @@ three-trigger decision flow — is documented in
   (`max_text_length`, `max_history_size`, `max_soul_chars`,
   `memory_ttl_secs`, `persist_interval_secs`, `max_context_bytes`,
   `model_context_length`)
-- Upstream: [Agent Harness](../agent-harness.md) triggers
+- Upstream: [Agent Harness](../agent/agent-harness.md) triggers
   `compress_room_if_needed` after each message, `persist_room_snapshots` on a
   periodic timer, `restore_history` on room init, and handles `edit_soul` tool
   calls

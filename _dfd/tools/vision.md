@@ -48,10 +48,10 @@ so images read from WebDAV storage pass transparently into the LLM context.
 The `vision` tool handles public URLs; the `webdav` tool handles authenticated
 WebDAV paths. The LLM chooses which to use based on the image's location.
 
-- Upstream: [Agent Harness](../agent-harness.md) invokes the tool during the
+- Upstream: [Agent Harness](../agent/agent-harness.md) invokes the tool during the
   agent loop via `ToolRegistry::execute_by_name()`. The harness intercepts
   the result for injection into LLM context.
-- Downstream: [AI Provider](../base/ai-provider.md) receives the tool result
+- Downstream: [AI Provider](../ai/ai-provider.md) receives the tool result
   text and the injected `ContentPart::ImageUrl` for multimodal analysis.
 
 ## 2. Diagram

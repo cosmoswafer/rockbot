@@ -6,7 +6,7 @@
 crate-rocketchat/     # lib + debug binary — standalone RocketChat DDP WebSocket client
 crate-rockbot/        # lib + application binary — config, AiProvider trait, agent loop, tools, memory
 crate-webdav/         # lib only — WebDAV client for NextCloud storage operations
-_dfd/                # Mermaid data flow diagrams (design spec)
+_dfd/                # data flow diagrams (design spec): context diagram at root, subdirs by component (agent, infra, ai, memory, knowledge, tools, interception)
 _doc/                # constraints, test suite inventory
 .agents/skills/       # OpenCode skill definitions (dfd-md, mermaid-cli)
 default.config.toml   # full config with all defaults (empty credentials)
@@ -116,23 +116,23 @@ to make data flow violations compile-time errors rather than runtime surprises:
 | DFD | Primary source | Key secondary sources |
 | --- | -------------- | --------------------- |
 | `_dfd/context-diagram.md` | Level 0 system boundary (no code) | — |
-| `_dfd/base/config.md` | `config.rs` | `example.config.toml`, `default.config.toml` |
-| `_dfd/base/rocketchat.md` | rocketchat (`client.rs`, `ddp.rs`, `types.rs`) | — |
-| `_dfd/base/rocketchat-rest.md` | rocketchat (`rest.rs`), `harness.rs` | — |
-| `_dfd/base/ai-provider.md` | `provider/mod.rs`, `provider/deepseek.rs`, `provider/openrouter.rs`, `provider/fal.rs` | `types.rs` |
-| `_dfd/base/memory.md` | `memory.rs` | `harness.rs`, webdav crate |
-| `_dfd/base/memory-compression.md` | `harness.rs` (`compress_room_if_needed`, `compress_for_summary`, `write_summary_md`, `load_summary`, `truncate_and_summarize`) | `memory.rs`, `knowledge.rs`, `config.rs` |
-| `_dfd/base/knowledge.md` | `knowledge.rs` | `tools/save_knowledge.rs`, `tools/forget_knowledge.rs`, `tools/recall_knowledge.rs` |
-| `_dfd/base/knowledge-priority.md` | `knowledge.rs` | `harness.rs`, `memory.rs` |
-| `_dfd/agent-loop.md` | `main.rs` | `harness.rs`, `config.rs` |
-| `_dfd/agent-harness.md` | `harness.rs` | `memory.rs`, `tool.rs`, `provider/mod.rs` |
-| `_dfd/image-interception.md` | `harness.rs` | `tools/image_gen.rs`, `tools/vision.rs`, `tools/webdav.rs`, `provider/fal.rs`, `image_cache.rs` |
+| `_dfd/infra/config.md` | `config.rs` | `example.config.toml`, `default.config.toml` |
+| `_dfd/infra/rocketchat.md` | rocketchat (`client.rs`, `ddp.rs`, `types.rs`) | — |
+| `_dfd/infra/rocketchat-rest.md` | rocketchat (`rest.rs`), `harness.rs` | — |
+| `_dfd/ai/ai-provider.md` | `provider/mod.rs`, `provider/deepseek.rs`, `provider/openrouter.rs`, `provider/fal.rs` | `types.rs` |
+| `_dfd/memory/memory.md` | `memory.rs` | `harness.rs`, webdav crate |
+| `_dfd/memory/memory-compression.md` | `harness.rs` (`compress_room_if_needed`, `compress_for_summary`, `write_summary_md`, `load_summary`, `truncate_and_summarize`) | `memory.rs`, `knowledge.rs`, `config.rs` |
+| `_dfd/knowledge/knowledge.md` | `knowledge.rs` | `tools/save_knowledge.rs`, `tools/forget_knowledge.rs`, `tools/recall_knowledge.rs` |
+| `_dfd/knowledge/knowledge-priority.md` | `knowledge.rs` | `harness.rs`, `memory.rs` |
+| `_dfd/agent/agent-loop.md` | `main.rs` | `harness.rs`, `config.rs` |
+| `_dfd/agent/agent-harness.md` | `harness.rs` | `memory.rs`, `tool.rs`, `provider/mod.rs` |
+| `_dfd/interception/image-interception.md` | `harness.rs` | `tools/image_gen.rs`, `tools/vision.rs`, `tools/webdav.rs`, `provider/fal.rs`, `image_cache.rs` |
+| `_dfd/interception/secret-interception.md` | `harness.rs` (`load_secrets_from_webdav`, `filter_secrets_by_host`, `resolve_secret_refs_deep`, `replace_secret_refs`) | `tools/web_fetch.rs`, `tools/webdav.rs`, webdav crate |
 | `_dfd/tools/compress-memory.md` | `tools/compress_memory.rs` | `harness.rs`, `memory.rs` |
 | `_dfd/tools/webdav.md` | `tools/webdav.rs` | webdav crate |
 | `_dfd/tools/calendar.md` | `tools/calendar.rs` | webdav crate |
 | `_dfd/tools/exa-search.md` | `tools/web_search.rs` | `tools/web_fetch.rs` |
 | `_dfd/tools/web-fetch.md` | `tools/web_fetch.rs` | `tools/web_search.rs`, `harness.rs` (secret interception) |
-| `_dfd/tools/secret-interception.md` | `harness.rs` (`load_secrets_from_webdav`, `inject_secrets_into_headers`, `replace_secret_refs`) | `tools/web_fetch.rs`, webdav crate |
 | `_dfd/tools/image-gen.md` | `tools/image_gen.rs` | `provider/fal.rs`, webdav crate |
 | `_dfd/tools/vision.md` | `tools/vision.rs` | — |
 | `_dfd/tools/datetime.md` | `tools/datetime.rs` | — |

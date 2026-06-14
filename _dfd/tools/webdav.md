@@ -26,11 +26,11 @@ directory. The isolation is structural — no path-sanitization needed:
 Other tool DFDs that use WebDAV (edit_soul, save_knowledge, calendar,
 image_gen, web_fetch) reference this layer instead of repeating it.**
 
-- Upstream: [Configuration Management](../base/config.md) provides `WebDavConfig`
-- Downstream: [Agent Harness](../agent-harness.md) exposes `WebDavTool` to
+- Upstream: [Configuration Management](../infra/config.md) provides `WebDavConfig`
+- Downstream: [Agent Harness](../agent/agent-harness.md) exposes `WebDavTool` to
   the AI agent
-- Downstream: [Knowledge Management](../base/knowledge.md) persists `.md` files
-- Downstream: [Memory Management](../base/memory.md) uses PUT/GET/PROPFIND
+- Downstream: [Knowledge Management](../knowledge/knowledge.md) persists `.md` files
+- Downstream: [Memory Management](../memory/memory.md) uses PUT/GET/PROPFIND
 - Related: [Vision Tool](vision.md) — webdav tool's `read` action detects
   image files by extension and returns base64 markdown tags (`![name](data:...)`),
   which the harness intercepts via the same vision image injection pipeline.
