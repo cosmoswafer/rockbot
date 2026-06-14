@@ -354,38 +354,38 @@ flowchart TD
     PROMOTE --> MARK
 ```
 
-### 2i. Inline Context Overflow — truncate_and_summarize
+### 2i. Safety Net — Inline Context Truncation (Pre-LLM, No Delay)
 
 Before each LLM call, the harness checks if the total JSON byte size of the
-messages exceeds `max_context_bytes`. If so, it summarises older messages
-inline — replacing them with a concise AI-generated summary — for the current
-LLM call. This is a separate lightweight mechanism from the Layer 1→Layer 2
-compression (which writes `summary.md` to WebDAV and prunes history).
+messages exceeds `max_context_bytes`. If so, it trims older messages inline —
+**no LLM call involved** — keeping the system prefix and last 2 conversation
+messages, stripping images from older entries. This is a fast in-memory
+operation that prevents provider rejection.
+
+When inline truncation fires, it also sets a `byte_pressure_flag` so the room
+receives full LLM compression **after the reply is delivered**. See
+[Memory Compression](base/memory-compression.md) for the full pipeline.
 
 ```mermaid
 flowchart TD
     CTX[BuildContext Messages]
     CHECK{"current_bytes<br/>> max_context_bytes?"}
-    SPLIT["Split messages:<br/>prefix (system) + older + suffix (last 2)"]
-    SUMMARIZE["AI Summarize<br/>(older messages → 1-3 sentences)"]
-    AI[AiProvider<br/>one-shot, tools=off]
-    REPLACE["Replace older messages<br/>with [summary] system msg"]
-    OUT[Return Summarized Messages]
+    TRIM["Fast Inline Trim<br/>(strip images, keep prefix + last 2)"]
+    SET_FLAG["Set byte_pressure_flag"]
+    OUT[Return Trimmed Messages]
 
     CTX --> CHECK
     CHECK -->|"no"| OUT
-    CHECK -->|"yes"| SPLIT
-    SPLIT -->|"older message texts (trimmed)"| SUMMARIZE
-    SUMMARIZE -->|"summary prompt"| AI
-    AI -->|"summary text"| REPLACE
-    REPLACE --> OUT
+    CHECK -->|"yes"| TRIM
+    TRIM --> SET_FLAG
+    SET_FLAG --> OUT
 ```
 
-**Fallback**: if the AI summarization fails, falls back to plain text
-`"N earlier messages (truncated due to context limit)"`. At least the
-last 2 messages plus the system prompt are always preserved. If the total
-message count is ≤ system prefix + 4, summarization is skipped entirely
-regardless of byte limit.
+**This is fast** — no LLM call, no WebDAV I/O. Just in-memory message array
+manipulation. At least the last 2 messages plus the system prompt are always
+preserved. If the total message count is ≤ system prefix + 4, trimming is
+skipped entirely regardless of byte limit. Sets `byte_pressure_flag` so the
+room gets full LLM compression after reply delivery.
 
 ### 2i2. Context-Length-Exceeded Retry — Provider-Triggered Compression
 
@@ -393,7 +393,7 @@ When the AI provider returns a `ContextLengthExceeded` error (HTTP 400 with
 "context length" or "maximum context" in the error message), the harness
 performs aggressive memory compression and retries the request once. This
 is a provider-initiated recovery path that complements the proactive
-`truncate_and_summarize` byte-check.
+`trim_context` byte-check.
 
 ```mermaid
 flowchart TD

@@ -28,25 +28,25 @@ there is zero delay between user request and bot response.
 
 ### 2a. Three-Trigger Compression Decision
 
-Compression fires when **any** of these thresholds is crossed. The decision
-is evaluated after each bot reply is delivered. The token trigger is evaluated
-after each LLM provider call, using the response's actual `usage.total_tokens`.
+All three compression triggers are evaluated **after the bot reply has been
+delivered to the user** — zero delay between user request and bot response.
+The token and byte pressure flags are set during the LLM call and checked
+asynchronously after reply delivery.
 
 ```mermaid
 flowchart TD
     POST_REPLY["After Bot Reply Delivered<br/>(background)"]
-    POST_LLM["After LLM Provider Call"]
 
     C1{"char_count<br/>> max_text_length<br/>AND msgs > 4?"}
-    C2{"context_bytes<br/>> max_context_bytes?"}
-    C3{"total_tokens<br/>> 90% of<br/>model_context_length?"}
+    C2{"token_pressure_flag<br/>set?"}
+    C3{"byte_pressure_flag<br/>set?"}
 
-    COMPRESS[Run Compression]
+    COMPRESS["Run Background Compression<br/>(full pipeline)"]
     SKIP[Skip]
 
     POST_REPLY --> C1
     POST_REPLY --> C2
-    POST_LLM -->|"usage.total_tokens"| C3
+    POST_REPLY --> C3
 
     C1 -->|"yes"| COMPRESS
     C1 -->|"no"| SKIP
@@ -56,9 +56,14 @@ flowchart TD
     C3 -->|"no"| SKIP
 ```
 
-**Trigger priority**: all three triggers independently call the same compression
-function. The token trigger is unique in that it is evaluated *after* the LLM
-response, using actual token counts from the provider — not estimates.
+| Flag | Set During | Condition | Reset |
+|------|-----------|-----------|-------|
+| `char_count` overflow | Each message append to history | `char_count > max_text_length` AND `msgs > 4` | Cleared after compression prunes oldest messages |
+| `token_pressure_flag` | Each LLM provider response | `usage.total_tokens > model_context_length * 0.9` | Cleared after compression completes |
+| `byte_pressure_flag` | Context assembly (`build_context`) | Serialized context bytes > `max_context_bytes` | Cleared after compression completes |
+
+All three flags cause the same background compression function to run. None
+block the user-facing response path.
 
 ### 2b. Compression Deep Dive
 
@@ -106,13 +111,14 @@ Compression is a **replace** operation: the LLM receives the existing
 that merges old and new into at most 10 bullet points. No per-date files, no
 accumulation.
 
-### 2c. Token-Based Trigger (Post-LLM Call)
+### 2c. Token-Based Trigger (Post-LLM Call → Checked After Reply)
 
 The token trigger is the most reliable mechanism because it uses the provider's
-actual token count, not byte or character estimates. After each LLM call, the
+actual token count, not byte or character estimates. During each LLM call, the
 harness inspects `response.usage.total_tokens`. If it exceeds 90% of the
-configured `model_context_length`, compression is scheduled for the current
-room.
+configured `model_context_length`, a `token_pressure_flag` is set for that room.
+The flag is checked **after the reply is delivered**, triggering background
+compression — the user never waits.
 
 ```mermaid
 flowchart TD
@@ -120,15 +126,17 @@ flowchart TD
     RESP["Response<br/>(CompletionResult)"]
     USAGE["usage.total_tokens"]
     CHECK{"total_tokens<br/>> 90% of<br/>model_context_length?"}
-    SCHEDULE["Schedule Compression<br/>(background, after reply)"]
-    CONTINUE[Continue Normal Flow]
+    SET_FLAG["Set token_pressure_flag<br/>for this room"]
+    CONTINUE["Continue Normal Flow<br/>(reply to user first)"]
 
     LLM_CALL -->|"chat/completions"| RESP
     RESP -->|"extract usage"| USAGE
     USAGE --> CHECK
-    CHECK -->|"yes: near context limit"| SCHEDULE
+    CHECK -->|"yes: near context limit"| SET_FLAG
     CHECK -->|"no"| CONTINUE
-    SCHEDULE -->|"same room"| COMPRESS[compress_room_if_needed]
+    SET_FLAG --> CONTINUE
+
+    CONTINUE -->|"reply delivered"| POST[After Reply:<br/>check flags → compress]
 ```
 
 **Token counting**: the provider response includes `usage.total_tokens` which
@@ -139,31 +147,39 @@ messages (soul, knowledge, summary) will push it closer to the limit.
 
 **Provider support**: all major providers (OpenRouter, DeepSeek, OpenAI)
 return `usage` in responses. If `usage` is absent or `total_tokens` is 0,
-the token trigger is skipped (graceful degradation).
+the flag is not set (graceful degradation).
 
-### 2d. Inline Context Overflow — truncate_and_summarize
+### 2d. Safety Net — Inline Context Truncation (Pre-LLM)
 
-Before each LLM call, the harness also checks if serialized context bytes
-exceed `max_context_bytes`. This is a separate in-memory-only mechanism
-(no WebDAV write) that summarises older messages inline for the current
-call. See [Agent Harness](../agent-harness.md §2i) for the full diagram.
+**Not a compression trigger.** This is a lightweight in-memory safety mechanism
+that runs immediately before each LLM call to prevent provider rejection. If the
+serialized context exceeds `max_context_bytes`, older messages are trimmed
+inline — no WebDAV write, no LLM summarization call. The actual compression
+(writing `summary.md`) always happens after the reply.
 
-If the inline truncation was substantial (many messages summarised), it
-may also flag the room for background compression after the reply.
+When inline truncation fires, it also sets the `byte_pressure_flag` so the
+room will receive full background compression after the reply is delivered.
 
 ```mermaid
 flowchart TD
     BEFORE[Before LLM Call]
     CHECK{"context_bytes<br/>> max_context_bytes?"}
-    INLINE["truncate_and_summarize<br/>(in-memory, no WebDAV)"]
+    TRIM["trim_context<br/>(strip images, truncate midsection)"]
+    SET_FLAG["Set byte_pressure_flag"]
     AI[AiProvider]
     SKIP[Continue]
 
     BEFORE --> CHECK
-    CHECK -->|"yes"| INLINE
+    CHECK -->|"yes"| TRIM
     CHECK -->|"no"| SKIP
-    INLINE -->|"summarized context"| AI
+    TRIM --> SET_FLAG
+    SET_FLAG --> AI
 ```
+
+**This is fast** — no additional LLM call, no WebDAV I/O. Just in-memory
+message array manipulation (strip images from oldest messages, keep system
+prefix + last 2 conversation messages). Flag is set so the room gets proper
+LLM compression after the user gets their reply.
 
 ### 2e. Fallback — Compression Failure
 
@@ -229,7 +245,7 @@ Fields from `ModelConfig` in [Configuration Management](config.md):
 | ---------------------- | ------- | ------- | ----- |
 | `max_text_length`      | `usize` | 50000   | char_count overflow trigger (post-reply) |
 | `max_context_bytes`    | `usize` | 4_000_000 | byte-size overflow trigger (pre-LLM inline, flag for background compression) |
-| `model_context_length` | `u32`   | 131072  | Model's max context tokens. 90% threshold (`* 0.9`) triggers post-LLM compression. Default 128K (typical for GPT-4o / Claude / Qwen). |
+| `model_context_length` | `u32`   | 1_000_000 | Model's max context tokens. 90% threshold (`* 0.9`) triggers post-LLM compression. Default 1M (Qwen3.7-Plus). |
 
 The `model_context_length` is a per-model default — different models have
 different context windows (e.g., 8K, 32K, 128K, 200K). The value should be
@@ -237,11 +253,15 @@ set to match the configured `default_model`'s context window.
 
 ## 5. Trigger Summary
 
+All background compression triggers are evaluated **after reply delivery**.
+The safety net (inline truncation) runs pre-LLM but is not a compression trigger.
+
 | Trigger | Evaluation Point | Condition | Action |
 |---------|-----------------|-----------|--------|
 | **Char overflow** | After reply delivery | `char_count > max_text_length` AND `msgs > 4` | Full background compression |
-| **Byte overflow** | Before each LLM call | `context_bytes > max_context_bytes` | Inline `truncate_and_summarize`; flag for background compression if substantial |
-| **Token near-limit** | After each LLM response | `usage.total_tokens > model_context_length * 0.9` | Schedule background compression for this room |
+| **Token near-limit** | Flag set during LLM call, checked after reply | `usage.total_tokens > model_context_length * 0.9` | Full background compression |
+| **Byte pressure** | Flag set during context assembly, checked after reply | `context_bytes > max_context_bytes` | Full background compression |
+| **Safety net** | Before each LLM call | `context_bytes > max_context_bytes` | Inline trim only (strip images, truncate); sets byte_pressure_flag |
 
 ## 6. Integration
 
@@ -249,9 +269,9 @@ set to match the configured `default_model`'s context window.
 
 | Method | When | Action |
 |--------|------|--------|
-| `compress_room_if_needed()` | After reply delivery (background) | Full compression cycle (char or token triggered) |
-| `truncate_and_summarize()` | Before each LLM call | Inline context reduction (byte triggered) |
-| `check_token_pressure()` | After each LLM response | Inspects `usage.total_tokens`, schedules compression if near limit |
+| `compress_room_if_needed()` | After reply delivery (background) | Full compression cycle (all three trigger flags checked) |
+| `check_token_pressure()` | During LLM response processing | Inspects `usage.total_tokens`, sets `token_pressure_flag` — does NOT block reply |
+| `trim_context()` | Before each LLM call (safety net) | Inline context reduction (strip images, truncate); sets `byte_pressure_flag` |
 
 ### With Memory Manager
 

@@ -384,7 +384,7 @@ Fields from `ModelConfig` in [Configuration Management](config.md):
 | `memory_ttl_secs`      | `u64`   | 300     | Room idle timeout — evict from memory (after snapshot persisted) |
 | `persist_interval_secs`| `u64`   | 60      | How often the timer writes dirty snapshots to WebDAV |
 | `max_context_bytes`    | `usize` | 4_000_000 | Max byte size for context (triggers inline summarization + flags for compression) |
-| `model_context_length` | `u32`   | 131072  | Model's max context tokens; 90% threshold triggers post-LLM compression |
+| `model_context_length` | `u32`   | 1_000_000 | Model's max context tokens; 90% threshold triggers post-LLM compression |
 
 Note: removed `max_summary_chars` and `summary_days` — no longer needed since
 Layer 2 is a single `summary.md` capped at 10 bullet points by LLM instruction.
@@ -397,9 +397,8 @@ Layer 2 is a single `summary.md` capped at 10 bullet points by LLM instruction.
 | ------------------- | ----------------------------- | ------------------------------ | ------------------------------------------------------------ | --------------------------------------------- |
 | **Timer persist**   | `maintenance_tick()` (Phase 1) | Every `persist_interval_secs`  | `dirty_snapshots` is non-empty                               | Build full snapshot (L1+L2+L3), PUT `snapshot.json`, clear dirty flag |
 | **Timer evict**     | `maintenance_tick()` (Phase 2) | Every `persist_interval_secs`  | Room has ≥ 1 message AND `last_activity > 0` AND `now - last_activity > memory_ttl_secs` | Persist snapshot if dirty, then remove room from `HashMap` |
-| **Compression**     | `compress_room_if_needed()`    | After reply delivered (background)  | `char_count > max_text_length` AND `messages.len() > 4`      | See [Memory Compression](memory-compression.md) |
-| **Token pressure**  | `check_token_pressure()`       | After each LLM response          | `usage.total_tokens > model_context_length * 0.9`           | See [Memory Compression](memory-compression.md) |
-| **Context overflow**| `truncate_and_summarize()`     | Before each LLM call           | Serialized context bytes > `max_context_bytes`               | Inline summarization; see [Memory Compression](memory-compression.md §2d) |
+| **Compression**     | `compress_room_if_needed()`    | After reply delivered (background)  | Checks all three flags (char overflow, token pressure, byte pressure) | See [Memory Compression](memory-compression.md) |
+| **Safety net**      | `trim_context()`               | Before each LLM call           | `context_bytes > max_context_bytes`                              | Inline trim only; sets byte_pressure_flag. See [Memory Compression](memory-compression.md §2d) |
 | **Room init**       | `restore_history()`            | Once per room, on first message| Room not in memory (fresh or evicted)                        | Load snapshot (cache-first), fall back to individual files |
 | **Soul edit**       | `edit_soul()` tool             | On user request                | LLM invokes `edit_soul` tool                                 | Write `soul.md`, update in-memory soul, mark snapshot dirty |
 | **Touch activity**  | `process_message()`            | On every incoming message      | Room exists in memory                                        | Update `last_activity` timestamp to prevent eviction |

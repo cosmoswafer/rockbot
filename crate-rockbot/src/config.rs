@@ -67,7 +67,7 @@ pub struct ModelConfig {
 }
 
 fn default_model_context_length() -> u32 {
-    131072
+    1_000_000
 }
 
 #[derive(Debug, Clone, Deserialize)]
