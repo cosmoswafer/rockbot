@@ -1,12 +1,13 @@
 use rockbot::config::ProviderConfig;
 use rockbot::error::RockBotError;
 use rockbot::validated::{ConfigUrl, NonEmptyString, ProviderName};
-use rockbot::provider::{AiProvider, DeepSeekProvider, FalAiProvider, ImageProvider, OpenRouterImageProvider, OpenRouterProvider};
-use rockbot::tool::Tool;
-use rockbot::types::{ChatMessage, ChatRequest, FinishReason, ImageGenParams, ThinkingConfig, ToolDef};
-use std::collections::HashMap;
-use wiremock::matchers::{body_string_contains, header, method, path};
-use wiremock::{Mock, MockServer, ResponseTemplate};
+    use rockbot::provider::{AiProvider, DeepSeekProvider, FalAiProvider, ImageProvider, OpenRouterImageProvider, OpenRouterProvider};
+    use rockbot::tool::Tool;
+    use rockbot::types::{ChatMessage, ChatRequest, FinishReason, ImageGenParams, ThinkingConfig, ToolDef};
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use wiremock::matchers::{body_string_contains, header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
 // ─── Mock HTTP Tests: DeepSeekProvider.complete() ────────────────────────────
 
@@ -2227,8 +2228,6 @@ async fn test_nextcloud_share_link_compiles_and_handles_no_server() {
 // ─── Mock HTTP Tests: Memory Compression Pipeline ─────────────────────────────
 
 use rockbot::harness::AgentHarness;
-use rockbot::memory::MemoryManager;
-use std::sync::Arc;
 
 #[cfg(test)]
 mod compression_tests {
@@ -2475,5 +2474,172 @@ mod compression_tests {
         harness.compress_room_if_needed("room1").await.unwrap();
 
         assert!(!harness.memory().has_token_pressure("room1"), "Token pressure should be cleared");
+    }
+}
+
+// ─── _dfd/knowledge/knowledge.md — Knowledge Cache TTL (happy path) ────────────
+
+#[cfg(test)]
+mod knowledge_cache_tests {
+    use super::*;
+    use rockbot::{AgentHarness, ImageCache};
+    use rockbot::config::{AppConfig, ImageModelConfig, ModelConfig, RocketChatSection, ServerConfig};
+    use rockbot::validated::{BoundedUsize, ConfigUrl, ProviderName};
+    use wiremock::matchers::{method, path};
+
+    fn make_knowledge_test_config(base_url: &str) -> AppConfig {
+        let webdav_cfg = {
+            let toml_str = format!(
+                r#"
+url = "{base_url}"
+username = "testuser"
+password = "testpass"
+root = "rockbot"
+dav_path = "remote.php/dav"
+"#
+            );
+            Some(toml::from_str(&toml_str).expect("valid WebDavConfig TOML"))
+        };
+
+        AppConfig {
+            rocketchat: RocketChatSection {
+                server: ServerConfig {
+                    url: "test.example.com".into(),
+                    username: "bot".into(),
+                    password: "secret".into(),
+                    debug: false,
+                },
+                model: ModelConfig {
+                    default_provider: ProviderName::try_new("mock".to_string()).unwrap(),
+                    default_model: "mock-model".into(),
+                    max_soul_chars: BoundedUsize::try_new(5000).unwrap(),
+                    max_iterations: 5,
+                    persist_interval_secs: 60,
+                    memory_ttl_secs: 86400,
+                    max_context_bytes: BoundedUsize::try_new(4194304).unwrap(),
+                    max_attachment_bytes: 20971520,
+                    model_context_length: 1_000_000,
+                },
+            },
+            chat_providers: vec![rockbot::config::ProviderConfig {
+                name: ProviderName::try_new("mock".to_string()).unwrap(),
+                api_key: "sk-test".into(),
+                base_url: ConfigUrl::try_new(format!("{}/v1", base_url)).unwrap(),
+                basecf_url: None,
+                chat_path: Some("/chat/completions".into()),
+                draw_path: None,
+                models: HashMap::new(),
+            }],
+            image_providers: vec![],
+            image_model: ImageModelConfig {
+                default_provider: ProviderName::try_new("mock".to_string()).unwrap(),
+                default_text_model: "mock-img".into(),
+                default_edit_model: "mock-img-edit".into(),
+                default_quality: "standard".into(),
+                default_output_format: "png".into(),
+                default_num_images: 1,
+                default_image_size: "1024x1024".into(),
+                default_image_size_tier: "1K".into(),
+            },
+            tools: HashMap::new(),
+            webdav: webdav_cfg,
+        }
+    }
+
+    struct MockMinProvider;
+    #[async_trait::async_trait]
+    impl AiProvider for MockMinProvider {
+        async fn complete(&self, _req: ChatRequest) -> rockbot::error::Result<rockbot::types::CompletionResult> {
+            Err(RockBotError::Provider("mock provider not for chat".into()))
+        }
+        fn provider_name(&self) -> &str { "mock-min" }
+        fn model_name(&self) -> &str { "mock-min" }
+    }
+
+    #[tokio::test]
+    async fn test_knowledge_cache_hit_skips_webdav() {
+        let mock_server = MockServer::start().await;
+        let base_url = mock_server.uri();
+
+        // Mock knowledge index with a matching entry
+        let index_json = serde_json::json!({
+            "version": "rockbot-knowledge/1",
+            "room_id": "r-testroom",
+            "entries": [{
+                "filename": "note1.md",
+                "when_useful": "user mentions cache testing",
+                "priority": "P1",
+                "last_promoted_at": null
+            }]
+        });
+
+        let md_content = "# Test Note\n\nThis is a cached knowledge entry.";
+
+        // Expect exactly 1 call to index and 1 call to .md file (first refresh only)
+        Mock::given(method("GET"))
+            .and(path("/r-testroom/knowledge/index.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&index_json))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/r-testroom/knowledge/note1.md"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(md_content))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let config = make_knowledge_test_config(&base_url);
+        let provider = Box::new(MockMinProvider);
+        let webdav = webdav::WebDavClient::new(&base_url, "testuser", "testpass").unwrap();
+        let image_cache = Arc::new(ImageCache::new());
+        let mut harness = AgentHarness::new(config, provider, Some(webdav), image_cache);
+
+        // Seed room with a message that will match knowledge "when_useful"
+        harness.memory_mut().get_or_create("room1", "testroom", "", false)
+            .history.append(ChatMessage::user("let's do some cache testing today"));
+
+        // First call: should hit WebDAV mocks (expect(1) set above)
+        harness.refresh_knowledge_context("room1", "r-testroom").await.unwrap();
+
+        // Second call: should be served from cache (no WebDAV calls)
+        // If cache is NOT working, this will fail because mocks have expect(1)
+        harness.refresh_knowledge_context("room1", "r-testroom").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_knowledge_cache_empty_index_skips_md_reads() {
+        let mock_server = MockServer::start().await;
+        let base_url = mock_server.uri();
+
+        // Empty index — no entries to load
+        let index_json = serde_json::json!({
+            "version": "rockbot-knowledge/1",
+            "room_id": "r-emptyroom",
+            "entries": []
+        });
+
+        Mock::given(method("GET"))
+            .and(path("/r-emptyroom/knowledge/index.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&index_json))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let config = make_knowledge_test_config(&base_url);
+        let provider = Box::new(MockMinProvider);
+        let webdav = webdav::WebDavClient::new(&base_url, "testuser", "testpass").unwrap();
+        let image_cache = Arc::new(ImageCache::new());
+        let mut harness = AgentHarness::new(config, provider, Some(webdav), image_cache);
+
+        harness.memory_mut().get_or_create("room2", "emptyroom", "", false)
+            .history.append(ChatMessage::user("hello"));
+
+        // First call: hits mock for index (empty, no md files read)
+        harness.refresh_knowledge_context("room2", "r-emptyroom").await.unwrap();
+
+        // Second call: cached as empty — should skip WebDAV entirely
+        harness.refresh_knowledge_context("room2", "r-emptyroom").await.unwrap();
     }
 }

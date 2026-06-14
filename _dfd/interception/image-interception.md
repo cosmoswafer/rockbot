@@ -35,6 +35,7 @@ flowchart TD
         VISION["Vision Tool Result<br/>![name](data:...)"]
         WEBDAV_READ["WebDAV Read<br/>(image files)"]
         PREV_GEN["Previous image_gen Result<br/>(share_url in ImageCache)"]
+        GEN_POOL["image_gen Success<br/>(added to ImagePool<br/>for name-based matching)"]
         MSG_URLS["Message Image URLs<br/>IncomingMessage.urls<br/>filtered: content_type image/*"]
     end
 
@@ -56,11 +57,12 @@ flowchart TD
     VISION -->|"markdown tags"| CACHE_VISION
     WEBDAV_READ -->|"markdown tags"| CACHE_VISION
     CACHE_VISION -->|"CachedImage {data_uri, name}"| POOL
+    GEN_POOL -->|"CachedImage {data_uri, prompt}"| POOL
     POOL -->|"drain"| INJECT_VISION
     INJECT_VISION -->|"user msg + ImageUrl parts"| CTX
     REFS -->|"match title in prompt"| INJECT_URLS
     POOL -->|"match name in prompt"| INJECT_URLS
-    PREV_GEN -->|"LLM passes share_url"| INJECT_URLS
+    PREV_GEN -->|"LLM passes share_url or reference_image_key"| INJECT_URLS
     MSG_URLS -->|"auto-inject (no matching)"| INJECT_URLS
     INJECT_URLS -->|"args['image_urls']"| IMG_GEN
     IMG_GEN -->|"GeneratedImage"| REPLY
@@ -127,7 +129,7 @@ tool-execution iteration.
 ### 2d. Image Editing — inject_image_urls_from_refs
 
 When the LLM calls `image_gen` with an edit prompt, the harness intercepts the
-arguments and injects real image data from four converging sources:
+arguments and injects real image data from five converging sources:
 
 ```mermaid
 flowchart TD
@@ -136,6 +138,7 @@ flowchart TD
     IMG_POOL["ImagePool<br/>CachedImage name: photo1.png, data_uri: ..."]
     AGENT_URL["LLM-provided URLs<br/>(share_url, https://...)"]
     MSG_URLS["Message Image URLs<br/>current_image_urls<br/>(from DDP urls,<br/>content_type image/*)"]
+    REF_KEY["reference_image_key<br/>(image_cache lookup<br/>via call_id)"]
 
     INJECT[inject_image_urls_from_refs]
     DEDUP[Deduplicate by URL string]
@@ -144,6 +147,7 @@ flowchart TD
     PROMPT -->|"contains 'apple.png'?"| ATTACH_REF
     PROMPT -->|"contains 'photo1.png'?"| IMG_POOL
     AGENT_URL -->|"explicit image_urls"| INJECT
+    REF_KEY -->|"lookup in ImageCache → upload to CDN"| INJECT
     ATTACH_REF -->|"match → inject data URI"| INJECT
     IMG_POOL -->|"match → inject data URI"| INJECT
     MSG_URLS -->|"auto-inject (unconditional)"| INJECT
@@ -155,8 +159,10 @@ flowchart TD
 matches against:
 1. `AttachmentRef.title` — original user attachment filenames
 2. `CachedImage.name` and `![name]` label — vision/webdav-fetched images
-3. Explicit `image_urls` from the LLM (deduplicated against injected URIs)
-4. `current_image_urls` — image URLs from the DDP message `urls` field (filtered
+3. `CachedImage.name` (prompt-derived) — images generated in the current turn by `image_gen`, added to the pool for name-based matching in subsequent tool calls (e.g. "make the fluffy cat darker")
+4. Explicit `image_urls` from the LLM (deduplicated against injected URIs)
+5. `reference_image_key` — the LLM passes an `image_key` string to reference a previously generated image; the tool looks it up in `ImageCache` and uploads the data URI to the provider's CDN
+6. `current_image_urls` — image URLs from the DDP message `urls` field (filtered
    by `content_type: image/*`). These are **always injected unconditionally**
    — no prompt matching required — because the harness knows the user shared them
    for editing.
@@ -168,20 +174,28 @@ are uploaded to the provider's CDN (Fal) via `upload_data_uri` → returns an
 
 ### 2e. Generated Image Loopback
 
-Generated images can be reused for editing — the `image_gen` tool exposes the
-NextCloud `share_url` in its result JSON, which the LLM can pass back in
-`image_urls` on a subsequent call:
+Generated images can be reused for editing via two paths:
+
+1. **Share URL**: the `image_gen` tool exposes the NextCloud `share_url` in its
+   result JSON, which the LLM can pass back in `image_urls` on a subsequent call.
+2. **Reference Key**: the LLM passes `reference_image_key` (the `image_key` from
+   a prior `image_gen` result), and the tool looks up the cached image bytes in
+   `ImageCache` and uploads them to the provider's CDN.
 
 ```mermaid
 flowchart LR
     GEN["image_gen Result<br/>{share_url, image_key}"]
-    LLM[LLM sees share_url]
-    NEXT["Next image_gen Call<br/>image_urls: share_url"]
-    PROVIDER[Provider Receives<br/>https:// URL for img2img]
+    LLM[LLM sees share_url + image_key]
+    URL_PATH["Next image_gen Call<br/>image_urls: share_url"]
+    KEY_PATH["Next image_gen Call<br/>reference_image_key: image_key"]
+    PROVIDER_URL[Provider Receives<br/>https:// URL for img2img]
+    PROVIDER_KEY[Provider Receives<br/>uploaded https:// URL<br/>from ImageCache lookup]
 
-    GEN -->|"share_url in result JSON"| LLM
-    LLM -->|"passes in image_urls"| NEXT
-    NEXT -->|"inject_image_urls_from_refs<br/>merges with agent URLs"| PROVIDER
+    GEN -->|"share_url + image_key in result JSON"| LLM
+    LLM -->|"passes in image_urls"| URL_PATH
+    LLM -->|"passes reference_image_key"| KEY_PATH
+    URL_PATH -->|"inject_image_urls_from_refs<br/>merges with agent URLs"| PROVIDER_URL
+    KEY_PATH -->|"ImageCache lookup → upload to CDN"| PROVIDER_KEY
 ```
 
 The loopback path: `image_gen` → `ImageCache` + tool result → LLM includes
@@ -205,7 +219,8 @@ provider receives `https://` URL (no re-upload needed).
 ### `ImagePool`
 `HashMap<String, Vec<CachedImage>>` keyed by `room_id`. Drained on each
 `inject_vision_images` call. Populated by `cache_vision_images` from vision
-and webdav tool results.
+and webdav tool results, and by the harness when `image_gen` succeeds (added
+with prompt-derived name for name-based matching in subsequent edit calls).
 
 ### `ImageCache`
 `Arc<Mutex<HashMap<String, GeneratedImage>>>` keyed by tool `call_id`. Stores

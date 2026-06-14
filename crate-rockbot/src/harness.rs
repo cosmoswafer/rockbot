@@ -11,7 +11,7 @@ use crate::error::Result;
 use crate::error::RockBotError;
 use crate::image_cache::ImageCache;
 use crate::knowledge::KnowledgeManager;
-use crate::memory::{MemoryManager, SoulMemory, strip_images_from_message, strip_orphaned_tool_calls, truncate_message_content};
+use crate::memory::{MemoryManager, SoulMemory, count_json_bytes, strip_images_from_message, strip_orphaned_tool_calls, truncate_message_content};
 use crate::provider::AiProvider;
 use crate::tool::ToolRegistry;
 use crate::types::{ChatMessage, ChatRequest, Role};
@@ -41,6 +41,10 @@ Answer in the same language as the user. \
 Keep responses clear and to the point.\
 ";
 
+/// TTL for in-memory knowledge context cache (seconds). Knowledge is re-read from
+/// WebDAV only when the cache is older than this or invalidated by a mutation.
+const KNOWLEDGE_CACHE_TTL_SECS: i64 = 60;
+
 pub struct AgentHarness {
     config: Arc<AppConfig>,
     provider: Box<dyn AiProvider>,
@@ -54,6 +58,7 @@ pub struct AgentHarness {
     image_cache: Arc<ImageCache>,
     last_image_ids: Vec<String>,
     current_image_urls: Vec<String>,
+    knowledge_cache: HashMap<String, (i64, String)>,
 }
 
 impl AgentHarness {
@@ -82,6 +87,7 @@ impl AgentHarness {
             image_cache,
             last_image_ids: Vec::new(),
             current_image_urls: Vec::new(),
+            knowledge_cache: HashMap::new(),
         }
     }
 
@@ -477,6 +483,37 @@ impl AgentHarness {
                             if tool_call.function.name == "image_gen" && !tool_result.is_error {
                                 debug!("image_gen call {} completed — queuing for post-reply upload", tool_call.id);
                                 image_ids_this_turn.push(tool_call.id.clone());
+                                // Add generated image to image_pool for name-based
+                                // matching in subsequent tool calls (e.g. "make the
+                                // fluffy cat darker" matches a prior image_gen prompt)
+                                if let Some(cached) = self.image_cache.get(&tool_call.id) {
+                                    if let Ok(v) =
+                                        serde_json::from_str::<serde_json::Value>(
+                                            &tool_call.function.arguments,
+                                        )
+                                    {
+                                        if let Some(prompt) =
+                                            v.get("prompt").and_then(|p| p.as_str())
+                                        {
+                                            let name = if prompt.len() > 80 {
+                                                format!("{}...", &prompt[..77])
+                                            } else {
+                                                prompt.to_string()
+                                            };
+                                            self.image_pool
+                                                .entry(room_id.to_string())
+                                                .or_default()
+                                                .push(CachedImage {
+                                                    data_uri: cached.data_uri(),
+                                                    name: name.clone(),
+                                                });
+                                            debug!(
+                                                "Added generated image to image_pool for room {}: {}",
+                                                room_id, name,
+                                            );
+                                        }
+                                    }
+                                }
                             }
 
                             let tool_msg = ChatMessage::tool(&tool_call.id, &tool_result.content);
@@ -495,6 +532,7 @@ impl AgentHarness {
                         if altered_knowledge {
                             self.memory.mark_snapshot_dirty(room_id);
                             let wd = compute_webdav_dir(room_name, room_fname, is_dm);
+                            self.knowledge_cache.remove(&wd);
                             if let Err(e) = self.refresh_knowledge_context(room_id, &wd).await {
                                 warn!("Failed to refresh knowledge context after alter: {}", e);
                             }
@@ -802,9 +840,7 @@ impl AgentHarness {
     ) -> Vec<ChatMessage> {
         let current_bytes: u64 = messages
             .iter()
-            .map(|m| {
-                serde_json::to_string(m).map(|s| s.len() as u64).unwrap_or(0)
-            })
+            .map(|m| count_json_bytes(m) as u64)
             .sum();
         if current_bytes <= max_bytes {
             return messages;
@@ -850,7 +886,7 @@ impl AgentHarness {
             result.len(),
             current_bytes,
             result.iter()
-                .map(|m| serde_json::to_string(m).map(|s| s.len()).unwrap_or(0))
+                .map(|m| count_json_bytes(m))
                 .sum::<usize>(),
         );
 
@@ -1258,11 +1294,26 @@ impl AgentHarness {
         room_id: &str,
         webdav_dir: &str,
     ) -> Result<()> {
+        // Check in-memory cache: if fresh (< TTL) and present, skip WebDAV reads.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        if let Some((cached_ts, cached_text)) = self.knowledge_cache.get(webdav_dir) {
+            if now - cached_ts < KNOWLEDGE_CACHE_TTL_SECS {
+                if !cached_text.is_empty() {
+                    self.memory.set_knowledge(room_id, cached_text.clone());
+                }
+                return Ok(());
+            }
+        }
+
         let webdav = self.webdav.clone();
         if let Some(ref webdav) = webdav {
             let text = self
                 .load_knowledge_for_room(webdav, room_id, webdav_dir)
                 .await?;
+            self.knowledge_cache.insert(webdav_dir.to_string(), (now, text.clone()));
             if !text.is_empty() {
                 self.memory.set_knowledge(room_id, text);
             }

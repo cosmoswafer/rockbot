@@ -5,6 +5,7 @@ use base64::Engine;
 
 use crate::validated::NonEmptyString;
 
+#[derive(Clone)]
 pub struct GeneratedImage {
     pub webdav_path: NonEmptyString,
     pub image_bytes: Vec<u8>,
@@ -54,6 +55,10 @@ impl ImageCache {
 
     pub fn take(&self, key: &str) -> Option<GeneratedImage> {
         self.entries.lock().unwrap().remove(key)
+    }
+
+    pub fn get(&self, key: &str) -> Option<GeneratedImage> {
+        self.entries.lock().unwrap().get(key).cloned()
     }
 
     pub fn is_empty(&self) -> bool {

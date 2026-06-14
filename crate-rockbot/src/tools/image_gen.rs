@@ -23,6 +23,8 @@ struct ImageGenArgs {
     webdav_dir: Option<String>,
     #[serde(default)]
     image_cache_key: Option<String>,
+    #[serde(default)]
+    reference_image_key: Option<String>,
 }
 
 use std::sync::Arc;
@@ -160,7 +162,11 @@ impl Tool for ImageGenTool {
                 "image_urls": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "Reference image URLs for editing (auto-injected from user attachments)"
+                    "description": "URLs of images to edit (e.g., share_url from a previous image_gen result). Omit to generate a new image. Auto-injected from user attachments and message images."
+                },
+                "reference_image_key": {
+                    "type": "string",
+                    "description": "The image_key of a previously generated image to edit. Alternative to providing explicit image_urls."
                 }
             },
             "required": ["prompt", "aspect_ratio"]
@@ -185,29 +191,47 @@ impl Tool for ImageGenTool {
         params.image_size = Some(ImageSizeValue::Preset(args.aspect_ratio.as_str().to_string()));
         params.size_tier = Some(self.default_image_size_tier.clone());
 
+        let mut collected_urls: Vec<String> = Vec::new();
+
+        if let Some(ref key) = args.reference_image_key {
+            if let Some(cached) = self.image_cache.get(key) {
+                let data_uri = cached.data_uri();
+                match self.upload_data_uri(&data_uri).await {
+                    Ok(uploaded_url) => {
+                        debug!("Injected reference_image_key '{}' for editing via uploaded URL: {}", key, uploaded_url);
+                        collected_urls.push(uploaded_url);
+                    }
+                    Err(e) => {
+                        warn!("Failed to upload reference_image_key '{}' to provider storage: {}", key, e);
+                    }
+                }
+            } else {
+                warn!("reference_image_key '{}' not found in image cache", key);
+            }
+        }
+
         if let Some(image_urls) = &args.image_urls {
-            let mut urls: Vec<String> = Vec::with_capacity(image_urls.len());
             for raw in image_urls {
                 match raw.as_str() {
                     uri if uri.starts_with("data:") => {
                         if let Ok(uploaded_url) = self.upload_data_uri(uri).await {
                             debug!("Uploaded image to provider storage: {}", uploaded_url);
-                            urls.push(uploaded_url);
+                            collected_urls.push(uploaded_url);
                         } else {
                             warn!("Failed to upload data URI to provider storage, skipping it");
                         }
                     }
                     s if s.starts_with("http://") || s.starts_with("https://") => {
-                        urls.push(s.to_string());
+                        collected_urls.push(s.to_string());
                     }
                     _ => {
                         debug!("Skipping non-URL image_urls entry");
                     }
                 }
             }
-            if !urls.is_empty() {
-                params.image_urls = Some(urls);
-            }
+        }
+        if !collected_urls.is_empty() {
+            params.image_urls = Some(collected_urls);
         }
 
         let ext = ext_from_output_format(params.output_format.as_deref());
@@ -690,5 +714,45 @@ mod tests {
         });
         let result = tool.execute(&args.to_string()).await;
         assert!(result.is_err(), "generate_image failure should propagate error");
+    }
+
+    #[test]
+    fn test_reference_image_key_deserialization() {
+        let args = serde_json::json!({
+            "prompt": "make the cat darker",
+            "aspect_ratio": "1:1",
+            "reference_image_key": "call_abc123def4567890",
+        });
+        let parsed: ImageGenArgs = serde_json::from_value(args).unwrap();
+        assert_eq!(parsed.prompt.as_str(), "make the cat darker");
+        assert_eq!(parsed.aspect_ratio.as_str(), "1:1");
+        assert_eq!(parsed.reference_image_key.as_deref(), Some("call_abc123def4567890"));
+    }
+
+    #[test]
+    fn test_reference_image_key_absent_by_default() {
+        let args = serde_json::json!({
+            "prompt": "generate a sunset",
+            "aspect_ratio": "16:9",
+        });
+        let parsed: ImageGenArgs = serde_json::from_value(args).unwrap();
+        assert!(parsed.reference_image_key.is_none());
+    }
+
+    #[test]
+    fn test_reference_image_key_in_schema() {
+        let tool = ImageGenTool::new(
+            Box::new(MockImageProvider::new()),
+            "medium".into(),
+            "png".into(),
+            1,
+            "4K".into(),
+            make_webdav(),
+            make_image_cache(),
+        );
+        let schema = tool.parameters();
+        let props = schema["properties"].as_object().unwrap();
+        assert!(props.contains_key("reference_image_key"), "schema must include reference_image_key");
+        assert_eq!(props["reference_image_key"]["type"], "string");
     }
 }

@@ -84,23 +84,36 @@ flowchart TD
 
 ### 2b. Happy Flow — Load
 
+Knowledge loading is protected by an in-memory cache (60s TTL) keyed by
+`webdav_dir`. On each call to `refresh_knowledge_context`, the cache is
+consulted first — if it contains a fresh entry (<60s old), WebDAV reads
+are skipped entirely. The cache is invalidated when knowledge is mutated
+(`save_knowledge` or `forget_knowledge` tool calls).
+
 ```mermaid
 flowchart TD
-    INIT[Room Initialization]
+    INIT[Room Initialization<br/>or refresh_knowledge_context]
+    CACHE_CHECK{Cache entry<br/>present and<br/>< 60s old?}
+    CACHE_HIT["Use cached text<br/>(no WebDAV I/O)"]
     GET_IDX[GET index.json]
     DAV[(NextCloud WebDAV)]
     MATCH{Match when_useful<br/>against context}
     LOAD_MD[GET matching .md files]
+    CACHE_STORE["Store in<br/>knowledge_cache"]
     INJECT[Inject into BuildContext]
     CTX[AgentContext]
 
-    INIT -->|"room id"| GET_IDX
+    INIT --> CACHE_CHECK
+    CACHE_CHECK -->|"yes: cache hit"| CACHE_HIT
+    CACHE_CHECK -->|"no: cache miss"| GET_IDX
     GET_IDX -->|"GET knowledge/index.json"| DAV
     DAV -->|"index entries"| MATCH
     MATCH -->|"tags + when_useful overlap"| LOAD_MD
     MATCH -->|"no matches: skip"| CTX
     LOAD_MD -->|"GET each .md"| DAV
-    DAV -->|"markdown content"| INJECT
+    DAV -->|"markdown content"| CACHE_STORE
+    CACHE_STORE --> INJECT
+    CACHE_HIT --> INJECT
     INJECT -->|"system messages"| CTX
 ```
 
@@ -334,10 +347,14 @@ Returns the matching `.md` content (or all entries if no query).
 ### Context Injection
 
 During `BuildContext` assembly (`MemoryManager::build_context`):
-1. If WebDAV is configured, load `index.json`
+1. If WebDAV is configured, load `index.json` (gated by in-memory cache with 60s TTL; cache hit skips all WebDAV I/O)
 2. Score each `IndexEntry` against recent conversation messages
 3. For entries scoring above threshold, `GET` the `.md` file
 4. Prepend each loaded entry as a system message:
    ```
    [Knowledge: {display_title}]\n{body}
    ```
+
+**Cache invalidation**: the `knowledge_cache` (keyed by `webdav_dir`) is removed
+when `save_knowledge` or `forget_knowledge` mutates WebDAV state, forcing a fresh
+read on the next `refresh_knowledge_context` call.

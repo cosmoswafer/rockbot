@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::io::{self, Write};
 use std::sync::LazyLock;
 
 use regex::Regex;
@@ -336,9 +337,16 @@ impl MemoryManager {
 
         // Enforce max_context_bytes: drop oldest images until under limit.
         if self.max_context_bytes > 0 {
+            // Fast guard: if char_count + generous JSON overhead is under the limit,
+            // skip expensive per-message serialization entirely.
+            let char_count = self.rooms.get(room_id).map(|r| r.history.char_count).unwrap_or(0);
+            let estimated_bytes = char_count + (200 * messages.len());
+            if estimated_bytes <= self.max_context_bytes {
+                return messages;
+            }
             let mut total = messages
                 .iter()
-                .map(|m| serde_json::to_vec(m).map(|v| v.len()).unwrap_or(0))
+                .map(|m| count_json_bytes(m))
                 .sum::<usize>();
             if total > self.max_context_bytes {
                 debug!(
@@ -356,9 +364,9 @@ impl MemoryManager {
                     if Some(i) == last_user_idx {
                         continue; // preserve latest user message with images
                     }
-                    let before = serde_json::to_vec(&messages[i]).map(|v| v.len()).unwrap_or(0);
+                    let before = count_json_bytes(&messages[i]);
                     messages[i] = strip_images_from_message(messages[i].clone());
-                    let after = serde_json::to_vec(&messages[i]).map(|v| v.len()).unwrap_or(0);
+                    let after = count_json_bytes(&messages[i]);
                     total = total.saturating_sub(before.saturating_sub(after));
                 }
                 debug!(
@@ -670,6 +678,23 @@ fn extract_identity_name(content: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+struct ByteCounter(usize);
+
+impl Write for ByteCounter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0 += buf.len();
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> io::Result<()> { Ok(()) }
+}
+
+#[inline]
+pub(crate) fn count_json_bytes(msg: &ChatMessage) -> usize {
+    let mut counter = ByteCounter(0);
+    let _ = serde_json::to_writer(&mut counter, msg);
+    counter.0
 }
 
 #[cfg(test)]
@@ -1086,5 +1111,28 @@ mod tests {
         assert_eq!(msg.role, crate::types::Role::Assistant);
         truncate_message_content(&mut msg, 100_000);
         assert_eq!(msg.role, crate::types::Role::Assistant);
+    }
+
+    #[test]
+    fn test_count_json_bytes_increasing_with_content() {
+        let short = ChatMessage::user("hi");
+        let long = ChatMessage::user("x".repeat(1000));
+        let short_bytes = count_json_bytes(&short);
+        let long_bytes = count_json_bytes(&long);
+        assert!(long_bytes > short_bytes, "longer content should produce more bytes: {short_bytes} vs {long_bytes}");
+    }
+
+    #[test]
+    fn test_count_json_bytes_produces_same_result_as_to_string() {
+        let msg = ChatMessage::user("hello world");
+        let via_string = serde_json::to_string(&msg).unwrap().len();
+        let via_counter = count_json_bytes(&msg);
+        assert_eq!(via_counter, via_string, "count_json_bytes should match serde_json::to_string().len()");
+    }
+
+    #[test]
+    fn test_count_json_bytes_empty_message() {
+        let msg = ChatMessage::user("");
+        assert!(count_json_bytes(&msg) > 0, "even empty message has JSON structure bytes");
     }
 }

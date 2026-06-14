@@ -34,7 +34,7 @@ flowchart TD
     CACHE[(ImageCache)]
     FORMAT(FormatResult)
 
-    AGENT -->|"prompt + aspect_ratio + image_urls (LLM), room_id + webdav_dir + image_cache_key (harness injects)"| PARSE
+    AGENT -->|"prompt + aspect_ratio + image_urls + reference_image_key (LLM), room_id + webdav_dir + image_cache_key (harness injects)"| PARSE
     PARSE -->|"merged with config defaults (quality, output_format, num_images, size_tier) + uploaded image_urls + resolved image_size"| RESOLVE
     RESOLVE -->|"t2i or edit provider + ImageGenParams"| PROVIDER
     PROVIDER --> GEN
@@ -138,11 +138,17 @@ strings (e.g. `"auto"`) pass through unchanged to both providers.
 
 ### 2e. Image URL Injection for Editing
 
-When the LLM calls `image_gen` for editing (with `image_urls` in the
-arguments), the harness intercepts the call at `inject_image_urls_from_refs()`
-(`harness.rs:1475`) and enriches the arguments with image URLs from four
-converging sources. The full merge logic is in
-[Image Interception](../interception/image-interception.md#2d-image-editing--inject_image_urls_from_refs).
+When the LLM calls `image_gen` for editing (with `image_urls` or
+`reference_image_key` in the arguments), the harness intercepts the call at
+`inject_image_urls_from_refs()` (`harness.rs:1475`) and enriches the
+arguments with image URLs from five converging sources. The full merge logic
+is in [Image Interception](../interception/image-interception.md#2d-image-editing--inject_image_urls_from_refs).
+
+`reference_image_key` provides a simpler alternative: the LLM passes the
+`image_key` from a prior `image_gen` result, and the tool looks up the
+cached image bytes in `ImageCache`, uploads the data URI to the provider's
+CDN, and appends the resulting `https://` URL to `image_urls` — no prompt
+matching needed.
 
 ```mermaid
 flowchart TD
@@ -184,7 +190,8 @@ LLM provides `prompt` and `aspect_ratio` (both required); all other fields come 
 | `room_id`       | Harness           | `string`                                       | Room UUID for image storage (injected if omitted). **Note:** injected at execute time, not stored in the Rust struct. |
 | `webdav_dir`    | Harness           | `string`                                       | Type-prefixed room path (injected; falls back to room_id). **Note:** injected at execute time, not stored in the Rust struct; also absent from the LLM-facing tool schema. |
 | `image_cache_key`| Harness          | `string`                                       | Tool call_id — used as ImageCache lookup key. **Note:** injected at execute time, not in LLM-facing schema. |
-| `image_urls`    | Harness (auto)    | `[]string`                                     | Injected from 4 converging sources (see §2d): user attachments, vision/WebDAV pool, agent-provided URLs, and message image URLs (auto-injected unconditionally) |
+| `image_urls`    | Harness (auto)    | `[]string`                                     | Injected from 5 converging sources (see §2e): user attachments, vision/WebDAV pool, agent-provided URLs, message image URLs (auto-injected unconditionally), and `reference_image_key` (ImageCache lookup) |
+| `reference_image_key` | LLM | `string` | Alternative to `image_urls` — the `image_key` from a prior `image_gen` result. Looked up in ImageCache; data URI uploaded to provider CDN. |
 | `model_id`      | Provider (runtime)| `string`                                       | Selected at provider call time via `provider.model_id()`. The struct field exists but is not populated from config by the tool. |
 | `quality`       | Config            | `string`                                       | From `default_quality`                           |
 | `output_format` | Config            | `string`                                       | From `default_output_format`                     |
