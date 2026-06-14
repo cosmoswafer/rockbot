@@ -234,3 +234,4 @@ generated images for the reply pipeline. Entries are consumed by `take_image()`.
 | `strip_markdown_image_id` | `utils.rs` | Removes `![desc](image_key)` from reply text |
 | `take_last_image_ids` | `harness.rs` | Returns and drains `last_image_ids` |
 | `take_image` | `harness.rs` | Removes `GeneratedImage` from `ImageCache` by call_id |
+
