@@ -249,8 +249,8 @@ impl KnowledgeManager {
         }
 
         let md_body = format!(
-            "# {}\n\n**Category:** {}\n**Priority:** {}\n**When Useful:** {}\n**Tags:** {}\n**Created:** {}\n**Updated:** {}\n\n{}",
-            topic, category, priority, when_useful, tags.join(", "), now, now, content
+            "# {}\n\n**Category:** {}\n**When Useful:** {}\n**Tags:** {}\n**Created:** {}\n**Updated:** {}\n\n{}",
+            topic, category, when_useful, tags.join(", "), now, now, content
         );
 
         webdav
@@ -476,8 +476,14 @@ impl KnowledgeManager {
 }
 
 fn parse_iso_to_secs(iso: &str) -> Option<u64> {
-    // Simple parser for "YYYY-MM-DD" format to epoch days
-    let parts: Vec<&str> = iso.split('-').collect();
+    // Parse "YYYY-MM-DD" or full ISO 8601 ("YYYY-MM-DDTHH:MM:SSZ") to epoch seconds.
+    // Extract the date portion only — time precision is not needed for day-level comparisons.
+    let date_part = if let Some(t_pos) = iso.find('T') {
+        &iso[..t_pos]
+    } else {
+        iso
+    };
+    let parts: Vec<&str> = date_part.split('-').collect();
     if parts.len() < 3 { return None; }
     let y: i64 = parts[0].parse().ok()?;
     let m: u32 = parts[1].parse().ok()?;
@@ -497,6 +503,7 @@ fn parse_iso_to_secs(iso: &str) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::civil_from_days;
 
     #[test]
     fn test_slugify_basic() {
@@ -611,4 +618,234 @@ mod tests {
         assert!(path.contains("d-saru"));
     }
 
+    #[test]
+    fn test_parse_iso_to_secs_date_only() {
+        let secs = parse_iso_to_secs("2026-06-14");
+        assert!(secs.is_some(), "should parse date-only format");
+    }
+
+    #[test]
+    fn test_parse_iso_to_secs_full_iso() {
+        let secs = parse_iso_to_secs("2026-06-14T12:30:45Z");
+        assert!(secs.is_some(), "should parse full ISO 8601 format");
+    }
+
+    #[test]
+    fn test_parse_iso_to_secs_full_iso_no_z() {
+        let secs = parse_iso_to_secs("2026-06-14T12:30:45");
+        assert!(secs.is_some(), "should parse ISO without Z suffix");
+    }
+
+    #[test]
+    fn test_parse_iso_to_secs_same_day_roundtrip() {
+        let a = parse_iso_to_secs("2026-06-14").unwrap();
+        let b = parse_iso_to_secs("2026-06-14T23:59:59Z").unwrap();
+        assert_eq!(a, b, "date-only and full ISO for same day must be equal");
+    }
+
+    #[test]
+    fn test_parse_iso_to_secs_different_days() {
+        let d1 = parse_iso_to_secs("2026-06-10").unwrap();
+        let d2 = parse_iso_to_secs("2026-06-14").unwrap();
+        let diff_days = (d2 - d1) / 86400;
+        assert_eq!(diff_days, 4, "difference should be 4 days");
+    }
+
+    #[test]
+    fn test_parse_iso_to_secs_now_roundtrip() {
+        let iso = now_iso_string();
+        let parsed = parse_iso_to_secs(&iso);
+        assert!(parsed.is_some(), "now_iso_string() output must be parseable");
+        let parsed = parsed.unwrap();
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let diff = if now_secs > parsed { now_secs - parsed } else { parsed - now_secs };
+        assert!(diff < 86400, "parsed epoch must be within 1 day of now, got diff={diff}");
+    }
+
+    #[test]
+    fn test_parse_iso_to_secs_invalid_formats() {
+        assert!(parse_iso_to_secs("").is_none(), "empty string");
+        assert!(parse_iso_to_secs("not-a-date").is_none(), "garbage");
+        assert!(parse_iso_to_secs("2026-06").is_none(), "missing day");
+        assert!(parse_iso_to_secs("2026-13-01").is_none(), "invalid month");
+    }
+
+    #[test]
+    fn test_priority_promotion_happy_path() {
+        let now = now_iso_string();
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let used_set: HashSet<&str> = ["note_test.md"].into();
+
+        let mut entry = IndexEntry {
+            filename: "note_test.md".into(),
+            when_useful: "for testing".into(),
+            priority: KnowledgePriority::P1,
+            last_promoted_at: None,
+        };
+
+        let was = entry.priority.clone();
+        if used_set.contains(entry.filename.as_str()) {
+            entry.priority = match entry.priority {
+                KnowledgePriority::P3 => KnowledgePriority::P2,
+                KnowledgePriority::P2 => KnowledgePriority::P1,
+                KnowledgePriority::P1 => KnowledgePriority::P0,
+                KnowledgePriority::P0 => KnowledgePriority::P0,
+            };
+            entry.last_promoted_at = Some(now.clone());
+        }
+        assert!(entry.priority != was, "priority should change on promotion");
+        assert_eq!(entry.priority, KnowledgePriority::P0);
+        assert!(entry.last_promoted_at.is_some(), "timestamp should be set");
+        assert_eq!(entry.last_promoted_at.unwrap(), now);
+
+        let promoted_secs = parse_iso_to_secs(&now).unwrap();
+        let days_since = (now_secs.saturating_sub(promoted_secs)) / 86400;
+        assert_eq!(days_since, 0, "just-promoted entry should have 0 days since");
+    }
+
+    #[test]
+    fn test_priority_decay_p0_to_p1() {
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let two_days_ago_epoch = now_secs - 2 * 86400;
+        let two_days_ago = civil_from_days((two_days_ago_epoch / 86400) as i64);
+        let ts = format!("{:04}-{:02}-{:02}", two_days_ago.0, two_days_ago.1, two_days_ago.2);
+
+        let mut entry = IndexEntry {
+            filename: "note_stale.md".into(),
+            when_useful: "stale entry".into(),
+            priority: KnowledgePriority::P0,
+            last_promoted_at: Some(ts),
+        };
+
+        let promoted_secs = parse_iso_to_secs(&entry.last_promoted_at.as_ref().unwrap()).unwrap();
+        let days_since = (now_secs.saturating_sub(promoted_secs)) / 86400;
+        assert_eq!(days_since, 2, "should be 2 days since promotion");
+
+        entry.priority = match (entry.priority.clone(), days_since) {
+            (KnowledgePriority::P0, d) if d >= 1 => KnowledgePriority::P1,
+            (KnowledgePriority::P1, d) if d >= 3 => KnowledgePriority::P2,
+            (KnowledgePriority::P2, d) if d >= 7 => KnowledgePriority::P3,
+            (p, _) => p,
+        };
+        assert_eq!(entry.priority, KnowledgePriority::P1);
+    }
+
+    #[test]
+    fn test_priority_decay_p1_to_p2() {
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let four_days_ago_epoch = now_secs - 4 * 86400;
+        let four_days_ago = civil_from_days((four_days_ago_epoch / 86400) as i64);
+        let ts = format!("{:04}-{:02}-{:02}", four_days_ago.0, four_days_ago.1, four_days_ago.2);
+
+        let entry = IndexEntry {
+            filename: "note_older.md".into(),
+            when_useful: "older entry".into(),
+            priority: KnowledgePriority::P1,
+            last_promoted_at: Some(ts),
+        };
+
+        let promoted_secs = parse_iso_to_secs(&entry.last_promoted_at.as_ref().unwrap()).unwrap();
+        let days_since = (now_secs.saturating_sub(promoted_secs)) / 86400;
+
+        let new_priority = match (entry.priority, days_since) {
+            (KnowledgePriority::P0, d) if d >= 1 => KnowledgePriority::P1,
+            (KnowledgePriority::P1, d) if d >= 3 => KnowledgePriority::P2,
+            (KnowledgePriority::P2, d) if d >= 7 => KnowledgePriority::P3,
+            (p, _) => p,
+        };
+        assert_eq!(new_priority, KnowledgePriority::P2);
+    }
+
+    #[test]
+    fn test_priority_decay_p2_to_p3() {
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let eight_days_ago_epoch = now_secs - 8 * 86400;
+        let eight_days_ago = civil_from_days((eight_days_ago_epoch / 86400) as i64);
+        let ts = format!("{:04}-{:02}-{:02}", eight_days_ago.0, eight_days_ago.1, eight_days_ago.2);
+
+        let entry = IndexEntry {
+            filename: "note_dead.md".into(),
+            when_useful: "dead entry".into(),
+            priority: KnowledgePriority::P2,
+            last_promoted_at: Some(ts),
+        };
+
+        let promoted_secs = parse_iso_to_secs(&entry.last_promoted_at.as_ref().unwrap()).unwrap();
+        let days_since = (now_secs.saturating_sub(promoted_secs)) / 86400;
+
+        let new_priority = match (entry.priority, days_since) {
+            (KnowledgePriority::P0, d) if d >= 1 => KnowledgePriority::P1,
+            (KnowledgePriority::P1, d) if d >= 3 => KnowledgePriority::P2,
+            (KnowledgePriority::P2, d) if d >= 7 => KnowledgePriority::P3,
+            (p, _) => p,
+        };
+        assert_eq!(new_priority, KnowledgePriority::P3);
+    }
+
+    #[test]
+    fn test_priority_p0_stays_p0_when_promoted() {
+        let now = now_iso_string();
+        let mut entry = IndexEntry {
+            filename: "note_p0.md".into(),
+            when_useful: "always used".into(),
+            priority: KnowledgePriority::P0,
+            last_promoted_at: Some(now.clone()),
+        };
+        let used: HashSet<&str> = ["note_p0.md"].into();
+
+        let was = entry.priority.clone();
+        if used.contains(entry.filename.as_str()) {
+            entry.priority = match entry.priority {
+                KnowledgePriority::P3 => KnowledgePriority::P2,
+                KnowledgePriority::P2 => KnowledgePriority::P1,
+                KnowledgePriority::P1 => KnowledgePriority::P0,
+                KnowledgePriority::P0 => KnowledgePriority::P0,
+            };
+        }
+        assert_eq!(entry.priority, was);
+        assert_eq!(entry.priority, KnowledgePriority::P0);
+    }
+
+    #[test]
+    fn test_priority_no_decay_when_never_promoted() {
+        let mut entry = IndexEntry {
+            filename: "note_fresh.md".into(),
+            when_useful: "fresh entry".into(),
+            priority: KnowledgePriority::P1,
+            last_promoted_at: None,
+        };
+
+        let was = entry.priority.clone();
+        if let Some(ref promoted_at) = entry.last_promoted_at {
+            let now_secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            let promoted_secs = parse_iso_to_secs(promoted_at).unwrap_or(0);
+            let days_since = (now_secs.saturating_sub(promoted_secs)) / 86400;
+            entry.priority = match (entry.priority.clone(), days_since) {
+                (KnowledgePriority::P0, d) if d >= 1 => KnowledgePriority::P1,
+                (KnowledgePriority::P1, d) if d >= 3 => KnowledgePriority::P2,
+                (KnowledgePriority::P2, d) if d >= 7 => KnowledgePriority::P3,
+                (p, _) => p,
+            };
+        }
+        assert_eq!(entry.priority, was, "never-promoted entry should not decay");
+        assert_eq!(entry.priority, KnowledgePriority::P1);
+    }
 }

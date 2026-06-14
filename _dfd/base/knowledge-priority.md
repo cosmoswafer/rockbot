@@ -42,7 +42,7 @@ flowchart TD
     IS_USED{"Entry in<br/>used filenames?"}
     PROMOTE["Promote One Level<br/>P3→P2, P2→P1, P1→P0<br/>set last_promoted_at = now"]
     CHECK_DAYS{"Days since<br/>last_promoted_at"}
-    DECAY["Decay Priority<br/>see 2b state diagram"]
+    DECAY["Decay Priority<br/>see 2b state diagram<br/>(last_promoted_at unchanged)"]
     CHANGED{Priority Changed?}
     WRITE_IDX["Write Updated index.json"]
     SKIP[Skip]
@@ -61,7 +61,7 @@ flowchart TD
     PROMOTE --> CHANGED
     CHECK_DAYS -->|"compute new priority"| DECAY
     DECAY --> CHANGED
-    CHANGED -->|"yes: update last_promoted_at"| TICK
+    CHANGED -->|"yes"| TICK
     CHANGED -->|"no"| SKIP
     SKIP --> TICK
     WRITE_IDX -->|"PUT knowledge/index.json"| DAV
@@ -107,14 +107,18 @@ stateDiagram-v2
     P3 --> P3 : stays stale\nuntil promoted
 ```
 
-**Transition table**:
+**Transition table** (one step per cycle — decay uses cumulative days since last promotion):
 
-| Current | Promoted (used now) | 0-1 day since | 1-3 days since | 3-7 days since | >7 days since |
-| ------- | ------------------- | ------------- | -------------- | -------------- | ------------- |
-| **P0**  | → P0                | → P1          | → P2           | → P3           | → P3          |
-| **P1**  | → P0                | —             | → P2           | → P3           | → P3          |
-| **P2**  | → P1                | —             | —              | → P3           | → P3          |
-| **P3**  | → P2                | —             | —              | —              | → P3          |
+| Current | Promoted (used now) | Not promoted, days since last promotion ≥ threshold |
+| ------- | ------------------- | --------------------------------------------------- |
+| **P0**  | → P0                | → P1  (if ≥ 1 day)                                  |
+| **P1**  | → P0                | → P2  (if ≥ 3 days)                                 |
+| **P2**  | → P1                | → P3  (if ≥ 7 days)                                 |
+| **P3**  | → P2                | stays P3 (floor)                                    |
+
+No multi-step jumps. Each compression cycle advances at most one level in
+either direction. Never-promoted entries (`last_promoted_at = None`) do not
+decay.
 
 **Rules**:
 - **P0** = promoted within the last day — always recalled in context
@@ -122,7 +126,8 @@ stateDiagram-v2
 - **P2** = promoted within 7 days — moderate recall
 - **P3** = promoted >7 days ago or never — baseline
 - **Promotion is one step up per compression cycle** — P3→P2, P2→P1, P1→P0. P0 stays P0 if used again. No instant jumps.
-- **Decay is one step per threshold crossing** — P0→P1 after 1 day, P1→P2 after 3 days, P2→P3 after 7 days
+- **Decay is one step per cycle** — evaluated against cumulative days since `last_promoted_at`. P0 decays to P1 if ≥1 day since promotion, P1 decays to P2 if ≥3 days, P2 decays to P3 if ≥7 days.
+- **`last_promoted_at` is only updated on promotion**, not on decay. Decay time is always measured from the most recent promotion, not from the most recent priority change.
 - **No rate limiting**
 - **New entries default to P1** — they haven't been promoted but aren't stale
 

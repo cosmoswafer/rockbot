@@ -1409,7 +1409,7 @@ fn parse_compression_output(output: &str, default_summary: &str) -> (String, Vec
     let used: Vec<String> = used_part
         .lines()
         .filter_map(|line| {
-            let trimmed = line.trim().trim_start_matches('-').trim();
+        let trimmed = line.trim().trim_start_matches(|c: char| c == '-' || c.is_whitespace());
             if trimmed.ends_with(".md") && !trimmed.is_empty() {
                 Some(trimmed.to_string())
             } else {
