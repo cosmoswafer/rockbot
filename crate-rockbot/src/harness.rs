@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use base64::Engine;
 use tracing::{debug, error, info, warn};
-use webdav::{WebDavClient, WebDavPath};
+use webdav::{WebDavClient, WebDavError, WebDavPath};
 use rocketchat::RestApiClient;
 
 use crate::AppConfig;
@@ -316,6 +316,7 @@ impl AgentHarness {
 
                         let mut altered_soul = false;
                         let mut altered_knowledge = false;
+                        let secrets = load_secrets_from_webdav(self.webdav.as_ref()).await;
 
                         for tool_call in &result.tool_calls {
                             debug!(
@@ -386,6 +387,13 @@ impl AgentHarness {
                                     args = serde_json::to_string(&v).unwrap_or(args);
                                 }
                                 args
+                            } else if tool_call.function.name == "web_fetch" {
+                                match &secrets {
+                                    Some(map) if !map.is_empty() => {
+                                        inject_secrets_into_headers(&tool_call.function.arguments, map)
+                                    }
+                                    _ => tool_call.function.arguments.clone(),
+                                }
                             } else if tool_call.function.name == "webdav"
                                 || tool_call.function.name == "edit_soul"
                                 || tool_call.function.name == "save_knowledge"
@@ -1323,6 +1331,12 @@ struct CachedImage {
     name: String,
 }
 
+#[derive(Debug, serde::Deserialize)]
+struct SecretsToml {
+    #[serde(default)]
+    secrets: HashMap<String, String>,
+}
+
 fn inject_room_context(arguments: &str, room_id: &str, webdav_dir: &str) -> String {
     let mut args: serde_json::Value =
         serde_json::from_str(arguments).unwrap_or(serde_json::json!({}));
@@ -1377,6 +1391,78 @@ fn inject_image_urls_from_refs(
     serde_json::to_string(&args).unwrap_or_else(|_| arguments.to_string())
 }
 
+fn replace_secret_refs(value: &str, secrets: &HashMap<String, String>) -> String {
+    let mut result = String::with_capacity(value.len());
+    let mut remaining = value;
+    while let Some(pos) = remaining.find("secret:") {
+        result.push_str(&remaining[..pos]);
+        let after_prefix = &remaining[pos + 7..];
+        let key_end = after_prefix
+            .find(|c: char| !c.is_alphanumeric() && c != '_' && c != '-')
+            .unwrap_or(after_prefix.len());
+        if key_end == 0 {
+            result.push_str("secret:");
+            remaining = after_prefix;
+            continue;
+        }
+        let key = &after_prefix[..key_end];
+        match secrets.get(key) {
+            Some(secret_value) => result.push_str(secret_value),
+            None => {
+                warn!("Secret key '{}' not found in secrets.toml", key);
+                result.push_str("secret:");
+                result.push_str(key);
+            }
+        }
+        remaining = &after_prefix[key_end..];
+    }
+    result.push_str(remaining);
+    result
+}
+
+fn inject_secrets_into_headers(arguments: &str, secrets: &HashMap<String, String>) -> String {
+    let mut args: serde_json::Value =
+        serde_json::from_str(arguments).unwrap_or(serde_json::json!({}));
+    let headers = match args.get_mut("headers").and_then(|v| v.as_object_mut()) {
+        Some(obj) => obj,
+        None => return arguments.to_string(),
+    };
+    for (_header_name, header_value) in headers.iter_mut() {
+        let value_str = match header_value.as_str() {
+            Some(s) => s,
+            None => continue,
+        };
+        if !value_str.contains("secret:") {
+            continue;
+        }
+        let resolved = replace_secret_refs(value_str, secrets);
+        *header_value = serde_json::Value::String(resolved);
+    }
+    serde_json::to_string(&args).unwrap_or_else(|_| arguments.to_string())
+}
+
+async fn load_secrets_from_webdav(webdav: Option<&WebDavClient>) -> Option<HashMap<String, String>> {
+    let client = webdav?;
+    match client.read_file_to_string("secrets.toml").await {
+        Ok(content) => match toml::from_str::<SecretsToml>(&content) {
+            Ok(parsed) if !parsed.secrets.is_empty() => Some(parsed.secrets),
+            Ok(_) => None,
+            Err(e) => {
+                warn!("Failed to parse secrets.toml: {e}");
+                None
+            }
+        },
+        Err(WebDavError::NotFound(_)) => {
+            debug!("No secrets.toml found on WebDAV");
+            None
+        }
+        Err(e) => {
+            warn!("Failed to load secrets.toml from WebDAV: {e}");
+            None
+        }
+    }
+}
+
 fn compute_webdav_dir(room_name: &str, room_fname: &str, is_dm: bool) -> String {
     let name = if room_fname.is_empty() {
         room_name
@@ -1428,6 +1514,8 @@ mod tests {
     use crate::image_cache::GeneratedImage;
     use crate::validated::NonEmptyString;
     use crate::provider::AiProvider;
+    use crate::tool::Tool;
+    use crate::tools::WebFetchTool;
     use crate::types::{CompletionResult, ContentPart, FinishReason, MessageContent, ToolCall};
     use async_trait::async_trait;
 
@@ -2376,5 +2464,233 @@ chat = "mock-model"
             reply.unwrap().contains("error"),
             "Double CE error should produce error fallback reply"
         );
+    }
+
+    #[test]
+    fn test_replace_secret_refs_simple() {
+        let mut secrets = HashMap::new();
+        secrets.insert("gitea_token".to_string(), "abc123".to_string());
+        assert_eq!(
+            replace_secret_refs("token secret:gitea_token", &secrets),
+            "token abc123"
+        );
+    }
+
+    #[test]
+    fn test_replace_secret_refs_bare_reference() {
+        let mut secrets = HashMap::new();
+        secrets.insert("api_key".to_string(), "sk-xyz".to_string());
+        assert_eq!(
+            replace_secret_refs("secret:api_key", &secrets),
+            "sk-xyz"
+        );
+    }
+
+    #[test]
+    fn test_replace_secret_refs_multiple_in_one_value() {
+        let mut secrets = HashMap::new();
+        secrets.insert("key1".to_string(), "aaa".to_string());
+        secrets.insert("key2".to_string(), "bbb".to_string());
+        assert_eq!(
+            replace_secret_refs("secret:key1:secret:key2", &secrets),
+            "aaa:bbb"
+        );
+    }
+
+    #[test]
+    fn test_replace_secret_refs_missing_key_preserves_original() {
+        let mut secrets = HashMap::new();
+        secrets.insert("other".to_string(), "value".to_string());
+        assert_eq!(
+            replace_secret_refs("secret:missing", &secrets),
+            "secret:missing"
+        );
+    }
+
+    #[test]
+    fn test_replace_secret_refs_no_refs() {
+        let secrets = HashMap::new();
+        assert_eq!(
+            replace_secret_refs("application/json", &secrets),
+            "application/json"
+        );
+    }
+
+    #[test]
+    fn test_replace_secret_refs_preserves_surrounding_text() {
+        let mut secrets = HashMap::new();
+        secrets.insert("tok".to_string(), "real".to_string());
+        assert_eq!(
+            replace_secret_refs("Bearer secret:tok extra", &secrets),
+            "Bearer real extra"
+        );
+    }
+
+    #[test]
+    fn test_replace_secret_refs_key_with_hyphens_underscores() {
+        let mut secrets = HashMap::new();
+        secrets.insert("my-api_key".to_string(), "resolved".to_string());
+        assert_eq!(
+            replace_secret_refs("secret:my-api_key", &secrets),
+            "resolved"
+        );
+    }
+
+    #[test]
+    fn test_replace_secret_refs_adjacent_non_key_char() {
+        let secrets = HashMap::new();
+        assert_eq!(
+            replace_secret_refs("secret: followed by space", &secrets),
+            "secret: followed by space"
+        );
+    }
+
+    #[test]
+    fn test_replace_secret_refs_trailing_prefix() {
+        let secrets = HashMap::new();
+        assert_eq!(
+            replace_secret_refs("ends with secret:", &secrets),
+            "ends with secret:"
+        );
+    }
+
+    #[test]
+    fn test_inject_secrets_into_headers_simple() {
+        let mut secrets = HashMap::new();
+        secrets.insert("gitea_token".to_string(), "abc123".to_string());
+        let args = r#"{"url":"https://example.com","headers":{"Authorization":"token secret:gitea_token"}}"#;
+        let result = inject_secrets_into_headers(args, &secrets);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(
+            parsed["headers"]["Authorization"].as_str().unwrap(),
+            "token abc123"
+        );
+    }
+
+    #[test]
+    fn test_inject_secrets_into_headers_multiple_headers() {
+        let mut secrets = HashMap::new();
+        secrets.insert("tok".to_string(), "real_tok".to_string());
+        secrets.insert("key2".to_string(), "val2".to_string());
+        let args = r#"{"headers":{"Authorization":"Bearer secret:tok","X-Custom":"secret:key2"}}"#;
+        let result = inject_secrets_into_headers(args, &secrets);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["headers"]["Authorization"].as_str().unwrap(), "Bearer real_tok");
+        assert_eq!(parsed["headers"]["X-Custom"].as_str().unwrap(), "val2");
+    }
+
+    #[test]
+    fn test_inject_secrets_into_headers_no_headers() {
+        let secrets = HashMap::new();
+        let args = r#"{"url":"https://example.com"}"#;
+        assert_eq!(inject_secrets_into_headers(args, &secrets), args);
+    }
+
+    #[test]
+    fn test_inject_secrets_into_headers_no_secret_refs() {
+        let mut secrets = HashMap::new();
+        secrets.insert("key".to_string(), "value".to_string());
+        let args = r#"{"headers":{"Content-Type":"application/json"}}"#;
+        let result = inject_secrets_into_headers(args, &secrets);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(
+            parsed["headers"]["Content-Type"].as_str().unwrap(),
+            "application/json"
+        );
+    }
+
+    #[test]
+    fn test_inject_secrets_into_headers_empty_secrets_map() {
+        let secrets = HashMap::new();
+        let args = r#"{"headers":{"Authorization":"secret:tok"}}"#;
+        let result = inject_secrets_into_headers(args, &secrets);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(
+            parsed["headers"]["Authorization"].as_str().unwrap(),
+            "secret:tok"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_load_secrets_from_webdav_with_mock_server() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/secrets.toml"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                "[secrets]\ngitea_token = \"abc123\"\ngithub_api_key = \"sk-xyz\"\n",
+            ))
+            .mount(&mock_server)
+            .await;
+
+        let client = WebDavClient::new(mock_server.uri(), "test", "pass")
+            .expect("valid webdav client");
+        let secrets = load_secrets_from_webdav(Some(&client)).await;
+
+        assert!(secrets.is_some(), "secrets should be loaded");
+        let map = secrets.unwrap();
+        assert_eq!(map.get("gitea_token").unwrap(), "abc123");
+        assert_eq!(map.get("github_api_key").unwrap(), "sk-xyz");
+    }
+
+    #[tokio::test]
+    async fn test_load_secrets_webdav_not_found_returns_none() {
+        use wiremock::MockServer;
+
+        let mock_server = MockServer::start().await;
+        let client = WebDavClient::new(mock_server.uri(), "test", "pass")
+            .expect("valid webdav client");
+        let secrets = load_secrets_from_webdav(Some(&client)).await;
+        assert!(secrets.is_none(), "should return None when file not found");
+    }
+
+    #[tokio::test]
+    async fn test_secret_interception_end_to_end() {
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/secrets.toml"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                "[secrets]\ngitea_token = \"real_gitea_token_123\"\n",
+            ))
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/api/test"))
+            .and(header("Authorization", "token real_gitea_token_123"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("authorized"))
+            .mount(&mock_server)
+            .await;
+
+        let client = WebDavClient::new(mock_server.uri(), "test", "pass")
+            .expect("valid webdav client");
+        let secrets = load_secrets_from_webdav(Some(&client)).await.unwrap();
+
+        let args = serde_json::json!({
+            "url": format!("{}/api/test", mock_server.uri()),
+            "headers": {
+                "Authorization": "token secret:gitea_token"
+            },
+            "format": "raw"
+        })
+        .to_string();
+
+        let resolved_args = inject_secrets_into_headers(&args, &secrets);
+        let parsed: serde_json::Value = serde_json::from_str(&resolved_args).unwrap();
+        assert_eq!(
+            parsed["headers"]["Authorization"].as_str().unwrap(),
+            "token real_gitea_token_123"
+        );
+
+        let tool = WebFetchTool::with_webdav(client);
+        let result = tool.execute(&resolved_args).await.unwrap();
+        assert!(result.contains("authorized"), "web_fetch should succeed with resolved secret, got: {result}");
     }
 }

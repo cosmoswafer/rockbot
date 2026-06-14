@@ -149,6 +149,12 @@ the deadlock from re-acquiring `Arc<Mutex<AgentHarness>>` and the data loss
 from clearing history while the LLM is still generating a reply. See
 [memory-compression.md §2b2](base/memory-compression.md#2b2-explicit-compression--compress_memory-tool) for the full flow.
 
+**Secret interception**: `web_fetch` arguments are scanned for `secret:<key>`
+references in header values before dispatch. The harness loads `secrets.toml`
+from WebDAV once per tool-call batch and replaces references with actual secret
+values. The tool receives resolved headers — it is unaware of the interception.
+See [secret-interception.md](tools/secret-interception.md) for the full flow.
+
 ```mermaid
 flowchart TD
     CALL[ToolCall]
@@ -157,6 +163,9 @@ flowchart TD
     REG[(ToolRegistry)]
     COMPRESS{compress_memory?}
     SET_FLAG["Set explicit_compress<br/>flag (post-reply)"]
+    SECRETS{web_fetch?}
+    SECRET_MAP[(secrets.toml)]
+    INJECT_SECRETS(Resolve secret:key refs)
     EXEC(ExecuteToolByName)
     RESULT[ToolResult]
 
@@ -165,7 +174,11 @@ flowchart TD
     INJECT -->|"stateful: enriched args"| COMPRESS
     INJECT -->|"stateless: raw args"| COMPRESS
     COMPRESS -->|"yes (set flag, return ack)"| SET_FLAG
-    COMPRESS -->|"no"| EXEC
+    COMPRESS -->|"no"| SECRETS
+    SECRETS -->|"yes"| INJECT_SECRETS
+    SECRETS -->|"no"| EXEC
+    SECRET_MAP -->|"key-value pairs"| INJECT_SECRETS
+    INJECT_SECRETS -->|"resolved args"| EXEC
     REG -->|"tool implementations"| EXEC
     SET_FLAG -->|"lightweight result"| RESULT
     EXEC -->|"formatted result"| RESULT

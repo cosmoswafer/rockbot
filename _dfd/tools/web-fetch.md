@@ -20,6 +20,9 @@ from chat — create issues, query resources, or interact with webhooks.
   during the agent loop, passing a URL and format selector
 - Upstream: [WebDAV Tool](webdav.md) provides file read/write for `file_from_webdav`
   and `save_to_webdav` body source/sink
+- Upstream: [Secret Interception](secret-interception.md) transparently
+  replaces `secret:<key>` references in header values with actual secrets
+  from `secrets.toml` on WebDAV before the tool sees the arguments
 - Downstream: [AI Provider](../base/ai-provider.md) consumes the returned content
   (plain text, markdown, or structured JSON) as context for chat completions
 
@@ -119,6 +122,13 @@ page title is extracted and used as a query to the Exa search API. The resulting
 related sources are bundled alongside the primary content, giving the AI provider
 cross-referenced information for fact-checking.
 
+### 2d. Secret Interception
+
+Before `web_fetch` executes, the harness scans header values for `secret:<key>`
+references and replaces them with actual values from `secrets.toml` on WebDAV.
+The tool itself is unaware of this interception. See
+[Secret Interception](secret-interception.md) for the full data flow.
+
 ## 3. Data Structures
 
 ### `FetchParams`
@@ -129,7 +139,7 @@ The table below documents the semantic interface of the `WebFetchParams` struct.
 | ------------------ | -------- | ---------------------------------------------------------- |
 | `url`              | `NonEmptyString` | The URL to fetch. Validated at LLM boundary (empty URL fails at parse boundary). |
 | `method`           | `String` | HTTP method: `"GET"`, `"POST"`, `"PUT"`, `"PATCH"`, `"DELETE"`, `"HEAD"`, `"OPTIONS"` (default: `"GET"`) |
-| `headers`          | `Object` | JSON object of `{ "Header-Name": "value" }` pairs          |
+| `headers`          | `Object` | JSON object of `{ "Header-Name": "value" }` pairs. Values may contain `secret:<key>` references resolved by [Secret Interception](secret-interception.md) before the tool sees them. |
 | `body`             | `String` | Raw string request body                                    |
 | `body_json`        | `Object` | JSON value serialized as request body string. The caller must add `Content-Type: application/json` header manually; the tool does not inject headers automatically. |
 | `file_from_webdav` | `String` | WebDAV file path to read and send as request body          |
@@ -162,14 +172,14 @@ The table below documents the semantic interface of the `WebFetchParams` struct.
 | `url`    | `String` | Page URL           |
 | `snippet`| `String` | Search snippet (populated from Exa's `text` field first, falling back to `snippet`) |
 
-### Example: Creating a Gitea Issue via API
+### Example: Creating a Gitea Issue via API (with secret reference)
 
 ```json
 {
     "url": "https://gitea.example.com/api/v1/repos/owner/repo/issues",
     "method": "POST",
     "headers": {
-        "Authorization": "token gitea_api_token",
+        "Authorization": "token secret:gitea_token",
         "Content-Type": "application/json"
     },
     "body_json": {
@@ -180,3 +190,7 @@ The table below documents the semantic interface of the `WebFetchParams` struct.
     "format": "json"
 }
 ```
+
+The harness replaces `secret:gitea_token` with the actual token from
+`secrets.toml` before the HTTP request is made. The LLM never sees the real
+token value.

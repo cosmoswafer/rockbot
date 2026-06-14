@@ -131,7 +131,8 @@ to make data flow violations compile-time errors rather than runtime surprises:
 | `_dfd/tools/webdav.md` | `tools/webdav.rs` | webdav crate |
 | `_dfd/tools/calendar.md` | `tools/calendar.rs` | webdav crate |
 | `_dfd/tools/exa-search.md` | `tools/web_search.rs` | `tools/web_fetch.rs` |
-| `_dfd/tools/web-fetch.md` | `tools/web_fetch.rs` | `tools/web_search.rs` |
+| `_dfd/tools/web-fetch.md` | `tools/web_fetch.rs` | `tools/web_search.rs`, `harness.rs` (secret interception) |
+| `_dfd/tools/secret-interception.md` | `harness.rs` (`load_secrets_from_webdav`, `inject_secrets_into_headers`, `replace_secret_refs`) | `tools/web_fetch.rs`, webdav crate |
 | `_dfd/tools/image-gen.md` | `tools/image_gen.rs` | `provider/fal.rs`, webdav crate |
 | `_dfd/tools/vision.md` | `tools/vision.rs` | — |
 | `_dfd/tools/datetime.md` | `tools/datetime.rs` | — |
