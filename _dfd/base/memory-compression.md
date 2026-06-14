@@ -336,63 +336,27 @@ The safety net (inline truncation) runs pre-LLM but is not a compression trigger
 | `load_index()` | Provides `Vec<IndexEntry>` for LLM relevance identification |
 | `review_priorities()` | Promotes/decays entries based on used filenames |
 
-## 7. Complete Procedure Inventory
+## 7. Compression Procedures
 
-The system has six distinct procedures that reduce conversation history.
-Three are **compression** (LLM summarization + WebDAV write + history prune)
-and three are **trim** (in-memory only, no LLM, no WebDAV).
+There are two compression procedures — one automatic, one manual. Both are
+LLM summarization + WebDAV write + history prune. Detailed flows are in §2b
+and §2b2 above.
 
-### 7a. Compress Procedures
+| Procedure | Trigger | Scope | History Effect |
+|-----------|---------|-------|----------------|
+| **Auto** | Token/byte pressure flags (post-reply) | Oldest half of L1 | Summarizes oldest half → writes `summary.md` → prunes compressed messages |
+| **Manual** | User `!compress` / explicit (post-reply) | ALL of L1 | Summarizes all messages → writes `summary.md` → prunes all → history at zero |
 
-| # | Procedure | Trigger | Scope | LLM Call | WebDAV | History Effect |
-|---|-----------|---------|-------|----------|--------|----------------|
-| C1 | `compress_room_inner(force=false)` | Token/byte pressure flags (post-reply) | Oldest half of L1 | Yes — summarize → bullet points | Writes `summary.md` | Prunes oldest half from L1 |
-| C2 | `compress_room_inner(force=true)` | User `!compress` / explicit (post-reply) | ALL of L1 | Yes — summarize → bullet points | Writes `summary.md` | Prunes all messages from L1 → history at zero |
-| C3 | `compress_for_summary` | Called by C1/C2 | Messages selected by `check_and_archive` | Yes — single completion, temp=0.3, max_tokens=512 | Indirect via caller | None directly; produces summary text |
+Both call `compress_for_summary()`, which uses `text_content()` to extract
+messages for the LLM prompt.
 
-**Note on C3:** `compress_for_summary` uses `text_content()` which returns
-`None` for multipart (image-bearing) messages. See §Design Notes.
+### Design Note: Images Are Silently Dropped
 
-### 7b. Trim Procedures (Pre-LLM, No LLM, No WebDAV)
+Compression builds its input via `text_content()` (`harness.rs:948`), which
+returns `None` for multipart (image-bearing) messages. Image data URIs are
+too large to include in a summarization prompt whose sole goal is ≤10 text
+bullet points. This is intentional.
 
-| # | Procedure | Trigger | Scope | History Effect |
-|---|-----------|---------|-------|----------------|
-| T1 | `trim_context` (harness.rs:784) | Context byte size > `max_context_bytes` (pre-LLM) | **Context copy only** | Drops all but last 2 conversation messages; strips images from all but the very last. Sets `byte_pressure_flag`. |
-| T2 | `compress_history_for_retry` (harness.rs:588) | Provider returns `ContextLengthExceeded` | **Stored history** | Strips images from all but last message; prunes to max 6 messages. One-shot per message (guarded by `context_compressed`). |
-| T3 | `build_context` image stripping + byte enforcement (memory.rs:308-369) | Every context build | **Context copy only** | Routine: strips images from all but last user message. Backup: walks oldest→newest stripping images until under `max_context_bytes`. |
-
-### 7c. Strip & Truncate Helpers
-
-| # | Procedure | What It Does |
-|---|-----------|-------------|
-| H1 | `strip_images_from_message` (memory.rs:569) | Replaces `ImageUrl` parts with `[image]` text placeholder. Core primitive used by T1, T2, T3. |
-| H2 | `truncate_message_content` (memory.rs:546) | Truncates text to `max_chars` chars, appends `[...truncated]`. Preserves image parts. Used on retry path only. |
-| H3 | `strip_orphaned_tool_calls` (memory.rs:590) | Removes orphaned tool-call/result pairs (no matching counterpart). Runs on every context assembly. |
-
-### 7d. Design Notes
-
-#### Images Are Silently Dropped During Compression
-
-Compression builds its input by calling `text_content()` on each message
-(`harness.rs:948`). `text_content()` returns `None` for `Multipart` messages
-(those containing `ContentPart::ImageUrl` parts). **Image-bearing messages
-are therefore filtered out of the compression pipeline** — neither their
-pixel data nor their accompanying text is included in the LLM summarization
-prompt.
-
-This is **intentional**: image data URIs (base64-encoded, often megabytes
-each) are too large and expensive to include in a compression prompt whose
-sole goal is producing ≤10 text bullet points. The text-only summary never
-needs to reference image pixels, and the user's original images remain in
-Layer 1 until pruned.
-
-**Consequences:**
-1. Any information conveyed solely through images (not also described in
-   separate text messages) is lost from compressed memory. The image-bearing
-   messages are pruned from Layer 1 after compression succeeds, and the next
-   snapshot overwrite removes the old data from WebDAV.
-2. The only preservation path is text the user or assistant wrote alongside
-   or about the image.
-3. This is distinct from the pre-LLM `strip_images_from_message()` calls in
-   `build_context()` (which preserve text but replace images with `[image]`
-   placeholders) — compression skips the entire message, text included.
+After compression, image-bearing messages are pruned from Layer 1, and the
+next snapshot overwrite removes them from WebDAV. Information conveyed solely
+through images (not also described in text) is permanently lost.
