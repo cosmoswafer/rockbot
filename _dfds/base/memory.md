@@ -104,7 +104,7 @@ flowchart TD
     EXISTING[Existing summary.md]
     AI[AiProvider]
     COMPRESS["LLM Compress<br/>oldest half + existing summary.md<br/>→ ≤10 bullet points"]
-    USED[Knowledge Entries Used<br/>(entry filenames)]
+    USED["Knowledge Entries Used<br/>(entry filenames)"]
     SUMMARY[New summary.md]
     WRITE[PUT summary.md]
     WEBDAV[(NextCloud WebDAV)]
