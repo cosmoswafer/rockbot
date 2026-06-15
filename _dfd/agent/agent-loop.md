@@ -180,7 +180,7 @@ Typing indicator state is intentionally not retried or persisted — it is a tra
 | `rest_client`    | `Option<RestApiClient>`| Optional REST API client for alias sends  |
 | `max_iterations` | `u32`                 | Max agent loop iterations per message      |
 | `max_attachment_bytes` | `u64`           | Max size for attachment download           |
-| `image_pool`     | `HashMap<String, Vec<CachedImage>>` | Per-room cache of vision-fetched images |
+| `image_pool`     | `HashMap<String, Vec<CachedImage>>` | Per-room image_gen-generated images (for same-turn edit name-matching) |
 | `image_cache`    | `Arc<ImageCache>`     | Generated image cache (by call_id)         |
 | `last_image_ids` | `Vec<String>`         | IDs of images generated this turn          |
 | `current_image_urls` | `Vec<String>`     | Image URLs from current message (auto-injected into image_gen) |

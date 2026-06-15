@@ -19,6 +19,10 @@ use crate::utils::now_iso_string;
 
 const DEFAULT_SYSTEM_PROMPT: &str = "\
 You are {name}, a helpful AI assistant running on a RocketChat server. \
+**Always reply in the same language as the user's most recent message.** \
+Tool results, tool-call arguments, and injected image prompts may appear in \
+English — ignore them when choosing your reply language; match only the \
+user's language. \
 You respond to DMs and @mentions concisely and helpfully. \
 Context space is limited to ~{max_context_mb}MB / 1M tokens. Keep your \
 reasoning brief and avoid verbose explanations. Use tools to fetch \
@@ -37,7 +41,6 @@ When you need to save or update your personality, preferences, or identity, use 
 When you need to remember something important, use the save_knowledge tool. \
 When you need to remove something you learned, use the forget_knowledge tool. \
 When you need to recall previously saved knowledge, use the recall_knowledge tool. \
-Answer in the same language as the user. \
 Keep responses clear and to the point.\
 ";
 
@@ -238,7 +241,6 @@ impl AgentHarness {
         let mut messages = self
             .memory
             .build_context(room_id, &system_prompt, None, None);
-        self.inject_vision_images(room_id, &mut messages);
         // Inline context trim: reduce if approaching byte limit (no LLM call)
         let max_ctx = *self.config.rocketchat.model.max_context_bytes as u64;
         let before_trim = messages.len();
@@ -471,15 +473,6 @@ impl AgentHarness {
                                 tool_result.is_error,
                             );
 
-                            if tool_call.function.name == "vision" && !tool_result.is_error {
-                                debug!("vision call {} completed — caching images for room {}", tool_call.id, room_id);
-                                self.cache_vision_images(room_id, &tool_result.content);
-                            }
-
-                            if tool_call.function.name == "webdav" && !tool_result.is_error {
-                                self.cache_vision_images(room_id, &tool_result.content);
-                            }
-
                             if tool_call.function.name == "image_gen" && !tool_result.is_error {
                                 debug!("image_gen call {} completed — queuing for post-reply upload", tool_call.id);
                                 image_ids_this_turn.push(tool_call.id.clone());
@@ -541,7 +534,6 @@ impl AgentHarness {
                         messages = self
                             .memory
                             .build_context(room_id, &system_prompt, None, None);
-                        self.inject_vision_images(room_id, &mut messages);
                         let max_ctx = *self.config.rocketchat.model.max_context_bytes as u64;
                         let before_trim2 = messages.len();
                         messages = self.trim_context(room_id, messages, max_ctx).await;
@@ -601,7 +593,6 @@ impl AgentHarness {
                             messages = self
                                 .memory
                                 .build_context(room_id, &system_prompt, Some(4), None);
-                            self.inject_vision_images(room_id, &mut messages);
                             // Hard truncation: keep system/front-matter messages
                             // at the start, and only the last 2 conversation
                             // messages at the end to guarantee token fit.
@@ -758,71 +749,6 @@ impl AgentHarness {
             mime,
             base64::engine::general_purpose::STANDARD.encode(&bytes)
         ))
-    }
-
-    fn cache_vision_images(&mut self, room_id: &str, result: &str) {
-        // Parse markdown image tags from vision tool result:
-        // ![name](data:mime/type;base64,...)
-        let mut remaining = result;
-        while let Some(start) = remaining.find("![") {
-            let after_bang = &remaining[start + 2..];
-            if let Some(alt_end) = after_bang.find("](") {
-                let name = &after_bang[..alt_end];
-                let after_alt = &after_bang[alt_end + 2..];
-                if let Some(paren_end) = after_alt.find(')') {
-                    let url = &after_alt[..paren_end];
-                    if url.starts_with("data:") {
-                        debug!(
-                            "Vision tool: caching image '{}' for room {}",
-                            name, room_id
-                        );
-                        self.image_pool
-                            .entry(room_id.to_string())
-                            .or_default()
-                            .push(CachedImage {
-                                data_uri: url.to_string(),
-                                name: name.to_string(),
-                            });
-                    }
-                    remaining = &after_alt[paren_end + 1..];
-                    continue;
-                }
-            }
-            break;
-        }
-    }
-
-    fn inject_vision_images(&mut self, room_id: &str, messages: &mut Vec<ChatMessage>) {
-        if let Some(images) = self.image_pool.remove(room_id) {
-            let count = images.len();
-            if count == 0 {
-                return;
-            }
-            let labels: Vec<String> = images
-                .iter()
-                .enumerate()
-                .map(|(i, ci)| {
-                    let idx = i + 1;
-                    let ext = ci.name.rfind('.').map(|p| &ci.name[p..]).unwrap_or(".png");
-                    format!("photo{}{}", idx, ext)
-                })
-                .collect();
-            let data_uris: Vec<String> = images.into_iter().map(|ci| ci.data_uri).collect();
-            let prompt = format!(
-                "The requested image{} visible below:\nAttached: {}",
-                if count > 1 { "s are" } else { " is" },
-                labels
-                    .iter()
-                    .map(|l| format!("![{}]({})", l, l))
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            );
-            debug!(
-                "Injecting {} vision image(s) for room {} into LLM context",
-                count, room_id
-            );
-            messages.push(ChatMessage::user_with_images(prompt, data_uris));
-        }
     }
 
     fn provider_http_client(&self) -> reqwest::Client {
@@ -2167,188 +2093,6 @@ chat = "mock-model"
             compute_webdav_dir("general", "", false),
             "r-general"
         );
-    }
-
-    #[test]
-    fn test_cache_vision_images_single() {
-        let config = make_test_config();
-        let provider = Box::new(MockProvider::new(vec![]));
-        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
-
-        let result = "![photo.png](data:image/png;base64,iVBORw0KGgo)";
-        harness.cache_vision_images("room1", result);
-
-        let pool = harness.image_pool.get("room1").unwrap();
-        assert_eq!(pool.len(), 1);
-        assert_eq!(pool[0].name, "photo.png");
-        assert_eq!(pool[0].data_uri, "data:image/png;base64,iVBORw0KGgo");
-    }
-
-    #[test]
-    fn test_cache_vision_images_multiple() {
-        let config = make_test_config();
-        let provider = Box::new(MockProvider::new(vec![]));
-        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
-
-        let result = "![photo1.png](data:image/png;base64,AAA) ![photo2.jpg](data:image/jpeg;base64,BBB)";
-        harness.cache_vision_images("room1", result);
-
-        let pool = harness.image_pool.get("room1").unwrap();
-        assert_eq!(pool.len(), 2);
-        assert_eq!(pool[0].name, "photo1.png");
-        assert_eq!(pool[0].data_uri, "data:image/png;base64,AAA");
-        assert_eq!(pool[1].name, "photo2.jpg");
-        assert_eq!(pool[1].data_uri, "data:image/jpeg;base64,BBB");
-    }
-
-    #[test]
-    fn test_cache_vision_images_skips_non_data_uri() {
-        let config = make_test_config();
-        let provider = Box::new(MockProvider::new(vec![]));
-        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
-
-        // Only data: URIs are cached; https URLs are ignored
-        let result = "![img](https://example.com/img.png)";
-        harness.cache_vision_images("room1", result);
-
-        let pool = harness.image_pool.get("room1");
-        assert!(pool.is_none());
-    }
-
-    #[test]
-    fn test_cache_vision_images_from_webdav_read_result() {
-        // Simulates a webdav tool read result for an image file.
-        // Format: ![{name}](data:{mime};base64,{bytes}) — same as vision.
-        let config = make_test_config();
-        let provider = Box::new(MockProvider::new(vec![]));
-        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
-
-        let webdav_result = "![generated_image.png](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==)";
-        harness.cache_vision_images("room1", webdav_result);
-
-        let pool = harness.image_pool.get("room1").unwrap();
-        assert_eq!(pool.len(), 1);
-        assert_eq!(pool[0].name, "generated_image.png");
-        assert!(pool[0].data_uri.starts_with("data:image/png;base64,"));
-    }
-
-    #[test]
-    fn test_cache_vision_images_malformed_markdown() {
-        let config = make_test_config();
-        let provider = Box::new(MockProvider::new(vec![]));
-        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
-
-        harness.cache_vision_images("room1", "not a markdown tag at all");
-        harness.cache_vision_images("room1", "![no closing paren(data:image/png;base64,AAA");
-        harness.cache_vision_images("room1", "![valid](data:image/png;base64,CCC)");
-        harness.cache_vision_images("room1", "![nobase64](https://example.com/img.png)");
-
-        let pool = harness.image_pool.get("room1").unwrap();
-        assert_eq!(pool.len(), 1, "only the valid data-URI markdown should be cached");
-        assert_eq!(pool[0].name, "valid");
-        assert_eq!(pool[0].data_uri, "data:image/png;base64,CCC");
-    }
-
-    #[test]
-    fn test_inject_vision_images_injects_message() {
-        let config = make_test_config();
-        let provider = Box::new(MockProvider::new(vec![]));
-        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
-
-        // Pre-populate the pool
-        harness.image_pool.insert(
-            "room1".into(),
-            vec![CachedImage {
-                data_uri: "data:image/png;base64,TEST".into(),
-                name: "photo.png".into(),
-            }],
-        );
-
-        let mut messages: Vec<ChatMessage> = vec![ChatMessage::system("sys")];
-        harness.inject_vision_images("room1", &mut messages);
-
-        // Check injected message
-        assert_eq!(messages.len(), 2);
-        let injected = &messages[1];
-        assert_eq!(injected.role, Role::User);
-        match &injected.content {
-            MessageContent::Multipart(parts) => {
-                assert!(parts.len() >= 2);
-                assert!(
-                    matches!(&parts[0], ContentPart::Text { text } if text.contains("photo1.png"))
-                );
-                assert!(
-                    matches!(&parts[1], ContentPart::ImageUrl { image_url } if image_url.url == "data:image/png;base64,TEST")
-                );
-            }
-            _ => panic!("Expected multipart content"),
-        }
-    }
-
-    #[test]
-    fn test_inject_vision_images_drains_pool() {
-        let config = make_test_config();
-        let provider = Box::new(MockProvider::new(vec![]));
-        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
-
-        harness.image_pool.insert(
-            "room1".into(),
-            vec![CachedImage {
-                data_uri: "data:image/png;base64,ABC".into(),
-                name: "img.png".into(),
-            }],
-        );
-
-        let mut messages = vec![];
-        harness.inject_vision_images("room1", &mut messages);
-
-        // Pool should be drained
-        assert!(!harness.image_pool.contains_key("room1"));
-    }
-
-    #[test]
-    fn test_inject_vision_images_empty_pool_noop() {
-        let config = make_test_config();
-        let provider = Box::new(MockProvider::new(vec![]));
-        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
-
-        let mut messages: Vec<ChatMessage> = vec![ChatMessage::user("hello")];
-        harness.inject_vision_images("room1", &mut messages);
-
-        // No injection when pool is empty
-        assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].text_content().unwrap(), "hello");
-    }
-
-    #[test]
-    fn test_inject_vision_images_numbered_labels() {
-        let config = make_test_config();
-        let provider = Box::new(MockProvider::new(vec![]));
-        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
-
-        harness.image_pool.insert(
-            "room1".into(),
-            vec![
-                CachedImage { data_uri: "data:image/png;base64,AAA".into(), name: "a.png".into() },
-                CachedImage { data_uri: "data:image/png;base64,BBB".into(), name: "b.jpg".into() },
-            ],
-        );
-
-        let mut messages = vec![ChatMessage::user("before")];
-        harness.inject_vision_images("room1", &mut messages);
-
-        let injected = &messages[1];
-        match &injected.content {
-            MessageContent::Multipart(parts) => {
-                if let ContentPart::Text { text } = &parts[0] {
-                    assert!(text.contains("photo1.png"), "should label first image photo1.png: {}", text);
-                    assert!(text.contains("photo2.jpg"), "should label second image photo2.jpg: {}", text);
-                } else {
-                    panic!("Expected text part first");
-                }
-            }
-            _ => panic!("Expected multipart"),
-        }
     }
 
     #[tokio::test]

@@ -275,50 +275,16 @@ flowchart TD
     INACT -->|"bot reply"| REPLY
 ```
 
-### 2g. Vision Image Injection
-
-After the vision tool returns, the harness intercepts the tool result, parses
-base64 data URIs from markdown image tags, caches them in a per-room image pool,
-and injects them as `ContentPart::ImageUrl` parts in a synthetic user message
-before the next LLM call. The pool is drained on each injection — images are
-ephemeral, used for a single LLM cycle.
-
-```mermaid
-flowchart TD
-    VISION_RESULT["Vision Tool Result<br/>(image data URIs)"]
-    CACHE(CacheVisionImages<br/>parse data URIs)
-    POOL[(ImagePool<br/>HashMap<room_id, Vec<CachedImage>>)]
-    BUILD(BuildContext)
-    INJECT(InjectVisionImages<br/>drain pool, label photoN.ext)
-    AI[AiProvider]
-
-    VISION_RESULT -->|"tool content text"| CACHE
-    CACHE -->|"CachedImage { data_uri, name }"| POOL
-    BUILD -->|"context messages"| INJECT
-    POOL -->|"drain images"| INJECT
-    INJECT -->|"user msg + ImageUrl parts"| BUILD
-    BUILD -->|"chat request with images"| AI
-```
-
-This bridges the gap between the vision tool (which returns plain text) and
-the AI provider's multimodal requirement (which needs structured
-`ContentPart::ImageUrl` parts). The same pipeline also intercepts `webdav`
-tool results — when the webdav tool reads an image file, it returns a base64
-markdown tag (`![name](data:...)`), and the harness caches it identically to
-vision results. This lets the LLM inspect images from WebDAV storage without
-a separate vision tool call. Injection happens at two points in the agent loop:
-(1) before the first LLM call for a message, and (2) after each tool-execution
-iteration before the next LLM call.
-
-### 2g2. Image Interception for Editing — inject_image_urls_from_refs
+### 2g. Image Interception for Editing — inject_image_urls_from_refs
 
 When the LLM calls `image_gen` for editing, the harness intercepts the arguments
 and injects real image data from **four sources** into `image_urls`:
 
 1. **User attachments** — downloaded from RocketChat as `data:` URIs, matched by
    filename substring in the LLM prompt (e.g. "edit apple.png")
-2. **Vision/webdav-fetched images** — stored in `image_pool` as
-   `CachedImage { data_uri, name }`, matched by name or `![name]` label in prompt
+2. **image_gen-generated images** — stored in `image_pool` as
+   `CachedImage { data_uri, name }` with prompt-derived name, matched by name in
+   prompt for same-turn edits (e.g. "make the fluffy cat darker")
 3. **Agent-provided URLs** — any `share_url` or `https://` URL the LLM explicitly
    includes in `image_urls` (e.g. from a previous `image_gen` result)
 4. **Message image URLs** — from `IncomingMessage.urls` (filtered by
@@ -328,14 +294,14 @@ and injects real image data from **four sources** into `image_urls`:
 ```mermaid
 flowchart TD
     ATTACH["1. User Attachments<br/>download_attachment_refs"]
-    VISION["2. Vision/WebDAV Fetch<br/>cache_vision_images"]
+    GEN["2. image_gen Success<br/>(prompt-derived name)"]
     AGENT_URL["3. Agent-Provided URLs<br/>share_url from prev result"]
     MSG_URL["4. Message Image URLs<br/>current_image_urls<br/>(from DDP urls field,<br/>filtered content_type image/*)"]
     POOL[(ImagePool<br/>room_id → Vec<CachedImage>)]
     INJECT[inject_image_urls_from_refs]
 
     ATTACH -->|"data: URIs"| INJECT
-    VISION -->|"parse ![name](data:...)"| POOL
+    GEN -->|"CachedImage { data_uri, prompt }"| POOL
     POOL -->|"match by name"| INJECT
     AGENT_URL -->|"https:// or data: URLs"| INJECT
     MSG_URL -->|"auto-inject (unconditional)"| INJECT
@@ -348,12 +314,16 @@ with deduplication, and message image URLs auto-injected unconditionally. The
 `image_gen` tool then uploads `data:` URIs to the provider's CDN (Fal) or passes
 `https://` URLs directly. Deduplication is by URL string equality.
 
-This covers all five image sources for editing:
-- Previous `image_gen` results (via agent-provided `share_url` in `image_urls`)
+This covers all image sources for editing:
+- Previous `image_gen` results (via agent-provided `share_url` in `image_urls`,
+  or `reference_image_key` via `ImageCache`, or `image_pool` name match)
 - User-attached images (via `AttachmentRef` title match)
-- Vision-fetched images from public URLs (via `image_pool` name match)
-- WebDAV-read images (via `image_pool` name match, same pipeline as vision)
-- DDP message URLs with image content types (via `current_image_urls` — auto-injected without prompt matching)
+- DDP message URLs with image content types (via `current_image_urls` —
+  auto-injected without prompt matching)
+
+Vision and WebDAV tool results are **not** routed through `image_pool`. They
+return markdown `![name](data:...)` which the LLM consumes directly in the
+tool-role message. See [Image Interception](base/image-interception.md).
 
 ### 2h. Memory Compression + Knowledge Priority Review
 
