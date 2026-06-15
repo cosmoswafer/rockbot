@@ -13,6 +13,7 @@ draw_path = "/images/generations"
 [image_providers.models]
 seedream = "bytedance-seed/seedream-4.5"
 banana   = "google/gemini-3.1-flash-image-preview"
+mai      = "microsoft/mai-image-2.5"
 ```
 
 > **Note:** `draw_path` is defined in config but **not used** by our implementation. OpenRouter image generation goes through the standard chat completions endpoint (`/chat/completions`) with the `modalities` parameter — this is OpenRouter's documented approach. The dedicated `/images/generations` endpoint (OpenAI-compatible) is an alternative API surface that our implementation does not consume.
@@ -164,16 +165,28 @@ The provider:
 
 ### Error Response
 
-```json
-{
-  "error": {
-    "message": "Model not found or doesn't support image modality",
-    "code": 404
-  }
-}
+OpenRouter returns JSON errors from the API handler. Non-JSON responses (HTML pages) indicate the request URL did not reach the API — typically a wrong base path.
+
+| HTTP Status | `error.message` pattern | Likely cause |
+|---|---|---|
+| 401 | `"Invalid credentials"` | Bad API key |
+| 404 | `"Model not found or doesn't support image modality"` | Model slug wrong or doesn't support image output |
+| 400 | `"Provider returned error"` | Upstream provider (e.g. Microsoft) rejected the request — content filter, rate limit, or transient failure |
+| 404 HTML | `<!DOCTYPE html>...` (Next.js SPA) | Wrong base URL path — missing `/v1/` in the URL |
+
+The endpoint `https://openrouter.ai/api/v1/chat/completions` is the correct URL. Omitting `/v1/` (e.g. `https://openrouter.ai/api/chat/completions`) returns a 404 HTML page.
+
+Transient `"Provider returned error"` (HTTP 400) from the upstream provider is not a code bug — retrying usually succeeds. The same request body format verified working via curl:
+
+```bash
+curl -X POST "https://openrouter.ai/api/v1/chat/completions" \
+  -H "Authorization: Bearer $KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"microsoft/mai-image-2.5","messages":[{"role":"user","content":"test"}],"modalities":["image"],"stream":false}'
+# → 200 OK with generated images
 ```
 
-Errors are extracted from `error.message`. Non-JSON response bodies fall back to the raw text.
+Errors are extracted from `error.message`. Non-JSON response bodies fall back to the raw text (used for the 404 HTML case).
 
 ## File Upload (img2img pre-upload)
 
@@ -204,6 +217,7 @@ Known working models (as of writing):
 | `sourceful/riverflow-v2-standard-preview` | |
 | `bytedance-seed/seedream-4.5` | |
 | `openai/gpt-5-image` | High quality, default for server-side tool |
+| `microsoft/mai-image-2.5` | Text-to-image and img2img; reliable via curl tests; `image_size: "4K"` with `aspect_ratio: "2:3"` outputs ~2730×4096 px |
 
 ## Trait Mapping
 
@@ -215,6 +229,28 @@ Known working models (as of writing):
 | `upload_file(data, content_type) -> String` | Return `data:{content_type};base64,{encode(data)}` |
 | `provider_name() -> "openrouter"` | Static |
 | `model_id() -> &str` | From config model resolution |
+
+## Troubleshooting & Observed Findings
+
+### 404 HTML page (Next.js SPA) response
+
+The bot logged HTTP 404 with a full HTML page. This occurs when `base_url` is missing the `/v1/` path segment — e.g. `https://openrouter.ai/api` instead of `https://openrouter.ai/api/v1`. The exact path `https://openrouter.ai/api/v1/chat/completions` is required.
+
+**Verified with curl:** `POST https://openrouter.ai/api/chat/completions` → 404 HTML, `POST https://openrouter.ai/api/v1/chat/completions` → 200 JSON.
+
+### 400 "Provider returned error" response
+
+After fixing the URL, the bot got HTTP 400 with `{"error": {"message": "Provider returned error"}}`. This is OpenRouter's generic message when the upstream model provider (e.g. Microsoft for `mai-image-2.5`) rejects the request — possibly content moderation, rate limit, or a transient backend issue. Not a code bug.
+
+**Verified:** The exact same request body format returns 200 reliably from curl (multiple prompts, all succeed). Retrying usually resolves it.
+
+### Config merge preserves base_url
+
+The `base_url` for `[[image_providers]]` with `name = "openrouter"` is defined in `default.config.toml` as `"https://openrouter.ai/api/v1"`. The user `config.toml` only overrides `api_key`. Verified via Python and Rust TOML merge tests: the merged config correctly preserves `base_url` from defaults. `chat_url()` produces `https://openrouter.ai/api/v1/chat/completions`.
+
+### Debug log
+
+Added `base_url` to the `debug!` line in `OpenRouterImageProvider::generate_image()` (`openrouter.rs:483`). Run with `RUST_LOG=debug` to capture the exact URL and request parameters on failure.
 
 ## Comparison: OpenRouter vs fal.ai
 
