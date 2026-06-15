@@ -8,7 +8,7 @@ Design-time constraints that shape the system's architecture and behavior.
 |------|---------|
 | [top-10-user-stories.md](top-10-user-stories.md) | Top 10 user-facing features with priorities (P0-P2). Source of truth for what RockBot does. |
 | [non-functional-requirements.md](non-functional-requirements.md) | Quality attributes: performance, reliability, security, maintainability, compatibility, scalability, portability, observability, testability. |
-| [image-generation-user-stories.md](image-generation-user-stories.md) | Detailed image generation workflows covering text-only LLMs, vision LLMs, image editing, and the interception pipeline. |
+| [image-generation-user-stories.md](image-generation-user-stories.md) | Top 3 image generation scenarios: text-to-image, multi-source editing, and vision LLM cooperation. |
 
 ## Relationship to DFDs
 
