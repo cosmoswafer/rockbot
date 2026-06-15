@@ -1,15 +1,15 @@
-# Constraints
+# Constraints — System Black Box Boundaries
 
-Design-time constraints that shape the system's architecture and behavior.
+These documents define RockBot's black box boundaries: what the system must do and how well it must do it, without prescribing internal implementation. Anything observable from outside the box — user-facing behavior, quality attributes, external protocol contracts — belongs here. Internal mechanics (data flow, module wiring, tool dispatch) belong in `_dfd/`.
 
 ## Files
 
-| File | Purpose |
-|------|---------|
-| [top-10-user-stories.md](top-10-user-stories.md) | Top 10 user-facing features with priorities (P0-P2). Source of truth for what RockBot does. |
-| [non-functional-requirements.md](non-functional-requirements.md) | Quality attributes: performance, reliability, security, maintainability, compatibility, scalability, portability, observability, testability. |
-| [image-generation-user-stories.md](image-generation-user-stories.md) | Top 3 image generation scenarios: text-to-image, multi-source editing, and vision LLM cooperation. |
+| File | Boundary it defines |
+|------|---------------------|
+| [top-10-user-stories.md](top-10-user-stories.md) | Functional boundary — the 10 behaviors a user can trigger and observe (P0–P2). |
+| [non-functional-requirements.md](non-functional-requirements.md) | Quality boundary — measurable limits the system must satisfy at its edges: latency caps, retry budgets, size limits, security invariants, platform constraints. |
+| [image-generation-user-stories.md](image-generation-user-stories.md) | Image I/O boundary — how images enter, leave, and round-trip through the system from the user's and LLM's perspective. |
 
 ## Relationship to DFDs
 
-Constraints define _what_ the system must do and _how well_ it must do it. DFDs in `_dfd/` define _how_ data moves through the system to satisfy those constraints. When constraints change, DFDs must be updated; when DFDs reveal new necessary behavior, constraints should be updated.
+Constraints specify the **contract** at the system boundary. DFDs in `_dfd/` specify the **internal plumbing** that fulfills that contract. When a constraint changes, DFDs must be re-checked; when a DFD reveals new externally-visible behavior, it should be promoted into a constraint here.
