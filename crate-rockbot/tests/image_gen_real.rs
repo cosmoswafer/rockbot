@@ -6,6 +6,8 @@ use rockbot::tools::ImageGenTool;
 use rockbot::validated::{ConfigUrl, ProviderName};
 use rockbot::ProviderConfig;
 use rockbot::Tool;
+use rockbot::provider::{ImageProvider, OpenRouterImageProvider};
+use rockbot::types::{ImageGenParams, ImageSizeValue};
 use webdav::WebDavClient;
 
 /// Find the workspace root by walking up from CARGO_MANIFEST_DIR.
@@ -366,6 +368,70 @@ async fn test_image_gen_real_data_uri_handling() {
             eprintln!("image_gen with data URI failed: {e}");
             eprintln!("This may be expected if the provider does not support data URIs in image edit requests.");
             panic!("image_gen data URI test: {e}");
+        }
+    }
+}
+
+/// Verify the OpenRouter image provider with the "mai" model (microsoft/mai-image-2.5).
+/// Tests text-to-image generation only (no WebDAV, no ImageCache).
+/// Run manually: cargo test -p rockbot --test image_gen_real test_openrouter_image_gen_mai -- --ignored --nocapture
+#[ignore]
+#[tokio::test]
+async fn test_openrouter_image_gen_mai() {
+    let provider_cfg = match load_image_provider("openrouter") {
+        Some(cfg) => {
+            eprintln!("Using image provider: openrouter");
+            cfg
+        }
+        None => {
+            eprintln!("Skipping: no image_provider config (openrouter) found in config.toml");
+            return;
+        }
+    };
+
+    let model = provider_cfg
+        .models
+        .get("mai")
+        .cloned()
+        .unwrap_or_else(|| "microsoft/mai-image-2.5".into());
+    eprintln!("Model alias: mai -> {}", model);
+
+    let provider = match OpenRouterImageProvider::new(&provider_cfg, &model) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("Skipping: failed to create OpenRouterImageProvider: {e}");
+            return;
+        }
+    };
+    eprintln!("Provider created: {} model={}", provider.provider_name(), provider.model_id());
+
+    let params = ImageGenParams {
+        prompt: "A simple geometric test pattern: a blue square on a white background, minimal, clean".into(),
+        model_id: None,
+        image_size: Some(ImageSizeValue::Preset("square".into())),
+        size_tier: None,
+        quality: Some("standard".into()),
+        output_format: Some("png".into()),
+        num_images: Some(1),
+        image_urls: None,
+    };
+    eprintln!("Executing generate_image with params: prompt={:?} size={:?}", params.prompt, params.image_size);
+
+    let t_start = std::time::Instant::now();
+    let result = provider.generate_image(&params).await;
+
+    match result {
+        Ok(bytes) => {
+            let elapsed = t_start.elapsed();
+            eprintln!("generate_image completed in {elapsed:.2?}");
+            eprintln!("Result: {} bytes, MIME: image/png", bytes.len());
+            assert!(!bytes.is_empty(), "Generated image bytes should not be empty");
+            assert_eq!(&bytes[..4], &[137, 80, 78, 71],
+                "Result should be a PNG image");
+            eprintln!("PNG header validated OK");
+        }
+        Err(e) => {
+            panic!("OpenRouter image gen (mai) failed: {e}");
         }
     }
 }
