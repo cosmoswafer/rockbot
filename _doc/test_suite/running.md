@@ -24,7 +24,7 @@ Multi-DFD integration tests. Also run with `cargo test` — wiremock mocks HTTP;
 | `tests/config_tests.rs` | webdav | 7 | — | Config deserialization, URL path building |
 | `tests/knowledge_real.rs` | rockbot | 1 | — | Public API accessibility (compile-time) |
 
-## Real tests (22 integration + 1 flaky unit = 23 `#[ignore]` — live servers)
+## Real tests (23 integration + 1 flaky unit = 24 `#[ignore]` — live servers)
 
 Connect to live RocketChat, NextCloud WebDAV, and fal.ai. Requires real credentials.
 
@@ -33,7 +33,7 @@ Connect to live RocketChat, NextCloud WebDAV, and fal.ai. Requires real credenti
 | `tests/integration_real.rs` | rocketchat | 7 | DDP, REST, WebDAV | `config.toml` |
 | `tests/integration_dual.rs` | rocketchat | 3 | DDP | `config.toml` |
 | `tests/fal_real.rs` | rockbot | 1 | fal.ai | `config.toml` |
-| `tests/image_gen_real.rs` | rockbot | 2 | fal.ai, WebDAV | `config.toml` or env vars |
+| `tests/image_gen_real.rs` | rockbot | 3 | fal.ai, OpenRouter, WebDAV | `config.toml` or env vars |
 | `tests/knowledge_real.rs` | rockbot | 2 | WebDAV | env vars or `config.toml` |
 | `tests/integration_real.rs` | webdav | 7 | WebDAV | env vars or `config.toml` |
 | `src/ddp.rs` (inline) | rocketchat | 1 | — | *(flaky unit test, not a real integration)* |

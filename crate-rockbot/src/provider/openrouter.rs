@@ -480,10 +480,11 @@ impl crate::provider::ImageProvider for OpenRouterImageProvider {
         let body_value = serde_json::Value::Object(body);
 
         debug!(
-            "OpenRouter image gen request: model={} prompt_len={} img2img={}",
+            "OpenRouter image gen request: model={} prompt_len={} img2img={} base_url={}",
             params.model_id.as_deref().unwrap_or(&self.model),
             params.prompt.len(),
             params.image_urls.as_ref().map(|u| u.len()).unwrap_or(0),
+            self.base_url,
         );
 
         let response = self

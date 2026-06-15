@@ -2,7 +2,7 @@
 
 Tests connecting to live servers and APIs with real credentials. All `#[ignore]`-annotated — not run by default. Use for data collection during development and final integration verification.
 
-**Total: 23 tests across 7 test targets (3 crates) — 22 true real tests + 1 flaky unit test**
+**Total: 24 tests across 7 test targets (3 crates) — 23 true real tests + 1 flaky unit test**
 
 *Excludes 1 test in `rocketchat/src/ddp.rs` ignored for flaky `AtomicU64` global state race (not a real integration test).*
 
@@ -45,7 +45,7 @@ Tests connecting to live servers and APIs with real credentials. All `#[ignore]`
 
 ---
 
-## rockbot crate — 5 tests
+## rockbot crate — 6 tests
 
 ### `tests/fal_real.rs` — 1 test
 **Services:** fal.ai API
@@ -58,15 +58,16 @@ Tests connecting to live servers and APIs with real credentials. All `#[ignore]`
 
 **Helpers:** `workspace_root()`, `load_fal_config()`
 
-### `tests/image_gen_real.rs` — 2 tests
-**Services:** fal.ai API (image provider), NextCloud WebDAV
-**Config:** `config.toml` (`[[image_providers]]` with `name = "fal"` + `[webdav]`) or `WEBDAV_*` env vars
+### `tests/image_gen_real.rs` — 3 tests
+**Services:** fal.ai API (image provider), OpenRouter (image provider), NextCloud WebDAV
+**Config:** `config.toml` (`[[image_providers]]` with `name = "fal"` or `name = "openrouter"` + `[webdav]`) or `WEBDAV_*` env vars
 **Run:** `cargo test --test image_gen_real -- --ignored`
 
 | # | Test | What it does | Services |
 |---|------|-------------|----------|
 | 1 | `test_image_gen_real_text_to_image` | Loads fal + WebDAV config, creates `ImageGenTool` with real provider and WebDAV client, executes a text-to-image prompt. Validates the DFD's `ImageGenResult` shape (`{"ok": true, "webdav_path": "...", "image_key": "..."}`), verifies image is in `ImageCache`, confirms WebDAV existence, collects share URL format. Cleans up generated file. | fal.ai, WebDAV |
 | 2 | `test_image_gen_real_data_uri_handling` | Same setup as above but reads the test image `_docs/test_suite/p0.png` (4x4 red square), base64-encodes it as a `data:` URI, and passes it in `image_urls` — exercises the `upload_data_uri` → provider CDN → img2img path. Validates that data URIs injected by the harness (per image-interception.md §2d) are correctly translated to provider CDN URLs by the tool. | fal.ai, WebDAV |
+| 3 | `test_openrouter_image_gen_mai` | Loads OpenRouter image provider config, creates `OpenRouterImageProvider` with `microsoft/mai-image-2.5`, calls `generate_image()` with a text-to-image prompt. Validates the returned bytes are non-empty and PNG format. Standalone — no WebDAV or ImageCache dependency. | OpenRouter |
 
 **Helpers:** `workspace_root()`, `load_config()`, `load_image_provider()`, `load_webdav_config()`
 
