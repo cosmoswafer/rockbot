@@ -61,7 +61,7 @@ memory_ttl_secs = 600
 persist_interval_secs = 120
 max_context_bytes = 4_000_000
 max_attachment_bytes = 25_000_000
-model_context_length = 1_000_000
+model_context_length = 128_000
 
 [rocketchat.server]
 url = "localhost"
