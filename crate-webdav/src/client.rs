@@ -308,6 +308,32 @@ impl WebDavClient {
         Ok(())
     }
 
+    /// Move or rename a file/directory. In WebDAV, rename and move are the
+    /// same operation — the `Destination` header specifies the target path.
+    /// `Overwrite: F` prevents clobbering an existing target.
+    pub async fn move_file(&self, from: &str, to: &str) -> Result<()> {
+        let src_url = self.full_url(from)?;
+        let dst_url = self.full_url(to)?;
+        let mut headers = self.headers();
+        headers.insert(
+            "Destination",
+            HeaderValue::from_str(dst_url.as_str())
+                .map_err(|e| WebDavError::InvalidUrl(format!("Invalid destination URL: {e}")))?,
+        );
+        headers.insert("Overwrite", HeaderValue::from_static("F"));
+
+        let response = self
+            .client
+            .request(reqwest::Method::from_bytes(b"MOVE").unwrap(), src_url)
+            .headers(headers)
+            .send()
+            .await?;
+
+        self.handle_status(response, |s| s == 201 || s == 204)
+            .await?;
+        Ok(())
+    }
+
     pub async fn exists(&self, path: &str) -> Result<bool> {
         let url = self.full_url(path)?;
         let mut headers = self.headers();

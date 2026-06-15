@@ -3,7 +3,7 @@
 ## 1. Purpose
 
 Thin abstraction over HTTP-based WebDAV (NextCloud) providing typed file
-read/write/list/mkdir/delete with per-room directory isolation. Each room gets
+read/write/list/mkdir/delete/rename with per-room directory isolation. Each room gets
 its own subtree created proactively on first use. Room names use type prefixes
 (`r-` for channels, `d-` for DMs) to prevent collisions.
 
@@ -58,6 +58,7 @@ flowchart TD
     DELETE(DeleteFile)
     EDIT(EditFile)
     EXISTS(CheckExists)
+    RENAME(RenameFile)
     ENSURE(EnsureRoomDir)
     HTTP(HttpClient)
     NC[(NextCloud WebDAV)]
@@ -74,6 +75,7 @@ flowchart TD
     RESOLVE -->|"delete request"| DELETE
     RESOLVE -->|"edit request"| EDIT
     RESOLVE -->|"exists request"| EXISTS
+    RESOLVE -->|"move request"| RENAME
     EDIT -->|"GET + content update + PUT"| WRITE
     EXISTS -->|"GET request"| READ
     ENSURE -.->|"mkcol request"| MKDIR
@@ -82,6 +84,7 @@ flowchart TD
     LIST -->|"PROPFIND depth=1"| HTTP
     MKDIR -->|"MKCOL"| HTTP
     DELETE -->|"DELETE"| HTTP
+    RENAME -->|"MOVE + Destination header"| HTTP
     HTTP -->|"http request"| NC
     NC -->|"response"| HTTP
     HTTP -->|"response body / status"| RESOLVE
@@ -276,6 +279,21 @@ component, rejecting traversal attempts before joining with the room prefix.
 | `path`   | `String` | The raw path that was rejected             |
 | `reason` | `String` | Human-readable reason (e.g. "contains '..' segment", "absolute path not allowed") |
 
+#### `WebDavTool` Rename Parameters
+
+The `rename` action takes two room-scoped paths: `path` (source) and
+`destination` (target). Both pass through the same sanitization checkpoint
+(2e) before being resolved to full WebDAV URLs. The tool computes the
+`Destination` header from the resolved target URL. The `Overwrite: F`
+header prevents accidental overwrites — if the destination already exists,
+the server returns 412 Precondition Failed.
+
+| Parameter     | Type     | Notes                                                       |
+| ------------- | -------- | ----------------------------------------------------------- |
+| `action`      | `String` | `"rename"`                                                  |
+| `path`        | `String` | Source file/directory path, room-scoped and sanitized       |
+| `destination` | `String` | Target file/directory path, room-scoped and sanitized       |
+
 ## 4. NextCloud API Reference
 
 Per [NextCloud WebDAV basic operations](https://docs.nextcloud.com/server/latest/developer_manual/client_apis/WebDAV/basic.html).
@@ -291,4 +309,5 @@ Per [NextCloud WebDAV basic operations](https://docs.nextcloud.com/server/latest
 | EnsureDirectoryAll      | `MKCOL`     | `{base}/files/{user}/{path}`              | Iterative MKCOL per segment          |
 | EnsureRoomDirectory     | `MKCOL`     | `{base}/files/{user}/{root}/{room}/`      | Creates room dir on first use        |
 | Delete                  | `DELETE`    | `{base}/files/{user}/{path}`              | Recursive for folders                |
+| RenameFile              | `MOVE`      | `{base}/files/{user}/{path}`              | `Destination: {base}/files/{user}/{dest}` header; `Overwrite: F`. Works for both rename and move — they are the same WebDAV operation. |
 | Exists                  | `PROPFIND`  | `{base}/files/{user}/{path}`              | `Depth: 0` — 207 = exists, 404 = no  |

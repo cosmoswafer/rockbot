@@ -22,6 +22,8 @@ struct WebDavParams {
     old_string: Option<String>,
     #[serde(default, rename = "newString")]
     new_string: Option<String>,
+    #[serde(default)]
+    destination: Option<String>,
 }
 
 pub struct WebDavTool {
@@ -202,6 +204,17 @@ impl WebDavTool {
         ))
     }
 
+    async fn do_rename(&self, dir_key: &str, path: &str, destination: &str) -> Result<String> {
+        let from = self.room_path(dir_key, path)?;
+        let to = self.room_path(dir_key, destination)?;
+        debug!("webdav rename: {} -> {}", from, to);
+        self.client
+            .move_file(&from, &to)
+            .await
+            .map_err(|e| RockBotError::Provider(format!("WebDAV rename failed: {e}")))?;
+        Ok(format!("Renamed: {} -> {}", from, to))
+    }
+
     async fn sanitize_secrets_toml(&self, dir_key: &str) -> Result<String> {
         let path = self.room_path(dir_key, "secrets.toml")?;
         match self.client.read_file_to_string(&path).await {
@@ -260,7 +273,8 @@ impl Tool for WebDavTool {
          edit (replace oldString with newString — reads file first, fails if oldString \
          not found or matches multiple times, 500 KB max), \
          list (list directory contents), mkdir (create directory tree), \
-         delete (remove file/directory), exists (check if path exists)."
+         delete (remove file/directory), exists (check if path exists), \
+         rename (move or rename a file/directory — path is source, destination is target)."
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -269,7 +283,7 @@ impl Tool for WebDavTool {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["read", "write", "edit", "list", "mkdir", "delete", "exists"],
+                    "enum": ["read", "write", "edit", "list", "mkdir", "delete", "exists", "rename"],
                     "description": "The WebDAV operation to perform"
                 },
                 "room_id": {
@@ -291,6 +305,10 @@ impl Tool for WebDavTool {
                 "newString": {
                     "type": "string",
                     "description": "Replacement text (required for 'edit' action)"
+                },
+                "destination": {
+                    "type": "string",
+                    "description": "Target path for rename/move (required for 'rename' action, relative to room root)"
                 }
             },
             "required": ["action", "path"]
@@ -326,8 +344,14 @@ impl Tool for WebDavTool {
             "mkdir" => self.do_mkdir(webdav_dir, &params.path).await,
             "delete" => self.do_delete(webdav_dir, &params.path).await,
             "exists" => self.do_exists(webdav_dir, &params.path).await,
+            "rename" => {
+                let destination = params.destination.as_deref().ok_or_else(|| {
+                    RockBotError::ToolCallParse("webdav rename requires 'destination' field".into())
+                })?;
+                self.do_rename(webdav_dir, &params.path, destination).await
+            }
             other => Err(RockBotError::ToolCallParse(format!(
-                "Unknown webdav action: {other}. Valid: read, write, list, mkdir, delete, exists"
+                "Unknown webdav action: {other}. Valid: read, write, edit, list, mkdir, delete, exists, rename"
             ))),
         }
     }
@@ -387,7 +411,7 @@ mod tests {
         );
 
         let actions = params["properties"]["action"]["enum"].as_array().unwrap();
-        assert_eq!(actions.len(), 7);
+        assert_eq!(actions.len(), 8);
         assert!(actions.contains(&serde_json::json!("read")));
         assert!(actions.contains(&serde_json::json!("write")));
         assert!(actions.contains(&serde_json::json!("edit")));
@@ -395,6 +419,7 @@ mod tests {
         assert!(actions.contains(&serde_json::json!("mkdir")));
         assert!(actions.contains(&serde_json::json!("delete")));
         assert!(actions.contains(&serde_json::json!("exists")));
+        assert!(actions.contains(&serde_json::json!("rename")));
     }
 
     #[test]
@@ -508,6 +533,17 @@ mod tests {
             .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("newString"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_rename_missing_destination() {
+        let client = webdav::WebDavClient::new("https://example.com", "user", "pass").unwrap();
+        let tool = WebDavTool::new(client);
+        let result = tool
+            .execute(r#"{"action": "rename", "room_id": "general", "path": "old.txt"}"#)
+            .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("destination"));
     }
 
     #[test]

@@ -799,6 +799,38 @@ async fn test_webdav_write_missing_content_fails() {
     assert!(result.is_err());
 }
 
+#[tokio::test]
+async fn test_webdav_rename_file() {
+    let mock_server = MockServer::start().await;
+    let webdav_url = format!("{}/", mock_server.uri());
+
+    let dst_url = format!("{}r-test/notes/new-name.txt", webdav_url);
+    Mock::given(method("MOVE"))
+        .and(path("/r-test/notes/old-name.txt"))
+        .and(header("Authorization", "Basic dGVzdDpwYXNz"))
+        .and(header("Destination", dst_url.as_str()))
+        .and(header("Overwrite", "F"))
+        .respond_with(ResponseTemplate::new(201))
+        .mount(&mock_server)
+        .await;
+
+    let client = webdav::WebDavClient::new(&webdav_url, "test", "pass").unwrap();
+    let tool = WebDavTool::new(client);
+
+    let args = serde_json::json!({
+        "action": "rename",
+        "path": "notes/old-name.txt",
+        "destination": "notes/new-name.txt",
+        "webdav_dir": "r-test"
+    })
+    .to_string();
+    let result = tool.execute(&args).await.unwrap();
+
+    assert!(result.contains("Renamed"));
+    assert!(result.contains("old-name.txt"));
+    assert!(result.contains("new-name.txt"));
+}
+
 // ============================================================================
 // _dfd/tools/calendar.md — Tool definition + param validation
 // ============================================================================
