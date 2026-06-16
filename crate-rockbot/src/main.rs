@@ -10,6 +10,7 @@ use rockbot::config::AppConfig;
 use rockbot::harness::AgentHarness;
 use rockbot::image_cache::ImageCache;
 use rockbot::provider::{AiProvider, DeepSeekProvider, FalAiProvider, ImageProvider, LlamaCppProvider, OpenRouterImageProvider, OpenRouterProvider};
+use rockbot::platform::{MatrixPlatform, MessagingClient, PlatformSender, RcPlatformSender, RocketChatPlatform};
 use rockbot::tool::ToolRegistry;
 use rockbot::tools::{
     CalendarTool, CompressMemoryTool, DateTimeTool, EditSoulTool, ForgetKnowledgeTool,
@@ -187,8 +188,6 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                 .resolve_image_model(image_provider_name, edit_model_name)
                 .unwrap_or_else(|| edit_model_name.to_string());
 
-            // Providers like OpenRouter use the same model for both t2i and edit.
-            // Providers like Fal use different models for each.
             let same_provider = resolved_t2i == resolved_edit;
 
             debug!("Resolved image models: t2i='{}' edit='{}'", resolved_t2i, resolved_edit);
@@ -269,15 +268,17 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     harness = harness.with_tools(tool_registry);
     let harness = Arc::new(Mutex::new(harness));
 
-    // Register compress_memory tool (intercepted in process_message, no harness ref needed)
     {
         let mut h = harness.lock().await;
         h.register_tool(Box::new(CompressMemoryTool::new()));
     }
 
-    info!("Bot initialized. Starting RocketChat connection...");
+    let platform_name = {
+        let h = harness.lock().await;
+        h.config().platform.name.clone()
+    };
+    info!("Bot initialized. Starting {} connection...", platform_name);
 
-    // Spawn combined maintenance timer: persist dirty snapshots, then evict stale rooms
     let timer_handle = {
         let harness = harness.clone();
         let persist_secs = {
@@ -315,15 +316,26 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
         format!("@{}", h.config().rocketchat.server.username)
     };
 
-    let rocketchat_config = {
+    let platform: Box<dyn MessagingClient> = {
         let h = harness.lock().await;
-        rocketchat::RocketChatConfig {
-            server: rocketchat::config::ServerConfig {
-                url: h.config().rocketchat.server.url.clone(),
-                username: h.config().rocketchat.server.username.clone(),
-                password: h.config().rocketchat.server.password.clone(),
-                use_tls: true,
-            },
+        match h.config().platform.name.as_str() {
+            "matrix" => {
+                let matrix_config = h.config().matrix.as_ref()
+                    .ok_or("Matrix config missing")?;
+                Box::new(MatrixPlatform::new(&matrix_config.server))
+            }
+            _ => {
+                let rc_config = rocketchat::RocketChatConfig {
+                    server: rocketchat::config::ServerConfig {
+                        url: h.config().rocketchat.server.url.clone(),
+                        username: h.config().rocketchat.server.username.clone(),
+                        password: h.config().rocketchat.server.password.clone(),
+                        use_tls: true,
+                    },
+                };
+                let display_name = h.memory().any_display_name();
+                Box::new(RocketChatPlatform::new(rc_config, bot_name.clone(), display_name))
+            }
         }
     };
 
@@ -343,168 +355,128 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     tokio::pin!(shutdown);
 
     loop {
-        let mut client = rocketchat::RocketChatClient::new(rocketchat_config.clone());
-        // Set display name for stage-4 filter (response to own display name in channels)
-        {
-            let h = harness.lock().await;
-            let display_name = h.memory().any_display_name();
-            client.set_display_name(display_name);
-        }
-
-        let connect_fut = client
-            .connect_and_run({
+        let connect_fut = platform.connect_and_run(Box::new({
+            let harness = harness.clone();
+            let bot_name = bot_name.clone();
+            move |msg: rocketchat::IncomingMessage, sender: Box<dyn PlatformSender>| {
                 let harness = harness.clone();
                 let bot_name = bot_name.clone();
-                move |msg, sender| {
-                    let harness = harness.clone();
-                    let bot_name = bot_name.clone();
-                    async move {
-                        let username = bot_name.trim_start_matches('@').to_string();
-                        if let Err(e) = sender.typing(true, &username).await {
-                            warn!("Failed to send typing indicator: {}", e);
-                        }
+                Box::pin(async move {
+                    if let Err(e) = sender.send_typing(true).await {
+                        warn!("Failed to send typing indicator: {}", e);
+                    }
 
-                        let hb_sender = sender.clone();
-                        let hb_username = username.clone();
-                        let heartbeat = tokio::spawn(async move {
-                            loop {
-                                tokio::time::sleep(Duration::from_secs(2)).await;
-                                if hb_sender.typing(true, &hb_username).await.is_err() {
-                                    break;
-                                }
+                    let hb_sender = sender.clone();
+                    let heartbeat = tokio::spawn(async move {
+                        loop {
+                            tokio::time::sleep(Duration::from_secs(2)).await;
+                            if hb_sender.send_typing(true).await.is_err() {
+                                break;
                             }
-                        });
-
-                        let mut h = harness.lock().await;
-
-                        // Initialize REST client on first message
-                        if !h.has_rest_client() {
-                            let rc_config = rocketchat::RocketChatConfig {
-                                server: rocketchat::config::ServerConfig {
-                                    url: h.config().rocketchat.server.url.clone(),
-                                    username: h.config().rocketchat.server.username.clone(),
-                                    password: h.config().rocketchat.server.password.clone(),
-                                    use_tls: true,
-                                },
-                            };
-                            h.set_rest_client(sender.rest_client(&rc_config));
                         }
+                    });
 
-                        let text = if msg.is_dm {
-                            msg.text.clone()
-                        } else {
-                            msg.text
-                                .strip_prefix(&bot_name)
-                                .unwrap_or(&msg.text)
-                                .trim()
-                                .to_string()
-                        };
+                    let mut h = harness.lock().await;
 
-                        let room_name = if msg.room_name.is_empty() {
-                            msg.sender_name.clone()
-                        } else {
-                            msg.room_name.clone()
-                        };
+                    if !h.has_rest_client() {
+                        if let Some(rc_sender) = sender.as_any().downcast_ref::<RcPlatformSender>() {
+                            let rc_config = rc_sender.rc_config().clone();
+                            h.set_rest_client(rc_sender.sender().rest_client(&rc_config));
+                        }
+                    }
 
-                        let display_name = if msg.room_fname.is_empty() {
-                            room_name.clone()
-                        } else {
-                            msg.room_fname.clone()
-                        };
+                    let text = if msg.is_dm {
+                        msg.text.clone()
+                    } else {
+                        msg.text
+                            .strip_prefix(&bot_name)
+                            .unwrap_or(&msg.text)
+                            .trim()
+                            .to_string()
+                    };
 
-                        // REST API fallback for Unicode room names
-                        let display_name = if !msg.is_dm && (display_name.is_empty() || display_name == room_name) {
-                            if let Some(fname) = h.resolve_room_fname(&msg.room_id).await {
-                                fname
-                            } else {
-                                display_name
-                            }
+                    let room_name = if msg.room_name.is_empty() {
+                        msg.sender_name.clone()
+                    } else {
+                        msg.room_name.clone()
+                    };
+
+                    let display_name = if msg.room_fname.is_empty() {
+                        room_name.clone()
+                    } else {
+                        msg.room_fname.clone()
+                    };
+
+                    let display_name = if !msg.is_dm && (display_name.is_empty() || display_name == room_name) {
+                        if let Some(fname) = h.resolve_room_fname(&msg.room_id).await {
+                            fname
                         } else {
                             display_name
-                        };
+                        }
+                    } else {
+                        display_name
+                    };
 
-                        debug!(
-                            "Processing message from {} in {} (is_dm={}): {}",
-                            msg.sender_name, display_name, msg.is_dm, text
-                        );
+                    debug!(
+                        "Processing message from {} in {} (is_dm={}): {}",
+                        msg.sender_name, display_name, msg.is_dm, text
+                    );
 
-                        match h
-                            .process_message(
-                                &msg.room_id,
-                                &room_name,
-                                &display_name,
-                                msg.is_dm,
-                                &msg.sender_name,
-                                &text,
-                                &msg.attachments,
-                                &msg.urls,
-                            )
-                            .await
-                        {
-                            Ok(Some(reply)) => {
-                                heartbeat.abort();
-                                if let Err(e) = sender.typing(false, &username).await {
-                                    warn!("Failed to stop typing indicator: {}", e);
-                                }
-                                tokio::time::sleep(Duration::from_millis(300)).await;
+                    match h
+                        .process_message(
+                            &msg.room_id,
+                            &room_name,
+                            &display_name,
+                            msg.is_dm,
+                            &msg.sender_name,
+                            &text,
+                            &msg.attachments,
+                            &msg.urls,
+                        )
+                        .await
+                    {
+                        Ok(Some(reply)) => {
+                            heartbeat.abort();
+                            if let Err(e) = sender.send_typing(false).await {
+                                warn!("Failed to stop typing indicator: {}", e);
+                            }
+                            tokio::time::sleep(Duration::from_millis(300)).await;
 
-                                // Check for generated image attachments
-                                let image_ids = h.take_last_image_ids();
-                                let mut attachments: Vec<serde_json::Value> = Vec::new();
-                                let mut reply_text = reply.clone();
+                            let image_ids = h.take_last_image_ids();
+                            let mut attachments: Vec<serde_json::Value> = Vec::new();
+                            let mut reply_text = reply.clone();
 
-                                for image_id in &image_ids {
-                                    if let Some(img) = h.take_image(image_id) {
-                                        reply_text = strip_markdown_image_id(
-                                            &reply_text,
-                                            image_id,
-                                        );
-                                        if let Some(ref share_url) = img.share_url {
-                                            // Prefer NextCloud share URL (short, works with REST)
-                                            let markdown = format!(
-                                                "\n\n![Generated image]({})",
-                                                share_url
-                                            );
-                                            reply_text.push_str(&markdown);
-                                        } else {
-                                            // Fallback: data URI as DDP attachment
-                                            let data_uri = img.data_uri();
-                                            attachments.push(serde_json::json!({
-                                                "image_url": data_uri
-                                            }));
-                                        }
+                            for image_id in &image_ids {
+                                if let Some(img) = h.take_image(image_id) {
+                                    reply_text = strip_markdown_image_id(&reply_text, image_id);
+                                    if let Some(ref share_url) = img.share_url {
+                                        let markdown = format!("\n\n![Generated image]({})", share_url);
+                                        reply_text.push_str(&markdown);
+                                    } else {
+                                        let data_uri = img.data_uri();
+                                        attachments.push(serde_json::json!({
+                                            "image_url": data_uri
+                                        }));
                                     }
                                 }
+                            }
 
-                                let has_images = !image_ids.is_empty();
-                                let has_attachments = !attachments.is_empty();
-                                let final_reply = if has_images {
-                                    &reply_text
-                                } else {
-                                    &reply
-                                };
+                            let has_images = !image_ids.is_empty();
+                            let has_attachments = !attachments.is_empty();
+                            let final_reply = if has_images { &reply_text } else { &reply };
 
-                                if has_attachments {
-                                    let alias = h
-                                        .memory()
-                                        .self_display_name(&msg.room_id);
-                                    if let Err(e) = sender
-                                        .reply_with_attachments(
-                                            final_reply,
-                                            &attachments,
-                                            alias.as_deref(),
-                                        )
-                                        .await
-                                    {
-                                        error!(
-                                            "Failed to send reply with attachments: {}",
-                                            e
-                                        );
-                                    }
-                                } else {
-                                    // Try REST API with alias first, fall back to DDP
-                                    let alias = h.memory().self_display_name(&msg.room_id);
-                                    let rest_ok = if let Some(ref alias_name) = alias {
+                            if has_attachments {
+                                let alias = h.memory().self_display_name(&msg.room_id);
+                                if let Err(e) = sender
+                                    .send_reply_with_attachments(final_reply, &attachments, alias.as_deref())
+                                    .await
+                                {
+                                    error!("Failed to send reply with attachments: {}", e);
+                                }
+                            } else {
+                                let alias = h.memory().self_display_name(&msg.room_id);
+                                let rest_ok = if let Some(ref alias_name) = alias {
+                                    if let Some(rc_sender) = sender.as_any().downcast_ref::<RcPlatformSender>() {
                                         debug!("Sending with alias={:?} via REST", alias_name);
                                         let rc_config = rocketchat::RocketChatConfig {
                                             server: rocketchat::config::ServerConfig {
@@ -514,60 +486,60 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                                                 use_tls: true,
                                             },
                                         };
-                                        let rest = sender.rest_client(&rc_config);
+                                        let rest = rc_sender.sender().rest_client(&rc_config);
                                         match rest.send_message(&msg.room_id, final_reply, Some(alias_name)).await {
                                             Ok(msg_id) => {
                                                 debug!("REST send_message ok, msg_id={} alias={:?}", msg_id, alias_name);
                                                 true
                                             }
                                             Err(e) => {
-                                                warn!("REST send_message failed: {}, falling back to DDP", e);
+                                                warn!("REST send_message failed: {}, falling back to platform sender", e);
                                                 false
                                             }
                                         }
                                     } else {
-                                        debug!("No self_display_name for room={}, sending via DDP without alias", msg.room_id);
                                         false
-                                    };
+                                    }
+                                } else {
+                                    false
+                                };
 
-                                    if !rest_ok {
-                                        if let Err(e) = sender.reply(final_reply).await {
-                                            error!("Failed to send reply: {}", e);
-                                        }
+                                if !rest_ok {
+                                    if let Err(e) = sender.send_reply(final_reply, None).await {
+                                        error!("Failed to send reply: {}", e);
                                     }
                                 }
-                                if let Err(e) = h.compress_room_if_needed(&msg.room_id).await {
-                                    warn!("Memory archiving failed: {}", e);
-                                }
                             }
-                            Ok(None) => {
-                                heartbeat.abort();
-                                if let Err(e) = sender.typing(false, &username).await {
-                                    warn!("Failed to stop typing indicator: {}", e);
-                                }
-                                if let Err(e) = h.compress_room_if_needed(&msg.room_id).await {
-                                    warn!("Memory archiving failed: {}", e);
-                                }
+                            if let Err(e) = h.compress_room_if_needed(&msg.room_id).await {
+                                warn!("Memory archiving failed: {}", e);
                             }
-                            Err(e) => {
-                                heartbeat.abort();
-                                if let Err(te) = sender.typing(false, &username).await {
-                                    warn!("Failed to stop typing indicator: {}", te);
-                                }
-                                error!("Failed to process message: {}", e);
-                                if let Err(re) = sender
-                                    .reply(&format!("Error processing message: {}", e))
-                                    .await {
-                                    warn!("Failed to send error reply: {}", re);
-                                }
-                                if let Err(e) = h.compress_room_if_needed(&msg.room_id).await {
-                                    warn!("Memory archiving failed: {}", e);
-                                }
+                        }
+                        Ok(None) => {
+                            heartbeat.abort();
+                            if let Err(e) = sender.send_typing(false).await {
+                                warn!("Failed to stop typing indicator: {}", e);
+                            }
+                            if let Err(e) = h.compress_room_if_needed(&msg.room_id).await {
+                                warn!("Memory archiving failed: {}", e);
+                            }
+                        }
+                        Err(e) => {
+                            heartbeat.abort();
+                            if let Err(te) = sender.send_typing(false).await {
+                                warn!("Failed to stop typing indicator: {}", te);
+                            }
+                            error!("Failed to process message: {}", e);
+                            if let Err(re) = sender.send_reply(&format!("Error processing message: {}", e), None).await {
+                                warn!("Failed to send error reply: {}", re);
+                            }
+                            if let Err(e) = h.compress_room_if_needed(&msg.room_id).await {
+                                warn!("Memory archiving failed: {}", e);
                             }
                         }
                     }
-                }
-            });
+                })
+            }
+        }));
 
         let result = tokio::select! {
             r = connect_fut => r,
@@ -583,7 +555,7 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
 
         match result {
             Ok(()) => {
-                info!("WebSocket connection closed normally");
+                info!("Connection closed normally");
                 timer_handle.abort();
                 let mut h = harness.lock().await;
                 h.flush_all_snapshots().await;
@@ -592,20 +564,14 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
             Err(e) => {
                 retry_count += 1;
                 if retry_count >= max_retries {
-                    error!(
-                        "Max reconnect retries ({}) reached, shutting down",
-                        max_retries
-                    );
+                    error!("Max reconnect retries ({}) reached, shutting down", max_retries);
                     timer_handle.abort();
                     let mut h = harness.lock().await;
                     h.flush_all_snapshots().await;
                     return Err(e.into());
                 }
                 let delay = Duration::from_secs(2u64.pow(retry_count));
-                warn!(
-                    "WebSocket disconnected: {}. Reconnecting in {:?} (attempt {}/{})",
-                    e, delay, retry_count, max_retries
-                );
+                warn!("Disconnected: {}. Reconnecting in {:?} (attempt {}/{})", e, delay, retry_count, max_retries);
                 tokio::time::sleep(delay).await;
             }
         }

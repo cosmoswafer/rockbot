@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use crate::error::Result;
 
 pub use self::matrix::MatrixPlatform;
-pub use self::rocketchat::RocketChatPlatform;
+pub use self::rocketchat::{RcPlatformSender, RocketChatPlatform};
 pub use ::rocketchat::IncomingMessage;
 
 #[async_trait]
@@ -28,6 +28,14 @@ pub trait PlatformSender: Send + Sync {
     fn room_id(&self) -> &str;
 
     fn as_any(&self) -> &dyn std::any::Any;
+
+    fn clone_box(&self) -> Box<dyn PlatformSender>;
+}
+
+impl Clone for Box<dyn PlatformSender> {
+    fn clone(&self) -> Self {
+        self.clone_box()
+    }
 }
 
 pub type MessageHandler = Box<

@@ -10,10 +10,6 @@ api_key = "EDITME"
 name = "openrouter"
 api_key = "sk-or-v1-EDITME"
 
-[[image_providers]]
-name = "fal"
-api_key = "EDITME"
-
 [rocketchat.server]
 url = "your-server.example.com"
 username = "EDITME"

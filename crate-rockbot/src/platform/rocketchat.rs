@@ -95,6 +95,14 @@ impl PlatformSender for RcPlatformSender {
     fn as_any(&self) -> &dyn Any {
         self
     }
+
+    fn clone_box(&self) -> Box<dyn PlatformSender> {
+        Box::new(RcPlatformSender::new(
+            self.sender.clone(),
+            self.username.clone(),
+            self.rc_config.clone(),
+        ))
+    }
 }
 
 #[async_trait]

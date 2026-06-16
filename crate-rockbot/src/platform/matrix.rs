@@ -2,10 +2,11 @@ use std::any::Any;
 
 use async_trait::async_trait;
 use matrix_sdk::config::SyncSettings;
+use matrix_sdk::ruma::events::room::member::{MembershipState, SyncRoomMemberEvent};
 use matrix_sdk::ruma::events::room::message::RoomMessageEventContent;
 use matrix_sdk::ruma::events::SyncMessageLikeEvent;
 use matrix_sdk::Client;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::error::{RockBotError, Result};
 use super::{MessageHandler, MessagingClient, PlatformSender};
@@ -83,6 +84,10 @@ impl PlatformSender for MatrixSender {
     fn as_any(&self) -> &dyn Any {
         self
     }
+
+    fn clone_box(&self) -> Box<dyn PlatformSender> {
+        Box::new(MatrixSender::new(self.room.clone()))
+    }
 }
 
 #[async_trait]
@@ -113,6 +118,28 @@ impl MessagingClient for MatrixPlatform {
             .map(|u| u.to_string())
             .unwrap_or_default();
         let handler = handler.clone();
+        let bot_user_id_for_invite = user_id_owned.clone();
+
+        client.add_event_handler(
+            move |ev: SyncRoomMemberEvent, room: matrix_sdk::Room| {
+                let bot_user_id = bot_user_id_for_invite.clone();
+                async move {
+                    if room.state() != matrix_sdk::RoomState::Invited {
+                        return;
+                    }
+                    if ev.state_key().to_string() != bot_user_id {
+                        return;
+                    }
+                    if ev.membership() != &MembershipState::Invite {
+                        return;
+                    }
+                    info!("Matrix: accepting invite to {}", room.room_id());
+                    if let Err(e) = room.join().await {
+                        warn!("Matrix: failed to join room {}: {e}", room.room_id());
+                    }
+                }
+            },
+        );
 
         client.add_event_handler(
             move |ev: SyncMessageLikeEvent<RoomMessageEventContent>,
@@ -120,16 +147,21 @@ impl MessagingClient for MatrixPlatform {
                 let handler = handler.clone();
                 let user_id = user_id_owned.clone();
                 async move {
+                    debug!("Matrix: received message event in room {}", room.room_id());
+
                     if room.state() != matrix_sdk::RoomState::Joined {
+                        debug!("Matrix: ignoring message in non-joined room");
                         return;
                     }
 
                     let SyncMessageLikeEvent::Original(ref original) = ev else {
+                        debug!("Matrix: ignoring non-original message event");
                         return;
                     };
 
                     let sender = original.sender.to_string();
                     if sender == user_id {
+                        debug!("Matrix: ignoring own message");
                         return;
                     }
 
@@ -137,7 +169,10 @@ impl MessagingClient for MatrixPlatform {
                         matrix_sdk::ruma::events::room::message::MessageType::Text(text) => {
                             text.body.clone()
                         }
-                        _ => return,
+                        _ => {
+                            debug!("Matrix: ignoring non-text message");
+                            return;
+                        }
                     };
 
                     let room_id = room.room_id().to_string();
@@ -193,6 +228,15 @@ impl MessagingClient for MatrixPlatform {
         );
 
         info!("Matrix: starting sync loop...");
+
+        // Auto-join any pending invites
+        for room in client.invited_rooms() {
+            info!("Matrix: auto-joining pending invite to {}", room.room_id());
+            if let Err(e) = room.join().await {
+                warn!("Matrix: failed to join invited room {}: {e}", room.room_id());
+            }
+        }
+
         client
             .sync(SyncSettings::default())
             .await
