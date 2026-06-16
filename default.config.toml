@@ -84,8 +84,7 @@ password = ""
 homeserver = ""
 user_id = ""
 password = ""
-# device_id = ""
-# room_prefix = ""
+# device_id = "ROCKBOT"
 state_dir = "./tmp/matrix-sdk"
 
 [webdav]

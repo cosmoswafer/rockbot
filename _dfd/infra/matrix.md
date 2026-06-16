@@ -108,7 +108,6 @@ flowchart TD
 3. **Skip edits**: `m.relates_to.rel_type == "m.replace"` → drop (edits are not re-processed)
 4. **DM check**: room member count ≤ 2 → forward as DM (`is_dm = true`)
 5. **Mention check**: message body contains `@bot_user_id` or bot display name → forward
-6. **Room prefix check**: if `room_prefix` configured, room name must match → forward
 7. **Otherwise**: drop
 
 ### 2d. Sync Loop Deep Dive
@@ -284,7 +283,6 @@ flowchart TD
 | `client`       | `matrix_sdk::Client`    | Authenticated Matrix SDK client             |
 | `user_id`      | `OwnedUserId`           | Bot's Matrix user ID (for self-filtering)   |
 | `display_name` | `Option<String>`        | Bot display name (for mention matching)     |
-| `room_prefix`  | `Option<String>`        | Optional room name filter prefix            |
 | `state_dir`    | `PathBuf`               | SDK state store directory (crypto + sync)   |
 
 #### Matrix → `IncomingMessage` Field Mapping
@@ -314,7 +312,6 @@ flowchart TD
 | `user_id`      | `String`         | Bot user ID (`@bot:example.org`)                |
 | `password`     | `String`         | Account password                                |
 | `device_id`    | `Option<String>` | Device ID for session management                |
-| `room_prefix`  | `Option<String>` | Optional room name filter prefix                |
 | `state_dir`    | `String`         | SDK state store path (default `"./tmp/matrix-sdk"`) |
 
 ## 4. Non-Functional Requirements

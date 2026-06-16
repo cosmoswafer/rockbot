@@ -122,7 +122,6 @@ flowchart TD
 | `user_id`      | `String` | Matrix user ID (`@bot:example.org`); non-empty validated       |
 | `password`     | `String` | Account password (`""` in defaults, filled in user config)     |
 | `device_id`    | `Option<String>` | Device identifier for session management. Auto-generated on first login if omitted. |
-| `room_prefix`  | `Option<String>` | Optional prefix for room name resolution (e.g. `"#bot"`). If set, bot only responds in rooms matching this prefix. |
 
 > **Cross-validation**: `validate_app_config()` checks that `platform.name == "rocketchat"`
 > implies `rocketchat.server` has non-empty credentials, and `platform.name == "matrix"`

@@ -68,8 +68,6 @@ pub struct MatrixServerConfig {
     pub password: String,
     #[serde(default)]
     pub device_id: Option<String>,
-    #[serde(default)]
-    pub room_prefix: Option<String>,
     #[serde(default = "default_matrix_state_dir")]
     pub state_dir: String,
 }

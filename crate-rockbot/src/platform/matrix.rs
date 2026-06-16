@@ -15,7 +15,6 @@ pub struct MatrixPlatform {
     user_id: String,
     password: String,
     device_id: Option<String>,
-    room_prefix: Option<String>,
     state_dir: String,
 }
 
@@ -26,7 +25,6 @@ impl MatrixPlatform {
             user_id: config.user_id.clone(),
             password: config.password.clone(),
             device_id: config.device_id.clone(),
-            room_prefix: config.room_prefix.clone(),
             state_dir: config.state_dir.clone(),
         }
     }
@@ -110,7 +108,6 @@ impl MessagingClient for MatrixPlatform {
 
         info!("Matrix: logged in as {}", self.user_id);
 
-        let room_prefix = self.room_prefix.clone();
         let user_id_owned = client
             .user_id()
             .map(|u| u.to_string())
@@ -122,7 +119,6 @@ impl MessagingClient for MatrixPlatform {
                   room: matrix_sdk::Room| {
                 let handler = handler.clone();
                 let user_id = user_id_owned.clone();
-                let room_prefix = room_prefix.clone();
                 async move {
                     if room.state() != matrix_sdk::RoomState::Joined {
                         return;
@@ -160,12 +156,6 @@ impl MessagingClient for MatrixPlatform {
                             _ => None,
                         })
                         .unwrap_or_else(|| room_name.clone());
-
-                    if let Some(ref prefix) = room_prefix {
-                        if !room_name.starts_with(prefix) && !room_fname.starts_with(prefix) {
-                            return;
-                        }
-                    }
 
                     let member_count = room.active_members_count();
                     let is_dm = member_count <= 2;
