@@ -7,8 +7,20 @@ Rust module (`crate-rockbot/src/platform/matrix.rs`) wrapping
 a Matrix messaging client that implements the `MessagingClient` trait. The
 Matrix platform uses the SDK's high-level `Client` API to authenticate with a
 homeserver, sync room events via long-polling `/sync`, filter incoming messages,
-and send replies. End-to-end encryption (E2EE) is handled transparently by the
-SDK's built-in crypto store.
+and send replies.
+
+**E2EE status (2026-06-17):** `matrix-sdk` is compiled with `default-features = false`
+and only `["markdown"]`. The `e2e-encryption` feature is **not** enabled. The bot
+cannot decrypt `m.room.encrypted` events — they are silently dropped because no
+handler is registered. When a client (e.g. Element) creates an encrypted DM, the
+bot will not see any messages. Two paths to resolve:
+1. Enable `e2e-encryption` feature + crypto store setup (Section 2e notes).
+2. Users must create **unencrypted** DMs (disable encryption toggle in their client
+   before sending the first message) and manually accept the room invite (bot does
+   not auto-join — see Section 2c notes).
+
+With E2EE enabled, the SDK's built-in crypto store would handle Olm/Megolm key
+exchange and message decryption transparently.
 
 Messages from joined rooms are parsed into the shared `IncomingMessage` type
 (defined in `crate-rocketchat/src/types.rs` — reused as the cross-platform
@@ -104,11 +116,19 @@ flowchart TD
 **Filter rules** (evaluated in order):
 
 1. **Skip self**: `event.sender == bot_user_id` → drop
-2. **Skip non-text**: `msgtype != "m.text"` → drop (images handled separately)
+2. **Skip non-text**: `msgtype != "m.text"` → drop (images handled separately; encrypted
+   `m.room.encrypted` events also dropped — no handler registered for them)
 3. **Skip edits**: `m.relates_to.rel_type == "m.replace"` → drop (edits are not re-processed)
 4. **DM check**: room member count ≤ 2 → forward as DM (`is_dm = true`)
-5. **Mention check**: message body contains `@bot_user_id` or bot display name → forward
-7. **Otherwise**: drop
+5. **Mention check** *(spec, not yet implemented)*: message body contains `@bot_user_id`
+   or bot display name → forward
+7. **Otherwise**: drop *(spec, not yet implemented — currently dispatches all text messages from all joined rooms)*
+
+**Room invite handling** *(not yet implemented)*: The bot does not auto-accept room
+invites. The event handler only processes `RoomState::Joined` rooms (line 134 of
+`matrix.rs`). Invited rooms (`RoomState::Invited`) are silently ignored. A user
+must manually accept the invite (e.g. via Element or homeserver admin) for the
+bot to enter the room.
 
 ### 2d. Sync Loop Deep Dive
 
@@ -161,8 +181,14 @@ the SDK restores the session from the store without re-authenticating, unless
 the token has expired.
 
 **E2EE**: The SDK automatically handles Olm/Megolm key exchange and message
-decryption. Encrypted messages arrive as `m.room.encrypted` events and are
-decrypted before reaching the room event handler — the filter sees plain text.
+decryption **when the `e2e-encryption` feature is enabled**. Currently this feature
+is not compiled in (see Section 1 note). Encrypted messages arrive as
+`m.room.encrypted` events and are dropped — no handler is registered for them.
+To enable E2EE:
+1. Add `"e2e-encryption"` to `features` in `crate-rockbot/Cargo.toml` for `matrix-sdk`.
+2. The SDK's crypto store will use the `state_dir` path for Olm/Megolm session storage.
+3. Device verification will need handling (e.g. auto-accept or a `/verify` command).
+When enabled, decrypted messages arrive at the room event handler as plain text.
 
 ### 2f. Reply Sending
 
@@ -321,9 +347,10 @@ flowchart TD
   stores (crypto keys, sync token, room state). This is configured via
   `state_dir` (default `./tmp/matrix-sdk`) and is considered infrastructure
   state, not bot data.
-- **E2EE transparency**: End-to-end encryption is handled entirely by the SDK.
-  The bot sees decrypted plain text in event handlers. No manual key management
-  is required.
+- **E2EE transparency** (spec target): When the `e2e-encryption` feature is enabled,
+  end-to-end encryption is handled entirely by the SDK. The bot sees decrypted plain
+  text in event handlers. No manual key management is required. Currently the feature
+  is **not** enabled — see Section 1 note.
 - **Sync state recovery**: On restart, the SDK resumes sync from the last stored
   `since` token, avoiding re-processing old messages. The first sync after a
   long offline period may be slow (catching up on missed events).
@@ -335,6 +362,9 @@ flowchart TD
 
 | Crate            | Version | Purpose                                         |
 | ---------------- | ------- | ----------------------------------------------- |
-| `matrix-sdk`     | `0.10+` | High-level Matrix client (sync, rooms, media)   |
+| `matrix-sdk`     | `0.18`  | High-level Matrix client (sync, rooms, media); built with `default-features = false`, `features = ["markdown"]` only |
 | `matrix-sdk-base`| (transitive) | Core types (`OwnedUserId`, `OwnedRoomId`) |
 | `ruma` (re-exported via SDK) | (transitive) | Matrix event types (`SyncRoomEvent`, `RoomMessageEventContent`) |
+
+**Note**: `e2e-encryption`, `sqlite`, and `native-tls` features are not enabled.
+This means no encrypted message support and no persistent SDK state store.
