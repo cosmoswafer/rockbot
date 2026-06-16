@@ -5,7 +5,7 @@ use crate::config::ProviderConfig;
 use crate::error::{Result, RockBotError};
 use crate::provider::AiProvider;
 use crate::types::{
-    ChatMessage, ChatRequest, CompletionResult, ContentPart, FinishReason, MessageContent, Role,
+    ChatMessage, ChatRequest, CompletionResult, ContentPart, FinishReason, MessageContent,
     ToolCall, ToolDef, UsageInfo,
 };
 
@@ -70,38 +70,6 @@ impl LlamaCppProvider {
             .join(" ");
         msg.content = MessageContent::Text(text);
         msg
-    }
-
-    fn build_tool_preamble(tools: &[ToolDef]) -> String {
-        let mut preamble = String::from(
-            "You have access to the following tools. To call a tool, respond with exactly:\n\
-             ✿FUNCTION✿tool_name✿ARGS✿{\"arg\": \"value\"}✿END✿\n\n\
-             Available tools:\n",
-        );
-        for tool in tools {
-            preamble.push_str(&format!("- {}: ", tool.function.name));
-            if let Some(ref desc) = tool.function.description {
-                preamble.push_str(desc);
-            }
-            if let Some(ref params) = tool.function.parameters {
-                preamble.push_str(&format!("\n  Parameters: {}", params));
-            }
-            preamble.push('\n');
-        }
-        preamble
-    }
-
-    fn inject_tool_preamble(mut messages: Vec<ChatMessage>, tools: &[ToolDef]) -> Vec<ChatMessage> {
-        let preamble = Self::build_tool_preamble(tools);
-        if let Some(msg) = messages.iter_mut().find(|m| m.role == Role::System) {
-            if let MessageContent::Text(ref mut text) = msg.content {
-                text.push_str("\n\n");
-                text.push_str(&preamble);
-            }
-        } else {
-            messages.insert(0, ChatMessage::system(preamble));
-        }
-        messages
     }
 
     fn parse_tool_calls_from_text(text: &str) -> Vec<ToolCall> {
@@ -172,17 +140,19 @@ impl LlamaCppProvider {
             .map(|m| Self::strip_message_images(m.clone()))
             .collect();
 
-        let messages = if let Some(ref tools) = request.tools {
-            Self::inject_tool_preamble(messages, tools)
-        } else {
-            messages
-        };
-
         let mut body = serde_json::json!({
             "model": request.model,
             "messages": messages,
             "stream": request.stream,
         });
+
+        if let Some(ref tools) = request.tools {
+            body["tools"] = serde_json::json!(tools);
+        }
+
+        if let Some(ref tool_choice) = request.tool_choice {
+            body["tool_choice"] = tool_choice.clone();
+        }
 
         if let Some(temp) = request.temperature {
             body["temperature"] = serde_json::json!(temp);
@@ -471,7 +441,7 @@ mod tests {
     }
 
     #[test]
-    fn test_build_request_body_tools_as_preamble() {
+    fn test_build_request_body_tools_native() {
         let provider = test_provider();
         let request = ChatRequest {
             model: "local-model".into(),
@@ -494,11 +464,14 @@ mod tests {
 
         let body = provider.build_request_body(&request);
         let system_content = body["messages"][0]["content"].as_str().unwrap();
-        assert!(system_content.starts_with("You are helpful"));
-        assert!(system_content.contains("✿FUNCTION✿"));
-        assert!(system_content.contains("get_weather"));
-        assert!(system_content.contains("Get weather for a city"));
-        assert!(body.get("tools").is_none(), "tools field should not be in request body");
+        assert_eq!(system_content, "You are helpful");
+        let tools = body.get("tools").unwrap().as_array().unwrap();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0]["function"]["name"], "get_weather");
+        assert_eq!(
+            tools[0]["function"]["description"],
+            "Get weather for a city"
+        );
     }
 
     #[test]
@@ -521,12 +494,10 @@ mod tests {
         };
 
         let body = provider.build_request_body(&request);
-        assert_eq!(body["messages"][0]["role"], "system");
-        assert!(body["messages"][0]["content"]
-            .as_str()
-            .unwrap()
-            .contains("get_weather"));
-        assert_eq!(body["messages"][1]["role"], "user");
+        assert_eq!(body["messages"][0]["role"], "user");
+        assert_eq!(body["messages"].as_array().unwrap().len(), 1);
+        let tools = body.get("tools").unwrap().as_array().unwrap();
+        assert_eq!(tools[0]["function"]["name"], "get_weather");
     }
 
     #[test]

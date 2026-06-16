@@ -25,13 +25,15 @@ with `OpenRouterProvider`. Key differences:
 
 - **No API key**: `api_key` is empty; the `Authorization` header is omitted
   when the key is empty.
-- **No tool/function calling**: most llama.cpp models do not support native
-  tool calling. When `tools` is present in `ChatRequest`, `LlamaCppProvider`
-  serializes tool definitions as a system-message preamble (JSON Schema
-  descriptions appended to the last system message) instead of the `tools`
-  field. The model emits tool calls as structured text; the provider parses
-  them back into `ToolCall` objects using a delimiter convention
-  (`✿FUNCTION✿` / `✿ARGS✿` / `✿END✿`).
+- **Native tool calling required**: tools are sent in the standard `tools`
+  JSON field (same as OpenRouter and DeepSeek). The llama.cpp server must be
+  started with `--jinja` so its Jinja2 chat template renders tool definitions
+  in the model's native format. The model itself must support tool calling
+  (e.g. Qwen2.5, Qwen3, Llama 3.x with tool-use chat template). The server
+  returns tool calls in the standard OpenAI `tool_calls` response field with
+  `finish_reason: "tool_calls"`. A text-based fallback parser
+  (`✿FUNCTION✿` / `✿ARGS✿` / `✿END✿` delimiter scan) is retained for
+  safety but should not trigger with properly configured servers.
 - **No vision**: `ContentPart::ImageUrl` parts are stripped and replaced with
   `[image]` text placeholders (same as DeepSeek).
 - **Single model**: `models` map typically has one entry. The model alias
@@ -60,7 +62,7 @@ flowchart TD
     BUILD -->|"provider request"| FORMAT
     FORMAT -->|"openrouter request"| OPENROUTER
     FORMAT -->|"deepseek request"| DEEPSEEK
-    FORMAT -->|"llama.cpp request<br/>(tools as system preamble)"| LLAMA
+    FORMAT -->|"llama.cpp request<br/>(native tools field)"| LLAMA
     OPENROUTER -->|"http request"| HTTP
     DEEPSEEK -->|"http request"| HTTP
     LLAMA -->|"http request<br/>(no auth header)"| HTTP
@@ -112,9 +114,8 @@ applies to OpenRouter, DeepSeek, and llama.cpp providers.
 **llama.cpp error handling**: The local server does not rate-limit (no 429).
 Connection errors (server not running, port unreachable) map to `ServerError`
 immediately with no retry. HTTP 400 with context-length keywords still triggers
-`ContextLengthExceeded`. The `sanitize_tool_args` re-validation step is skipped
-since tool call arguments originate from structured-text parsing, not provider
-JSON.
+`ContextLengthExceeded`. Tool call arguments arrive as standard JSON from the
+server's native tool calling, same as OpenRouter and DeepSeek.
 
 Before sending each request, messages are sanitized:
 - `reasoning_content` is stripped from all messages (response-only field that
