@@ -212,7 +212,7 @@ impl AgentHarness {
                 .collect::<Vec<_>>()
                 .join(" ");
             let prompt = if clean_text.is_empty() {
-                format!("{}: Describe this image in detail.\nAttached: {}", sender_name, image_labels)
+                format!("{}:\nAttached: {}", sender_name, image_labels)
             } else {
                 format!(
                     "{}: {}\nAttached: {}",
