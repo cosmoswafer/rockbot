@@ -2,7 +2,6 @@ use std::any::Any;
 
 use async_trait::async_trait;
 use matrix_sdk::config::SyncSettings;
-use matrix_sdk::ruma::events::room::member::{MembershipState, SyncRoomMemberEvent};
 use matrix_sdk::ruma::events::room::message::RoomMessageEventContent;
 use matrix_sdk::ruma::events::SyncMessageLikeEvent;
 use matrix_sdk::Client;
@@ -123,28 +122,6 @@ impl MessagingClient for MatrixPlatform {
             .unwrap_or_default()
             .as_secs();
         let handler = handler.clone();
-        let bot_user_id_for_invite = user_id_owned.clone();
-
-        client.add_event_handler(
-            move |ev: SyncRoomMemberEvent, room: matrix_sdk::Room| {
-                let bot_user_id = bot_user_id_for_invite.clone();
-                async move {
-                    if room.state() != matrix_sdk::RoomState::Invited {
-                        return;
-                    }
-                    if ev.state_key().to_string() != bot_user_id {
-                        return;
-                    }
-                    if ev.membership() != &MembershipState::Invite {
-                        return;
-                    }
-                    info!("Matrix: accepting invite to {}", room.room_id());
-                    if let Err(e) = room.join().await {
-                        warn!("Matrix: failed to join room {}: {e}", room.room_id());
-                    }
-                }
-            },
-        );
 
         client.add_event_handler(
             move |ev: SyncMessageLikeEvent<RoomMessageEventContent>,
@@ -244,14 +221,6 @@ impl MessagingClient for MatrixPlatform {
         );
 
         info!("Matrix: starting sync loop...");
-
-        // Auto-join any pending invites
-        for room in client.invited_rooms() {
-            info!("Matrix: auto-joining pending invite to {}", room.room_id());
-            if let Err(e) = room.join().await {
-                warn!("Matrix: failed to join invited room {}: {e}", room.room_id());
-            }
-        }
 
         client
             .sync(SyncSettings::default())
