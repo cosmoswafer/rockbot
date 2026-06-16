@@ -117,6 +117,11 @@ impl MessagingClient for MatrixPlatform {
             .user_id()
             .map(|u| u.to_string())
             .unwrap_or_default();
+
+        let startup_ts_secs: u64 = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
         let handler = handler.clone();
         let bot_user_id_for_invite = user_id_owned.clone();
 
@@ -164,6 +169,17 @@ impl MessagingClient for MatrixPlatform {
                         debug!("Matrix: ignoring own message");
                         return;
                     }
+
+                    let msg_ts_secs: u64 = original.origin_server_ts.as_secs().into();
+                    if msg_ts_secs < startup_ts_secs {
+                        debug!(
+                            "Matrix: ignoring historical message (msg_ts={} < startup_ts={})",
+                            msg_ts_secs, startup_ts_secs
+                        );
+                        return;
+                    }
+
+                    info!("Matrix: processing message from sender='{}' in room {}", sender, room.room_id());
 
                     let body = match &original.content.msgtype {
                         matrix_sdk::ruma::events::room::message::MessageType::Text(text) => {
