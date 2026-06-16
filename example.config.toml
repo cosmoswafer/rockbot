@@ -19,6 +19,10 @@ url = "your-server.example.com"
 username = "EDITME"
 password = "EDITME"
 
+[model]
+default_provider = "openrouter"
+default_model = "gpt"
+
 [webdav]
 url = "https://cloud.example.com"
 username = "EDITME"
