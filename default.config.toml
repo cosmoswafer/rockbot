@@ -84,8 +84,15 @@ password = ""
 homeserver = ""
 user_id = ""
 password = ""
-# device_id = "ROCKBOT"
+device_id = ""
 state_dir = "./tmp/matrix-sdk"
 
 [webdav]
+url = ""
+username = ""
+password = ""
+root = ""
 dav_path = "/remote.php/dav"
+
+[tools.exa]
+api_key = ""
