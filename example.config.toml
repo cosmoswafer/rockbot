@@ -1,6 +1,9 @@
 # User config — overrides default.config.toml
 # Only include settings you want to override (secrets, URLs, etc.)
 
+# [platform]
+# name = "matrix"  # default: "rocketchat"
+
 [[chat_providers]]
 name = "openrouter"
 api_key = "sk-or-v1-EDITME"
@@ -8,6 +11,11 @@ api_key = "sk-or-v1-EDITME"
 [[chat_providers]]
 name = "deepseek"
 api_key = "EDITME"
+
+# [[chat_providers]]
+# name = "llamacpp"
+# api_key = ""
+# base_url = "http://localhost:8080/v1"
 
 [[image_providers]]
 name = "openrouter"
@@ -22,10 +30,15 @@ url = "your-server.example.com"
 username = "EDITME"
 password = "EDITME"
 
-[rocketchat.model]
+# [model]
 # Uncomment to override defaults:
 # default_provider = "deepseek"
 # default_model = "flash"
+
+# [matrix.server]
+# homeserver = "https://matrix.example.com"
+# user_id = "@bot:example.com"
+# password = "EDITME"
 
 # [image_model]
 # default_provider = "fal"

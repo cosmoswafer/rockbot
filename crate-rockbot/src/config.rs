@@ -11,7 +11,13 @@ const DEFAULT_CONFIG_PATH: &str = "default.config.toml";
 #[derive(Debug, Clone, Deserialize, ValidatorValidate)]
 #[validate(schema(function = "validate_app_config"))]
 pub struct AppConfig {
+    #[serde(default)]
+    pub platform: PlatformConfig,
     pub rocketchat: RocketChatSection,
+    #[serde(default)]
+    pub matrix: Option<MatrixSection>,
+    #[serde(default)]
+    pub model: ModelConfig,
     #[serde(default)]
     pub chat_providers: Vec<ProviderConfig>,
     #[serde(default)]
@@ -25,9 +31,51 @@ pub struct AppConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct PlatformConfig {
+    #[serde(default = "default_platform_name")]
+    pub name: String,
+}
+
+impl Default for PlatformConfig {
+    fn default() -> Self {
+        Self {
+            name: default_platform_name(),
+        }
+    }
+}
+
+fn default_platform_name() -> String {
+    "rocketchat".into()
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct RocketChatSection {
     pub server: ServerConfig,
-    pub model: ModelConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MatrixSection {
+    pub server: MatrixServerConfig,
+}
+
+#[derive(Debug, Clone, Deserialize, Validate)]
+pub struct MatrixServerConfig {
+    #[validate(min_length = 1)]
+    pub homeserver: String,
+    #[validate(min_length = 1)]
+    pub user_id: String,
+    #[serde(default)]
+    pub password: String,
+    #[serde(default)]
+    pub device_id: Option<String>,
+    #[serde(default)]
+    pub room_prefix: Option<String>,
+    #[serde(default = "default_matrix_state_dir")]
+    pub state_dir: String,
+}
+
+fn default_matrix_state_dir() -> String {
+    "./tmp/matrix-sdk".into()
 }
 
 #[derive(Debug, Clone, Deserialize, Validate)]
@@ -154,6 +202,22 @@ fn default_max_attachment_bytes() -> u64 {
     25_000_000
 }
 
+impl Default for ModelConfig {
+    fn default() -> Self {
+        Self {
+            default_provider: ProviderName::try_new("openrouter".to_string()).expect("hardcoded default"),
+            default_model: "gpt".into(),
+            max_iterations: default_max_iterations(),
+            max_soul_chars: default_max_soul_chars(),
+            persist_interval_secs: default_persist_interval_secs(),
+            memory_ttl_secs: default_memory_ttl_secs(),
+            max_context_bytes: default_max_context_bytes(),
+            max_attachment_bytes: default_max_attachment_bytes(),
+            model_context_length: default_model_context_length(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Validate)]
 pub struct ToolServiceConfig {
     #[validate(min_length = 1)]
@@ -202,9 +266,16 @@ impl AppConfig {
             .map_err(|e| crate::error::RockBotError::Config(format!("merge failed: {}", e)))?;
         let config: Self = toml::from_str(&merged_str)
             .map_err(|e| crate::error::RockBotError::Config(format!("merged parse: {}", e)))?;
-        config.rocketchat.server.validate().map_err(|e| {
-            crate::error::RockBotError::Config(format!("server config validation: {e}"))
-        })?;
+        if config.platform.name == "rocketchat" {
+            config.rocketchat.server.validate().map_err(|e| {
+                crate::error::RockBotError::Config(format!("server config validation: {e}"))
+            })?;
+        }
+        if let Some(ref mx) = config.matrix {
+            mx.server.validate().map_err(|e| {
+                crate::error::RockBotError::Config(format!("matrix server config validation: {e}"))
+            })?;
+        }
         <Self as ValidatorValidate>::validate(&config).map_err(|e| {
             crate::error::RockBotError::Config(format!("config validation: {e}"))
         })?;
@@ -238,7 +309,7 @@ impl AppConfig {
 
 /// Validator schema function — cross-field business-logic validation for AppConfig.
 fn validate_app_config(config: &AppConfig) -> Result<(), validator::ValidationError> {
-    let provider_name: &str = &config.rocketchat.model.default_provider;
+    let provider_name: &str = &config.model.default_provider;
     if config.find_chat_provider(provider_name).is_none() {
         let mut err = validator::ValidationError::new("provider_not_found");
         err.message = Some(format!("chat_provider '{}' not found in [[chat_providers]]", provider_name).into());
@@ -253,6 +324,23 @@ fn validate_app_config(config: &AppConfig) -> Result<(), validator::ValidationEr
             return Err(err);
         }
     }
+
+    match config.platform.name.as_str() {
+        "rocketchat" => {}
+        "matrix" => {
+            if config.matrix.is_none() {
+                let mut err = validator::ValidationError::new("matrix_missing");
+                err.message = Some("[matrix.server] section required when platform.name = \"matrix\"".into());
+                return Err(err);
+            }
+        }
+        other => {
+            let mut err = validator::ValidationError::new("invalid_platform");
+            err.message = Some(format!("platform.name must be \"rocketchat\" or \"matrix\", got \"{}\"", other).into());
+            return Err(err);
+        }
+    }
+
     Ok(())
 }
 

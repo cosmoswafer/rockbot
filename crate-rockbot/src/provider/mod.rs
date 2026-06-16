@@ -1,5 +1,6 @@
 pub mod deepseek;
 pub mod fal;
+pub mod llamacpp;
 pub mod openrouter;
 
 use async_trait::async_trait;
@@ -29,4 +30,5 @@ pub trait ImageProvider: Send + Sync {
 
 pub use deepseek::DeepSeekProvider;
 pub use fal::FalAiProvider;
+pub use llamacpp::LlamaCppProvider;
 pub use openrouter::{OpenRouterImageProvider, OpenRouterProvider};

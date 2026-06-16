@@ -9,7 +9,7 @@ use tracing_subscriber::EnvFilter;
 use rockbot::config::AppConfig;
 use rockbot::harness::AgentHarness;
 use rockbot::image_cache::ImageCache;
-use rockbot::provider::{AiProvider, DeepSeekProvider, FalAiProvider, ImageProvider, OpenRouterImageProvider, OpenRouterProvider};
+use rockbot::provider::{AiProvider, DeepSeekProvider, FalAiProvider, ImageProvider, LlamaCppProvider, OpenRouterImageProvider, OpenRouterProvider};
 use rockbot::tool::ToolRegistry;
 use rockbot::tools::{
     CalendarTool, CompressMemoryTool, DateTimeTool, EditSoulTool, ForgetKnowledgeTool,
@@ -63,8 +63,8 @@ fn main() {
 
 async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     let provider: Box<dyn AiProvider> = {
-        let provider_name = &config.rocketchat.model.default_provider;
-        let model_alias = &config.rocketchat.model.default_model;
+        let provider_name = &config.model.default_provider;
+        let model_alias = &config.model.default_model;
 
         let provider_config = config
             .find_chat_provider(provider_name)
@@ -86,6 +86,10 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
             }
             "openrouter" => {
                 let p = OpenRouterProvider::new(provider_config, &resolved_model)?;
+                Box::new(p)
+            }
+            "llamacpp" => {
+                let p = LlamaCppProvider::new(provider_config, &resolved_model)?;
                 Box::new(p)
             }
             other => {
@@ -138,7 +142,7 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     }
     tool_registry.register(Box::new(DateTimeTool::new()));
     tool_registry.register(Box::new(VisionTool::with_max_bytes(
-        harness.config().rocketchat.model.max_attachment_bytes,
+        harness.config().model.max_attachment_bytes,
     )));
     if let Some(ref webdav_client) = webdav {
         tool_registry.register(Box::new(WebDavTool::new(webdav_client.clone())));
@@ -282,7 +286,7 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
         };
         let ttl_secs = {
             let h = harness.lock().await;
-            h.config().rocketchat.model.memory_ttl_secs
+            h.config().model.memory_ttl_secs
         };
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(persist_secs.max(1)));
@@ -302,7 +306,7 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
         },
         {
             let h = harness.lock().await;
-            h.config().rocketchat.model.memory_ttl_secs
+            h.config().model.memory_ttl_secs
         }
     );
 

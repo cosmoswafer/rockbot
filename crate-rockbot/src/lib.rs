@@ -4,6 +4,7 @@ pub mod harness;
 pub mod image_cache;
 pub mod knowledge;
 pub mod memory;
+pub mod platform;
 pub mod provider;
 pub mod tool;
 pub mod tools;
@@ -11,12 +12,13 @@ pub mod types;
 pub mod utils;
 pub mod validated;
 
-pub use config::{merge_toml, AppConfig, ProviderConfig};
+pub use config::{merge_toml, AppConfig, MatrixServerConfig, MatrixSection, PlatformConfig, ProviderConfig};
 pub use error::{Result, RockBotError};
 pub use harness::AgentHarness;
 pub use image_cache::{GeneratedImage, ImageCache, image_markdown};
 pub use memory::{ConversationHistory, MemoryManager, RoomState};
-pub use provider::{AiProvider, DeepSeekProvider, FalAiProvider, ImageProvider, OpenRouterProvider};
+pub use platform::{MatrixPlatform, MessagingClient, PlatformSender, RocketChatPlatform};
+pub use provider::{AiProvider, DeepSeekProvider, FalAiProvider, ImageProvider, LlamaCppProvider, OpenRouterProvider};
 pub use tool::{Tool, ToolRegistry, ToolResult};
 pub use types::{
     ChatMessage, ChatRequest, CompletionResult, ContentPart, FinishReason, ImageGenParams,

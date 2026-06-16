@@ -78,11 +78,11 @@ impl AgentHarness {
         webdav: Option<WebDavClient>,
         image_cache: Arc<ImageCache>,
     ) -> Self {
-        let max_soul_chars = *config.rocketchat.model.max_soul_chars;
-        let max_iterations = config.rocketchat.model.max_iterations;
-        let persist_interval = config.rocketchat.model.persist_interval_secs;
-        let max_context_bytes = *config.rocketchat.model.max_context_bytes;
-        let max_attachment_bytes = config.rocketchat.model.max_attachment_bytes;
+        let max_soul_chars = *config.model.max_soul_chars;
+        let max_iterations = config.model.max_iterations;
+        let persist_interval = config.model.persist_interval_secs;
+        let max_context_bytes = *config.model.max_context_bytes;
+        let max_attachment_bytes = config.model.max_attachment_bytes;
         let config = Arc::new(config);
         Self {
             config,
@@ -249,7 +249,7 @@ impl AgentHarness {
             .memory
             .build_context(room_id, &system_prompt, None, None);
         // Inline context trim: reduce if approaching byte limit (no LLM call)
-        let max_ctx = *self.config.rocketchat.model.max_context_bytes as u64;
+        let max_ctx = *self.config.model.max_context_bytes as u64;
         let before_trim = messages.len();
         messages = self.trim_context(room_id, messages, max_ctx).await;
         if messages.len() < before_trim {
@@ -315,11 +315,11 @@ impl AgentHarness {
 
                     // Check token pressure: if usage nears model context limit, flag for background compression
                     if let Some(ref usage) = result.usage {
-                        let threshold = (self.config.rocketchat.model.model_context_length as f64 * 0.9) as u64;
+                        let threshold = (self.config.model.model_context_length as f64 * 0.9) as u64;
                         if usage.total_tokens > threshold {
                             debug!(
                                 "Token pressure detected: {} total_tokens > 90% of {} (threshold={})",
-                                usage.total_tokens, self.config.rocketchat.model.model_context_length, threshold
+                                usage.total_tokens, self.config.model.model_context_length, threshold
                             );
                             self.memory.set_token_pressure(room_id);
                         }
@@ -541,7 +541,7 @@ impl AgentHarness {
                         messages = self
                             .memory
                             .build_context(room_id, &system_prompt, None, None);
-                        let max_ctx = *self.config.rocketchat.model.max_context_bytes as u64;
+                        let max_ctx = *self.config.model.max_context_bytes as u64;
                         let before_trim2 = messages.len();
                         messages = self.trim_context(room_id, messages, max_ctx).await;
                         if messages.len() < before_trim2 {
@@ -652,8 +652,8 @@ impl AgentHarness {
 
     fn build_system_prompt(&self) -> String {
         let name = &self.config.rocketchat.server.username;
-        let max_ctx = *self.config.rocketchat.model.max_context_bytes as f64 / 1_000_000.0;
-        let max_iter = self.config.rocketchat.model.max_iterations;
+        let max_ctx = *self.config.model.max_context_bytes as f64 / 1_000_000.0;
+        let max_iter = self.config.model.max_iterations;
         DEFAULT_SYSTEM_PROMPT
             .replace("{name}", name)
             .replace("{max_context_mb}", &format!("{max_ctx:.1}"))
@@ -669,16 +669,16 @@ impl AgentHarness {
     fn resolve_model(&self) -> String {
         self.config
             .resolve_chat_model(
-            self.config.rocketchat.model.default_provider.as_str(),
-            &self.config.rocketchat.model.default_model,
+            self.config.model.default_provider.as_str(),
+            &self.config.model.default_model,
             )
             .unwrap_or_else(|| {
                 warn!(
                     "Model alias '{}' not found for provider '{}', using raw model name",
-                    self.config.rocketchat.model.default_model,
-                    self.config.rocketchat.model.default_provider.as_str()
+                    self.config.model.default_model,
+                    self.config.model.default_provider.as_str()
                 );
-                self.config.rocketchat.model.default_model.clone()
+                self.config.model.default_model.clone()
             })
     }
 
@@ -1692,7 +1692,7 @@ url = "test.example.com"
 username = "bot"
 password = "secret"
 
-[rocketchat.model]
+[model]
 default_provider = "mock"
 default_model = "chat"
 max_iterations = 8
@@ -1775,7 +1775,7 @@ url = "test.example.com"
 username = "bot"
 password = "secret"
 
-[rocketchat.model]
+[model]
 default_provider = "mock"
 default_model = "chat"
 max_iterations = 2

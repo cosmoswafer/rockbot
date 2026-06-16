@@ -2281,6 +2281,7 @@ mod compression_tests {
     fn make_compression_test_config() -> rockbot::config::AppConfig {
         use rockbot::config::{ImageModelConfig, ModelConfig, RocketChatSection, ServerConfig};
         rockbot::config::AppConfig {
+            platform: Default::default(),
             rocketchat: RocketChatSection {
                 server: ServerConfig {
                     url: "test.example.com".into(),
@@ -2288,17 +2289,18 @@ mod compression_tests {
                     password: "secret".into(),
                     debug: false,
                 },
-                model: ModelConfig {
-                    default_provider: ProviderName::try_new("counting-mock".to_string()).unwrap(),
-                    default_model: "counting-model".into(),
-                    max_iterations: 5,
-                    max_soul_chars: BoundedUsize::try_new(5000).unwrap(),
-                    persist_interval_secs: 60,
-                    memory_ttl_secs: 86400,
-                    max_context_bytes: BoundedUsize::try_new(4194304).unwrap(),
-                    max_attachment_bytes: 20971520,
-                    model_context_length: 1_000_000,
-                },
+            },
+            matrix: None,
+            model: ModelConfig {
+                default_provider: ProviderName::try_new("counting-mock".to_string()).unwrap(),
+                default_model: "counting-model".into(),
+                max_iterations: 5,
+                max_soul_chars: BoundedUsize::try_new(5000).unwrap(),
+                persist_interval_secs: 60,
+                memory_ttl_secs: 86400,
+                max_context_bytes: BoundedUsize::try_new(4194304).unwrap(),
+                max_attachment_bytes: 20971520,
+                model_context_length: 1_000_000,
             },
             chat_providers: vec![rockbot::config::ProviderConfig {
                 name: ProviderName::try_new("counting-mock".to_string()).unwrap(),
@@ -2502,6 +2504,7 @@ dav_path = "remote.php/dav"
         };
 
         AppConfig {
+            platform: Default::default(),
             rocketchat: RocketChatSection {
                 server: ServerConfig {
                     url: "test.example.com".into(),
@@ -2509,17 +2512,18 @@ dav_path = "remote.php/dav"
                     password: "secret".into(),
                     debug: false,
                 },
-                model: ModelConfig {
-                    default_provider: ProviderName::try_new("mock".to_string()).unwrap(),
-                    default_model: "mock-model".into(),
-                    max_soul_chars: BoundedUsize::try_new(5000).unwrap(),
-                    max_iterations: 5,
-                    persist_interval_secs: 60,
-                    memory_ttl_secs: 86400,
-                    max_context_bytes: BoundedUsize::try_new(4194304).unwrap(),
-                    max_attachment_bytes: 20971520,
-                    model_context_length: 1_000_000,
-                },
+            },
+            matrix: None,
+            model: ModelConfig {
+                default_provider: ProviderName::try_new("mock".to_string()).unwrap(),
+                default_model: "mock-model".into(),
+                max_soul_chars: BoundedUsize::try_new(5000).unwrap(),
+                max_iterations: 5,
+                persist_interval_secs: 60,
+                memory_ttl_secs: 86400,
+                max_context_bytes: BoundedUsize::try_new(4194304).unwrap(),
+                max_attachment_bytes: 20971520,
+                model_context_length: 1_000_000,
             },
             chat_providers: vec![rockbot::config::ProviderConfig {
                 name: ProviderName::try_new("mock".to_string()).unwrap(),

@@ -25,6 +25,7 @@ uuid = { version = "1", features = ["v5"] }
 url = "2"
 serde_valid = "0.18"
 validator = { version = "0.20", features = ["derive"] }
+matrix-sdk = { version = "0.18", default-features = false, features = ["markdown"] }
 
 [dev-dependencies]
 tokio-test = "0.4"

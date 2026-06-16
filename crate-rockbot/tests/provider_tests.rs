@@ -22,7 +22,7 @@ username = "bot"
 password = "secret"
 
 
-[rocketchat.model]
+[model]
 default_provider = "openrouter"
 default_model = "deepseek"
 
@@ -47,9 +47,9 @@ reasoner = "deepseek-reasoner"
 "#;
     let config = AppConfig::from_toml(toml_content).unwrap();
 
-    assert_eq!(config.rocketchat.model.default_provider.as_str(), "openrouter");
-    assert_eq!(config.rocketchat.model.default_model, "deepseek");
-    assert_eq!(config.rocketchat.model.max_iterations, 28); // default
+    assert_eq!(config.model.default_provider.as_str(), "openrouter");
+    assert_eq!(config.model.default_model, "deepseek");
+    assert_eq!(config.model.max_iterations, 28); // default
 
     assert_eq!(config.chat_providers.len(), 2);
 
@@ -80,7 +80,7 @@ url = "test.example.com"
 username = "bot"
 password = "secret"
 
-[rocketchat.model]
+[model]
 default_provider = "mock"
 default_model = "chat"
 
@@ -93,7 +93,7 @@ base_url = "https://mock.ai/v1"
 chat = "mock-model"
 "#;
     let config = AppConfig::from_toml(toml).unwrap();
-    assert_eq!(config.rocketchat.model.max_iterations, 28);
+    assert_eq!(config.model.max_iterations, 28);
 }
 
 #[test]
@@ -104,7 +104,7 @@ url = "test.example.com"
 username = "bot"
 password = "secret"
 
-[rocketchat.model]
+[model]
 default_provider = "mock"
 default_model = "chat"
 max_iterations = 16
@@ -118,7 +118,7 @@ base_url = "https://mock.ai/v1"
 chat = "mock-model"
 "#;
     let config = AppConfig::from_toml(toml).unwrap();
-    assert_eq!(config.rocketchat.model.max_iterations, 16);
+    assert_eq!(config.model.max_iterations, 16);
 }
 
 #[test]
@@ -130,7 +130,7 @@ username = "bot"
 password = "secret"
 
 
-[rocketchat.model]
+[model]
 default_provider = "openrouter"
 default_model = "deepseek"
 
@@ -166,7 +166,7 @@ username = "bot"
 password = "secret"
 
 
-[rocketchat.model]
+[model]
 default_provider = "openrouter"
 default_model = "deepseek"
 
@@ -214,7 +214,7 @@ username = "bot"
 password = "secret"
 
 
-[rocketchat.model]
+[model]
 default_provider = "openrouter"
 default_model = "deepseek"
 
@@ -244,7 +244,7 @@ username = "bot"
 password = "secret"
 
 
-[rocketchat.model]
+[model]
 default_provider = "openrouter"
 default_model = "deepseek"
 
@@ -308,7 +308,7 @@ url = "test.example.com"
 username = "bot"
 password = "secret"
 
-[rocketchat.model]
+[model]
 default_provider = "p1"
 default_model = "chat"
 max_iterations = 8
@@ -324,7 +324,7 @@ chat = "test-model"
     std::fs::write(dir.join("default.config.toml"), default_toml).unwrap();
 
     let user_toml = r#"
-[rocketchat.model]
+[model]
 max_iterations = 100
 "#;
     let user_path = dir.join("user.config.toml");
@@ -341,8 +341,8 @@ max_iterations = 100
     std::env::set_current_dir(&old_cwd).unwrap();
     let _ = std::fs::remove_dir_all(&dir);
 
-    assert_eq!(config.rocketchat.model.max_iterations, 100);
-    assert_eq!(config.rocketchat.model.default_provider.as_str(), "p1");
+    assert_eq!(config.model.max_iterations, 100);
+    assert_eq!(config.model.default_provider.as_str(), "p1");
 }
 
 #[test]
@@ -353,7 +353,7 @@ url = "test.example.com"
 username = "bot"
 password = "secret"
 
-[rocketchat.model]
+[model]
 default_provider = "nonexistent"
 default_model = "chat"
 

@@ -999,7 +999,7 @@ async fn test_harness_constructs_and_registers_tools() {
 
     // Verify config access
     let cfg = harness.config();
-    assert_eq!(cfg.rocketchat.model.max_iterations, 5);
+    assert_eq!(cfg.model.max_iterations, 5);
 
     // Verify memory
     let mem = harness.memory();
@@ -1052,8 +1052,8 @@ async fn test_harness_image_pool_starts_empty() {
 #[test]
 fn test_agent_loop_max_iterations_from_config() {
     let config = make_test_config("https://chat.example.com");
-    assert_eq!(config.rocketchat.model.max_iterations, 5);
-    assert_eq!(config.rocketchat.model.model_context_length, 1_000_000);
+    assert_eq!(config.model.max_iterations, 5);
+    assert_eq!(config.model.model_context_length, 1_000_000);
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -1086,6 +1086,7 @@ fn make_test_config(webdav_url: &str) -> rockbot::config::AppConfig {
     let webdav_cfg = make_webdav_config(webdav_url);
 
     rockbot::config::AppConfig {
+        platform: Default::default(),
         rocketchat: RocketChatSection {
             server: ServerConfig {
                 url: "chat.example.com".into(),
@@ -1093,17 +1094,18 @@ fn make_test_config(webdav_url: &str) -> rockbot::config::AppConfig {
                 password: "secret".into(),
                 debug: false,
             },
-            model: ModelConfig {
-                default_provider: ProviderName::try_new("mock".to_string()).unwrap(),
-                default_model: "mock-model".into(),
-                max_soul_chars: BoundedUsize::try_new(5000).unwrap(),
-                max_iterations: 5,
-                persist_interval_secs: 60,
-                memory_ttl_secs: 86400,
-                max_context_bytes: BoundedUsize::try_new(4194304).unwrap(),
-                max_attachment_bytes: 20971520,
-                model_context_length: 1_000_000,
-            },
+        },
+        matrix: None,
+        model: ModelConfig {
+            default_provider: ProviderName::try_new("mock".to_string()).unwrap(),
+            default_model: "mock-model".into(),
+            max_soul_chars: BoundedUsize::try_new(5000).unwrap(),
+            max_iterations: 5,
+            persist_interval_secs: 60,
+            memory_ttl_secs: 86400,
+            max_context_bytes: BoundedUsize::try_new(4194304).unwrap(),
+            max_attachment_bytes: 20971520,
+            model_context_length: 1_000_000,
         },
         chat_providers: vec![chat_config],
         image_providers: vec![rockbot::config::ProviderConfig {

@@ -1,3 +1,6 @@
+[platform]
+name = "rocketchat"
+
 [[chat_providers]]
 name = "openrouter"
 api_key = ""
@@ -18,6 +21,15 @@ base_url = "https://api.deepseek.com/v1"
 [chat_providers.models]
 flash = "deepseek-v4-flash"
 pro = "deepseek-v4-pro"
+
+[[chat_providers]]
+name = "llamacpp"
+api_key = ""
+base_url = "http://localhost:8080/v1"
+chat_path = "/chat/completions"
+
+[chat_providers.models]
+local = "local-model"
 
 [[image_providers]]
 name = "openrouter"
@@ -52,7 +64,7 @@ default_num_images = 1
 default_image_size = "portrait_2_3"
 default_image_size_tier = "4K"
 
-[rocketchat.model]
+[model]
 default_provider = "openrouter"
 default_model = "gpt"
 max_iterations = 47
@@ -67,6 +79,14 @@ model_context_length = 128_000
 url = "localhost"
 username = ""
 password = ""
+
+[matrix.server]
+homeserver = ""
+user_id = ""
+password = ""
+# device_id = ""
+# room_prefix = ""
+state_dir = "./tmp/matrix-sdk"
 
 [webdav]
 dav_path = "/remote.php/dav"
