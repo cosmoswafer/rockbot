@@ -52,7 +52,6 @@ url = "https://cloud.example.com"
 username = "EDITME"
 password = "EDITME"
 root = "rockbot"
-# calendar_name = "personal"
 
 [tools.exa]
 api_key = "EDITME"

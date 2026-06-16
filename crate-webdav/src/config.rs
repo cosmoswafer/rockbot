@@ -14,8 +14,6 @@ pub struct WebDavConfig {
     pub username: String,
     pub password: String,
     pub root: DavRoot,
-    #[serde(default)]
-    pub calendar_name: Option<String>,
     #[serde(default = "default_dav_path")]
     pub dav_path: String,
 }

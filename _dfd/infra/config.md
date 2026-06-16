@@ -182,7 +182,6 @@ flowchart TD
 | `username` | `String`  | NextCloud username                      |
 | `password` | `String`  | NextCloud app password                  |
 | `root`     | `DavRoot` | Base directory for bot data; non-empty validated newtype |
-| `calendar_name` | `Option<String>` | CalDAV calendar name (enables calendar tool if set) |
 | `dav_path`      | `String`         | WebDAV/NextCloud API path prefix (default `"/remote.php/dav"`) |
 
 > **Validated newtypes.** `ProviderName`, `ConfigUrl`, `DavUrl`, `DavRoot`, `NonEmptyString`, and `BoundedUsize`
