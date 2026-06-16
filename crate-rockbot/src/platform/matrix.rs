@@ -1,8 +1,11 @@
 use std::any::Any;
 
 use async_trait::async_trait;
+use base64::Engine;
 use matrix_sdk::config::SyncSettings;
-use matrix_sdk::ruma::events::room::message::RoomMessageEventContent;
+use matrix_sdk::ruma::events::room::message::{
+    MessageType, RoomMessageEventContent,
+};
 use matrix_sdk::ruma::events::SyncMessageLikeEvent;
 use matrix_sdk::Client;
 use tracing::{debug, info, warn};
@@ -122,12 +125,14 @@ impl MessagingClient for MatrixPlatform {
             .unwrap_or_default()
             .as_secs();
         let handler = handler.clone();
+        let media_client = client.clone();
 
         client.add_event_handler(
             move |ev: SyncMessageLikeEvent<RoomMessageEventContent>,
                   room: matrix_sdk::Room| {
                 let handler = handler.clone();
                 let user_id = user_id_owned.clone();
+                let media_client = media_client.clone();
                 async move {
                     debug!("Matrix: received message event in room {}", room.room_id());
 
@@ -158,12 +163,49 @@ impl MessagingClient for MatrixPlatform {
 
                     info!("Matrix: processing message from sender='{}' in room {}", sender, room.room_id());
 
-                    let body = match &original.content.msgtype {
-                        matrix_sdk::ruma::events::room::message::MessageType::Text(text) => {
-                            text.body.clone()
+                    let (body, attachments) = match &original.content.msgtype {
+                        MessageType::Text(text) => {
+                            (text.body.clone(), vec![])
+                        }
+                        MessageType::Image(image_content) => {
+                            match media_client.media().get_file(image_content, false).await {
+                                Ok(Some(bytes)) => {
+                                    let mime = image_content.info.as_ref()
+                                        .and_then(|i| i.mimetype.as_deref())
+                                        .unwrap_or("image/png");
+                                    let data_uri = format!(
+                                        "data:{};base64,{}",
+                                        mime,
+                                        base64::engine::general_purpose::STANDARD.encode(&bytes)
+                                    );
+                                    let title = image_content.body.clone();
+                                    let att = rocketchat::AttachmentInfo {
+                                        title: Some(title.clone()),
+                                        title_link: Some(data_uri),
+                                        title_link_download: None,
+                                        image_url: None,
+                                        image_type: Some(mime.to_string()),
+                                        image_size: image_content.info.as_ref().and_then(|i| i.size.map(Into::into)),
+                                        image_dimensions: image_content.info.as_ref().and_then(|i| {
+                                            i.width.zip(i.height).map(|(w, h)| rocketchat::ImageDim {
+                                                width: w.into(),
+                                                height: h.into(),
+                                            })
+                                        }),
+                                        image_preview: None,
+                                        attach_type: Some("file".to_string()),
+                                        file_id: None,
+                                    };
+                                    (title, vec![att])
+                                }
+                                _ => {
+                                    // Download failed — treat as text-only
+                                    (image_content.body.clone(), vec![])
+                                }
+                            }
                         }
                         _ => {
-                            debug!("Matrix: ignoring non-text message");
+                            debug!("Matrix: ignoring non-text, non-image message");
                             return;
                         }
                     };
@@ -209,7 +251,7 @@ impl MessagingClient for MatrixPlatform {
                         alias: None,
                         file: None,
                         files: vec![],
-                        attachments: vec![],
+                        attachments,
                         urls: vec![],
                     };
 

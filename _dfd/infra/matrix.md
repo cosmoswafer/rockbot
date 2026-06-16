@@ -116,8 +116,8 @@ flowchart TD
 **Filter rules** (evaluated in order):
 
 1. **Skip self**: `event.sender == bot_user_id` → drop
-2. **Skip non-text**: `msgtype != "m.text"` → drop (images handled separately; encrypted
-   `m.room.encrypted` events also dropped — no handler registered for them)
+2. **Skip non-text**: `msgtype != "m.text"` → drop (images are handled in the `m.image`
+   branch; encrypted `m.room.encrypted` events also dropped — no handler registered for them)
 3. **Skip edits**: `m.relates_to.rel_type == "m.replace"` → drop (edits are not re-processed)
 4. **DM check**: room member count ≤ 2 → forward as DM (`is_dm = true`)
 5. **Mention check** *(spec, not yet implemented)*: message body contains `@bot_user_id`
@@ -240,40 +240,57 @@ The typing timeout is set to 5000ms per the Matrix spec recommendation. The
 heartbeat task in the agent loop refreshes it every 2 seconds, matching the
 RocketChat behavior.
 
-### 2h. Image Attachment Reception
+### 2h. Image Attachment Reception (Approach A)
 
 When a user sends an image in a Matrix room, the event has `msgtype: "m.image"`
-with an `mxc://` URI pointing to the media on the homeserver.
+with an `mxc://` URI pointing to the media on the homeserver. The SDK provides
+`Client::media()` for downloading media content directly.
+
+Unlike the RocketChat path (which downloads in the harness layer via HTTP),
+Matrix images are **downloaded and base64‑encoded in the platform event handler**
+(Approach A). The encoded `data:` URI is placed in `attachments[0].title_link`,
+and the harness `download_attachment_refs()` detects the `data:` scheme and
+passes it through without a redundant HTTP fetch.
 
 ```mermaid
 flowchart TD
     MATRIX[Matrix Homeserver]
     EVT[m.room.message<br/>msgtype: m.image]
     PARSE(ParseImageEvent)
-    RESOLVE(ResolveMxcUri)
-    DOWNLOAD(DownloadMedia)
+    DOWNLOAD(DownloadViaSdk)
+    ENCODE(Base64Encode)
     BUILD(BuildIncomingMessage)
     DISPATCH(DispatchToAgent)
+    HARNESS[Agent Harness]
+    BYPASS[download_attachment_refs<br/>detects data: → passthrough]
 
     MATRIX -->|"sync event"| EVT
-    EVT -->|"event content"| PARSE
-    PARSE -->|"mxc:// URI + mimetype"| RESOLVE
-    RESOLVE -->|"https://homeserver/_matrix/media/v3/download/<server>/<mediaId>"| DOWNLOAD
-    DOWNLOAD -->|"image bytes"| BUILD
-    BUILD -->|"IncomingMessage with<br/>attachment metadata"| DISPATCH
+    EVT -->|"ImageMessageEventContent"| PARSE
+    PARSE -->|"mxc:// URI via source field"| DOWNLOAD
+    DOWNLOAD -->|"client.media().get_file()"| MATRIX
+    MATRIX -->|"image bytes"| DOWNLOAD
+    DOWNLOAD -->|"raw bytes"| ENCODE
+    ENCODE -->|"data:image/png;base64,..."| BUILD
+    BUILD -->|"IncomingMessage<br/>attachments[0].title_link = data: URI"| DISPATCH
+    DISPATCH -->|"process_message()"| HARNESS
+    HARNESS -->|"download_attachment_refs()<br/>checks title_link starts with data: → passthrough"| BYPASS
 ```
 
-**MXC URI resolution**: `mxc://server/mediaId` → `GET /_matrix/media/v3/download/{server}/{mediaId}`
-on the homeserver. The SDK provides `Client::media()` for downloading media content.
+**Limitations**:
+- Encrypted images (`m.room.encrypted` + `file` field) are not supported — the
+  `e2e-encryption` feature is not enabled (see Section 1). Only `MediaSource::Plain`
+  (unencrypted `mxc://` URIs) can be downloaded.
+- E2EE room images arrive as opaque `m.room.encrypted` events and are dropped
+  by the event handler — no handler is registered for them.
 
 **Mapping to `IncomingMessage`**:
-- `file.title_link` → resolved HTTPS URL for the original image
-- `file.type` → `mimetype` from the event content
-- `file.name` → `body` field from the event content (filename)
-- `file.size` → `size` from the event content (if present)
-- `attachments[0].image_url` → same resolved URL (Matrix has no thumbnail/original split)
-- `attachments[0].image_type` → `mimetype`
+- `text` → `body` field from the event content (filename or media caption)
+- `attachments[0].title` → `body` field (filename)
+- `attachments[0].title_link` → `data:image/{type};base64,...` (pre‑encoded data URI)
+- `attachments[0].image_type` → `mimetype` from `info` (if present)
 - `attachments[0].image_dimensions` → `{width, height}` from `info` (if present)
+- `attachments[0].image_size` → `size` from `info` (if present)
+- `file` → `None` (image data travels via `attachments`, not via `file`)
 
 ### 2i. Room Name Resolution
 
@@ -325,9 +342,9 @@ flowchart TD
 | `timestamp`             | `event.origin_server_ts` (milliseconds → seconds)      |
 | `sender_id`             | `event.sender` (full MXID, e.g. `@alice:example.org`)  |
 | `alias`                 | `None` (Matrix has no per-message alias)               |
-| `file`                  | Populated from `m.image` / `m.file` events             |
-| `files`                 | Single-element list (Matrix has no thumbnail variants)  |
-| `attachments`           | Populated from `m.image` events with resolved HTTPS URL |
+| `file`                  | `None` (image data travels via `attachments`)           |
+| `files`                 | Empty (Matrix has no file list metadata)                |
+| `attachments`           | Populated from `m.image` events with `data:` URI in `title_link` |
 | `urls`                  | Extracted from message body URLs (no server-side preview headers) |
 
 #### `MatrixServerConfig`

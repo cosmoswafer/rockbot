@@ -698,6 +698,15 @@ impl AgentHarness {
                 .filter(|t| !t.is_empty())
                 .unwrap_or("image")
                 .to_string();
+            // Pre-encoded data: URI from platform layer (e.g. Matrix m.image handler).
+            // Pass through directly without HTTP fetch.
+            if title_link.starts_with("data:") {
+                refs.push(AttachmentRef {
+                    title,
+                    data_uri: title_link.to_string(),
+                });
+                continue;
+            }
             let host = self.config.rocketchat.server.url
                 .trim_start_matches("https://")
                 .trim_start_matches("http://")
