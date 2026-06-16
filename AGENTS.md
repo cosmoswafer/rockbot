@@ -4,7 +4,7 @@
 
 ```
 crate-rocketchat/     # lib + debug binary — standalone RocketChat DDP WebSocket client
-crate-rockbot/        # lib + application binary — config, AiProvider trait, agent loop, tools, memory
+crate-rockbot/        # lib + application binary — config, AiProvider trait, MessagingClient trait (platform/), agent loop, tools, memory
 crate-webdav/         # lib only — WebDAV client for NextCloud storage operations
 _dfd/                # data flow diagrams (design spec): context diagram at root, subdirs by component (agent, infra, ai, memory, knowledge, tools, interception)
 _doc/                # constraints, test suite inventory
@@ -54,9 +54,9 @@ No CI, no `rustfmt.toml`, no `clippy.toml`, no `rust-toolchain` file.
   - `default.config.toml` — complete spec with all keys and default values (empty strings for credentials).
   - `example.config.toml` — minimal user override file with `EDITME` placeholders. Intended to be copied to `config.toml` and edited.
 - `CONFIG_FILE` env var sets the config path; defaults to `config.toml` (not a CLI argument).
-- Config uses TOML: `[rocketchat.server]` + `[rocketchat.model]` sub-sections, `[[chat_providers]]` and `[[image_providers]]` arrays-of-tables.
+- Config uses TOML: `[platform] name` selects messaging platform (`"rocketchat"` or `"matrix"`), `[rocketchat.server]` + `[rocketchat.model]` or `[matrix.server]` + `[matrix.model]` sub-sections, `[[chat_providers]]` and `[[image_providers]]` arrays-of-tables.
 - `rocketchat` crate has both `lib.rs` (public API) and `main.rs` (debug binary — connects to RocketChat and logs events, no bot logic).
-- `rockbot` crate uses `async-trait` for the `AiProvider` trait (implementations: OpenRouter, DeepSeek, Fal). Wiremock is available for mock HTTP testing.
+- `rockbot` crate uses `async-trait` for the `AiProvider` trait (implementations: OpenRouter, DeepSeek, llama.cpp, Fal) and the `MessagingClient` trait (implementations: `RocketChatPlatform`, `MatrixPlatform`). Wiremock is available for mock HTTP testing.
 - Exa API key: reads from `[tools.exa]` config section first, then falls back to `EXA_API_KEY` env var.
 - Tools registered conditionally: `WebDavTool` and `ImageGenTool` only if WebDAV is configured; `ImageGenTool` also requires an `image_provider` entry (uses `FalAiProvider` internally regardless of provider name).
 - Main loop: exponential backoff reconnect (2^attempt seconds, max 5 retries, then exits).
@@ -117,14 +117,15 @@ to make data flow violations compile-time errors rather than runtime surprises:
 | --- | -------------- | --------------------- |
 | `_dfd/context-diagram.md` | Level 0 system boundary (no code) | — |
 | `_dfd/infra/config.md` | `config.rs` | `example.config.toml`, `default.config.toml` |
-| `_dfd/infra/rocketchat.md` | rocketchat (`client.rs`, `ddp.rs`, `types.rs`) | — |
+| `_dfd/infra/rocketchat.md` | rocketchat (`client.rs`, `ddp.rs`, `types.rs`), `platform/rocketchat.rs` | — |
 | `_dfd/infra/rocketchat-rest.md` | rocketchat (`rest.rs`), `harness.rs` | — |
-| `_dfd/ai/ai-provider.md` | `provider/mod.rs`, `provider/deepseek.rs`, `provider/openrouter.rs`, `provider/fal.rs` | `types.rs` |
+| `_dfd/infra/matrix.md` | `platform/matrix.rs` | `platform/mod.rs` |
+| `_dfd/ai/ai-provider.md` | `provider/mod.rs`, `provider/deepseek.rs`, `provider/openrouter.rs`, `provider/fal.rs`, `provider/llamacpp.rs` | `types.rs` |
 | `_dfd/memory/memory.md` | `memory.rs` | `harness.rs`, webdav crate |
 | `_dfd/memory/memory-compression.md` | `harness.rs` (`compress_room_if_needed`, `compress_for_summary`, `write_summary_md`, `load_summary`, `truncate_and_summarize`) | `memory.rs`, `knowledge.rs`, `config.rs` |
 | `_dfd/knowledge/knowledge.md` | `knowledge.rs` | `tools/save_knowledge.rs`, `tools/forget_knowledge.rs`, `tools/recall_knowledge.rs` |
 | `_dfd/knowledge/knowledge-priority.md` | `knowledge.rs` | `harness.rs`, `memory.rs` |
-| `_dfd/agent/agent-loop.md` | `main.rs` | `harness.rs`, `config.rs` |
+| `_dfd/agent/agent-loop.md` | `main.rs`, `platform/mod.rs` | `harness.rs`, `config.rs`, `platform/rocketchat.rs`, `platform/matrix.rs` |
 | `_dfd/agent/agent-harness.md` | `harness.rs` | `memory.rs`, `tool.rs`, `provider/mod.rs` |
 | `_dfd/interception/image-interception.md` | `harness.rs` | `tools/image_gen.rs`, `tools/vision.rs`, `tools/webdav.rs`, `provider/fal.rs`, `image_cache.rs` |
 | `_dfd/interception/secret-interception.md` | `harness.rs` (`load_secrets_from_webdav`, `filter_secrets_by_host`, `resolve_secret_refs_deep`, `replace_secret_refs`) | `tools/web_fetch.rs`, `tools/webdav.rs`, webdav crate |

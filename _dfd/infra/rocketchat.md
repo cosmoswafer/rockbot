@@ -9,6 +9,12 @@ parsing/filtering, and reply delivery. DMs, messages that start with or contain 
 self-display name (emoji stripped), and room-specific registered callbacks
 are forwarded to the agent.
 
+This crate also implements the `MessagingClient` trait (defined in
+`crate-rockbot/src/platform/mod.rs`) via `RocketChatPlatform`, which wraps
+`RocketChatClient` and `RestApiClient` together. The trait provides the
+agent loop with a platform-agnostic interface — the same `IncomingMessage`
+type is shared with the [Matrix platform](matrix.md).
+
 > **Deprecation note**: Rocket.Chat's official documentation marks the raw
 > DDP/bots approach as **deprecated** (2025). The recommended replacement is
 > [`@rocket.chat/ddp-client`](https://www.npmjs.com/package/@rocket.chat/ddp-client)
@@ -17,7 +23,8 @@ are forwarded to the agent.
 - Upstream: [Configuration Management](config.md) provides configuration
   (typed `RocketChatConfig` deserialized from TOML via `serde`)
 - Downstream: [Agent Harness](../agent/agent-harness.md) receives filtered `IncomingMessage`
-  structs via async callback; sends replies through `MessageSender::reply()`
+  structs via async callback; sends replies through `MessagingClient::send_reply()`
+- See also: [Matrix Connection](matrix.md) for the alternative platform
 
 ## 2. Diagram
 
@@ -547,3 +554,20 @@ and run through `utils::strip_emoji()` to remove emoji codepoints (e.g. "零夢 
 contains the display name, even without an `@username` mention.
 
 *(Room name cache removed — see `room-name-fields.md` for the rationale.)*
+
+#### `RocketChatPlatform` (crate-rockbot/src/platform/rocketchat.rs)
+
+Wrapper that implements the `MessagingClient` trait for RocketChat. Composes
+`RocketChatClient` (DDP) and `RestApiClient` (REST) to provide the trait's
+methods:
+
+| `MessagingClient` method | RocketChat implementation                                    |
+| ------------------------ | ------------------------------------------------------------ |
+| `connect_and_run()`      | Delegates to `RocketChatClient::connect_and_run()` with the handler callback |
+| `send_reply()`           | REST `chat.sendMessage` with `alias` from soul memory; falls back to DDP `MessageSender::reply()` on REST failure |
+| `send_typing()`          | DDP `stream-notify-room/typing` via `MessageSender::typing()` |
+| `bot_user_id()`          | `RocketChatClient.user_id` (set after authentication)        |
+
+The platform wrapper is constructed in `main.rs::run_bot()` after config loading
+and provider wiring. It is passed to the reconnect loop which calls
+`connect_and_run()` with the message dispatch closure.

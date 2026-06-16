@@ -4,7 +4,7 @@
 
 Configurable `AiProvider` trait abstracting over OpenAI-compatible chat
 completion APIs and `ImageProvider` trait for image generation. Concrete
-implementations include OpenRouter, DeepSeek (text), OpenRouterImageProvider,
+implementations include OpenRouter, DeepSeek, llama.cpp (text), OpenRouterImageProvider,
 and FalAiProvider (image). Each handles provider-specific headers, model naming,
 and payload formatting. Supports both base64 data URIs and remote URLs via
 `ContentPart::ImageUrl`. The `stream` field is sent in request bodies but SSE
@@ -15,6 +15,30 @@ response parsing is not implemented — all responses are consumed as full JSON.
   (message history + tool definitions) and returns `CompletionResult`
 - Downstream: [Image Gen Tool](../tools/image-gen.md) calls `generate_image()` via
   `ImageProvider` trait, implemented by `FalAiProvider` and `OpenRouterImageProvider`
+
+### llama.cpp provider
+
+`LlamaCppProvider` targets a local llama.cpp HTTP server (typically
+`http://localhost:8080`). The llama.cpp server exposes an OpenAI-compatible
+`/v1/chat/completions` endpoint, so the request/response format is shared
+with `OpenRouterProvider`. Key differences:
+
+- **No API key**: `api_key` is empty; the `Authorization` header is omitted
+  when the key is empty.
+- **No tool/function calling**: most llama.cpp models do not support native
+  tool calling. When `tools` is present in `ChatRequest`, `LlamaCppProvider`
+  serializes tool definitions as a system-message preamble (JSON Schema
+  descriptions appended to the last system message) instead of the `tools`
+  field. The model emits tool calls as structured text; the provider parses
+  them back into `ToolCall` objects using a delimiter convention
+  (`✿FUNCTION✿` / `✿ARGS✿` / `✿END✿`).
+- **No vision**: `ContentPart::ImageUrl` parts are stripped and replaced with
+  `[image]` text placeholders (same as DeepSeek).
+- **Single model**: `models` map typically has one entry. The model alias
+  is required by config but the server ignores the `model` field in the
+  request body (the loaded GGUF determines the model).
+- **No retry on 429**: local servers do not rate-limit. Network errors
+  (connection refused, timeout) are returned immediately as `ServerError`.
 
 ## 2. Diagram
 
@@ -27,6 +51,7 @@ flowchart TD
     FORMAT(FormatProviderRequest)
     OPENROUTER(OpenRouterProvider)
     DEEPSEEK(DeepSeekProvider)
+    LLAMA(LlamaCppProvider)
     HTTP(SendHttpRequest)
     PARSE(ParseResponse)
     PROVIDER_API[Provider HTTP API]
@@ -35,8 +60,10 @@ flowchart TD
     BUILD -->|"provider request"| FORMAT
     FORMAT -->|"openrouter request"| OPENROUTER
     FORMAT -->|"deepseek request"| DEEPSEEK
+    FORMAT -->|"llama.cpp request<br/>(tools as system preamble)"| LLAMA
     OPENROUTER -->|"http request"| HTTP
     DEEPSEEK -->|"http request"| HTTP
+    LLAMA -->|"http request<br/>(no auth header)"| HTTP
     HTTP -->|"http post"| PROVIDER_API
     PROVIDER_API -->|"json response body"| HTTP
     HTTP -->|"raw bytes"| PARSE
@@ -80,7 +107,14 @@ flowchart TD
 "context length" or "maximum context" (case-insensitive) are mapped to
 `RockBotError::ContextLengthExceeded` instead of `InvalidRequest`. The harness
 uses this to trigger aggressive memory compression and a one-time retry. This
-applies to both OpenRouter and DeepSeek providers.
+applies to OpenRouter, DeepSeek, and llama.cpp providers.
+
+**llama.cpp error handling**: The local server does not rate-limit (no 429).
+Connection errors (server not running, port unreachable) map to `ServerError`
+immediately with no retry. HTTP 400 with context-length keywords still triggers
+`ContextLengthExceeded`. The `sanitize_tool_args` re-validation step is skipped
+since tool call arguments originate from structured-text parsing, not provider
+JSON.
 
 Before sending each request, messages are sanitized:
 - `reasoning_content` is stripped from all messages (response-only field that
@@ -115,14 +149,14 @@ flowchart TD
     IMG_B64 -->|"image base64 part"| MULTI
     MULTI -->|"content array"| STRIP
     STRIP -->|"yes (OpenRouter)"| REQ
-    STRIP -->|"no (DeepSeek)"| CONVERT
+    STRIP -->|"no (DeepSeek / llama.cpp)"| CONVERT
     CONVERT -->|"text-only content"| REQ
 ```
 
-**Provider-specific handling**: DeepSeek models currently do not support vision
-(multimodal) input. Until DeepSeek adds `image_url` content part support, the
-`DeepSeekProvider::build_request_body()` method strips all `ContentPart::ImageUrl`
-parts from every `ChatMessage`, converting multipart content to plain text with
+**Provider-specific handling**: DeepSeek and llama.cpp models currently do not
+support vision (multimodal) input. `DeepSeekProvider::build_request_body()` and
+`LlamaCppProvider::build_request_body()` strip all `ContentPart::ImageUrl` parts
+from every `ChatMessage`, converting multipart content to plain text with
 `[image]` placeholders. This keeps the shared `ChatMessage`/`ContentPart` data
 structures intact across all providers while preventing 400 errors from
 `unknown variant 'image_url', expected 'text'`. OpenRouter passes vision payloads

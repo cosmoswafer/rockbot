@@ -8,10 +8,16 @@ passwords and API keys). The two are deep-merged via Serde's merge strategy
 (user values override defaults). The validated `AppConfig` struct is shared
 read-only across all subsystems.
 
+The messaging platform is selected via `[platform] name = "rocketchat" | "matrix"`.
+Only the matching server section (`[rocketchat.server]` or `[matrix.server]`) is
+required; the other is ignored. Both platforms produce the same `IncomingMessage`
+type consumed by the agent harness.
+
 - Downstream: [WebDAV Tool](../tools/webdav.md) consumes `WebDavConfig` for remote file
   access
-- Downstream: [RocketChat Connection](rocketchat.md), [AI Provider](ai-provider.md),
-  [Memory Management](memory.md) and [Tools](tools/) each consume their respective
+- Downstream: [RocketChat Connection](rocketchat.md) or [Matrix Connection](matrix.md) — selected by platform name
+- Downstream: [AI Provider](../ai/ai-provider.md),
+  [Memory Management](../memory/memory.md) and [Tools](../tools/) each consume their respective
   config slices
 
 ## 2. Diagram
@@ -65,12 +71,20 @@ flowchart TD
 
 | Field        | Type                         | Notes                                          |
 | ------------ | ---------------------------- | ---------------------------------------------- |
-| `rocketchat` | `RocketChatSection`          | Server connection + chat model settings        |
+| `platform`   | `PlatformConfig`             | Messaging platform selection (`name` field)    |
+| `rocketchat` | `RocketChatSection`          | RocketChat server + chat model (required if `platform.name = "rocketchat"`) |
+| `matrix`     | `Option<MatrixSection>`      | Matrix server + chat model (required if `platform.name = "matrix"`) |
 | `chat_providers` | `Vec<ProviderConfig>`    | Chat AI provider definitions (array-of-tables) |
 | `image_providers`| `Vec<ProviderConfig>`    | Image generation provider definitions          |
 | `image_model`    | `ImageModelConfig` (always present via default)| Default image provider + model alias           |
 | `webdav`     | `Option<WebDavConfig>`       | NextCloud WebDAV endpoint and credentials      |
 | `tools`      | `HashMap<String, ToolServiceConfig>`| Tool-specific API keys (generic map)     |
+
+#### `PlatformConfig`
+
+| Field  | Type     | Notes                                                          |
+| ------ | -------- | -------------------------------------------------------------- |
+| `name` | `String` | `"rocketchat"` or `"matrix"`. Determines which server section is active. Validated non-empty at deserialization; cross-validated against server section presence. |
 
 #### `RocketChatSection`
 
@@ -79,7 +93,7 @@ flowchart TD
 | `server` | `ServerConfig` | RocketChat connection details                 |
 | `model`  | `ModelConfig`  | Default provider, model alias, history limits |
 
-#### `ServerConfig`
+#### `ServerConfig` (RocketChat)
 
 | Field      | Type     | Notes                                                               |
 | ---------- | -------- | ------------------------------------------------------------------- |
@@ -92,6 +106,27 @@ flowchart TD
 > with a `use_tls: bool` field (default `true`) instead of `debug`. The rockbot crate's
 > `ServerConfig` is for bot-level connections; the rocketchat crate's is per-client TLS
 > configuration.
+
+#### `MatrixSection`
+
+| Field    | Type                  | Notes                                         |
+| -------- | --------------------- | --------------------------------------------- |
+| `server` | `MatrixServerConfig`  | Matrix homeserver connection details           |
+| `model`  | `ModelConfig`         | Default provider, model alias, history limits (shared type with RocketChat) |
+
+#### `MatrixServerConfig`
+
+| Field          | Type     | Notes                                                          |
+| -------------- | -------- | -------------------------------------------------------------- |
+| `homeserver`   | `String` | Matrix homeserver URL (e.g. `"https://matrix.org"`); non-empty validated |
+| `user_id`      | `String` | Matrix user ID (`@bot:example.org`); non-empty validated       |
+| `password`     | `String` | Account password (`""` in defaults, filled in user config)     |
+| `device_id`    | `Option<String>` | Device identifier for session management. Auto-generated on first login if omitted. |
+| `room_prefix`  | `Option<String>` | Optional prefix for room name resolution (e.g. `"#bot"`). If set, bot only responds in rooms matching this prefix. |
+
+> **Cross-validation**: `validate_app_config()` checks that `platform.name == "rocketchat"`
+> implies `rocketchat.server` has non-empty credentials, and `platform.name == "matrix"`
+> implies `matrix` is `Some` with non-empty `homeserver` and `user_id`.
 
 #### `ModelConfig`
 
@@ -162,10 +197,11 @@ flowchart TD
 > **Two-layer input protection** follows the pattern in AGENTS.md:
 > - [`serde_valid`](https://crates.io/crates/serde_valid) — format/shape constraints at deserialization
 >   boundaries (`min_length`, `max_length`, `pattern`, etc.). Used on `ToolServiceConfig`,
->   `KnowledgeIndex`, and `IndexEntry`.
+>   `KnowledgeIndex`, `IndexEntry`, and `MatrixServerConfig`.
 > - [`validator`](https://crates.io/crates/validator) — business-logic cross-field validation.
 >   Used on `AppConfig` via a `#[validate(schema)]` function that verifies `default_provider`
->   references exist in `[[chat_providers]]` and `[[image_providers]]`.
+>   references exist in `[[chat_providers]]` and `[[image_providers]]`, and that the active
+>   platform's server section has non-empty credentials.
 >
 > Defined in `crate-rockbot/src/validated.rs` (rockbot types) and
 > `crate-webdav/src/validated.rs` + `crate-webdav/src/types.rs` (WebDAV types).
