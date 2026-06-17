@@ -119,11 +119,11 @@ Errors during auto-attachment download/encode are logged and the attachment is
 skipped; the message still enters chat history with text-only content. Errors
 from the vision tool are returned as tool result errors.
 The size limit is configurable via `rocketchat.model.max_attachment_bytes`
-(default 20 MB).
+(default 25 MB).
 
 ### 2c. Image Download & Encoding
 
-Downloads the image bytes, verifies the MIME type and size limit (configurable via `max_attachment_bytes`, fallback default 20MB),
+Downloads the image bytes, verifies the MIME type and size limit (configurable via `max_attachment_bytes`, fallback default 25MB),
 encodes as base64, and builds a markdown image tag. The URL path fragment is
 used as the image alt text.
 
@@ -166,37 +166,54 @@ RocketChat reply text, where multi-megabyte base64 strings exceed
 
 ### 2d. Harness Vision Injection
 
-After the vision tool returns, the harness intercepts the result text, parses
-the base64 data URIs from the markdown tags, caches them in a per-room image
-pool, and injects them as `ContentPart::ImageUrl` parts in a synthetic user
-message appended to the messages array before the next LLM call. The pool is
-consumed (drained) on injection — images are ephemeral and only used for a
-single LLM cycle.
+After the vision (or webdav) tool returns, the harness intercepts the result
+text, parses the base64 data URIs from the markdown tags, and stores the
+`CachedImage` entries in **two** pools:
+
+1. **`image_pool`** (`HashMap<room_id, Vec<CachedImage>>`): **persistent** pool
+   (entries live for the room's lifetime). Used by `inject_image_urls_from_refs`
+   for name-based matching when the LLM calls `image_gen` for editing (one of the
+   4 editing sources — see [Image Interception](../interception/image-interception.md#2d)).
+2. **`pending_vision_images`** (`HashMap<room_id, Vec<CachedImage>>`):
+   **ephemeral** pool — drained once per LLM iteration. Before each context
+   rebuild, the harness drains this pool and injects a synthetic user message
+   with `ContentPart::ImageUrl` parts so vision-capable LLMs can actually see
+   the fetched image pixels (raw markdown `![name](data:...)` text is invisible
+   to vision models).
+
+Both vision and webdav tool results are intercepted — `webdav`'s `read` action
+detects image files by extension and returns the same `![name](data:...)` format,
+passing through the same `parse_markdown_images()` → dual-cache pipeline.
 
 ```mermaid
 flowchart TD
     HIST[(ConversationHistory)]
-    CACHE(CacheVisionImages)
-    POOL[(ImagePool<br/>per-room)]
+    CACHE(parse_markdown_images)
+    IMG_POOL[(image_pool<br/>persistent — editing<br/>name-matching)]
+    PENDING[(pending_vision_images<br/>ephemeral — drained<br/>per iteration)]
     BUILD(BuildContext)
-    INJECT(InjectVisionImages)
     AI[AiProvider]
+    INJECT(InjectVisionImages)
 
-    HIST -->|"vision tool result text<br/>![n](data:...)"| CACHE
-    CACHE -->|"CachedImage { data_uri, name }"| POOL
+    HIST -->|"tool result text<br/>![n](data:...)"| CACHE
+    CACHE -->|"CachedImage { data_uri, name }"| IMG_POOL
+    CACHE -->|"CachedImage { data_uri, name }"| PENDING
     BUILD -->|"context messages"| INJECT
-    POOL -->|"drain images"| INJECT
+    PENDING -->|"drain room images"| INJECT
     INJECT -->|"synthetic user msg<br/>with ImageUrl parts"| BUILD
     BUILD -->|"chat request"| AI
+    IMG_POOL -->|"persistent — available for<br/>inject_image_urls_from_refs<br/>name matching on editing"| INJECT_EDIT[inject_image_urls_from_refs]
 ```
 
-**Labelling**: injected images are numbered `photo1.png`, `photo2.png`, etc.,
-preserving the original file extension.
+**Persistence**: `pending_vision_images` is cleared at the start of each
+`process_message` call (stale drain). During a multi-turn loop, it is consumed
+(drained) before each context rebuild — one injection per LLM iteration.
+`image_pool` entries persist indefinitely and can be matched by name in
+subsequent `image_gen` calls (e.g. "make the cat darker" matches a vision-
+fetched "cat.png").
 
-**Image pool structure** (`harness.rs`):
-```
-HashMap<room_id, Vec<CachedImage { data_uri, name }>>
-```
+**Labelling**: injected images use the filename from the markdown tag (e.g.
+`photo.png`), or `photo1.png`, `photo2.png`, etc. if the name is empty.
 
 ## 3. Data Structures
 

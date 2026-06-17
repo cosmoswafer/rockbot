@@ -42,7 +42,7 @@ flowchart TD
 
     subgraph "Interception Layer"
         REFS["AttachmentRef list<br/>{title, data_uri}"]
-        POOL[(ImagePool<br/>room_id → Vec<CachedImage><br/>image_gen only)]
+        POOL[(ImagePool<br/>room_id → Vec<CachedImage><br/>vision/webdav/image_gen)]
         INJECT_URLS[inject_image_urls_from_refs<br/>match by name → image_urls]
     end
 
@@ -121,54 +121,78 @@ The vision tool's purpose is to retrieve image data from external sources
 (WebDAV storage, public URLs). The LLM consumes the data URI directly from the
 tool result on the next iteration.
 
-### 2d. Image Editing — inject_image_urls_from_refs
+### 2d. Image Editing — Four Converging Sources
 
-When the LLM calls `image_gen` with an edit prompt, the harness intercepts the
-arguments and injects real image data from five converging sources:
+When the LLM calls `image_gen` with an edit prompt, image URLs converge from
+four sources at two injection points:
+
+**Injection point A — `inject_image_urls_from_refs()`** (`harness.rs`):
+merges 3 sources via name/prompt matching + deduplication:
 
 ```mermaid
 flowchart TD
     PROMPT[LLM Prompt<br/>e.g. 'edit apple.png to add a hat']
-    ATTACH_REF["AttachmentRef<br/>{title: 'apple.png', data_uri: 'data:...'}"]
-    IMG_POOL["ImagePool<br/>CachedImage name derived<br/>from image_gen prompt"]
-    AGENT_URL["LLM-provided URLs<br/>(share_url, https://...)"]
-    MSG_URLS["Message Image URLs<br/>current_image_urls<br/>(from DDP urls,<br/>content_type image/*)"]
-    REF_KEY["reference_image_key<br/>(image_cache lookup<br/>via call_id)"]
-
+    ATTACH_REF["1. User Attachments<br/>AttachmentRef matched by<br/>title substring in prompt"]
+    IMG_POOL["2. WebDAV File / Public URL<br/>CachedImage in image_pool<br/>from vision/webdav tool results<br/>or image_gen results"]
+    AGENT_URL["3. Agent-Provided URLs<br/>share_url / https:// from LLM's<br/>explicit image_urls arg"]
     INJECT[inject_image_urls_from_refs]
     DEDUP[Deduplicate by URL string]
-    OUT["args[image_urls]"]
+    ARGS["args[image_urls]<br/>(merged)"]
 
     PROMPT -->|"contains 'apple.png'?"| ATTACH_REF
-    PROMPT -->|"contains prompt-derived name?"| IMG_POOL
+    PROMPT -->|"contains image name?"| IMG_POOL
     AGENT_URL -->|"explicit image_urls"| INJECT
-    REF_KEY -->|"lookup in ImageCache → upload to CDN"| INJECT
-    ATTACH_REF -->|"match → inject data URI"| INJECT
-    IMG_POOL -->|"match → inject data URI"| INJECT
-    MSG_URLS -->|"auto-inject (unconditional)"| INJECT
+    ATTACH_REF -->|"match → data URI"| INJECT
+    IMG_POOL -->|"match → data URI"| INJECT
     INJECT --> DEDUP
-    DEDUP --> OUT
+    DEDUP --> ARGS
 ```
 
-**How matching works**: the prompt is lowercased and checked for substring
-matches against:
-1. `AttachmentRef.title` — original user attachment filenames
-2. `CachedImage.name` (prompt-derived) — images generated in the current turn
-   by `image_gen`, added to the pool for name-based matching in subsequent tool
-   calls (e.g. "make the fluffy cat darker" matches a prior `image_gen` prompt)
-3. Explicit `image_urls` from the LLM (deduplicated against injected URIs)
-4. `reference_image_key` — the LLM passes an `image_key` string to reference a
-   previously generated image; the tool looks it up in `ImageCache` and uploads
-   the data URI to the provider's CDN
-5. `current_image_urls` — image URLs from the DDP message `urls` field (filtered
-   by `content_type: image/*`). These are **always injected unconditionally**
-   — no prompt matching required — because the harness knows the user shared them
-   for editing.
+**Injection point B — `process_message` inline**: `current_image_urls`
+auto-injected unconditionally (no prompt matching) from the DDP `urls`
+field filtered by `content_type: image/*`:
 
-**After injection**: `image_gen` receives the `image_urls` array. `data:` URIs
-are uploaded to the provider's CDN (Fal) via `upload_data_uri` → returns an
-`https://` URL. Existing `https://` URLs (e.g. from a previous `image_gen`
-`share_url`) pass through directly.
+```mermaid
+flowchart LR
+    MSG_URLS["4. Message Image URLs<br/>current_image_urls<br/>(from DDP urls —<br/>content_type image/*)"]
+    INLINE["process_message inline<br/>auto-inject (unconditional)"]
+    ARGS2["args[image_urls]<br/>(merged)"]
+
+    MSG_URLS -->|"inject if non-empty"| INLINE
+    INLINE --> ARGS2
+```
+
+**Injection point C — `ImageGenTool::execute()`**: `reference_image_key`
+resolved at the tool level (not in the harness). The LLM passes the
+`image_key` from a prior `image_gen` result; the tool looks it up in
+`ImageCache`, uploads the data URI to the provider's CDN, and appends
+the resulting `https://` URL to `image_urls`:
+
+```mermaid
+flowchart LR
+    REF_KEY["reference_image_key<br/>(image_key from prev result)"]
+    CACHE_LOOKUP["ImageCache lookup<br/>by call_id"]
+    UPLOAD["upload_data_uri → CDN"]
+    APPEND["Append https:// URL<br/>to image_urls"]
+
+    REF_KEY --> CACHE_LOOKUP
+    CACHE_LOOKUP -->|"GeneratedImage"| UPLOAD
+    UPLOAD -->|"https:// URL"| APPEND
+```
+
+**Summary — image_urls at provider dispatch**:
+
+| Source | Injection point | Matching | Data format |
+|--------|----------------|----------|-------------|
+| User Attachments | `inject_image_urls_from_refs` | Title substring in prompt | `data:` URI |
+| WebDAV File / Public URL | `inject_image_urls_from_refs` | Name in prompt | `data:` URI (from `image_pool`) |
+| Agent-Provided URLs | `inject_image_urls_from_refs` | Explicit (LLM passes in `image_urls`) | `https://` or `data:` URL |
+| Message Image URLs | `process_message` inline | None — unconditional | NextCloud share link |
+| reference_image_key | `ImageGenTool::execute` | None — lookup by key | `https://` URL (CDN upload) |
+
+All data URIs are uploaded to the provider's CDN (Fal) via `upload_data_uri`
+before the generation request is dispatched. Existing `https://` URLs pass
+through directly.
 
 ### 2e. Generated Image Loopback
 
@@ -215,11 +239,12 @@ provider receives `https://` URL (no re-upload needed).
 | `data_uri`| String | `"data:image/png;base64,..."`                   |
 
 ### `ImagePool`
-`HashMap<String, Vec<CachedImage>>` keyed by `room_id`. Populated only by the
-harness when `image_gen` succeeds — each entry uses the `image_gen` prompt
-(truncated to 80 chars) as the name, enabling name-based matching in
-subsequent edit calls within the same turn. Never drained as a whole —
-entries persist for the lifetime of the room.
+`HashMap<String, Vec<CachedImage>>` keyed by `room_id`. Populated by the
+harness from three sources: `image_gen` success (prompt-derived name, truncated
+to 80 chars), `vision` tool results (filename from markdown tag), and `webdav`
+tool results (filename from markdown tag). Enables name-based matching in
+subsequent edit calls. Never drained as a whole — entries persist for the
+lifetime of the room.
 
 ### `ImageCache`
 `Arc<Mutex<HashMap<String, GeneratedImage>>>` keyed by tool `call_id`. Stores

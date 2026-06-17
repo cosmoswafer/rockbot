@@ -66,6 +66,7 @@ pub struct AgentHarness {
     max_iterations: u32,
     max_attachment_bytes: u64,
     image_pool: HashMap<String, Vec<CachedImage>>,
+    pending_vision_images: HashMap<String, Vec<CachedImage>>,
     image_cache: Arc<ImageCache>,
     last_image_ids: Vec<String>,
     current_image_urls: Vec<String>,
@@ -96,6 +97,7 @@ impl AgentHarness {
             max_iterations,
             max_attachment_bytes,
             image_pool: HashMap::new(),
+            pending_vision_images: HashMap::new(),
             image_cache,
             last_image_ids: Vec::new(),
             current_image_urls: Vec::new(),
@@ -115,6 +117,10 @@ impl AgentHarness {
     #[cfg(test)]
     pub fn current_image_urls(&self) -> &[String] {
         &self.current_image_urls
+    }
+
+    pub fn image_pool_len(&self, room_id: &str) -> usize {
+        self.image_pool.get(room_id).map(|v| v.len()).unwrap_or(0)
     }
 
     pub fn provider(&self) -> &dyn AiProvider {
@@ -183,6 +189,11 @@ impl AgentHarness {
                 .is_some_and(|ct| ct.starts_with("image/")))
             .map(|u| u.url.clone())
             .collect();
+
+        // Drain any stale pending vision images from a previous turn
+        // that were never injected (e.g. the turn ended without another
+        // LLM iteration after a vision/webdav tool call).
+        self.pending_vision_images.remove(room_id);
 
         let clean_text = if !is_dm && !text.is_empty() {
             text.trim_start().to_string()
@@ -520,6 +531,34 @@ impl AgentHarness {
 
                             let tool_msg = ChatMessage::tool(&tool_call.id, &tool_result.content);
                             self.append_to_history(room_id, tool_msg);
+
+                            // Intercept vision and webdav tool results: parse
+                            // base64 data URIs from markdown image tags and cache
+                            // them in image_pool (for editing/name-matching) and
+                            // pending_vision_images (for ContentPart injection
+                            // so vision LLMs can actually see the fetched images).
+                            if !tool_result.is_error
+                                && (tool_call.function.name == "vision"
+                                    || tool_call.function.name == "webdav")
+                            {
+                                let cached = parse_markdown_images(&tool_result.content);
+                                if !cached.is_empty() {
+                                    debug!(
+                                        "Cached {} image(s) from {} tool result for room {}",
+                                        cached.len(),
+                                        tool_call.function.name,
+                                        room_id,
+                                    );
+                                    self.image_pool
+                                        .entry(room_id.to_string())
+                                        .or_default()
+                                        .extend(cached.clone());
+                                    self.pending_vision_images
+                                        .entry(room_id.to_string())
+                                        .or_default()
+                                        .extend(cached);
+                                }
+                            }
                         }
 
                         if altered_soul {
@@ -537,6 +576,40 @@ impl AgentHarness {
                             self.knowledge_cache.remove(&wd);
                             if let Err(e) = self.refresh_knowledge_context(room_id, &wd).await {
                                 warn!("Failed to refresh knowledge context after alter: {}", e);
+                            }
+                        }
+
+                        // Inject pending vision/webdav images as ContentPart::ImageUrl
+                        // so vision LLMs can see fetched images on the next iteration.
+                        if let Some(pending) = self.pending_vision_images.remove(room_id) {
+                            if !pending.is_empty() {
+                                let data_uris: Vec<String> =
+                                    pending.iter().map(|ci| ci.data_uri.clone()).collect();
+                                let names: Vec<String> = pending
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(i, ci)| {
+                                        if ci.name.is_empty() {
+                                            format!("photo{}.png", i + 1)
+                                        } else {
+                                            ci.name.clone()
+                                        }
+                                    })
+                                    .collect();
+                                let labels = names
+                                    .iter()
+                                    .map(|n| format!("![{}]({})", n, n))
+                                    .collect::<Vec<_>>()
+                                    .join(" ");
+                                let prompt = format!("Fetched images: {}", labels);
+                                let vision_msg =
+                                    ChatMessage::user_with_images(prompt, data_uris);
+                                self.append_to_history(room_id, vision_msg);
+                                debug!(
+                                    "Injected {} pending vision image(s) into context for room {}",
+                                    names.len(),
+                                    room_id,
+                                );
                             }
                         }
 
@@ -1360,9 +1433,38 @@ struct AttachmentRef {
     pub data_uri: String,
 }
 
+#[derive(Clone)]
 struct CachedImage {
     data_uri: String,
     name: String,
+}
+
+/// Parse `![name](data:mime;base64,...)` markdown image tags from a string.
+/// Returns a `CachedImage` for each matched tag. Used to extract data URIs
+/// from vision and webdav tool results so vision LLMs can see the fetched
+/// images and the harness can match them by name for editing.
+fn parse_markdown_images(text: &str) -> Vec<CachedImage> {
+    let mut result = Vec::new();
+    let mut remaining = text;
+    while let Some(start) = remaining.find("![") {
+        let after_bang = &remaining[start + 2..];
+        if let Some(alt_end) = after_bang.find("](data:") {
+            let name = &after_bang[..alt_end];
+            let after_paren = &after_bang[alt_end + 2..]; // skip "](data:..."
+            // Find the closing ) — we need to be careful about nested parens in base64
+            if let Some(close) = after_paren.find(')') {
+                let data_uri = &after_paren[..close];
+                if data_uri.starts_with("data:") && data_uri.contains(";base64,") {
+                    result.push(CachedImage {
+                        data_uri: data_uri.to_string(),
+                        name: name.to_string(),
+                    });
+                }
+            }
+        }
+        remaining = &remaining[start + 2..];
+    }
+    result
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -2768,5 +2870,61 @@ value = "real_gitea_token_123"
         assert!(prompt.contains("secret:e5f6a7b8-c9d0-41e1-f2a3-b4c5d6e7f890 (github_pat)"));
         assert!(!prompt.contains("gitea.example.com"), "host name must not appear in prompt");
         assert!(!prompt.contains("api.github.com"), "host name must not appear in prompt");
+    }
+
+    // ── parse_markdown_images ─────────────────────────────────────────
+
+    #[test]
+    fn test_parse_markdown_images_single() {
+        let text = "Here is the result: ![photo.png](data:image/png;base64,iVBORw0KGgo=)";
+        let images = parse_markdown_images(text);
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].name, "photo.png");
+        assert_eq!(images[0].data_uri, "data:image/png;base64,iVBORw0KGgo=");
+    }
+
+    #[test]
+    fn test_parse_markdown_images_multiple() {
+        let text = "![a.png](data:image/png;base64,AAA) some text ![b.jpg](data:image/jpeg;base64,BBB)";
+        let images = parse_markdown_images(text);
+        assert_eq!(images.len(), 2);
+        assert_eq!(images[0].name, "a.png");
+        assert_eq!(images[0].data_uri, "data:image/png;base64,AAA");
+        assert_eq!(images[1].name, "b.jpg");
+        assert_eq!(images[1].data_uri, "data:image/jpeg;base64,BBB");
+    }
+
+    #[test]
+    fn test_parse_markdown_images_no_images() {
+        let text = "No image tags here, just plain text.";
+        let images = parse_markdown_images(text);
+        assert_eq!(images.len(), 0);
+    }
+
+    #[test]
+    fn test_parse_markdown_images_not_data_uri() {
+        let text = "![logo](https://example.com/logo.png) is not a data URI";
+        let images = parse_markdown_images(text);
+        assert_eq!(images.len(), 0);
+    }
+
+    #[test]
+    fn test_parse_markdown_images_no_base64_delimiter() {
+        let text = "![x](data:image/png,no-base64-delimiter) should be skipped";
+        let images = parse_markdown_images(text);
+        assert_eq!(images.len(), 0);
+    }
+
+    #[test]
+    fn test_parse_markdown_images_realistic_webdav_result() {
+        let text = r#"File read successfully:
+
+![photo.png](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==)
+
+You can now see the image."#;
+        let images = parse_markdown_images(text);
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].name, "photo.png");
+        assert!(images[0].data_uri.starts_with("data:image/png;base64,"));
     }
 }

@@ -9,7 +9,7 @@ Three major user stories covering text-to-image generation, multi-source image e
 **User sends a text prompt. The LLM calls `image_gen` to produce a new image.**
 
 1. User sends a message with an image generation prompt (e.g. "generate a cyberpunk city at night").
-2. The LLM calls the `image_gen` tool with `prompt` and optional `aspect_ratio`.
+2. The LLM calls the `image_gen` tool with `prompt` and `aspect_ratio` (both required).
 3. The harness intercepts the tool call (`harness.rs:355-409`) and:
    - Calls `inject_image_urls_from_refs()` (`harness.rs:1401-1450`) to inject `room_id`, `webdav_dir`, and merge available image URL sources — relevant when the LLM provides reference images.
    - Injects `image_cache_key` set to `tool_call.id` (`harness.rs:368-373`).
@@ -56,7 +56,9 @@ Three major user stories covering text-to-image generation, multi-source image e
 1. User asks the LLM to read an image file from WebDAV or fetch from a URL.
 2. The LLM calls the `webdav` tool (for files) or `vision` tool (for URLs).
 3. Both tools return the image as `![filename](data:mime/type;base64,...)` markdown in the tool result.
-4. The LLM receives the base64 data directly in its tool-result context. Unlike the previous design, these images are **not** cached into `image_pool` — the LLM consumes the tool result directly.
+4. The LLM receives the base64 data directly in its tool-result context. The harness intercepts the result, parses the markdown `![name](data:...)` tags, and caches the data URIs in **two** pools:
+   - **`image_pool`**: persistent — available for `inject_image_urls_from_refs` name-matching when the LLM calls `image_gen` for editing (e.g. "make the cat darker" matches a vision-fetched "cat.png").
+   - **`pending_vision_images`**: ephemeral — drained before the next context rebuild and injected as `ContentPart::ImageUrl` parts in a synthetic user message, so vision LLMs can actually see the fetched image pixels.
 
 ### 2c. Editing (Common to All Input Paths)
 
@@ -81,10 +83,10 @@ Three major user stories covering text-to-image generation, multi-source image e
 
 **User with a vision-capable LLM (e.g. OpenRouter) sees all images in the conversation and uses that visual context when calling `image_gen`.**
 
-1. Images enter the vision LLM's context through two mechanisms:
+1. Images enter the vision LLM's context through three mechanisms:
    - **Directly in conversation_history:** User-pasted images are stored as `ChatMessage::user_with_images` with multipart content (`data:` URIs). These are present in every context build.
-   - **Tool results:** Images fetched by `vision` or `webdav` tools are returned as base64 markdown in tool-result messages — the LLM sees them inline.
-   - **Generated images** from `image_gen` also enter `image_pool` with their prompt text as the name (`harness.rs:503-509`), making them available for `inject_image_urls_from_refs` name-matching on subsequent edits.
+   - **Tool results + ContentPart injection:** Images fetched by `vision` or `webdav` tools return base64 markdown. The harness intercepts the result, caches data URIs in `pending_vision_images`, and injects a synthetic user message with `ContentPart::ImageUrl` parts before the next LLM call — so vision LLMs see the actual pixels, not just markdown text.
+   - **Generated images** from `image_gen` also enter `image_pool` with their prompt text as the name, making them available for `inject_image_urls_from_refs` name-matching on subsequent edits. The share URL enters `conversation_history` for visual reference.
 2. When building context, OpenRouter passes multipart messages through unchanged — `data:` URIs are sent directly in the API request. DeepSeek strips them to `[image]`.
 3. With images visible in context, the vision LLM can:
    - Describe image content in detail.
@@ -133,8 +135,13 @@ AttachmentRef (data URI) ─────▶ conversation_history ─────
 WebDAV file / Public URL   │
        │                   │
        ▼                   │
-vision/webdav tool ───────▶ LLM sees base64 in tool result
-(no image_pool caching)      (consumed directly)
+vision/webdav tool ───────▶ image_pool (cached as CachedImage)
+       │                        │
+       │                        ▼ (available for inject_image_urls_from_refs name matching)
+       │
+       └──────────────────▶ pending_vision_images ─────▶ synthetic user msg with
+                                (drained per cycle)        ContentPart::ImageUrl
+                                                           → vision LLM sees pixels
 
 current_image_urls (NextCloud share links from most recent message)
        │
@@ -174,7 +181,7 @@ When the LLM calls `image_gen`, image URL sources converge at two points:
 | Source | Type | When available |
 |--------|------|---------------|
 | User-attached images | `AttachmentRef` (data URI) | Current message has RocketChat image attachments |
-| Generated image pool | `CachedImage` (data URI) | `image_gen` produced an image earlier in this turn |
+| image_pool (vision/webdav + image_gen) | `CachedImage` (data URI) | `image_gen` produced an image earlier, or `vision`/`webdav` tool fetched an image |
 | Agent-provided URLs | CDN URL or share link | LLM explicitly passes `image_urls` in tool call |
 
 **`process_message`** (`harness.rs:377-405`) adds a 4th source:

@@ -25,10 +25,10 @@ use rockbot::tools::{
     CalendarTool, EditSoulTool, VisionTool, WebDavTool, WebFetchTool,
     WebSearchTool,
 };
-use rockbot::types::{ChatMessage, ChatRequest, CompletionResult, FinishReason};
+use rockbot::types::{ChatMessage, ChatRequest, CompletionResult, ContentPart, FinishReason, MessageContent, ToolCall};
 use rockbot::validated::{ConfigUrl, NonEmptyString, ProviderName};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use wiremock::matchers::{body_string_contains, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -855,7 +855,7 @@ fn test_persist_snapshot_serialization() {
 /// A mock AI provider that returns canned responses for testing the harness.
 struct MockProvider {
     response: String,
-    tool_calls: Vec<rockbot::types::ToolCall>,
+    tool_calls: Vec<ToolCall>,
     fail_on_call: Option<String>,
 }
 
@@ -867,6 +867,42 @@ impl MockProvider {
             fail_on_call: None,
         }
     }
+
+    fn new_with_tool_calls(text: impl Into<String>, tool_calls: Vec<ToolCall>) -> Self {
+        Self {
+            response: text.into(),
+            tool_calls,
+            fail_on_call: None,
+        }
+    }
+}
+
+/// A provider that pops responses from a queue — supports multi-turn tests.
+struct SequentialMockProvider {
+    responses: Mutex<Vec<Result<CompletionResult, rockbot::error::RockBotError>>>,
+}
+
+impl SequentialMockProvider {
+    fn new(responses: Vec<CompletionResult>) -> Self {
+        Self {
+            responses: Mutex::new(responses.into_iter().map(Ok).collect()),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl AiProvider for SequentialMockProvider {
+    async fn complete(&self, _request: ChatRequest) -> Result<CompletionResult, rockbot::error::RockBotError> {
+        let mut responses = self.responses.lock().unwrap();
+        if responses.is_empty() {
+            Err(rockbot::error::RockBotError::Provider("No mock responses left".into()))
+        } else {
+            responses.remove(0)
+        }
+    }
+
+    fn provider_name(&self) -> &str { "sequential-mock" }
+    fn model_name(&self) -> &str { "sequential-mock-model" }
 }
 
 #[async_trait::async_trait]
@@ -960,6 +996,109 @@ fn test_agent_loop_max_iterations_from_config() {
     let config = make_test_config("https://chat.example.com");
     assert_eq!(config.model.max_iterations, 5);
     assert_eq!(config.model.model_context_length, 1_000_000);
+}
+
+// ============================================================================
+// _dfd/interception/image-interception.md — Vision/webdav result interception
+// (image_pool caching + ContentPart injection)
+// ============================================================================
+
+#[tokio::test]
+async fn test_harness_vision_result_cached_in_image_pool_and_injected() {
+    let mock_server = MockServer::start().await;
+    let webdav_url = format!("{}/", mock_server.uri());
+
+    // Mock the image that the vision tool will fetch
+    Mock::given(method("GET"))
+        .and(path("/images/cat.png"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(tiny_png_bytes())
+                .insert_header("Content-Type", "image/png"),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let config = make_test_config(&webdav_url);
+    let webdav = webdav::WebDavClient::new(&webdav_url, "test", "pass").unwrap();
+    let image_cache = Arc::new(ImageCache::new());
+
+    // Sequential: vision tool call first, then text response
+    let url = format!("{}/images/cat.png", mock_server.uri());
+    let sequential = SequentialMockProvider::new(vec![
+        // Iteration 1: LLM calls vision tool
+        CompletionResult {
+            text: None,
+            finish: FinishReason::ToolUse,
+            tool_calls: vec![ToolCall::new(
+                "call_v_001",
+                "vision",
+                serde_json::json!({"url": url}).to_string(),
+            )],
+            reasoning_content: None,
+            usage: None,
+        },
+        // Iteration 2: LLM acknowledges (after ContentPart injection)
+        CompletionResult {
+            text: Some("I can see the cat photo. What would you like me to do with it?".into()),
+            finish: FinishReason::Stop,
+            tool_calls: vec![],
+            reasoning_content: None,
+            usage: None,
+        },
+    ]);
+
+    let mut harness = AgentHarness::new(config, Box::new(sequential), Some(webdav), image_cache.clone());
+    harness.register_tool(Box::new(VisionTool::with_max_bytes(10_000_000)));
+
+    let result = harness
+        .process_message("room1", "general", "", false, "user", "Look at cat.png", &[], &[])
+        .await;
+
+    assert!(result.is_ok());
+    assert!(result.unwrap().is_some());
+
+    // Verify image_pool was populated
+    let pool_len = harness.image_pool_len("room1");
+    assert_eq!(pool_len, 1, "vision tool result should be cached in image_pool");
+
+    // Verify the synthetic "Fetched images:" message was injected into history
+    let room = harness.memory().get("room1").unwrap();
+    let messages = &room.history.messages;
+    let fetched_msg = messages
+        .iter()
+        .find(|m| {
+            if let MessageContent::Multipart(ref parts) = m.content {
+                parts.iter().any(|p| {
+                    if let ContentPart::Text { text } = p {
+                        text.contains("Fetched images:")
+                    } else {
+                        false
+                    }
+                })
+            } else {
+                false
+            }
+        })
+        .expect("should contain a 'Fetched images:' message in history");
+
+    // Verify the fetched message has ContentPart::ImageUrl for the cat.png
+    if let MessageContent::Multipart(ref parts) = fetched_msg.content {
+        let has_image_part = parts.iter().any(|p| {
+            matches!(p, ContentPart::ImageUrl { .. })
+        });
+        assert!(
+            has_image_part,
+            "'Fetched images:' message should contain ImageUrl ContentPart"
+        );
+        let image_count = parts
+            .iter()
+            .filter(|p| matches!(p, ContentPart::ImageUrl { .. }))
+            .count();
+        assert_eq!(image_count, 1, "should have exactly 1 ImageUrl part for cat.png");
+    } else {
+        panic!("'Fetched images:' message should be Multipart content, got: {:?}", fetched_msg.content);
+    }
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
