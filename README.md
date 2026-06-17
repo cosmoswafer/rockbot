@@ -8,7 +8,7 @@ by a NextCloud WebDAV server for persistent state.
 ## User Stories
 
 > **Priority**: P0 = critical, P1 = core, P2 = enhancement
-> Full details: [`_doc/constraints/`](_doc/constraints/)
+> Full details: [`_doc/scenarios/`](_doc/scenarios/)
 
 1. **DM Conversation** (P0) — DMs bot, gets AI replies with per-room conversation history across sessions.
 2. **@Mention & Display Name in Channels** (P0) — `@rockbot` or display name triggers reply in-thread; per-room isolation.
@@ -99,10 +99,10 @@ Test inventory and run instructions: [`_doc/test_suite/`](_doc/test_suite/).
 ### Constraints & user stories
 | Document | Description |
 | -------- | ----------- |
-| [`_doc/constraints/README.md`](_doc/constraints/README.md) | Directory index |
-| [`_doc/constraints/top-10-user-stories.md`](_doc/constraints/top-10-user-stories.md) | Top-level user-facing features |
-| [`_doc/constraints/image-generation-user-stories.md`](_doc/constraints/image-generation-user-stories.md) | Image pipeline: 5 detailed stories |
-| [`_doc/constraints/non-functional-requirements.md`](_doc/constraints/non-functional-requirements.md) | Quality attributes |
+| [`_doc/scenarios/README.md`](_doc/scenarios/README.md) | Directory index |
+| [`_doc/scenarios/top-10-user-stories.md`](_doc/scenarios/top-10-user-stories.md) | Top-level user-facing features |
+| [`_doc/scenarios/image-generation-user-stories.md`](_doc/scenarios/image-generation-user-stories.md) | Image pipeline: 5 detailed stories |
+| [`_doc/scenarios/non-functional-requirements.md`](_doc/scenarios/non-functional-requirements.md) | Quality attributes |
 
 ### DFDs
 | Component | DFD | Detailed notes |
