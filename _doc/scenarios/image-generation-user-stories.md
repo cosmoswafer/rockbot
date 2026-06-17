@@ -21,6 +21,13 @@ Three major user stories covering text-to-image generation, multi-source image e
 8. The main loop retrieves the generated image from `ImageCache` via `take_last_image_ids` + `take_image`, calls `strip_markdown_image_id` to remove the key from the reply text, and appends `![Generated image](share_url)` markdown (or falls back to a data URI attachment) (`main.rs:448-473`).
 9. The share URL reply becomes part of `conversation_history`, visible to vision LLMs in subsequent turns.
 
+10. *(Optional)* The user sends a follow-up edit request (e.g. "make it darker"). The preceding
+    share URL is part of `conversation_history`, so the LLM can reference it. If the LLM includes
+    the share URL in `image_urls` when calling `image_gen`, it is passed through
+    `inject_image_urls_from_refs` as an agent-provided URL (`harness.rs:1432-1440`) and the
+    provider edits the last generated image. If the LLM references it by `reference_image_key`,
+    `ImageGenTool` resolves it and appends it to `image_urls` (`image_gen.rs:196-211`).
+
 **Edge case — text-only LLM (DeepSeek):** DeepSeek does not support vision natively. Images are stripped from messages before sending (`provider/deepseek.rs:71`), replacing image parts with `[image]`. The LLM can still generate images via the tool — it just cannot describe or analyze visual content. The `current_image_urls` auto-injection ensures reference images are still passed to the generation provider even though the LLM cannot see them.
 
 ---
