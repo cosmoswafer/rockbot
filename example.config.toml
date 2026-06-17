@@ -15,7 +15,7 @@ url = "your-server.example.com"
 username = "EDITME"
 password = "EDITME"
 
-[model]
+[rocketchat.model]
 default_provider = "openrouter"
 default_model = "gpt"
 

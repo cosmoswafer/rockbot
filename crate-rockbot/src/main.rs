@@ -64,8 +64,9 @@ fn main() {
 
 async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     let provider: Box<dyn AiProvider> = {
-        let provider_name = &config.model.default_provider;
-        let model_alias = &config.model.default_model;
+        let active_model = config.active_model();
+        let provider_name = &active_model.default_provider;
+        let model_alias = &active_model.default_model;
 
         let provider_config = config
             .find_chat_provider(provider_name)
@@ -143,7 +144,7 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     }
     tool_registry.register(Box::new(DateTimeTool::new()));
     tool_registry.register(Box::new(VisionTool::with_max_bytes(
-        harness.config().model.max_attachment_bytes,
+        harness.config().active_model().max_attachment_bytes,
     )));
     if let Some(ref webdav_client) = webdav {
         tool_registry.register(Box::new(WebDavTool::new(webdav_client.clone())));

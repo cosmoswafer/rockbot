@@ -51,11 +51,15 @@ fn default_platform_name() -> String {
 #[derive(Debug, Clone, Deserialize)]
 pub struct RocketChatSection {
     pub server: ServerConfig,
+    #[serde(default)]
+    pub model: Option<ModelConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct MatrixSection {
     pub server: MatrixServerConfig,
+    #[serde(default)]
+    pub model: Option<ModelConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize, Validate)]
@@ -269,10 +273,12 @@ impl AppConfig {
                 crate::error::RockBotError::Config(format!("server config validation: {e}"))
             })?;
         }
-        if let Some(ref mx) = config.matrix {
-            mx.server.validate().map_err(|e| {
-                crate::error::RockBotError::Config(format!("matrix server config validation: {e}"))
-            })?;
+        if config.platform.name == "matrix" {
+            if let Some(ref mx) = config.matrix {
+                mx.server.validate().map_err(|e| {
+                    crate::error::RockBotError::Config(format!("matrix server config validation: {e}"))
+                })?;
+            }
         }
         <Self as ValidatorValidate>::validate(&config).map_err(|e| {
             crate::error::RockBotError::Config(format!("config validation: {e}"))
@@ -303,11 +309,22 @@ impl AppConfig {
         let provider = self.find_image_provider(provider_name)?;
         provider.models.get(model_alias).cloned()
     }
+
+    /// Returns the platform-specific model config based on the active platform.
+    pub fn active_model(&self) -> &ModelConfig {
+        if self.platform.name == "rocketchat" {
+            self.rocketchat.model.as_ref().unwrap_or(&self.model)
+        } else if self.platform.name == "matrix" {
+            self.matrix.as_ref().and_then(|mx| mx.model.as_ref()).unwrap_or(&self.model)
+        } else {
+            &self.model
+        }
+    }
 }
 
 /// Validator schema function — cross-field business-logic validation for AppConfig.
 fn validate_app_config(config: &AppConfig) -> Result<(), validator::ValidationError> {
-    let provider_name: &str = &config.model.default_provider;
+    let provider_name: &str = &config.active_model().default_provider;
     if config.find_chat_provider(provider_name).is_none() {
         let mut err = validator::ValidationError::new("provider_not_found");
         err.message = Some(format!("chat_provider '{}' not found in [[chat_providers]]", provider_name).into());
@@ -398,5 +415,90 @@ impl ProviderConfig {
             return Err(crate::error::RockBotError::MissingApiKey(self.name.to_string()));
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_base_config() -> String {
+        r#"
+[rocketchat.server]
+url = "test.example.com"
+username = "bot"
+password = "secret"
+
+[[chat_providers]]
+name = "openrouter"
+api_key = "sk-test"
+base_url = "https://openrouter.ai/api/v1"
+
+[[chat_providers]]
+name = "deepseek"
+api_key = "sk-test"
+base_url = "https://api.deepseek.com/v1"
+"#.to_string()
+    }
+
+    #[test]
+    fn test_active_model_uses_rocketchat_model_when_present() {
+        let toml_str = make_base_config() + r#"
+[rocketchat.model]
+default_provider = "deepseek"
+default_model = "flash"
+
+[model]
+default_provider = "openrouter"
+default_model = "gpt"
+"#;
+        let config = AppConfig::from_toml(&toml_str).unwrap();
+        let active = config.active_model();
+        assert_eq!(active.default_provider.as_str(), "deepseek");
+        assert_eq!(active.default_model, "flash");
+    }
+
+    #[test]
+    fn test_active_model_falls_back_when_rocketchat_model_is_absent() {
+        let toml_str = make_base_config() + r#"
+[model]
+default_provider = "openrouter"
+default_model = "gpt"
+"#;
+        let config = AppConfig::from_toml(&toml_str).unwrap();
+        assert!(config.rocketchat.model.is_none());
+        let active = config.active_model();
+        assert_eq!(active.default_provider.as_str(), "openrouter");
+        assert_eq!(active.default_model, "gpt");
+    }
+
+    #[test]
+    fn test_toml_parses_rocketchat_model() {
+        let toml_str = make_base_config() + r#"
+[rocketchat.model]
+default_provider = "deepseek"
+default_model = "flash"
+max_iterations = 10
+"#;
+        let config = AppConfig::from_toml(&toml_str).unwrap();
+        assert!(config.rocketchat.model.is_some());
+        let m = config.rocketchat.model.as_ref().unwrap();
+        assert_eq!(m.default_provider.as_str(), "deepseek");
+        assert_eq!(m.default_model, "flash");
+        assert_eq!(m.max_iterations, 10);
+    }
+
+    #[test]
+    fn test_toml_top_level_model_still_works() {
+        let toml_str = make_base_config() + r#"
+[model]
+default_provider = "openrouter"
+default_model = "gpt"
+"#;
+        let config = AppConfig::from_toml(&toml_str).unwrap();
+        assert!(config.rocketchat.model.is_none());
+        let active = config.active_model();
+        assert_eq!(active.default_provider.as_str(), "openrouter");
+        assert_eq!(active.default_model, "gpt");
     }
 }

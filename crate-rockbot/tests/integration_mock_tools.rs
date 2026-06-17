@@ -1094,6 +1094,7 @@ fn make_test_config(webdav_url: &str) -> rockbot::config::AppConfig {
                 password: "secret".into(),
                 debug: false,
             },
+            model: None,
         },
         matrix: None,
         model: ModelConfig {

@@ -78,11 +78,12 @@ impl AgentHarness {
         webdav: Option<WebDavClient>,
         image_cache: Arc<ImageCache>,
     ) -> Self {
-        let max_soul_chars = *config.model.max_soul_chars;
-        let max_iterations = config.model.max_iterations;
-        let persist_interval = config.model.persist_interval_secs;
-        let max_context_bytes = *config.model.max_context_bytes;
-        let max_attachment_bytes = config.model.max_attachment_bytes;
+        let active_model = config.active_model();
+        let max_soul_chars = *active_model.max_soul_chars;
+        let max_iterations = active_model.max_iterations;
+        let persist_interval = active_model.persist_interval_secs;
+        let max_context_bytes = *active_model.max_context_bytes;
+        let max_attachment_bytes = active_model.max_attachment_bytes;
         let config = Arc::new(config);
         Self {
             config,
@@ -249,7 +250,7 @@ impl AgentHarness {
             .memory
             .build_context(room_id, &system_prompt, None, None);
         // Inline context trim: reduce if approaching byte limit (no LLM call)
-        let max_ctx = *self.config.model.max_context_bytes as u64;
+        let max_ctx = *self.config.active_model().max_context_bytes as u64;
         let before_trim = messages.len();
         messages = self.trim_context(room_id, messages, max_ctx).await;
         if messages.len() < before_trim {
@@ -315,11 +316,11 @@ impl AgentHarness {
 
                     // Check token pressure: if usage nears model context limit, flag for background compression
                     if let Some(ref usage) = result.usage {
-                        let threshold = (self.config.model.model_context_length as f64 * 0.9) as u64;
+                        let threshold = (self.config.active_model().model_context_length as f64 * 0.9) as u64;
                         if usage.total_tokens > threshold {
                             debug!(
                                 "Token pressure detected: {} total_tokens > 90% of {} (threshold={})",
-                                usage.total_tokens, self.config.model.model_context_length, threshold
+                                usage.total_tokens, self.config.active_model().model_context_length, threshold
                             );
                             self.memory.set_token_pressure(room_id);
                         }
@@ -541,7 +542,7 @@ impl AgentHarness {
                         messages = self
                             .memory
                             .build_context(room_id, &system_prompt, None, None);
-                        let max_ctx = *self.config.model.max_context_bytes as u64;
+                        let max_ctx = *self.config.active_model().max_context_bytes as u64;
                         let before_trim2 = messages.len();
                         messages = self.trim_context(room_id, messages, max_ctx).await;
                         if messages.len() < before_trim2 {
@@ -652,8 +653,8 @@ impl AgentHarness {
 
     fn build_system_prompt(&self) -> String {
         let name = &self.config.rocketchat.server.username;
-        let max_ctx = *self.config.model.max_context_bytes as f64 / 1_000_000.0;
-        let max_iter = self.config.model.max_iterations;
+        let max_ctx = *self.config.active_model().max_context_bytes as f64 / 1_000_000.0;
+        let max_iter = self.config.active_model().max_iterations;
         DEFAULT_SYSTEM_PROMPT
             .replace("{name}", name)
             .replace("{max_context_mb}", &format!("{max_ctx:.1}"))
@@ -669,16 +670,16 @@ impl AgentHarness {
     fn resolve_model(&self) -> String {
         self.config
             .resolve_chat_model(
-            self.config.model.default_provider.as_str(),
-            &self.config.model.default_model,
+            self.config.active_model().default_provider.as_str(),
+            &self.config.active_model().default_model,
             )
             .unwrap_or_else(|| {
                 warn!(
                     "Model alias '{}' not found for provider '{}', using raw model name",
-                    self.config.model.default_model,
-                    self.config.model.default_provider.as_str()
+                    self.config.active_model().default_model,
+                    self.config.active_model().default_provider.as_str()
                 );
-                self.config.model.default_model.clone()
+                self.config.active_model().default_model.clone()
             })
     }
 
@@ -1001,6 +1002,10 @@ impl AgentHarness {
         match self.provider.complete(request).await {
             Ok(result) => {
                 let text = result.text.unwrap_or_else(|| default_summary.clone());
+                debug!("compress_for_summary raw AI response text ({} chars):\n{}", text.len(), &text[..text.len().min(1000)]);
+                if let Some(ref rc) = result.reasoning_content {
+                    debug!("compress_for_summary reasoning_content ({} chars):\n{}", rc.len(), &rc[..rc.len().min(500)]);
+                }
                 parse_compression_output(&text, &default_summary)
             }
             Err(e) => {

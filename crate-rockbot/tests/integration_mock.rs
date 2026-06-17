@@ -2289,6 +2289,7 @@ mod compression_tests {
                     password: "secret".into(),
                     debug: false,
                 },
+                model: None,
             },
             matrix: None,
             model: ModelConfig {
@@ -2512,6 +2513,7 @@ dav_path = "remote.php/dav"
                     password: "secret".into(),
                     debug: false,
                 },
+                model: None,
             },
             matrix: None,
             model: ModelConfig {
