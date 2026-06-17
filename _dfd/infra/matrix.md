@@ -124,11 +124,9 @@ flowchart TD
    or bot display name → forward
 7. **Otherwise**: drop *(spec, not yet implemented — currently dispatches all text messages from all joined rooms)*
 
-**Room invite handling** *(not yet implemented)*: The bot does not auto-accept room
-invites. The event handler only processes `RoomState::Joined` rooms (line 134 of
-`matrix.rs`). Invited rooms (`RoomState::Invited`) are silently ignored. A user
-must manually accept the invite (e.g. via Element or homeserver admin) for the
-bot to enter the room.
+**Room invite handling** *(by design)*: The bot never auto-joins rooms.
+Only `RoomState::Joined` rooms are processed; `RoomState::Invited` is silently
+ignored. Invites must be accepted manually (Element / homeserver admin).
 
 ### 2d. Sync Loop Deep Dive
 

@@ -26,15 +26,18 @@ The `e2e-encryption` feature is **not** enabled. This means:
 Since clients like Element create **encrypted DMs by default**, every DM the
 bot receives is an encrypted room. The bot sees nothing.
 
-### 2. No auto-join on room invites
+### 2. No auto-join on room invites (intentional design)
 
-`matrix.rs:134` only processes `RoomState::Joined` rooms. There is no invite
-event handler, no `client.join_room_by_id()` call.
+The bot deliberately never auto-joins rooms. `matrix.rs:134` only processes
+`RoomState::Joined` rooms; `RoomState::Invited` is silently ignored. There is
+no invite event handler, no `client.join_room_by_id()` call.
 
 When a user starts a DM with the bot, the bot receives an invite but never
-accepts it. Even an unencrypted DM would fail at this step.
+accepts it — even an unencrypted DM would fail at this step. This is a
+conservative design choice: the bot only enters rooms an admin has explicitly
+placed it in.
 
-> The user plans to manually accept invites (via Element or homeserver admin).
+> Workaround: manually accept invites via Element or homeserver admin.
 
 ### 3. No mention filter (minor, unrelated to encryption)
 
