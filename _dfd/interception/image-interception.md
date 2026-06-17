@@ -248,7 +248,10 @@ lifetime of the room.
 
 ### `ImageCache`
 `Arc<Mutex<HashMap<String, GeneratedImage>>>` keyed by tool `call_id`. Stores
-generated images for the reply pipeline. Entries are consumed by `take_image()`.
+generated images for the reply pipeline. Entries are accessed by `get_image()`
+(returns a clone) — they persist beyond the reply so that subsequent
+`reference_image_key` lookups succeed. Explicit removal via `take_image()`
+is used only when the room's context is evicted (memory compaction).
 
 ### `GeneratedImage`
 | Field         | Type           | Notes                                   |
@@ -270,4 +273,5 @@ generated images for the reply pipeline. Entries are consumed by `take_image()`.
 | `upload_data_uri` | `tools/image_gen.rs` | Uploads `data:` URI to Fal CDN → returns `https://` URL |
 | `strip_markdown_image_id` | `utils.rs` | Removes `![desc](image_key)` from reply text |
 | `take_last_image_ids` | `harness.rs` | Returns and drains `last_image_ids` |
-| `take_image` | `harness.rs` | Removes `GeneratedImage` from `ImageCache` by call_id |
+| `get_image` | `harness.rs` | Returns `GeneratedImage` clone from `ImageCache` by call_id (non-destructive, so `reference_image_key` lookups work) |
+| `take_image` | `harness.rs` | Removes `GeneratedImage` from `ImageCache` by call_id (used only during context eviction) |

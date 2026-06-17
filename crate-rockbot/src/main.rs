@@ -447,7 +447,7 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                             let mut reply_text = reply.clone();
 
                             for image_id in &image_ids {
-                                if let Some(img) = h.take_image(image_id) {
+                                if let Some(img) = h.get_image(image_id) {
                                     reply_text = strip_markdown_image_id(&reply_text, image_id);
                                     if let Some(ref share_url) = img.share_url {
                                         let markdown = format!("\n\n![Generated image]({})", share_url);

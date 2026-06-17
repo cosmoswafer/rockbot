@@ -155,6 +155,10 @@ impl AgentHarness {
         std::mem::take(&mut self.last_image_ids)
     }
 
+    pub fn get_image(&self, key: &str) -> Option<crate::image_cache::GeneratedImage> {
+        self.image_cache.get(key)
+    }
+
     pub fn take_image(&self, key: &str) -> Option<crate::image_cache::GeneratedImage> {
         self.image_cache.take(key)
     }
