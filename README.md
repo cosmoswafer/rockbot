@@ -59,7 +59,7 @@ flowchart TB
     LLM["LLM APIs<br/>DeepSeek / OpenRouter / Fal"] <-->|HTTP| AP
 ```
 
-Three crates: `rocketchat` (DDP WebSocket client), `rockbot` (bot logic), `webdav` (NextCloud storage).
+Three crates: `rocketchat` (DDP WebSocket client), `rockbot` (bot logic + Matrix HTTP client), `webdav` (NextCloud storage).
 
 ### Key design decisions
 
@@ -72,7 +72,7 @@ Three crates: `rocketchat` (DDP WebSocket client), `rockbot` (bot logic), `webda
 ## Prerequisites
 
 - Rust 1.85+ (edition 2024)
-- RocketChat server with WebSocket
+- RocketChat server with WebSocket and/or Matrix homeserver
 - NextCloud WebDAV (optional — bot runs without it)
 - API key for DeepSeek, OpenRouter, or Fal
 - Exa API key (optional, for web search/fetch)
