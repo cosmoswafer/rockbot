@@ -136,7 +136,7 @@ flowchart TD
 
 Room context (`room_id` UUID + `webdav_dir` path key) is injected into
 stateful tools that need it (tools backed by WebDAV or room-scoped storage).
-Stateless tools (web search, fetch, datetime, etc.) receive raw arguments
+Stateless tools (web search, fetch, vision, etc.) receive raw arguments
 without room context. The `ToolRegistry` maps tool names to implementations;
 calls are dispatched generically via `execute_by_name()`.
 
@@ -503,7 +503,7 @@ chat message lifetimes.
 
 ## 3. Data Structures
 
-- **AgentContext** — does not exist as a struct. The harness constructs these values on the fly: `system_prompt` is built by `build_system_prompt()`, `history` by `build_context()`, `tools` by `ToolRegistry::definitions()`, `room_id` is a method parameter, `webdav_dir` is computed by `compute_webdav_dir()`.
+- **AgentContext** — does not exist as a struct. The harness constructs these values on the fly: `system_prompt` is built by `build_system_prompt()` (which injects the current UTC time via `now_utc_human()` into `{current_utc_time}` in the `DEFAULT_SYSTEM_PROMPT` template), `history` by `build_context()`, `tools` by `ToolRegistry::definitions()`, `room_id` is a method parameter, `webdav_dir` is computed by `compute_webdav_dir()`.
 
 #### `ToolResult`
 

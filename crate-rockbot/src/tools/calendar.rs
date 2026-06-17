@@ -4,7 +4,7 @@ use std::sync::Mutex;
 use async_trait::async_trait;
 use serde::Deserialize;
 use tracing::{debug, warn};
-use webdav::{CaldavEvent, CaldavTodo, Reminder, ReminderAction, ReminderTrigger, WebDavClient, WebDavConfig, build_vevent_ics, quick_uid};
+use webdav::{CaldavEvent, Reminder, ReminderAction, ReminderTrigger, WebDavClient, WebDavConfig, build_vevent_ics, quick_uid};
 
 use crate::error::{Result, RockBotError};
 use crate::tool::Tool;
@@ -37,10 +37,15 @@ struct CalendarParams {
     rrule: Option<String>,
     #[serde(default)]
     reminder_minutes: Option<i64>,
+    #[serde(default = "default_timezone")]
+    timezone: String,
+    #[serde(default)]
+    month_offset: i64,
 }
 
 fn default_cal_start() -> String { "20250101T000000Z".to_string() }
 fn default_cal_end() -> String { "20990101T000000Z".to_string() }
+fn default_timezone() -> String { "UTC".to_string() }
 
 pub struct CalendarTool {
     client: WebDavClient,
@@ -133,27 +138,6 @@ impl CalendarTool {
         out
     }
 
-    fn format_todo(todo: &CaldavTodo) -> String {
-        let mut out = format!(
-            "Todo: {}\n  UID: {}\n  Status: {}\n",
-            todo.summary.as_str(), todo.uid.as_str(), todo.status
-        );
-        if let Some(ref desc) = todo.description {
-            if !desc.is_empty() {
-                out.push_str(&format!("  Description: {}\n", desc));
-            }
-        }
-        if let Some(ref due) = todo.due {
-            if !due.is_empty() {
-                out.push_str(&format!("  Due: {}\n", due));
-            }
-        }
-        if let Some(priority) = todo.priority {
-            out.push_str(&format!("  Priority: {}\n", priority));
-        }
-        out
-    }
-
 }
 
 fn build_ics_for_event(params: &CalendarParams, uid: &str) -> Result<String> {
@@ -218,6 +202,69 @@ fn build_ics_for_update(params: &CalendarParams, uid: &str, existing: &CaldavEve
     ))
 }
 
+fn generate_calendar_grid(month_offset: i64) -> String {
+    use crate::utils::{civil_from_days, days_from_civil, weekday_index};
+
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    let today_days = secs / 86400;
+    let (year, month, today_day) = civil_from_days(today_days);
+
+    let target_month = month as i64 + month_offset;
+    let (cal_year, cal_month) = if target_month > 12 {
+        (year + (target_month - 1) / 12, ((target_month - 1) % 12 + 1) as u32)
+    } else if target_month < 1 {
+        let yr_adj = target_month / 12 - 1;
+        let m = (target_month % 12 + 12) % 12;
+        (year + yr_adj, if m == 0 { 12 } else { m as u32 })
+    } else {
+        (year, target_month as u32)
+    };
+
+    const MONTH_NAMES: [&str; 12] = [
+        "January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December",
+    ];
+
+    let first_day = days_from_civil(cal_year, cal_month, 1);
+    let first_wday = weekday_index(first_day);
+    let days_in_month = if cal_month == 12 {
+        days_from_civil(cal_year + 1, 1, 1) - first_day
+    } else {
+        days_from_civil(cal_year, cal_month + 1, 1) - first_day
+    };
+
+    let mut out = String::new();
+    out.push_str(&format!("{} {}\n", MONTH_NAMES[cal_month as usize - 1], cal_year));
+    out.push_str("Mon Tue Wed Thu Fri Sat Sun\n");
+
+    for _ in 0..first_wday {
+        out.push_str("    ");
+    }
+
+    for d in 1..=days_in_month {
+        let is_today = cal_year == year && cal_month == month && d == today_day as i64;
+        if is_today {
+            out.push_str(&format!("{:>2}*", d));
+        } else {
+            out.push_str(&format!("{:>2}", d));
+        }
+        let col = (first_wday + d - 1) % 7;
+        if col == 6 {
+            out.push('\n');
+        } else {
+            out.push(' ');
+        }
+    }
+    if (first_wday + days_in_month - 1) % 7 != 6 {
+        out.push('\n');
+    }
+
+    out.trim_end().to_string()
+}
+
 #[async_trait]
 impl Tool for CalendarTool {
     fn name(&self) -> &str {
@@ -225,10 +272,11 @@ impl Tool for CalendarTool {
     }
 
     fn description(&self) -> &str {
-        "Manage calendar events on NextCloud CalDAV. \
+        "Manage calendar events on NextCloud CalDAV and display calendar grids. \
          Events are stored per-room — each room has its own calendar \
          auto-created on first use. \
-         Actions: list_events (list events in a date range), \
+         Actions: mini_calendar (display a month calendar grid), \
+         list_events (list events in a date range), \
          get_event (fetch a single event by UID), \
          add_event (create a new event), update_event (modify an existing event by UID), \
          delete_event (remove an event by UID). \
@@ -237,6 +285,8 @@ impl Tool for CalendarTool {
          omitted fields keep their existing values. \
          Optional for both: description, location, rrule (recurrence rule, RFC 5545), \
          reminder_minutes (e.g. 15). \
+         mini_calendar accepts optional month_offset (0=current month, 1=next, -1=previous) \
+         and timezone (default UTC). \
          All date/time values must be in UTC — use the Z suffix (e.g. 20260615T140000Z) \
          or omit seconds (e.g. 20260601T000000Z). Floating times (without Z) are not supported."
     }
@@ -247,7 +297,7 @@ impl Tool for CalendarTool {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["list_events", "get_event", "add_event", "update_event", "delete_event", "list_todos"],
+                    "enum": ["mini_calendar", "list_events", "get_event", "add_event", "update_event", "delete_event"],
                     "description": "Calendar operation to perform"
                 },
                 "start": {
@@ -289,6 +339,14 @@ impl Tool for CalendarTool {
                 "reminder_minutes": {
                     "type": "integer",
                     "description": "Optional reminder in minutes before event (e.g. 15)."
+                },
+                "timezone": {
+                    "type": "string",
+                    "description": "IANA timezone name (e.g. Asia/Macau, America/New_York). Default: UTC. Used by mini_calendar."
+                },
+                "month_offset": {
+                    "type": "integer",
+                    "description": "Month offset for mini_calendar: 0=current month, 1=next month, -1=previous. Default: 0."
                 }
             },
             "required": ["action"]
@@ -387,27 +445,14 @@ impl Tool for CalendarTool {
                     .map_err(|e| RockBotError::Provider(format!("Calendar delete failed: {e}")))?;
                 Ok(format!("Event deleted: {}", uid))
             }
-            "list_todos" => {
-                debug!("calendar list_todos (room={})", room_id);
-                let todos = self
-                    .client
-                    .list_todos(&caldav_url)
-                    .await
-                    .map_err(|e| RockBotError::Provider(format!("Calendar todo list failed: {e}")))?;
-
-                if todos.is_empty() {
-                    Ok("No todos found.".to_string())
-                } else {
-                    let mut out = format!("{} todo(s):\n\n", todos.len());
-                    for todo in &todos {
-                        out.push_str(&Self::format_todo(todo));
-                        out.push('\n');
-                    }
-                    Ok(out)
-                }
+            "mini_calendar" => {
+                let tz = params.timezone.as_str();
+                let tz_display = if tz == "UTC" { "UTC".to_string() } else { format!("UTC ({})", tz) };
+                let cal = generate_calendar_grid(params.month_offset);
+                Ok(format!("Calendar ({}, month_offset={}):\n\n{}", tz_display, params.month_offset, cal))
             }
             other => Err(RockBotError::ToolCallParse(format!(
-                "Unknown calendar action: {other}. Valid: list_events, get_event, add_event, update_event, delete_event, list_todos"
+                "Unknown calendar action: {other}. Valid: mini_calendar, list_events, get_event, add_event, update_event, delete_event"
             ))),
         }
     }
@@ -500,12 +545,12 @@ mod tests {
         let tool = make_test_tool();
         let params = tool.parameters();
         let actions = params["properties"]["action"]["enum"].as_array().unwrap();
+        assert!(actions.contains(&serde_json::json!("mini_calendar")));
         assert!(actions.contains(&serde_json::json!("list_events")));
         assert!(actions.contains(&serde_json::json!("get_event")));
         assert!(actions.contains(&serde_json::json!("add_event")));
         assert!(actions.contains(&serde_json::json!("update_event")));
         assert!(actions.contains(&serde_json::json!("delete_event")));
-        assert!(actions.contains(&serde_json::json!("list_todos")));
     }
 
     #[tokio::test]
@@ -532,5 +577,39 @@ mod tests {
             )
             .await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_execute_mini_calendar_default() {
+        let tool = make_test_tool();
+        let result = tool.execute(r#"{"action": "mini_calendar"}"#).await.unwrap();
+        assert!(result.contains("Calendar (UTC, month_offset=0)"));
+        assert!(result.contains("Mon Tue Wed Thu Fri Sat Sun"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_mini_calendar_with_offset() {
+        let tool = make_test_tool();
+        let result = tool.execute(r#"{"action": "mini_calendar", "month_offset": 1}"#).await.unwrap();
+        assert!(result.contains("month_offset=1"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_mini_calendar_with_timezone() {
+        let tool = make_test_tool();
+        let result = tool.execute(r#"{"action": "mini_calendar", "timezone": "Asia/Macau"}"#).await.unwrap();
+        assert!(result.contains("UTC (Asia/Macau)"));
+    }
+
+    #[test]
+    fn test_generate_calendar_grid_basic() {
+        let cal = generate_calendar_grid(0);
+        assert!(!cal.is_empty());
+        let months = [
+            "January", "February", "March", "April", "May", "June",
+            "July", "August", "September", "October", "November", "December",
+        ];
+        let has_month = months.iter().any(|m| cal.contains(m));
+        assert!(has_month, "Calendar should contain a month name, got: {cal}");
     }
 }

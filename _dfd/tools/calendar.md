@@ -4,7 +4,10 @@
 
 CalDAV event access wrapping NextCloud's calendar service. Supports listing
 events by date range, create/read/update/delete individual events with
-iCalendar (RFC 5545) `VEVENT` payloads, and `VALARM` reminders.
+iCalendar (RFC 5545) `VEVENT` payloads, `VALARM` reminders, and a
+`mini_calendar` action that renders a text-based month calendar grid (no
+CalDAV calls — pure computation, replaces the former standalone datetime
+tool's calendar view).
 
 **Scope**: Calendar events are **per-room** — each RocketChat room gets its own
 NextCloud calendar, auto-created on first use via CalDAV `MKCALENDAR`. The
@@ -13,9 +16,10 @@ e.g. `r-General`, `d-bob`), stored under the configured user's CalDAV
 calendar home (`/remote.php/dav/calendars/{username}/`). Events from
 different rooms are fully isolated.
 
-> **Note:** `list_todos` currently does **not** accept a date range — it
-> fetches todos without time-range filtering. The DFD diagrams show date
-> range for todos as aspirational/planned behavior.
+> **Note:** The `timezone` parameter is accepted for forward compatibility
+> but the current implementation always computes dates in UTC. The LLM is
+> expected to perform any necessary timezone offset arithmetic itself using
+> the UTC time injected into the system prompt.
 
 - Upstream: [Configuration Management](../infra/config.md) provides `WebDavConfig`
   (server URL, credentials)
@@ -35,19 +39,21 @@ flowchart TD
     HTTP(HttpClient)
     NC[(NextCloud CalDAV)]
     AUTO(EnsureCalendar)
+    MINI_CAL[GenerateCalendarGrid]
     LIST(ListEventsByDate)
     GET(GetEvent)
     ADD(AddEvent)
     UPD(UpdateEvent)
     DEL(DeleteEvent)
-    LIST_TODOS(ListTodos)
 
+    CALLER -->|"month_offset + timezone"| MINI_CAL
     CALLER -->|"date range + room_id"| LIST
     CALLER -->|"event uid + room_id"| GET
     CALLER -->|"event details + room_id"| ADD
     CALLER -->|"event uid + updates + room_id"| UPD
     CALLER -->|"event uid + room_id"| DEL
-    CALLER -->|"date range + room_id"| LIST_TODOS
+
+    MINI_CAL -->|"text month grid"| CALLER
 
     CAL_CFG -->|"server url + credentials"| AUTO
     AUTO -->|"checks room calendar mapping"| LIST
@@ -55,27 +61,23 @@ flowchart TD
     AUTO -->|"checks room calendar mapping"| ADD
     AUTO -->|"checks room calendar mapping"| UPD
     AUTO -->|"checks room calendar mapping"| DEL
-    AUTO -->|"checks room calendar mapping"| LIST_TODOS
 
     LIST -->|"REPORT calendar-query xml"| HTTP
     GET -->|"GET .ics"| HTTP
     ADD -->|"PUT vevent ics body"| HTTP
     UPD -->|"PUT vevent ics + If-Match etag"| HTTP
     DEL -->|"DELETE .ics"| HTTP
-    LIST_TODOS -->|"REPORT calendar-query with VTODO filter"| HTTP
     HTTP -->|"dav request"| NC
     NC -->|"207 multi-status"| LIST
     NC -->|"200 .ics body"| GET
     NC -->|"201 created"| ADD
     NC -->|"204 no content"| UPD
     NC -->|"204 no content"| DEL
-    NC -->|"207 multi-status"| LIST_TODOS
     LIST -->|"event list"| CALLER
     GET -->|"event .ics"| CALLER
     ADD -->|"event uid"| CALLER
     UPD -->|"updated"| CALLER
     DEL -->|"deleted"| CALLER
-    LIST_TODOS -->|"todo list"| CALLER
 ```
 
 ### 2b. Calendar Auto-Creation Flow
@@ -119,7 +121,6 @@ flowchart TD
         EVT_ADD(PUT new .ics)
         EVT_UPD(PUT existing .ics + If-Match)
         EVT_DEL(DELETE .ics resource)
-        EVT_LIST_TODOS(REPORT calendar-query<br/>with VTODO filter)
     end
 
     EVT_LIST -->|"REPORT + calendar-query xml"| HTTP
@@ -127,7 +128,6 @@ flowchart TD
     EVT_ADD -->|"PUT vevent ics body"| HTTP
     EVT_UPD -->|"PUT vevent ics + If-Match: etag"| HTTP
     EVT_DEL -->|"DELETE .ics"| HTTP
-    EVT_LIST_TODOS -->|"REPORT + calendar-query<br/>with comp-filter VTODO"| HTTP
 
     HTTP -->|"dav request"| NC
     NC -->|"207 multi-status"| EVT_LIST
@@ -135,18 +135,6 @@ flowchart TD
     NC -->|"201 created"| EVT_ADD
     NC -->|"204 no content"| EVT_UPD
     NC -->|"204 no content"| EVT_DEL
-    NC -->|"207 multi-status"| EVT_LIST_TODOS
-
-    subgraph VTODOStructure[VTODO Content]
-        direction LR
-        TODOSUMMARY[summary: title]
-        TODODESCRIPTION[description: details]
-        TODODUE[due: datetime]
-        TODOSTATUS[status: COMPLETED/NEEDS-ACTION]
-        TODOPRIORITY[priority: 1-9]
-    end
-
-    EVT_LIST_TODOS -->|"parses time-range filtered vtodos"| VTODOStructure
 
     subgraph VEVENTStructure[VEVENT Content]
         direction LR
@@ -188,6 +176,49 @@ Note: The 409 Conflict retry loop (refetch → merge → retry with new etag) is
 
 ## 3. Data Structures
 
+#### `CalendarParams`
+
+Deserializable from JSON tool-call arguments. All fields are optional except
+`action`.
+
+| Field              | Type             | Notes                                                   |
+| ------------------ | ---------------- | ------------------------------------------------------- |
+| `action`           | `NonEmptyString` | `"mini_calendar"`, `"list_events"`, `"get_event"`, `"add_event"`, `"update_event"`, or `"delete_event"` |
+| `room_id`          | `Option<String>` | Fallback `"global"`                                     |
+| `webdav_dir`       | `Option<String>` | Calendar name; defaults to `room_id`                    |
+| `start`            | `String`         | ISO 8601 UTC range start for `list_events`. Default `20250101T000000Z` |
+| `end`              | `String`         | ISO 8601 UTC range end. Default `20990101T000000Z`      |
+| `uid`              | `Option<String>` | Required for `get_event`, `update_event`, `delete_event` |
+| `summary`          | `Option<String>` | Event title; required for `add_event`                   |
+| `dtstart`          | `Option<String>` | ISO 8601 UTC start; required for `add_event`            |
+| `dtend`            | `Option<String>` | ISO 8601 UTC end; required for `add_event`              |
+| `description`      | `Option<String>` | Event details                                           |
+| `location`         | `Option<String>` | Event venue                                             |
+| `rrule`            | `Option<String>` | RFC 5545 recurrence rule                                |
+| `reminder_minutes` | `Option<i64>`    | Minutes before event for `VALARM`                       |
+| `timezone`         | `String`         | IANA timezone name (e.g. `Asia/Macau`). Default `"UTC"`. Used by `mini_calendar` |
+| `month_offset`     | `i64`            | Month offset for `mini_calendar`: 0=current, 1=next, -1=previous. Default 0 |
+
+#### `mini_calendar` Action
+
+Pure computation — no CalDAV calls. Renders a text-based month calendar grid
+using Howard Hinnant's civil date algorithm (from `utils.rs`). The current
+day is marked with `*`. Example output:
+
+```
+June 2026
+Mon Tue Wed Thu Fri Sat Sun
+  1    2    3    4    5    6    7
+  8    9   10*  11   12   13   14
+ 15   16   17   18   19   20   21
+ 22   23   24   25   26   27   28
+ 29   30
+```
+
+The `timezone` parameter is accepted and echoed in the header for
+readability, but the calendar grid itself is always computed in UTC.
+`month_offset` allows browsing forward/backward up to 12 months.
+
 #### `CaldavEvent`
 
 CalDAV event resource represented as a parsed iCalendar `VEVENT` (RFC 5545).
@@ -214,20 +245,6 @@ Stored as `{uid}.ics` within the calendar collection.
 | -------- | -------- | --------------------------------------------- |
 | `action` | `ReminderAction` | Validated newtype: non-empty, max 64 chars. `DISPLAY` or `EMAIL` |
 | `trigger`| `ReminderTrigger`| Validated non-empty newtype. Duration before event (`-PT15M`) or absolute |
-
-#### `CaldavTodo`
-
-| Field         | Type              | Notes                               |
-| ------------- | ----------------- | ----------------------------------- |
-| `uid`         | `NonEmptyString`  | Globally unique identifier          |
-| `href`        | `String`          | Full CalDAV href                    |
-| `summary`     | `NonEmptyString`  | Todo title                          |
-| `description` | `Option<String>`  | Details                             |
-| `priority`    | `Option<u8>`      | 1-9 priority                        |
-| `status`      | `String`          | `COMPLETED` / `NEEDS-ACTION` / `CANCELLED` |
-| `due`         | `Option<String>`  | Due datetime                        |
-| `completed`   | `Option<String>`  | Completion datetime                 |
-| `created`     | `String`          | Creation timestamp                  |
 
 #### Room Calendar Mapping
 
@@ -266,8 +283,6 @@ Per [NextCloud Calendar user guide](https://docs.nextcloud.com/server/latest/use
 | AddEvent            | `PUT`       | `{base}/calendars/{user}/{cal}/{uid}.ics` | Body = `VEVENT` iCalendar (RFC 5545)            |
 | UpdateEvent         | `PUT`       | `{base}/calendars/{user}/{cal}/{uid}.ics` | `If-Match: {etag}` header; 409 on conflict      |
 | DeleteEvent         | `DELETE`    | `{base}/calendars/{user}/{cal}/{uid}.ics` | 204 on success, 404 if not found                |
-| ListTodos           | `REPORT`    | `{base}/calendars/{user}/{cal}/`          | XML body with `calendar-query`, comp-filter `VTODO`, time-range filter |
-
 #### `MKCALENDAR` request body
 
 ```xml

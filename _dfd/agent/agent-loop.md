@@ -16,6 +16,9 @@ type and consuming `BotReply`. The agent harness and tool execution are
 platform-agnostic.
 
 - Upstream: [Configuration Management](../infra/config.md) provides `AppConfig`
+- Upstream: [Boot Sequence](boot-sequence.md) covers config loading, provider
+  selection, tool registration, and platform connection — all boot steps
+  that precede entering this event loop
 - Downstream: [Agent Harness](agent-harness.md) receives `IncomingMessage` and
   returns `BotReply` (see agent-harness.md for loop internals and tool execution)
 - Downstream: [RocketChat Connection](../infra/rocketchat.md) or
@@ -116,41 +119,7 @@ On graceful shutdown (SIGINT, SIGTERM, normal connection close, or max reconnect
 
 Typing indicator failures are non-critical: if `sender.typing()` returns an error (e.g. WebSocket disconnected), the heartbeat task silently catches it and stops refreshing. The main agent loop is unaffected — it continues processing and sends the reply without typing cleanup.
 
-### 2c. Startup Sequence
-
-```mermaid
-flowchart TD
-    START["main()"]
-    CFG(LoadConfig)
-    TOML[(Config File)]
-    VALIDATE(ValidateConfig)
-    SELECT{Platform?}
-    LOGIN_RC(LoginRocketChat)
-    CONNECT_RC(ConnectWebSocket)
-    LOGIN_MX(LoginMatrix)
-    SYNC_MX(MatrixSync)
-    DAV[(NextCloud WebDAV)]
-    LOOP[AgentLoop]
-    CFG_STORE[(AppConfig)]
-
-    START -->|"config path"| CFG
-    CFG -->|"load toml"| TOML
-    TOML -->|"raw config"| VALIDATE
-    VALIDATE -->|"appconfig"| CFG_STORE
-    CFG_STORE -->|"platform.name"| SELECT
-    SELECT -->|"rocketchat"| LOGIN_RC
-    SELECT -->|"matrix"| LOGIN_MX
-    LOGIN_RC -->|"auth token"| CONNECT_RC
-    CONNECT_RC -->|"connected"| DAV
-    LOGIN_MX -->|"session token"| SYNC_MX
-    SYNC_MX -->|"sync started"| DAV
-    CFG_STORE -->|"webdav credentials"| DAV
-    DAV -->|"WebDAV client"| LOOP
-```
-
-Note: History loading is lazy — each room's memory (summary, soul, knowledge) is restored on first message per room via `restore_history()`, not eagerly at startup. No batch restore occurs at boot time.
-
-### 2d. Typing Indicator Heartbeat
+### 2c. Typing Indicator Heartbeat
 
 Level 2 decomposition of `ToggleTyping` and the typing flows during `AgentLoop`. The bot sends an initial `typing=true` signal before the agent loop begins, then a background task refreshes it every 2 seconds while the loop runs. When the loop produces a reply (or errors out), typing is set to `false`.
 
@@ -272,7 +241,7 @@ state to WebDAV before exiting.
   (and `default.config.toml`) at startup. All persistent state lives in WebDAV.
   Exception: `matrix-rust-sdk` stores an encryption key store and sync state in a
   configurable state directory (`[matrix.server] state_dir`, default `./tmp/matrix-sdk`).
-- **No tool touches local files**: Every tool (web_fetch, webdav, calendar, datetime,
+- **No tool touches local files**: Every tool (web_fetch, webdav, calendar,
   vision, web_search, image_gen, edit_soul, knowledge tools) MUST NOT access the
   local filesystem. All I/O goes through WebDAV or HTTP.
 - **Config-only startup**: The application only loads `config.toml` (merged with

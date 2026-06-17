@@ -131,12 +131,11 @@ to make data flow violations compile-time errors rather than runtime surprises:
 | `_dfd/interception/secret-interception.md` | `harness.rs` (`load_secrets_from_webdav`, `filter_secrets_by_host`, `resolve_secret_refs_deep`, `replace_secret_refs`) | `tools/web_fetch.rs`, `tools/webdav.rs`, webdav crate |
 | `_dfd/tools/compress-memory.md` | `tools/compress_memory.rs` | `harness.rs`, `memory.rs` |
 | `_dfd/tools/webdav.md` | `tools/webdav.rs` | webdav crate |
-| `_dfd/tools/calendar.md` | `tools/calendar.rs` | webdav crate |
+| `_dfd/tools/calendar.md` | `tools/calendar.rs` | webdav crate, `utils.rs` |
 | `_dfd/tools/exa-search.md` | `tools/web_search.rs` | `tools/web_fetch.rs` |
 | `_dfd/tools/web-fetch.md` | `tools/web_fetch.rs` | `tools/web_search.rs`, `harness.rs` (secret interception) |
 | `_dfd/tools/image-gen.md` | `tools/image_gen.rs` | `provider/fal.rs`, webdav crate |
 | `_dfd/tools/vision.md` | `tools/vision.rs` | — |
-| `_dfd/tools/datetime.md` | `tools/datetime.rs` | — |
 | `_dfd/tools/edit-soul.md` | `tools/edit_soul.rs` | `memory.rs`, webdav crate |
 | `_dfd/tools/knowledge.md` | `tools/save_knowledge.rs`, `tools/forget_knowledge.rs`, `tools/recall_knowledge.rs` | `knowledge.rs`, webdav crate |
 

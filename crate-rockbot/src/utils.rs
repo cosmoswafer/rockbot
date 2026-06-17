@@ -91,6 +91,55 @@ pub fn civil_from_days(days: i64) -> (i64, u32, u32) {
     (y, m, d)
 }
 
+/// Converts (year, month, day) to days since Unix epoch using Howard Hinnant's algorithm.
+pub fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = (y - era * 400) as u32;
+    let doy = (153 * (if m <= 2 { m + 9 } else { m - 3 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146097 + doe as i64 - 719468
+}
+
+/// Returns the weekday name for a given number of days since Unix epoch.
+/// Epoch day 0 is Thursday (1970-01-01).
+pub fn weekday_name(days: i64) -> &'static str {
+    const WEEKDAYS: [&str; 7] = [
+        "Thursday", "Friday", "Saturday",
+        "Sunday", "Monday", "Tuesday", "Wednesday",
+    ];
+    let idx = days.rem_euclid(7);
+    WEEKDAYS[idx as usize]
+}
+
+/// Returns weekday index: 0=Monday, 6=Sunday.
+pub fn weekday_index(days: i64) -> i64 {
+    (days + 3) % 7
+}
+
+/// Returns the current UTC time as a human-readable string: "YYYY-MM-DD HH:MM:SS UTC (Weekday)".
+pub fn now_utc_human() -> String {
+    let secs = now_unix_secs();
+    let days = secs / 86400;
+    let time_of_day = secs % 86400;
+    let hours = time_of_day / 3600;
+    let minutes = (time_of_day % 3600) / 60;
+    let seconds = time_of_day % 60;
+    let (year, month, day) = civil_from_days(days);
+    let weekday = weekday_name(days);
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC ({})",
+        year, month, day, hours, minutes, seconds, weekday
+    )
+}
+
+fn now_unix_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64
+}
+
 /// Removes a markdown image link `![any text](image_id)` from text.
 /// Also strips any trailing newline left behind.
 pub fn strip_markdown_image_id(text: &str, image_id: &str) -> String {
@@ -130,6 +179,56 @@ mod tests {
         assert_eq!(y, 2025);
         assert_eq!(m, 1);
         assert_eq!(d, 1);
+    }
+
+    #[test]
+    fn test_days_from_civil_epoch() {
+        let days = days_from_civil(1970, 1, 1);
+        assert_eq!(days, 0);
+    }
+
+    #[test]
+    fn test_days_from_civil_roundtrip() {
+        let days = 20089;
+        let (y, m, d) = civil_from_days(days);
+        let back = days_from_civil(y, m, d);
+        assert_eq!(days, back);
+    }
+
+    #[test]
+    fn test_weekday_name_epoch() {
+        assert_eq!(weekday_name(0), "Thursday");
+    }
+
+    #[test]
+    fn test_weekday_name_known() {
+        let mon = days_from_civil(2026, 6, 8);
+        assert_eq!(weekday_name(mon), "Monday");
+        let wed = days_from_civil(2026, 6, 10);
+        assert_eq!(weekday_name(wed), "Wednesday");
+        let sun = days_from_civil(2026, 6, 14);
+        assert_eq!(weekday_name(sun), "Sunday");
+    }
+
+    #[test]
+    fn test_weekday_index() {
+        let mon = days_from_civil(2026, 6, 8);
+        assert_eq!(weekday_index(mon), 0);
+        let sun = days_from_civil(2026, 6, 14);
+        assert_eq!(weekday_index(sun), 6);
+    }
+
+    #[test]
+    fn test_now_utc_human() {
+        let s = now_utc_human();
+        assert!(s.contains("UTC ("), "Expected 'UTC (' in: {s}");
+        // Should contain a weekday name in parentheses
+        for w in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] {
+            if s.contains(w) {
+                return;
+            }
+        }
+        panic!("Expected a weekday name in: {s}");
     }
 
     #[test]

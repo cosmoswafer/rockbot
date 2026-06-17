@@ -26,7 +26,8 @@ Context space is limited to ~{max_context_mb}MB / 1M tokens. Keep your \
 reasoning brief and avoid verbose explanations. Use tools to fetch \
 information rather than guessing. You have up to {max_iterations} iterations \
 per task — plan your tool calls efficiently. \
-When you need the current date or time, use the datetime tool. \
+Current UTC time: {current_utc_time}. Use this for all time/date questions \
+and calendar calculations — do not guess or fabricate dates. \
 When you need information from the web, use the web_search tool. \
 When you need to fetch a URL, use web_fetch. \
 When you need to describe or analyze an image, use the vision tool. \
@@ -75,10 +76,16 @@ Example output: `"Alice: what's the weather in Tokyo?"`
 
 ## 3. Tool Descriptions (sent to AI provider in tool definitions)
 
-### 3a. `datetime`
-**File:** `crate-rockbot/src/tools/datetime.rs:228-232`
+### 3a. `calendar`
+**File:** `crate-rockbot/src/tools/calendar.rs:293-310`
 ```
-Get the current UTC date and time. Returns ISO 8601 timestamp, human-readable date with weekday, Unix epoch seconds, calendar month view, week number (ISO 8601), or weekday list. Supports week_offset for prev/next week views.
+Manage calendar events on NextCloud CalDAV and display calendar grids.
+Events are stored per-room — each room has its own calendar auto-created on first use.
+Actions: mini_calendar (display a month calendar grid), list_events (list events in
+a date range), get_event, add_event, update_event, delete_event.
+add_event requires summary, dtstart (ISO 8601, UTC), dtend (ISO 8601, UTC).
+mini_calendar accepts optional month_offset (0=current, 1=next, -1=previous) and
+timezone (default UTC).
 ```
 
 ### 3b. `web_search`
@@ -183,8 +190,9 @@ Compress all current conversation messages into a memory summary. The LLM will d
 
 | File | Lines | Tool | Parameter | Description |
 |------|-------|------|-----------|-------------|
-| `datetime.rs` | 241, 243 | `datetime` | `format` | Output format: iso (ISO 8601), human (readable with weekday), unix (epoch seconds), calendar (month grid), weekdays (list of weekdays with dates), week_number (ISO week number), full (all). Default: full |
-| `datetime.rs` | 245-247 | `datetime` | `week_offset` | Offset for calendar/weekdays format: 0=current week/month, 1=next, -1=previous. Default: 0 |
+| `calendar.rs` | 336 | `calendar` | `action` | Calendar operation: mini_calendar, list_events, get_event, add_event, update_event, delete_event |
+| `calendar.rs` | 348 | `calendar` | `month_offset` | Month offset for mini_calendar: 0=current, 1=next, -1=previous. Default: 0 |
+| `calendar.rs` | 344 | `calendar` | `timezone` | IANA timezone name (e.g. Asia/Macau). Default: UTC. Used by mini_calendar |
 | `web_search.rs` | 241 | `web_search` | `query` | The search query to execute |
 | `web_search.rs` | 246 | `web_search` | `type` | Search type: auto (balanced with autoprompt), fast (quick results), deep (comprehensive). Default: auto |
 | `web_search.rs` | 251 | `web_search` | `contents_mode` | Content mode: highlights returns snippets (default), text returns full page content, deep enables comprehensive search |

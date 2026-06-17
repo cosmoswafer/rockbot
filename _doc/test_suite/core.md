@@ -41,7 +41,7 @@ Full `AgentHarness`: simple response, DM handling, provider error fallback, max_
 ### `src/tools/webdav.rs` — 19 tests
 `WebDavTool` definition (7 actions: read/write/edit/list/mkdir/delete/exists), file size formatting (B/KB/MB), room path/dir construction (channel r- and DM d- prefixes), error paths (missing action, unknown action, missing room_id, missing path, missing write content, invalid JSON, missing oldString/newString in edit), image extension detection (png/jpg/jpeg/gif/svg/webp), MIME type mapping.
 
-### `src/tools/datetime.rs` — 21 tests
+### `src/tools/calendar.rs` — 12 tests (includes mini_calendar)
 `DateTimeTool` definition, `civil_from_days`/`days_from_civil` date algorithms (epoch, known dates, roundtrip), weekday names/indexes, ISO week number, calendar and weekday output generation, all 7 execution output formats (full, iso, human, unix, calendar, weekdays, week_number), empty args default, week_offset variants.
 
 ### `src/tools/image_gen.rs` — 23 tests

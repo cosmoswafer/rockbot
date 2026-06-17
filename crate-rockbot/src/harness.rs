@@ -28,7 +28,8 @@ Context space is limited to ~{max_context_mb}MB / 1M tokens. Keep your \
 reasoning brief and avoid verbose explanations. Use tools to fetch \
 information rather than guessing. You have up to {max_iterations} iterations \
 per task — plan your tool calls efficiently. \
-When you need the current date or time, use the datetime tool. \
+Current UTC time: {current_utc_time}. Use this for all time/date questions \
+and calendar calculations — do not guess or fabricate dates. \
 When you need information from the web, use the web_search tool. \
 When you need to fetch a URL, use web_fetch. \
 When you need to describe or analyze an image, use the vision tool. \
@@ -655,10 +656,12 @@ impl AgentHarness {
         let name = &self.config.rocketchat.server.username;
         let max_ctx = *self.config.active_model().max_context_bytes as f64 / 1_000_000.0;
         let max_iter = self.config.active_model().max_iterations;
+        let utc_time = crate::utils::now_utc_human();
         DEFAULT_SYSTEM_PROMPT
             .replace("{name}", name)
             .replace("{max_context_mb}", &format!("{max_ctx:.1}"))
             .replace("{max_iterations}", &max_iter.to_string())
+            .replace("{current_utc_time}", &utc_time)
     }
 
     fn build_system_prompt_with_secrets(&self, secrets: &[ResolvedSecret]) -> String {

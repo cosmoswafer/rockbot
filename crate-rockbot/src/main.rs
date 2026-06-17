@@ -13,7 +13,7 @@ use rockbot::provider::{AiProvider, DeepSeekProvider, FalAiProvider, ImageProvid
 use rockbot::platform::{MatrixPlatform, MessagingClient, PlatformSender, RcPlatformSender, RocketChatPlatform};
 use rockbot::tool::ToolRegistry;
 use rockbot::tools::{
-    CalendarTool, CompressMemoryTool, DateTimeTool, EditSoulTool, ForgetKnowledgeTool,
+    CalendarTool, CompressMemoryTool, EditSoulTool, ForgetKnowledgeTool,
     ImageGenTool, RecallKnowledgeTool, SaveKnowledgeTool, VisionTool, WebDavTool, WebFetchTool,
     WebSearchTool,
 };
@@ -128,21 +128,20 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     if has_exa {
         if let Some(ref webdav_client) = webdav {
             tool_registry.register(Box::new(WebFetchTool::with_exa_key_and_webdav(exa_key, webdav_client.clone())));
-            debug!("WebFetchTool registered with Exa verification and WebDAV support");
+            info!("WebFetchTool registered with Exa verification and WebDAV support");
         } else {
             tool_registry.register(Box::new(WebFetchTool::with_exa_key(exa_key)));
-            debug!("WebFetchTool registered with Exa verification support");
+            info!("WebFetchTool registered with Exa verification support");
         }
     } else {
         if let Some(ref webdav_client) = webdav {
             tool_registry.register(Box::new(WebFetchTool::with_webdav(webdav_client.clone())));
-            debug!("WebFetchTool registered with WebDAV support (no Exa)");
+            info!("WebFetchTool registered with WebDAV support (no Exa)");
         } else {
             tool_registry.register(Box::new(WebFetchTool::new()));
-            debug!("WebFetchTool registered without Exa or WebDAV support");
+            info!("WebFetchTool registered without Exa or WebDAV support");
         }
     }
-    tool_registry.register(Box::new(DateTimeTool::new()));
     tool_registry.register(Box::new(VisionTool::with_max_bytes(
         harness.config().active_model().max_attachment_bytes,
     )));
@@ -159,7 +158,7 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
             tool_registry.register(Box::new(calendar_tool));
             info!("Registered calendar tool (per-room, auto-created)");
         } else {
-            debug!("Calendar tool not registered — WebDAV config missing calendar settings");
+            info!("Calendar tool not registered — WebDAV config missing calendar settings");
         }
 
         let (image_provider_name, t2i_model_name, edit_model_name, default_quality, default_output_format, default_num_images, _default_image_size, default_image_size_tier) = {
@@ -178,7 +177,7 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
 
         let image_cfg = harness.config().find_image_provider(image_provider_name);
         if let Some(img_cfg) = image_cfg {
-            debug!("Found image provider '{}', resolving models t2i={} edit={}", image_provider_name, t2i_model_name, edit_model_name);
+            info!("Found image provider '{}', resolving models t2i={} edit={}", image_provider_name, t2i_model_name, edit_model_name);
             let resolved_t2i = harness
                 .config()
                 .resolve_image_model(image_provider_name, t2i_model_name)
@@ -191,7 +190,7 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
 
             let same_provider = resolved_t2i == resolved_edit;
 
-            debug!("Resolved image models: t2i='{}' edit='{}'", resolved_t2i, resolved_edit);
+            info!("Resolved image models: t2i='{}' edit='{}'", resolved_t2i, resolved_edit);
 
             let t2i_provider: Option<Box<dyn ImageProvider>> = match image_provider_name {
                 "fal" => FalAiProvider::new(img_cfg, &resolved_t2i).ok().map(|p| Box::new(p) as Box<dyn ImageProvider>),
@@ -252,10 +251,10 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         } else {
-            debug!("Image provider '{}' not found in config — image_gen tool not registered", image_provider_name);
+            info!("Image provider '{}' not found in config — image_gen tool not registered", image_provider_name);
         }
     } else {
-        debug!("WebDAV not configured — WebDAV-dependent tools (webdav, edit_soul, knowledge, calendar, image_gen) not registered");
+        info!("WebDAV not configured — WebDAV-dependent tools (webdav, edit_soul, knowledge, calendar, image_gen) not registered");
     }
 
     if !tool_registry.is_empty() {

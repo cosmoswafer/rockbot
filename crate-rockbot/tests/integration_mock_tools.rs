@@ -2,10 +2,9 @@
 //
 // Each section covers one DFD's happy path with wiremock where the tool
 // depends on external HTTP services (Exa, image servers, WebDAV).
-// Pure-computation tools (datetime) are tested via direct execute() calls.
+// Pure-computation tools (calendar/memory) are tested via direct execute() calls.
 //
 // DFDs covered:
-//   _dfd/tools/datetime.md
 //   _dfd/tools/vision.md
 //   _dfd/tools/exa-search.md
 //   _dfd/tools/web-fetch.md
@@ -23,7 +22,7 @@ use rockbot::memory::{ConversationHistory, MemoryManager, PersistSnapshot};
 use rockbot::provider::AiProvider;
 use rockbot::tool::Tool;
 use rockbot::tools::{
-    CalendarTool, DateTimeTool, EditSoulTool, VisionTool, WebDavTool, WebFetchTool,
+    CalendarTool, EditSoulTool, VisionTool, WebDavTool, WebFetchTool,
     WebSearchTool,
 };
 use rockbot::types::{ChatMessage, ChatRequest, CompletionResult, FinishReason};
@@ -45,99 +44,6 @@ fn tiny_png_bytes() -> Vec<u8> {
         0x00, 0x03, 0x01, 0x01, 0x00, 0x18, 0xDD, 0x8D, 0xB0, 0x00, 0x00, 0x00,
         0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
     ]
-}
-
-// ============================================================================
-// _dfd/tools/datetime.md — Happy Path
-// ============================================================================
-
-#[tokio::test]
-async fn test_datetime_full_format() {
-    let tool = DateTimeTool::new();
-    let result = tool.execute(r#"{"format": "full"}"#).await.unwrap();
-    // Full output contains all sub-formats: iso, human, unix, Week Number, Weekdays, Calendar
-    assert!(result.contains("T"));
-    assert!(result.contains("UTC"));
-    assert!(result.contains("Week Number:"));
-    assert!(result.contains("Weekdays:"));
-    assert!(result.contains("Calendar:"));
-}
-
-#[tokio::test]
-async fn test_datetime_iso_format() {
-    let tool = DateTimeTool::new();
-    let result = tool.execute(r#"{"format": "iso"}"#).await.unwrap();
-    assert!(result.contains("T"));
-    assert!(result.contains("Z"));
-}
-
-#[tokio::test]
-async fn test_datetime_human_format() {
-    let tool = DateTimeTool::new();
-    let result = tool.execute(r#"{"format": "human"}"#).await.unwrap();
-    assert!(result.contains("UTC"));
-}
-
-#[tokio::test]
-async fn test_datetime_unix_format() {
-    let tool = DateTimeTool::new();
-    let result = tool.execute(r#"{"format": "unix"}"#).await.unwrap();
-    let timestamp: i64 = result.trim().parse().unwrap();
-    // Must be a reasonable Unix timestamp (after 2020)
-    assert!(timestamp > 1577836800);
-}
-
-#[tokio::test]
-async fn test_datetime_calendar_format() {
-    let tool = DateTimeTool::new();
-    let result = tool.execute(r#"{"format": "calendar"}"#).await.unwrap();
-    // Calendar output contains month header and day grid
-    assert!(result.contains("Mon") || result.contains("Sun"));
-}
-
-#[tokio::test]
-async fn test_datetime_week_number_format() {
-    let tool = DateTimeTool::new();
-    let result = tool.execute(r#"{"format": "week_number"}"#).await.unwrap();
-    let week_num: i32 = result.trim().parse().unwrap();
-    assert!((1..=53).contains(&week_num));
-}
-
-#[tokio::test]
-async fn test_datetime_weekdays_format() {
-    let tool = DateTimeTool::new();
-    let result = tool.execute(r#"{"format": "weekdays"}"#).await.unwrap();
-    assert!(result.contains("Monday") || result.contains("Sunday"));
-}
-
-#[tokio::test]
-async fn test_datetime_week_offset() {
-    let tool = DateTimeTool::new();
-    // Next week with week_offset=1
-    let result = tool
-        .execute(r#"{"format": "week_number", "week_offset": 1}"#)
-        .await
-        .unwrap();
-    let week_num: i32 = result.trim().parse().unwrap();
-    assert!((1..=53).contains(&week_num));
-}
-
-#[tokio::test]
-async fn test_datetime_default_format() {
-    let tool = DateTimeTool::new();
-    let result = tool.execute(r#"{}"#).await.unwrap();
-    // Default is "full"
-    assert!(result.contains("T"));
-    assert!(result.contains("Week Number:"));
-}
-
-#[tokio::test]
-async fn test_datetime_invalid_format_falls_back() {
-    let tool = DateTimeTool::new();
-    let result = tool.execute(r#"{"format": "bogus"}"#).await.unwrap();
-    // Unknown format falls back to full
-    assert!(result.contains("T"));
-    assert!(result.contains("Week Number:"));
 }
 
 // ============================================================================
@@ -994,7 +900,7 @@ async fn test_harness_constructs_and_registers_tools() {
     let mut harness = AgentHarness::new(config, provider, Some(webdav), image_cache);
 
     // Register some tools
-    harness.register_tool(Box::new(DateTimeTool::new()));
+    harness.register_tool(Box::new(VisionTool::with_max_bytes(10_000_000)));
     harness.register_tool(Box::new(WebSearchTool::new("test-key".to_string())));
 
     // Verify config access
@@ -1016,7 +922,7 @@ async fn test_harness_get_or_create_room() {
     let webdav = webdav::WebDavClient::new(&webdav_url, "test", "pass").unwrap();
     let image_cache = Arc::new(ImageCache::new());
     let mut harness = AgentHarness::new(config, provider, Some(webdav), image_cache);
-    harness.register_tool(Box::new(DateTimeTool::new()));
+    harness.register_tool(Box::new(VisionTool::with_max_bytes(10_000_000)));
 
     // MemoryManager::get_or_create creates rooms on first access
     let mem = harness.memory_mut();
