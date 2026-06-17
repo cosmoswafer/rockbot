@@ -193,7 +193,7 @@ All data structures are shared with [Knowledge Management](../knowledge/knowledg
 | `content`    | `NonEmptyString`        | Markdown body of the knowledge entry. Validated newtype. |
 | `when_useful`| `NonEmptyString`        | Situation description for retrieval. Validated non-empty (required field). |
 | `tags`       | `Option<String>`        | Comma-separated keywords. Serde default: `None`. |
-| `priority`   | `KnowledgePriority`     | Enum: `P0`, `P1`, `P2`, `P3`. Default `P1`.    |
+| `priority`   | `KnowledgePriority`     | Enum: `P0`, `P1`, `P2`, `P3`. Required — no default. |
 | `webdav_dir` | `Option<String>`        | Room WebDAV key. Serde default: `None` (injected by harness). |
 
 #### ForgetKnowledgeParams

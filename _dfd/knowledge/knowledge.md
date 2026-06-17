@@ -320,7 +320,7 @@ Registered in `ToolRegistry`. Parameters:
 | `content`     | `string` | Yes      | Markdown body                                    |
 | `when_useful` | `string` | Yes      | Situation description (retrieval trigger)        |
 | `tags`        | `string` | No       | Comma-separated keywords                         |
-| `priority`    | `string` | No       | `"P0"`, `"P1"`, `"P2"`, or `"P3"` (default: P1) |
+| `priority`    | `string` | Yes      | `"P0"`, `"P1"`, `"P2"`, or `"P3"` |
 
 ### Tool: `forget_knowledge`
 

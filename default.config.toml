@@ -12,6 +12,7 @@ chat_path = "/chat/completions"
 gpt = "openai/gpt-oss-120b:online"
 qwen = "qwen/qwen3.7-plus"
 minimax = "minimax/minimax-m3"
+mimo = "xiaomi/mimo-v2.5"
 
 [[chat_providers]]
 name = "deepseek"

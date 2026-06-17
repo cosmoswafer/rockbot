@@ -62,7 +62,7 @@ impl Tool for SaveKnowledgeTool {
                     "description": "Knowledge priority: P0 (highest, always recalled), P1 (high, default), P2 (medium), P3 (low). Higher priority means more frequently recalled."
                 }
             },
-            "required": ["topic", "content", "when_useful"]
+            "required": ["topic", "content", "when_useful", "priority"]
         })
     }
 
@@ -110,6 +110,7 @@ mod tests {
         assert!(required.contains(&serde_json::json!("topic")));
         assert!(required.contains(&serde_json::json!("content")));
         assert!(required.contains(&serde_json::json!("when_useful")));
+        assert!(required.contains(&serde_json::json!("priority")));
     }
 
     #[tokio::test]
@@ -118,6 +119,16 @@ mod tests {
         let tool = SaveKnowledgeTool::new(webdav);
         let result = tool.execute(r#"{}"#).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_execute_missing_priority() {
+        let webdav = webdav::WebDavClient::new("https://example.com", "user", "pass").unwrap();
+        let tool = SaveKnowledgeTool::new(webdav);
+        let result = tool.execute(
+            r#"{"topic": "Test", "content": "Some content", "when_useful": "testing"}"#,
+        ).await;
+        assert!(result.is_err(), "should fail when priority is missing");
     }
 
     #[test]

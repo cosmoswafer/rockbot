@@ -82,7 +82,6 @@ pub struct SaveKnowledgeParams {
     pub topic: NonEmptyString,
     pub content: NonEmptyString,
     pub when_useful: NonEmptyString,
-    #[serde(default)]
     pub priority: KnowledgePriority,
     #[serde(default)]
     pub tags: Option<String>,
@@ -323,8 +322,17 @@ impl KnowledgeManager {
                         score += 1;
                     }
                 }
-                if score > 0 {
-                    Some((score, entry.clone()))
+                let priority_bonus: usize = match entry.priority {
+                    KnowledgePriority::P0 => 8,
+                    KnowledgePriority::P1 => 5,
+                    KnowledgePriority::P2 => 2,
+                    KnowledgePriority::P3 => 0,
+                };
+                // P0 always selected regardless of keyword overlap
+                if entry.priority == KnowledgePriority::P0 {
+                    Some((score + priority_bonus, entry.clone()))
+                } else if score > 0 {
+                    Some((score + priority_bonus, entry.clone()))
                 } else {
                     None
                 }
@@ -572,6 +580,75 @@ mod tests {
             &["hello", "how are you", "nice weather"],
         );
         assert!(matches.is_empty());
+    }
+
+    #[test]
+    fn test_match_relevant_p0_always_selected() {
+        let index = KnowledgeIndex {
+            version: "rockbot-knowledge/1".into(),
+            room_id: "r-test".into(),
+            entries: vec![IndexEntry {
+                filename: "critical.md".into(),
+                when_useful: "Always important".into(),
+                priority: KnowledgePriority::P0, last_promoted_at: None,
+            }],
+        };
+
+        let matches = KnowledgeManager::match_relevant(
+            &index,
+            &["hello", "how are you", "nice weather"],
+        );
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].filename, "critical.md");
+    }
+
+    #[test]
+    fn test_match_relevant_priority_bonus_sorting() {
+        let index = KnowledgeIndex {
+            version: "rockbot-knowledge/1".into(),
+            room_id: "r-test".into(),
+            entries: vec![
+                IndexEntry {
+                    filename: "p0_doc.md".into(),
+                    when_useful: "When working with databases".into(),
+                    priority: KnowledgePriority::P0, last_promoted_at: None,
+                },
+                IndexEntry {
+                    filename: "p3_doc.md".into(),
+                    when_useful: "When working with databases".into(),
+                    priority: KnowledgePriority::P3, last_promoted_at: None,
+                },
+            ],
+        };
+
+        let matches = KnowledgeManager::match_relevant(
+            &index,
+            &["databases"],
+        );
+        assert_eq!(matches.len(), 2);
+        assert_eq!(matches[0].filename, "p0_doc.md",
+            "P0 should sort before P3 when both match same keywords");
+        assert_eq!(matches[1].filename, "p3_doc.md");
+    }
+
+    #[test]
+    fn test_match_relevant_p1_no_keyword_match_excluded() {
+        let index = KnowledgeIndex {
+            version: "rockbot-knowledge/1".into(),
+            room_id: "r-test".into(),
+            entries: vec![IndexEntry {
+                filename: "p1_item.md".into(),
+                when_useful: "When configuring the server".into(),
+                priority: KnowledgePriority::P1, last_promoted_at: None,
+            }],
+        };
+
+        let matches = KnowledgeManager::match_relevant(
+            &index,
+            &["completely", "unrelated", "topic"],
+        );
+        assert!(matches.is_empty(),
+            "P1 should not be included without keyword match");
     }
 
     #[test]
