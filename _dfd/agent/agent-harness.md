@@ -15,7 +15,7 @@ standard harness mechanisms are present:
 | Mechanism   | Coverage | Details |
 |-------------|----------|---------|
 | **Tools**   | Full     | Abstract tool calling via `ToolRegistry` — individual tools each have their own DFD |
-| **Context** | Full     | Per-room conversation history buffer, compression (see [Memory Compression](base/memory-compression.md)), archive loading — see [Memory Management](base/memory.md); plus iteration limits, room state routing, system prompt assembly |
+| **Context** | Full     | Per-room conversation history buffer, compression (see [Memory Compression](../memory/memory-compression.md)), archive loading — see [Memory Management](../memory/memory.md); plus iteration limits, room state routing, system prompt assembly (with live UTC time injection via `now_utc_human()`) |
 | **Knowledge** | Full     | `save_knowledge`, `forget_knowledge`, `recall_knowledge`; retrieval via keyword-matching against `when_useful` + filename — see [Knowledge Management](base/knowledge.md) |
 
 Intentionally absent — not needed for rockbot's scope:

@@ -1872,6 +1872,14 @@ chat = "mock-model"
             prompt.contains("only image_gen produces real images"),
             "Prompt must warn against fabricating fake image references"
         );
+        assert!(
+            prompt.contains("Current UTC time:"),
+            "Prompt must inject current UTC time"
+        );
+        assert!(
+            prompt.contains("UTC ("),
+            "UTC time must include weekday in parentheses"
+        );
     }
 
     #[test]

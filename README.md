@@ -1,7 +1,7 @@
 # RockBot
 
-AI-powered RocketChat bot written in Rust. Responds to DMs and @mentions with
-agentic capabilities — web search, URL fetching, image vision, image generation,
+AI-powered RocketChat + Matrix bot written in Rust. Responds to DMs and @mentions
+with agentic capabilities — web search, URL fetching, image vision, image generation,
 calendar/todo management, knowledge storage, and file operations — backed
 by a NextCloud WebDAV server for persistent state.
 
@@ -54,6 +54,7 @@ flowchart TB
     end
 
     RCS["RocketChat Server"] <--> RC
+    MX["Matrix Homeserver"] <-->|HTTP| rb
     NC["NextCloud WebDAV"] <--> WD
     LLM["LLM APIs<br/>DeepSeek / OpenRouter / Fal"] <-->|HTTP| AP
 ```
@@ -106,18 +107,30 @@ Test inventory and run instructions: [`_doc/test_suite/`](_doc/test_suite/).
 ### DFDs
 | Component | DFD | Detailed notes |
 | --------- | --- | -------------- |
-| Agent loop | [`_dfd/agent-loop.md`](_dfd/agent-loop.md) | — |
-| Agent harness | [`_dfd/agent-harness.md`](_dfd/agent-harness.md) | [`_doc/agent-harness.md`](_doc/agent-harness.md) |
-| Image interception | [`_dfd/image-interception.md`](_dfd/image-interception.md) | — |
-| RocketChat client | [`_dfd/base/rocketchat.md`](_dfd/base/rocketchat.md) | [`_doc/rocketchat-client.md`](_doc/rocketchat-client.md) |
-| AI Provider | [`_dfd/base/ai-provider.md`](_dfd/base/ai-provider.md) | — |
-| Config | [`_dfd/base/config.md`](_dfd/base/config.md) | — |
-| Memory | [`_dfd/base/memory.md`](_dfd/base/memory.md) | — |
-| Knowledge | [`_dfd/base/knowledge.md`](_dfd/base/knowledge.md) | — |
 | Context diagram | [`_dfd/context-diagram.md`](_dfd/context-diagram.md) | — |
-| WebDAV tool | [`_dfd/tools/webdav.md`](_dfd/tools/webdav.md) | — |
+| Agent loop | [`_dfd/agent/agent-loop.md`](_dfd/agent/agent-loop.md) | — |
+| Agent harness | [`_dfd/agent/agent-harness.md`](_dfd/agent/agent-harness.md) | [`_doc/agent-harness.md`](_doc/agent-harness.md) |
+| Boot sequence | [`_dfd/agent/boot-sequence.md`](_dfd/agent/boot-sequence.md) | — |
+| Config | [`_dfd/infra/config.md`](_dfd/infra/config.md) | — |
+| RocketChat client | [`_dfd/infra/rocketchat.md`](_dfd/infra/rocketchat.md) | [`_doc/rocketchat/rocketchat-client.md`](_doc/rocketchat/rocketchat-client.md) |
+| RocketChat REST | [`_dfd/infra/rocketchat-rest.md`](_dfd/infra/rocketchat-rest.md) | — |
+| Matrix client | [`_dfd/infra/matrix.md`](_dfd/infra/matrix.md) | — |
+| AI Provider | [`_dfd/ai/ai-provider.md`](_dfd/ai/ai-provider.md) | — |
+| Memory | [`_dfd/memory/memory.md`](_dfd/memory/memory.md) | — |
+| Memory compression | [`_dfd/memory/memory-compression.md`](_dfd/memory/memory-compression.md) | — |
+| Knowledge | [`_dfd/knowledge/knowledge.md`](_dfd/knowledge/knowledge.md) | — |
+| Knowledge priority | [`_dfd/knowledge/knowledge-priority.md`](_dfd/knowledge/knowledge-priority.md) | — |
+| Image interception | [`_dfd/interception/image-interception.md`](_dfd/interception/image-interception.md) | — |
+| Secret interception | [`_dfd/interception/secret-interception.md`](_dfd/interception/secret-interception.md) | — |
+| Web search | [`_dfd/tools/exa-search.md`](_dfd/tools/exa-search.md) | — |
+| Web fetch | [`_dfd/tools/web-fetch.md`](_dfd/tools/web-fetch.md) | — |
+| Image gen tool | [`_dfd/tools/image-gen.md`](_dfd/tools/image-gen.md) | — |
+| Vision tool | [`_dfd/tools/vision.md`](_dfd/tools/vision.md) | — |
 | Calendar tool | [`_dfd/tools/calendar.md`](_dfd/tools/calendar.md) | — |
-| Web search / fetch | [`_dfd/tools/exa-search.md`](_dfd/tools/exa-search.md) | [`_dfd/tools/web-fetch.md`](_dfd/tools/web-fetch.md) |
+| WebDAV tool | [`_dfd/tools/webdav.md`](_dfd/tools/webdav.md) | — |
+| Compress memory | [`_dfd/tools/compress-memory.md`](_dfd/tools/compress-memory.md) | — |
+| Edit soul | [`_dfd/tools/edit-soul.md`](_dfd/tools/edit-soul.md) | — |
+| Knowledge tools | [`_dfd/tools/knowledge.md`](_dfd/tools/knowledge.md) | — |
 | Test suite | — | [`_doc/test_suite/running.md`](_doc/test_suite/running.md) |
 
 ## Environment variables
