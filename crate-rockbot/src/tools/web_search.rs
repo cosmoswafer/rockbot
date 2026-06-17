@@ -451,6 +451,25 @@ mod tests {
     }
 
     #[test]
+    fn test_tool_with_empty_key_returns_none() {
+        let tool = WebSearchTool::new("");
+        assert!(tool.api_key.is_none());
+        let def = tool.to_def();
+        assert_eq!(def.function.name, "web_search");
+        // Tool definition is still valid (name/params), but execute will
+        // return an error because api_key is None.
+    }
+
+    #[tokio::test]
+    async fn test_execute_with_empty_key_returns_error() {
+        let tool = WebSearchTool::new("");
+        let result = tool.execute(r#"{"query":"test","contents_mode":"highlights"}"#).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Exa API key"), "Expected Exa API key error, got: {}", err);
+    }
+
+    #[test]
     fn test_exa_contents_mode_text_in_execute() {
         let args: Value =
             serde_json::from_str(r#"{"query": "rust", "contents_mode": "text"}"#).unwrap();

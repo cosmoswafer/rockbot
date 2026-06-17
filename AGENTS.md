@@ -72,7 +72,7 @@ Data Flow Diagrams in `_dfd/` are the design spec. The development flow is defin
 - **Phase 4**: Concrete implementation — code types, core logic, and wiring described by the DFD. Favour incremental, type-first implementation.
 - **Phase 5**: Review all DFDs — re-read every DFD and confirm it matches the code. If a DFD's `mtime` is newer than its corresponding Rust source, the code is stale and must be updated to match the DFD. If the code was updated first, update the DFD.
 - **Phase 6**: Integration test — write mock-backed (Wiremock) integration tests to verify the implementation works end-to-end. Each DFD's happy-path flow should have corresponding mock integration coverage.
-- **Phase 7**: `cargo build --release` → commit → push → restart bot.
+- **Phase 7**: `cargo build --release` → commit → push → restart bot. When the work resolves one or more open Gitea issues, the commit message must include `closes #<N>` for each issue so Gitea auto-closes them on push.
 
 ### Rust type-driven design rules
 

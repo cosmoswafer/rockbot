@@ -77,9 +77,11 @@ persistent tools, image provider for image_gen). Each registration and
 model-resolution step emits an **about-info** log line (see §4).
 
 Tools registered unconditionally:
-- `WebSearchTool` (with Exa key if present)
 - `WebFetchTool` (variant depends on Exa + WebDAV availability)
 - `VisionTool`
+
+Tools registered conditionally on config:
+- `WebSearchTool` (requires Exa API key in `[tools.exa]`)
 
 Tools registered when WebDAV is configured:
 - `WebDavTool`, `EditSoulTool`, `SaveKnowledgeTool`,
