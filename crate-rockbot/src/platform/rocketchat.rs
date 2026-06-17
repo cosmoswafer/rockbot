@@ -9,19 +9,16 @@ use super::{MessageHandler, MessagingClient, PlatformSender};
 pub struct RocketChatPlatform {
     pub config: rocketchat::RocketChatConfig,
     pub bot_name: String,
-    pub display_name: Option<String>,
 }
 
 impl RocketChatPlatform {
     pub fn new(
         config: rocketchat::RocketChatConfig,
         bot_name: String,
-        display_name: Option<String>,
     ) -> Self {
         Self {
             config,
             bot_name,
-            display_name,
         }
     }
 }
@@ -108,8 +105,7 @@ impl PlatformSender for RcPlatformSender {
 #[async_trait]
 impl MessagingClient for RocketChatPlatform {
     async fn connect_and_run(&self, handler: MessageHandler) -> Result<()> {
-        let mut client = rocketchat::RocketChatClient::new(self.config.clone());
-        client.set_display_name(self.display_name.clone());
+        let client = rocketchat::RocketChatClient::new(self.config.clone());
 
         let username = self.bot_name.trim_start_matches('@').to_string();
         let rc_config = self.config.clone();

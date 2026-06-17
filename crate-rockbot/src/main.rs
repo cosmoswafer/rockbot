@@ -333,8 +333,7 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                         use_tls: true,
                     },
                 };
-                let display_name = h.memory().any_display_name();
-                Box::new(RocketChatPlatform::new(rc_config, bot_name.clone(), display_name))
+                Box::new(RocketChatPlatform::new(rc_config, bot_name.clone()))
             }
         }
     };

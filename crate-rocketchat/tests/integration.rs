@@ -182,7 +182,7 @@ fn test_filter_registered_room() {
     let msg = filter.filter(&event).expect("Should accept registered room msg");
 
     assert_eq!(msg.room_name, "secret-room");
-    assert!(MessageFilter::is_dm_or_mention(&msg, bot_name, &rooms, None));
+    assert!(MessageFilter::is_dm_or_mention(&msg, bot_name, &rooms));
 }
 
 #[test]
@@ -199,7 +199,7 @@ fn test_filter_non_registered_channel_no_mention() {
     let msg = filter.filter(&event).expect("Should parse but not dispatch");
 
     assert!(
-        !MessageFilter::is_dm_or_mention(&msg, bot_name, &rooms, None),
+        !MessageFilter::is_dm_or_mention(&msg, bot_name, &rooms),
         "Should not dispatch non-mention in non-registered room"
     );
 }
@@ -464,7 +464,7 @@ fn test_incoming_message_dm_detection() {
     let rooms: HashMap<String, bool> = HashMap::new();
     let bot_name = "@rockbot";
 
-    assert!(MessageFilter::is_dm_or_mention(&msg, bot_name, &rooms, None));
+    assert!(MessageFilter::is_dm_or_mention(&msg, bot_name, &rooms));
 
     let msg2 = IncomingMessage {
         msg_id: Some("m2".into()),
@@ -482,7 +482,7 @@ fn test_incoming_message_dm_detection() {
         attachments: vec![],
         urls: vec![],
     };
-    assert!(!MessageFilter::is_dm_or_mention(&msg2, bot_name, &rooms, None));
+    assert!(!MessageFilter::is_dm_or_mention(&msg2, bot_name, &rooms));
 
     let msg3 = IncomingMessage {
         msg_id: Some("m3".into()),
@@ -500,7 +500,7 @@ fn test_incoming_message_dm_detection() {
         attachments: vec![],
         urls: vec![],
     };
-    assert!(MessageFilter::is_dm_or_mention(&msg3, bot_name, &rooms, None));
+    assert!(MessageFilter::is_dm_or_mention(&msg3, bot_name, &rooms));
 }
 
 #[test]
@@ -525,7 +525,7 @@ fn test_registered_room_dispatch() {
         urls: vec![],
     };
 
-    assert!(MessageFilter::is_dm_or_mention(&msg, "@rockbot", &rooms, None));
+    assert!(MessageFilter::is_dm_or_mention(&msg, "@rockbot", &rooms));
 }
 
 #[test]
