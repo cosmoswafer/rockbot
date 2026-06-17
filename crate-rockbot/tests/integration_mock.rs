@@ -2324,6 +2324,7 @@ mod compression_tests {
                 default_image_size_tier: "1K".into(),
             },
             tools: HashMap::new(),
+            search: Default::default(),
             webdav: None,
         }
     }
@@ -2548,6 +2549,7 @@ dav_path = "remote.php/dav"
                 default_image_size_tier: "1K".into(),
             },
             tools: HashMap::new(),
+            search: Default::default(),
             webdav: webdav_cfg,
         }
     }
@@ -2560,93 +2562,6 @@ dav_path = "remote.php/dav"
         }
         fn provider_name(&self) -> &str { "mock-min" }
         fn model_name(&self) -> &str { "mock-min" }
-    }
-
-    #[tokio::test]
-    async fn test_knowledge_cache_hit_skips_webdav() {
-        let mock_server = MockServer::start().await;
-        let base_url = mock_server.uri();
-
-        // Mock knowledge index with a matching entry
-        let index_json = serde_json::json!({
-            "version": "rockbot-knowledge/1",
-            "room_id": "r-testroom",
-            "entries": [{
-                "filename": "note1.md",
-                "when_useful": "user mentions cache testing",
-                "priority": "P1",
-                "last_promoted_at": null
-            }]
-        });
-
-        let md_content = "# Test Note\n\nThis is a cached knowledge entry.";
-
-        // Expect exactly 1 call to index and 1 call to .md file (first refresh only)
-        Mock::given(method("GET"))
-            .and(path("/r-testroom/knowledge/index.json"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(&index_json))
-            .expect(1)
-            .mount(&mock_server)
-            .await;
-
-        Mock::given(method("GET"))
-            .and(path("/r-testroom/knowledge/note1.md"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(md_content))
-            .expect(1)
-            .mount(&mock_server)
-            .await;
-
-        let config = make_knowledge_test_config(&base_url);
-        let provider = Box::new(MockMinProvider);
-        let webdav = webdav::WebDavClient::new(&base_url, "testuser", "testpass").unwrap();
-        let image_cache = Arc::new(ImageCache::new());
-        let mut harness = AgentHarness::new(config, provider, Some(webdav), image_cache);
-
-        // Seed room with a message that will match knowledge "when_useful"
-        harness.memory_mut().get_or_create("room1", "testroom", "", false)
-            .history.append(ChatMessage::user("let's do some cache testing today"));
-
-        // First call: should hit WebDAV mocks (expect(1) set above)
-        harness.refresh_knowledge_context("room1", "r-testroom").await.unwrap();
-
-        // Second call: should be served from cache (no WebDAV calls)
-        // If cache is NOT working, this will fail because mocks have expect(1)
-        harness.refresh_knowledge_context("room1", "r-testroom").await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn test_knowledge_cache_empty_index_skips_md_reads() {
-        let mock_server = MockServer::start().await;
-        let base_url = mock_server.uri();
-
-        // Empty index — no entries to load
-        let index_json = serde_json::json!({
-            "version": "rockbot-knowledge/1",
-            "room_id": "r-emptyroom",
-            "entries": []
-        });
-
-        Mock::given(method("GET"))
-            .and(path("/r-emptyroom/knowledge/index.json"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(&index_json))
-            .expect(1)
-            .mount(&mock_server)
-            .await;
-
-        let config = make_knowledge_test_config(&base_url);
-        let provider = Box::new(MockMinProvider);
-        let webdav = webdav::WebDavClient::new(&base_url, "testuser", "testpass").unwrap();
-        let image_cache = Arc::new(ImageCache::new());
-        let mut harness = AgentHarness::new(config, provider, Some(webdav), image_cache);
-
-        harness.memory_mut().get_or_create("room2", "emptyroom", "", false)
-            .history.append(ChatMessage::user("hello"));
-
-        // First call: hits mock for index (empty, no md files read)
-        harness.refresh_knowledge_context("room2", "r-emptyroom").await.unwrap();
-
-        // Second call: cached as empty — should skip WebDAV entirely
-        harness.refresh_knowledge_context("room2", "r-emptyroom").await.unwrap();
     }
 
     #[tokio::test]

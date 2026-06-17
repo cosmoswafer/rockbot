@@ -79,6 +79,7 @@ flowchart TD
 | `image_model`    | `ImageModelConfig` (always present via default)| Default image provider + model alias           |
 | `webdav`     | `Option<WebDavConfig>`       | NextCloud WebDAV endpoint and credentials      |
 | `tools`      | `HashMap<String, ToolServiceConfig>`| Tool-specific API keys (generic map)     |
+| `search`     | `SearchConfig`               | Web search provider selection + API keys       |
 
 #### `PlatformConfig`
 
@@ -154,6 +155,29 @@ flowchart TD
 | `models`     | `HashMap<String, String>`| Alias → model-id map                                              |
 
 > **Note:** `basecf_url` is used by `FalAiProvider` as the `storage_url` for CDN uploads. Chat providers use `base_url` + `chat_path` via `ProviderConfig::chat_url()`.
+
+#### `SearchConfig`
+
+| Field      | Type                       | Notes                                           |
+| ---------- | -------------------------- | ----------------------------------------------- |
+| `provider` | `String`                   | `"exa"` (default) or `"brave"`                   |
+| `exa`      | `Option<ExaSearchConfig>`  | Exa API key                                      |
+| `brave`    | `Option<BraveSearchConfig>`| Brave Search API key                             |
+
+#### `ExaSearchConfig`
+
+| Field     | Type     | Notes                                         |
+| --------- | -------- | --------------------------------------------- |
+| `api_key` | `String` | Exa API key (`"https://dashboard.exa.ai/api-keys") |
+
+#### `BraveSearchConfig`
+
+| Field     | Type     | Notes                                               |
+| --------- | -------- | --------------------------------------------------- |
+| `api_key` | `String` | Brave Search API key (`"https://api.search.brave.com") |
+
+> The `SearchConfig` replaces the legacy `[tools.exa]` key. If `[search.exa].api_key` is empty,
+> `AppConfig::search_api_key()` falls back to `[tools.exa].api_key` for backward compatibility.
 
 #### `ToolServiceConfig`
 

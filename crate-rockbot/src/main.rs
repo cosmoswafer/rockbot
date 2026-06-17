@@ -13,9 +13,9 @@ use rockbot::provider::{AiProvider, DeepSeekProvider, FalAiProvider, ImageProvid
 use rockbot::platform::{MatrixPlatform, MessagingClient, PlatformSender, RcPlatformSender, RocketChatPlatform};
 use rockbot::tool::ToolRegistry;
 use rockbot::tools::{
-    CalendarTool, CompressMemoryTool, EditSoulTool, ForgetKnowledgeTool,
-    ImageGenTool, RecallKnowledgeTool, SaveKnowledgeTool, VisionTool, WebDavTool, WebFetchTool,
-    WebSearchTool,
+    BraveSearchProvider, CalendarTool, CompressMemoryTool, EditSoulTool, ExaSearchProvider,
+    ForgetKnowledgeTool, ImageGenTool, RecallKnowledgeTool, SaveKnowledgeTool, SearchProvider,
+    VisionTool, WebDavTool, WebFetchTool, WebSearchTool,
 };
 use rockbot::utils::strip_markdown_image_id;
 
@@ -113,19 +113,47 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
 
     let webdav_config_for_calendar = config.webdav.clone();
 
-    let exa_key = config
-        .tools
-        .get("exa")
-        .map(|t| t.api_key.clone())
-        .unwrap_or_default();
+    let exa_key = config.search_api_key();
+    let brave_key = config.brave_api_key();
+    let search_provider_name = config.search.provider.clone();
 
     let image_cache = Arc::new(ImageCache::new());
     let mut harness = AgentHarness::new(config, provider, webdav.clone(), image_cache.clone());
 
     let mut tool_registry = ToolRegistry::new();
-    let has_exa = !exa_key.is_empty();
-    if has_exa {
-        tool_registry.register(Box::new(WebSearchTool::new(exa_key.clone())));
+
+    let search_provider: Option<Box<dyn SearchProvider>> = match search_provider_name.as_str() {
+        "brave" if !brave_key.is_empty() => {
+            info!("Using Brave Search as search provider");
+            Some(Box::new(BraveSearchProvider::new(brave_key)))
+        }
+        "exa" if !exa_key.is_empty() => {
+            info!("Using Exa as search provider");
+            Some(Box::new(ExaSearchProvider::new(exa_key.clone())))
+        }
+        "brave" => {
+            warn!("Brave Search configured but no API key found — check [search.brave] config");
+            None
+        }
+        _ if !exa_key.is_empty() => {
+            info!("Using Exa as search provider (default)");
+            Some(Box::new(ExaSearchProvider::new(exa_key.clone())))
+        }
+        _ => {
+            warn!("No search provider configured — WebSearchTool not registered. Set [search] section in config.");
+            None
+        }
+    };
+
+    if let Some(provider) = search_provider {
+        tool_registry.register(Box::new(WebSearchTool::new(provider)));
+        info!("WebSearchTool registered");
+    } else {
+        info!("WebSearchTool not registered — no search provider available");
+    }
+
+    let has_search_key = !exa_key.is_empty();
+    if has_search_key {
         if let Some(ref webdav_client) = webdav {
             tool_registry.register(Box::new(WebFetchTool::with_exa_key_and_webdav(exa_key, webdav_client.clone())));
             info!("WebFetchTool registered with Exa verification and WebDAV support");
@@ -134,7 +162,6 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
             info!("WebFetchTool registered with Exa verification support");
         }
     } else {
-        info!("WebSearchTool not registered — no Exa API key");
         if let Some(ref webdav_client) = webdav {
             tool_registry.register(Box::new(WebFetchTool::with_webdav(webdav_client.clone())));
             info!("WebFetchTool registered with WebDAV support (no Exa)");

@@ -132,7 +132,7 @@ to make data flow violations compile-time errors rather than runtime surprises:
 | `_dfd/tools/compress-memory.md` | `tools/compress_memory.rs` | `harness.rs`, `memory.rs` |
 | `_dfd/tools/webdav.md` | `tools/webdav.rs` | webdav crate |
 | `_dfd/tools/calendar.md` | `tools/calendar.rs` | webdav crate, `utils.rs` |
-| `_dfd/tools/exa-search.md` | `tools/web_search.rs` | `tools/web_fetch.rs` |
+| `_dfd/tools/search-web.md` | `tools/web_search.rs` | `tools/web_fetch.rs` |
 | `_dfd/tools/web-fetch.md` | `tools/web_fetch.rs` | `tools/web_search.rs`, `harness.rs` (secret interception) |
 | `_dfd/tools/image-gen.md` | `tools/image_gen.rs` | `provider/fal.rs`, webdav crate |
 | `_dfd/tools/vision.md` | `tools/vision.rs` | — |

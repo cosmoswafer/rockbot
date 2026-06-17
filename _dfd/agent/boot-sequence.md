@@ -72,7 +72,7 @@ flowchart TD
 ```
 
 Tool registration is the core of boot. Every tool is registered conditionally
-based on available config (Exa key for web search, WebDAV for
+based on available config (search provider config for web search, WebDAV for
 persistent tools, image provider for image_gen). Each registration and
 model-resolution step emits an **about-info** log line (see §4).
 
@@ -81,7 +81,7 @@ Tools registered unconditionally:
 - `VisionTool`
 
 Tools registered conditionally on config:
-- `WebSearchTool` (requires Exa API key in `[tools.exa]`)
+- `WebSearchTool` (requires configured search provider in `[search]` section)
 
 Tools registered when WebDAV is configured:
 - `WebDavTool`, `EditSoulTool`, `SaveKnowledgeTool`,

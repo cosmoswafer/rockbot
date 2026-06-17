@@ -52,10 +52,6 @@ When you need to recall previously saved knowledge, use the recall_knowledge too
 Keep responses clear and to the point.\
 ";
 
-/// TTL for in-memory knowledge context cache (seconds). Knowledge is re-read from
-/// WebDAV only when the cache is older than this or invalidated by a mutation.
-const KNOWLEDGE_CACHE_TTL_SECS: i64 = 60;
-
 pub struct AgentHarness {
     config: Arc<AppConfig>,
     provider: Box<dyn AiProvider>,
@@ -70,7 +66,6 @@ pub struct AgentHarness {
     image_cache: Arc<ImageCache>,
     last_image_ids: Vec<String>,
     current_image_urls: Vec<String>,
-    knowledge_cache: HashMap<String, (i64, String)>,
 }
 
 impl AgentHarness {
@@ -101,7 +96,6 @@ impl AgentHarness {
             image_cache,
             last_image_ids: Vec::new(),
             current_image_urls: Vec::new(),
-            knowledge_cache: HashMap::new(),
         }
     }
 
@@ -577,7 +571,6 @@ impl AgentHarness {
                         if altered_knowledge {
                             self.memory.mark_snapshot_dirty(room_id);
                             let wd = compute_webdav_dir(room_name, room_fname, is_dm);
-                            self.knowledge_cache.remove(&wd);
                             if let Err(e) = self.refresh_knowledge_context(room_id, &wd).await {
                                 warn!("Failed to refresh knowledge context after alter: {}", e);
                             }
@@ -1321,26 +1314,11 @@ impl AgentHarness {
         room_id: &str,
         webdav_dir: &str,
     ) -> Result<()> {
-        // Check in-memory cache: if fresh (< TTL) and present, skip WebDAV reads.
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs() as i64;
-        if let Some((cached_ts, cached_text)) = self.knowledge_cache.get(webdav_dir) {
-            if now - cached_ts < KNOWLEDGE_CACHE_TTL_SECS {
-                if !cached_text.is_empty() {
-                    self.memory.set_knowledge(room_id, cached_text.clone());
-                }
-                return Ok(());
-            }
-        }
-
         let webdav = self.webdav.clone();
         if let Some(ref webdav) = webdav {
             let text = self
                 .load_knowledge_for_room(webdav, room_id, webdav_dir)
                 .await?;
-            self.knowledge_cache.insert(webdav_dir.to_string(), (now, text.clone()));
             if !text.is_empty() {
                 self.memory.set_knowledge(room_id, text);
             }

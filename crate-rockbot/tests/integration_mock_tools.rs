@@ -22,8 +22,8 @@ use rockbot::memory::{ConversationHistory, MemoryManager, PersistSnapshot};
 use rockbot::provider::AiProvider;
 use rockbot::tool::Tool;
 use rockbot::tools::{
-    CalendarTool, EditSoulTool, VisionTool, WebDavTool, WebFetchTool,
-    WebSearchTool,
+    BraveSearchProvider, CalendarTool, EditSoulTool, ExaSearchProvider, VisionTool, WebDavTool,
+    WebFetchTool, WebSearchTool,
 };
 use rockbot::types::{ChatMessage, ChatRequest, CompletionResult, ContentPart, FinishReason, MessageContent, ToolCall};
 use rockbot::validated::{ConfigUrl, NonEmptyString, ProviderName};
@@ -172,56 +172,19 @@ async fn test_vision_missing_url_param() {
 }
 
 // ============================================================================
-// _dfd/tools/exa-search.md — Happy Path (wiremock)
+// _dfd/tools/search-web.md — Happy Path (wiremock)
 // ============================================================================
 
 #[tokio::test]
-async fn test_web_search_highlights_mode() {
-    let mock_server = MockServer::start().await;
+async fn test_search_web_tool_metadata() {
+    let provider = ExaSearchProvider::new("test-exa-key");
+    let tool = WebSearchTool::new(Box::new(provider));
 
-    Mock::given(method("POST"))
-        .and(path("/search"))
-        .and(header("x-api-key", "test-exa-key"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "request_id": "req-001",
-            "search_type": "auto",
-            "results": [
-                {
-                    "id": "https://example.com/rust",
-                    "title": "Rust Programming Language",
-                    "url": "https://example.com/rust",
-                    "published_date": "2026-01-15",
-                    "author": "Mozilla",
-                    "highlights": [
-                        "Rust is a systems programming language",
-                        "Memory safety without garbage collection"
-                    ],
-                    "highlight_scores": [0.95, 0.88]
-                }
-            ],
-            "cost_dollors": {
-                "total": 0.005
-            }
-        })))
-        .mount(&mock_server)
-        .await;
-
-    let tool = WebSearchTool::new("test-exa-key".to_string());
-    // Override the internal reqwest client to point to mock (tool doesn't expose setter, but
-    // we can test via the tool's description/params validation, and the execute path by
-    // constructing the tool with a custom HTTP client base URL).
-    //
-    // Actually WebSearchTool creates its own reqwest client internally and uses the
-    // hardcoded Exa API base. This test validates the tool interface and param parsing.
-    // End-to-end Exa API integration is tested via live integration probes (--ignored).
-
-    // Test tool metadata
-    assert_eq!(tool.name(), "web_search");
-    assert!(tool.description().contains("Exa"));
+    assert_eq!(tool.name(), "search_web");
+    assert!(tool.description().contains("Search the web"));
     let params = tool.parameters();
     assert_eq!(params["type"], "object");
 
-    // Test param parsing
     let args = serde_json::json!({
         "query": "rust programming",
         "type": "auto",
@@ -229,22 +192,225 @@ async fn test_web_search_highlights_mode() {
     })
     .to_string();
 
-    // execute() will fail because no real API key, but params should parse
     let result = tool.execute(&args).await;
-    // With a real key we'd get results; without, it fails
     assert!(result.is_err() || result.is_ok());
 }
 
 #[tokio::test]
-async fn test_web_search_missing_query() {
-    let tool = WebSearchTool::new("test-key".to_string());
+async fn test_search_web_missing_query() {
+    let provider = ExaSearchProvider::new("test-key");
+    let tool = WebSearchTool::new(Box::new(provider));
     let result = tool.execute(r#"{}"#).await;
     assert!(result.is_err());
 }
 
+// ============================================================================
+// _dfd/tools/search-web.md — Exa wiremock happy path
+// ============================================================================
+
 #[tokio::test]
-async fn test_web_search_tool_definitions_includes_all_modes() {
-    let tool = WebSearchTool::new("test-key".to_string());
+async fn test_search_web_exa_api_returns_formatted_results() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/search"))
+        .and(header("x-api-key", "test-exa-key"))
+        .and(header("Content-Type", "application/json"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "request_id": "req-001",
+            "results": [
+                {
+                    "title": "Rust Programming Language",
+                    "url": "https://www.rust-lang.org",
+                    "publishedDate": "2026-01-15",
+                    "highlights": [
+                        "Rust is a systems programming language",
+                        "Memory safety without garbage collection"
+                    ]
+                },
+                {
+                    "title": "Learn Rust",
+                    "url": "https://learn.rust-lang.org",
+                    "publishedDate": "2026-03-01",
+                    "highlights": [
+                        "Official Rust learning resources"
+                    ]
+                }
+            ]
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let provider = ExaSearchProvider::with_client("test-exa-key", mock_server.uri());
+    let tool = WebSearchTool::new(Box::new(provider));
+
+    let args = serde_json::json!({
+        "query": "rust programming",
+        "num_results": 5
+    })
+    .to_string();
+
+    let result = tool.execute(&args).await.unwrap();
+    assert!(result.contains("Rust Programming Language"), "should contain title");
+    assert!(result.contains("https://www.rust-lang.org"), "should contain url");
+    assert!(result.contains("Memory safety"), "should contain highlight");
+    assert!(result.contains("Learn Rust"), "should contain second result");
+    assert!(result.contains("2026-01-15"), "should contain date");
+}
+
+#[tokio::test]
+async fn test_search_web_exa_api_empty_results_returns_message() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/search"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "request_id": "req-002",
+            "results": []
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let provider = ExaSearchProvider::with_client("test-key", mock_server.uri());
+    let tool = WebSearchTool::new(Box::new(provider));
+
+    let result = tool.execute(r#"{"query": "nonexistent", "num_results": 5}"#).await.unwrap();
+    assert_eq!(result, "No search results found.");
+}
+
+#[tokio::test]
+async fn test_search_web_exa_api_401_returns_error() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/search"))
+        .respond_with(ResponseTemplate::new(401))
+        .mount(&mock_server)
+        .await;
+
+    let provider = ExaSearchProvider::with_client("bad-key", mock_server.uri());
+    let tool = WebSearchTool::new(Box::new(provider));
+
+    let result = tool.execute(r#"{"query": "test"}"#).await;
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("401"), "expected 401 error, got: {err}");
+}
+
+#[tokio::test]
+async fn test_search_web_exa_text_mode_uses_text_contents() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/search"))
+        .and(body_string_contains("\"text\""))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "results": [{
+                "title": "Full Article",
+                "url": "https://example.com/article",
+                "text": "This is the full article content with lots of useful information."
+            }]
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let provider = ExaSearchProvider::with_client("test-key", mock_server.uri());
+    let tool = WebSearchTool::new(Box::new(provider));
+
+    let args = serde_json::json!({
+        "query": "full article",
+        "contents_mode": "text"
+    })
+    .to_string();
+
+    let result = tool.execute(&args).await.unwrap();
+    assert!(result.contains("Full Article"));
+    assert!(result.contains("full article content"));
+}
+
+// ============================================================================
+// _dfd/tools/search-web.md — Brave wiremock happy path
+// ============================================================================
+
+#[tokio::test]
+async fn test_search_web_brave_api_returns_formatted_results() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/res/v1/web/search"))
+        .and(header("X-Subscription-Token", "test-brave-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "web": {
+                "results": [
+                    {
+                        "title": "Brave Search",
+                        "url": "https://search.brave.com",
+                        "description": "Brave Search is a private search engine",
+                        "page_age": "2025-06-01"
+                    },
+                    {
+                        "title": "Brave Browser",
+                        "url": "https://brave.com",
+                        "description": "Fast, private browser"
+                    }
+                ]
+            }
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let provider = BraveSearchProvider::with_client("test-brave-key", mock_server.uri());
+    let tool = WebSearchTool::new(Box::new(provider));
+
+    let result = tool.execute(r#"{"query": "brave search", "num_results": 5}"#).await.unwrap();
+    assert!(result.contains("Brave Search"), "should contain title");
+    assert!(result.contains("https://search.brave.com"), "should contain url");
+    assert!(result.contains("private search engine"), "should contain description");
+    assert!(result.contains("Brave Browser"), "should contain second result");
+}
+
+#[tokio::test]
+async fn test_search_web_brave_api_empty_results_returns_message() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/res/v1/web/search"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "web": { "results": [] }
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let provider = BraveSearchProvider::with_client("test-key", mock_server.uri());
+    let tool = WebSearchTool::new(Box::new(provider));
+
+    let result = tool.execute(r#"{"query": "nothing", "num_results": 5}"#).await.unwrap();
+    assert_eq!(result, "No search results found.");
+}
+
+#[tokio::test]
+async fn test_search_web_brave_api_401_returns_error() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/res/v1/web/search"))
+        .respond_with(ResponseTemplate::new(401))
+        .mount(&mock_server)
+        .await;
+
+    let provider = BraveSearchProvider::with_client("bad-key", mock_server.uri());
+    let tool = WebSearchTool::new(Box::new(provider));
+
+    let result = tool.execute(r#"{"query": "test"}"#).await;
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("401"), "expected 401 error, got: {err}");
+}
+
+#[tokio::test]
+async fn test_search_web_tool_definitions_includes_all_modes() {
+    let provider = ExaSearchProvider::new("test-key");
+    let tool = WebSearchTool::new(Box::new(provider));
     let params = tool.parameters();
 
     let types = params["properties"]["type"]["enum"].as_array().unwrap();
@@ -937,7 +1103,7 @@ async fn test_harness_constructs_and_registers_tools() {
 
     // Register some tools
     harness.register_tool(Box::new(VisionTool::with_max_bytes(10_000_000)));
-    harness.register_tool(Box::new(WebSearchTool::new("test-key".to_string())));
+    harness.register_tool(Box::new(WebSearchTool::new(Box::new(ExaSearchProvider::new("test-key")))));
 
     // Verify config access
     let cfg = harness.config();
@@ -1165,6 +1331,7 @@ fn make_test_config(webdav_url: &str) -> rockbot::config::AppConfig {
         }],
         image_model: image_config,
         tools: HashMap::new(),
+        search: Default::default(),
         webdav: Some(webdav_cfg),
     }
 }

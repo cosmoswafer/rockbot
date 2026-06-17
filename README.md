@@ -122,7 +122,7 @@ Test inventory and run instructions: [`_doc/test_suite/`](_doc/test_suite/).
 | Knowledge priority | [`_dfd/knowledge/knowledge-priority.md`](_dfd/knowledge/knowledge-priority.md) | — |
 | Image interception | [`_dfd/interception/image-interception.md`](_dfd/interception/image-interception.md) | — |
 | Secret interception | [`_dfd/interception/secret-interception.md`](_dfd/interception/secret-interception.md) | — |
-| Web search | [`_dfd/tools/exa-search.md`](_dfd/tools/exa-search.md) | — |
+| Web search | [`_dfd/tools/search-web.md`](_dfd/tools/search-web.md) | Exa / Brave multi-provider |
 | Web fetch | [`_dfd/tools/web-fetch.md`](_dfd/tools/web-fetch.md) | — |
 | Image gen tool | [`_dfd/tools/image-gen.md`](_dfd/tools/image-gen.md) | — |
 | Vision tool | [`_dfd/tools/vision.md`](_dfd/tools/vision.md) | — |

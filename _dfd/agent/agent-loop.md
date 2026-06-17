@@ -40,7 +40,7 @@ flowchart TD
     PLATFORM[Messaging Platform<br/>RocketChat or Matrix]
     AI[AI Provider API]
     DAV[(NextCloud WebDAV)]
-    EXA[Exa Search API]
+    EXA[Search Web API]
     TIMER[Evict Timer]
     DISPATCH(ReceiveMessage)
     TYPING(ToggleTyping)

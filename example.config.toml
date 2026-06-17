@@ -25,5 +25,11 @@ username = "EDITME"
 password = "EDITME"
 root = "rockbot"
 
+[search]
+provider = "exa"
+
+[search.exa]
+api_key = "EDITME"
+
 [tools.exa]
 api_key = "EDITME"

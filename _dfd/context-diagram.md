@@ -20,7 +20,7 @@ flowchart LR
     Matrix[Matrix Homeserver]
     AIProvider[AI Provider<br/>OpenRouter / DeepSeek / llama.cpp]
     NextCloud[NextCloud WebDAV]
-    ExaSearch[Exa Search API]
+    SearchWeb[Search Web API]
     WebPage[Web Page]
     ImageGen[Image Generation<br/>OpenRouter / fal.ai]
     Bot(("RockBot"))
@@ -37,8 +37,8 @@ flowchart LR
     Bot -->|"file read/write/list request"| NextCloud
     NextCloud -->|"config, archives, images"| Bot
 
-    Bot -->|"search query"| ExaSearch
-    ExaSearch -->|"search results"| Bot
+    Bot -->|"search query"| SearchWeb
+    SearchWeb -->|"search results"| Bot
 
     Bot -->|"http GET request"| WebPage
     WebPage -->|"page html"| Bot

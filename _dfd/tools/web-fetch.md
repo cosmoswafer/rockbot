@@ -12,10 +12,10 @@ Optionally cross-verifies fetched content via a parallel Exa web search.
 This enables managing external APIs like Gitea, GitHub, or any REST API directly
 from chat — create issues, query resources, or interact with webhooks.
 
-- Upstream: [Exa Search](exa-search.md) provides the verification search when
+- Upstream: [Search Web](search-web.md) provides the verification search when
   `verify` is enabled and an Exa API key is configured
 - Upstream: [Configuration Management](../infra/config.md) supplies the
-  `exa_api_key` for the optional verify flow
+  Exa API key (from `[search.exa]` or legacy `[tools.exa]`) for the optional verify flow
 - Upstream: [Agent Harness](../agent/agent-harness.md) invokes web_fetch as a tool
   during the agent loop, passing a URL and format selector
 - Upstream: [WebDAV Tool](webdav.md) provides file read/write for `file_from_webdav`
@@ -53,7 +53,7 @@ flowchart TD
     AI[AiProvider]
 
     AGENT -->|"url + method + headers + body"| FETCH
-    CFG -->|"exa_api_key (optional)"| FETCH
+    CFG -->|"Exa API key (optional)"| FETCH
     FETCH -->|"params"| BUILD_REQ
     DAV -->|"file content"| BUILD_REQ
     BUILD_REQ -->|"GET/POST/PUT/PATCH/DELETE"| HTTP

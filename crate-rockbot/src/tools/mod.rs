@@ -19,5 +19,5 @@ pub use recall_knowledge::RecallKnowledgeTool;
 pub use save_knowledge::SaveKnowledgeTool;
 pub use vision::VisionTool;
 pub use web_fetch::WebFetchTool;
-pub use web_search::WebSearchTool;
+pub use web_search::{BraveSearchProvider, ExaSearchProvider, SearchProvider, WebSearchTool};
 pub use webdav::WebDavTool;

@@ -8,76 +8,65 @@ use crate::error::{Result, RockBotError};
 use crate::tool::Tool;
 use crate::validated::NonEmptyString;
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum SearchType {
-    Auto,
-    Fast,
-    Deep,
+// ─── SearchProvider trait ─────────────────────────────────────────────────────
+
+#[async_trait]
+pub trait SearchProvider: Send + Sync {
+    async fn search(
+        &self,
+        client: &reqwest::Client,
+        query: &str,
+        search_type: &str,
+        num_results: u32,
+        contents_mode: &str,
+    ) -> Result<String>;
+    fn provider_name(&self) -> &str;
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum ContentsMode {
-    Highlights,
-    Text,
-    Deep,
+// ─── ExaSearchProvider ────────────────────────────────────────────────────────
+
+pub struct ExaSearchProvider {
+    api_key: String,
+    base_url: String,
 }
 
-#[derive(Debug, Deserialize, Validate)]
-struct WebSearchParams {
-    query: NonEmptyString,
-    #[serde(rename = "type", default = "default_search_type")]
-    search_type: SearchType,
-    #[serde(default = "default_num_results")]
-    #[validate(minimum = 1)]
-    #[validate(maximum = 20)]
-    num_results: u32,
-    #[serde(default = "default_contents_mode")]
-    contents_mode: ContentsMode,
-}
-
-fn default_search_type() -> SearchType {
-    SearchType::Auto
-}
-fn default_num_results() -> u32 {
-    5
-}
-fn default_contents_mode() -> ContentsMode {
-    ContentsMode::Highlights
-}
-
-pub struct WebSearchTool {
-    api_key: Option<String>,
-    http_client: reqwest::Client,
-}
-
-impl WebSearchTool {
+impl ExaSearchProvider {
     pub fn new(api_key: impl Into<String>) -> Self {
-        let key = api_key.into();
-        let key = if key.is_empty() { None } else { Some(key) };
         Self {
-            api_key: key,
-            http_client: reqwest::Client::new(),
+            api_key: api_key.into(),
+            base_url: "https://api.exa.ai".into(),
         }
     }
 
-    pub fn with_client(api_key: impl Into<String>, client: reqwest::Client) -> Self {
-        let key = api_key.into();
-        let key = if key.is_empty() { None } else { Some(key) };
+    /// Test-only — allows injecting a mock server URL.
+    pub fn with_client(api_key: impl Into<String>, base_url: impl Into<String>) -> Self {
         Self {
-            api_key: key,
-            http_client: client,
+            api_key: api_key.into(),
+            base_url: base_url.into(),
         }
     }
+}
 
-    async fn search_exa(&self, query: &str, search_type: &str, num_results: u32, contents_mode: &str) -> Result<String> {
-        let api_key = self.api_key.as_deref().ok_or_else(|| {
-            RockBotError::Provider(
-                "web_search requires an Exa API key. Configure it in [tools.exa] section of config.toml."
+#[async_trait]
+impl SearchProvider for ExaSearchProvider {
+    fn provider_name(&self) -> &str {
+        "exa"
+    }
+
+    async fn search(
+        &self,
+        client: &reqwest::Client,
+        query: &str,
+        search_type: &str,
+        num_results: u32,
+        contents_mode: &str,
+    ) -> Result<String> {
+        if self.api_key.is_empty() {
+            return Err(RockBotError::Provider(
+                "Exa search requires an API key. Configure it in the [search.exa] section of config.toml."
                     .into(),
-            )
-        })?;
+            ));
+        }
 
         let contents = match contents_mode {
             "text" => serde_json::json!({
@@ -106,10 +95,9 @@ impl WebSearchTool {
 
         let response = 'retry: {
             for attempt in 1..=max_retries {
-                let resp = self
-                    .http_client
-                    .post("https://api.exa.ai/search")
-                    .header("x-api-key", api_key)
+                let resp = client
+                    .post(format!("{}/search", self.base_url))
+                    .header("x-api-key", &self.api_key)
                     .header("Content-Type", "application/json")
                     .json(&body)
                     .send()
@@ -142,7 +130,8 @@ impl WebSearchTool {
 
                 if status.as_u16() == 401 {
                     return Err(RockBotError::Provider(
-                        "Exa search failed: invalid API key (401). Check your EXA_API_KEY env var or [tools.exa] config.".into(),
+                        "Exa search failed: invalid API key (401). Check your [search.exa] config."
+                            .into(),
                     ));
                 }
 
@@ -221,15 +210,195 @@ impl WebSearchTool {
     }
 }
 
+// ─── BraveSearchProvider ──────────────────────────────────────────────────────
+
+pub struct BraveSearchProvider {
+    api_key: String,
+    base_url: String,
+}
+
+impl BraveSearchProvider {
+    pub fn new(api_key: impl Into<String>) -> Self {
+        Self {
+            api_key: api_key.into(),
+            base_url: "https://api.search.brave.com".into(),
+        }
+    }
+
+    /// Test-only — allows injecting a mock server URL.
+    pub fn with_client(api_key: impl Into<String>, base_url: impl Into<String>) -> Self {
+        Self {
+            api_key: api_key.into(),
+            base_url: base_url.into(),
+        }
+    }
+}
+
+#[async_trait]
+impl SearchProvider for BraveSearchProvider {
+    fn provider_name(&self) -> &str {
+        "brave"
+    }
+
+    async fn search(
+        &self,
+        client: &reqwest::Client,
+        query: &str,
+        _search_type: &str,
+        num_results: u32,
+        _contents_mode: &str,
+    ) -> Result<String> {
+        if self.api_key.is_empty() {
+            return Err(RockBotError::Provider(
+                "Brave Search requires an API key. Configure it in the [search.brave] section of config.toml."
+                    .into(),
+            ));
+        }
+
+        let mut url = url::Url::parse(&format!("{}/res/v1/web/search", self.base_url))
+            .expect("hardcoded Brave URL");
+        url.query_pairs_mut()
+            .append_pair("q", query)
+            .append_pair("count", &num_results.to_string());
+        let resp = client
+            .get(url.as_str())
+            .header("X-Subscription-Token", &self.api_key)
+            .header("Accept", "application/json")
+            .send()
+            .await?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let error_body = resp
+                .text()
+                .await
+                .unwrap_or_else(|_| "unknown error".into());
+            return if status.as_u16() == 401 {
+                Err(RockBotError::Provider(
+                    "Brave Search failed: invalid API key (401). Check your [search.brave] config."
+                        .into(),
+                ))
+            } else {
+                Err(RockBotError::Provider(format!(
+                    "Brave Search failed with status {}: {}",
+                    status, error_body
+                )))
+            };
+        }
+
+        let body: Value = resp.json().await?;
+        let results = body
+            .get("web")
+            .and_then(|w| w.get("results"))
+            .and_then(|r| r.as_array())
+            .ok_or_else(|| RockBotError::Provider("Brave returned no results array".into()))?;
+
+        if results.is_empty() {
+            return Ok("No search results found.".to_string());
+        }
+
+        let mut output = String::new();
+        for (i, result) in results.iter().enumerate() {
+            let title = result
+                .get("title")
+                .and_then(|t| t.as_str())
+                .unwrap_or("Untitled");
+            let url = result.get("url").and_then(|u| u.as_str()).unwrap_or("");
+            let description = result
+                .get("description")
+                .and_then(|d| d.as_str())
+                .unwrap_or("");
+            let age = result
+                .get("page_age")
+                .and_then(|a| a.as_str())
+                .unwrap_or("");
+
+            output.push_str(&format!("{}. {}\n", i + 1, title));
+            output.push_str(&format!("   URL: {}\n", url));
+            if !age.is_empty() {
+                output.push_str(&format!("   Age: {}\n", age));
+            }
+            output.push_str(&format!("   {}\n\n", description));
+        }
+
+        Ok(output)
+    }
+}
+
+// ─── LLM-facing parameter types ───────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum SearchType {
+    Auto,
+    Fast,
+    Deep,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum ContentsMode {
+    Highlights,
+    Text,
+    Deep,
+}
+
+#[derive(Debug, Deserialize, Validate)]
+struct WebSearchParams {
+    query: NonEmptyString,
+    #[serde(rename = "type", default = "default_search_type")]
+    search_type: SearchType,
+    #[serde(default = "default_num_results")]
+    #[validate(minimum = 1)]
+    #[validate(maximum = 20)]
+    num_results: u32,
+    #[serde(default = "default_contents_mode")]
+    contents_mode: ContentsMode,
+}
+
+fn default_search_type() -> SearchType {
+    SearchType::Auto
+}
+fn default_num_results() -> u32 {
+    5
+}
+fn default_contents_mode() -> ContentsMode {
+    ContentsMode::Highlights
+}
+
+// ─── WebSearchTool ────────────────────────────────────────────────────────────
+
+pub struct WebSearchTool {
+    provider: Box<dyn SearchProvider>,
+    http_client: reqwest::Client,
+}
+
+impl WebSearchTool {
+    pub fn new(provider: Box<dyn SearchProvider>) -> Self {
+        Self {
+            provider,
+            http_client: reqwest::Client::new(),
+        }
+    }
+
+    pub fn with_client(provider: Box<dyn SearchProvider>, client: reqwest::Client) -> Self {
+        Self {
+            provider,
+            http_client: client,
+        }
+    }
+}
+
 #[async_trait]
 impl Tool for WebSearchTool {
     fn name(&self) -> &str {
-        "web_search"
+        "search_web"
     }
 
     fn description(&self) -> &str {
-        "Search the web using Exa. Returns ranked results with titles, URLs, highlights, and dates. \
-         Supports optional type (auto/fast/deep), num_results, and contents_mode (highlights/text/deep) parameters."
+        "Search the web using the configured search provider (Exa or Brave). Returns ranked results \
+         with titles, URLs, highlights, and dates. Supports optional type (auto/fast/deep), \
+         num_results, and contents_mode (highlights/text/deep) parameters."
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -243,7 +412,7 @@ impl Tool for WebSearchTool {
                 "type": {
                     "type": "string",
                     "enum": ["auto", "fast", "deep"],
-                    "description": "Search type: auto (balanced with autoprompt), fast (quick results), deep (comprehensive). Default: auto"
+                    "description": "Search type: auto (balanced), fast (quick results), deep (comprehensive). Default: auto"
                 },
                 "contents_mode": {
                     "type": "string",
@@ -263,10 +432,10 @@ impl Tool for WebSearchTool {
 
     async fn execute(&self, arguments: &str) -> Result<String> {
         let params: WebSearchParams = serde_json::from_str(arguments).map_err(|e| {
-            RockBotError::ToolCallParse(format!("Failed to parse web_search arguments: {}", e))
+            RockBotError::ToolCallParse(format!("Failed to parse search_web arguments: {}", e))
         })?;
         params.validate().map_err(|e| {
-            RockBotError::ToolCallParse(format!("Invalid web_search arguments: {e}"))
+            RockBotError::ToolCallParse(format!("Invalid search_web arguments: {e}"))
         })?;
 
         let search_type = match params.search_type {
@@ -280,7 +449,15 @@ impl Tool for WebSearchTool {
             ContentsMode::Deep => "deep",
         };
 
-        self.search_exa(&params.query, search_type, params.num_results, contents_mode).await
+        self.provider
+            .search(
+                &self.http_client,
+                &params.query,
+                search_type,
+                params.num_results,
+                contents_mode,
+            )
+            .await
     }
 }
 
@@ -289,9 +466,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_web_search_tool_definition() {
-        let tool = WebSearchTool::new("test-key");
-        assert_eq!(tool.name(), "web_search");
+    fn test_search_web_tool_definition() {
+        let provider = ExaSearchProvider::new("test-key");
+        let tool = WebSearchTool::new(Box::new(provider));
+        assert_eq!(tool.name(), "search_web");
         assert!(tool.description().contains("Search the web"));
 
         let params = tool.parameters();
@@ -309,22 +487,25 @@ mod tests {
     }
 
     #[test]
-    fn test_web_search_tool_to_def() {
-        let tool = WebSearchTool::new("test-key");
+    fn test_search_web_tool_to_def() {
+        let provider = ExaSearchProvider::new("test-key");
+        let tool = WebSearchTool::new(Box::new(provider));
         let def = tool.to_def();
-        assert_eq!(def.function.name, "web_search");
+        assert_eq!(def.function.name, "search_web");
     }
 
     #[tokio::test]
     async fn test_execute_missing_query() {
-        let tool = WebSearchTool::new("test-key");
+        let provider = ExaSearchProvider::new("test-key");
+        let tool = WebSearchTool::new(Box::new(provider));
         let result = tool.execute(r#"{}"#).await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn test_execute_invalid_json() {
-        let tool = WebSearchTool::new("test-key");
+        let provider = ExaSearchProvider::new("test-key");
+        let tool = WebSearchTool::new(Box::new(provider));
         let result = tool.execute("not json").await;
         assert!(result.is_err());
     }
@@ -432,8 +613,9 @@ mod tests {
     }
 
     #[test]
-    fn test_exa_contents_mode_highlights() {
-        let tool = WebSearchTool::new("test-key");
+    fn test_search_web_params_schema() {
+        let provider = ExaSearchProvider::new("test-key");
+        let tool = WebSearchTool::new(Box::new(provider));
         let params = tool.parameters();
         let contents_mode = &params["properties"]["contents_mode"];
         assert_eq!(contents_mode["type"], "string");
@@ -450,35 +632,35 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_tool_with_empty_key_returns_none() {
-        let tool = WebSearchTool::new("");
-        assert!(tool.api_key.is_none());
-        let def = tool.to_def();
-        assert_eq!(def.function.name, "web_search");
-        // Tool definition is still valid (name/params), but execute will
-        // return an error because api_key is None.
-    }
-
     #[tokio::test]
-    async fn test_execute_with_empty_key_returns_error() {
-        let tool = WebSearchTool::new("");
+    async fn test_execute_with_empty_exa_key_returns_error() {
+        let provider = ExaSearchProvider::new("");
+        let tool = WebSearchTool::new(Box::new(provider));
         let result = tool.execute(r#"{"query":"test","contents_mode":"highlights"}"#).await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("Exa API key"), "Expected Exa API key error, got: {}", err);
+        assert!(err.contains("Exa search requires an API key"), "Expected Exa API key error, got: {}", err);
+    }
+
+    #[tokio::test]
+    async fn test_execute_with_empty_brave_key_returns_error() {
+        let provider = BraveSearchProvider::new("");
+        let tool = WebSearchTool::new(Box::new(provider));
+        let result = tool.execute(r#"{"query":"test"}"#).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Brave Search requires an API key"), "Expected Brave API key error, got: {}", err);
     }
 
     #[test]
-    fn test_exa_contents_mode_text_in_execute() {
-        let args: Value =
-            serde_json::from_str(r#"{"query": "rust", "contents_mode": "text"}"#).unwrap();
-        assert_eq!(args["query"], "rust");
-        assert_eq!(args["contents_mode"], "text");
-        let contents_mode = args
-            .get("contents_mode")
-            .and_then(|c| c.as_str())
-            .unwrap_or("highlights");
-        assert_eq!(contents_mode, "text");
+    fn test_exa_provider_name() {
+        let provider = ExaSearchProvider::new("key");
+        assert_eq!(provider.provider_name(), "exa");
+    }
+
+    #[test]
+    fn test_brave_provider_name() {
+        let provider = BraveSearchProvider::new("key");
+        assert_eq!(provider.provider_name(), "brave");
     }
 }

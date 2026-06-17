@@ -27,6 +27,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub tools: HashMap<String, ToolServiceConfig>,
     #[serde(default)]
+    pub search: SearchConfig,
+    #[serde(default)]
     pub webdav: Option<WebDavConfig>,
 }
 
@@ -227,6 +229,42 @@ pub struct ToolServiceConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct SearchConfig {
+    #[serde(default = "default_search_provider")]
+    pub provider: String,
+    #[serde(default)]
+    pub exa: Option<ExaSearchConfig>,
+    #[serde(default)]
+    pub brave: Option<BraveSearchConfig>,
+}
+
+impl Default for SearchConfig {
+    fn default() -> Self {
+        Self {
+            provider: default_search_provider(),
+            exa: None,
+            brave: None,
+        }
+    }
+}
+
+fn default_search_provider() -> String {
+    "exa".into()
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ExaSearchConfig {
+    #[serde(default)]
+    pub api_key: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct BraveSearchConfig {
+    #[serde(default)]
+    pub api_key: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct ProviderConfig {
     pub name: ProviderName,
     pub api_key: String,
@@ -311,6 +349,21 @@ impl AppConfig {
     }
 
     /// Returns the platform-specific model config based on the active platform.
+    /// Returns the Exa API key, checking [search.exa] first, then falling back to legacy [tools.exa].
+    pub fn search_api_key(&self) -> String {
+        if let Some(ref exa) = self.search.exa {
+            if !exa.api_key.is_empty() {
+                return exa.api_key.clone();
+            }
+        }
+        self.tools.get("exa").map(|t| t.api_key.clone()).unwrap_or_default()
+    }
+
+    /// Returns the Brave Search API key from [search.brave].
+    pub fn brave_api_key(&self) -> String {
+        self.search.brave.as_ref().map(|b| b.api_key.clone()).unwrap_or_default()
+    }
+
     pub fn active_model(&self) -> &ModelConfig {
         if self.platform.name == "rocketchat" {
             self.rocketchat.model.as_ref().unwrap_or(&self.model)
