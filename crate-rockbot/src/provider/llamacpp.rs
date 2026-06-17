@@ -6,7 +6,7 @@ use crate::error::{Result, RockBotError};
 use crate::provider::AiProvider;
 use crate::types::{
     ChatMessage, ChatRequest, CompletionResult, ContentPart, FinishReason, MessageContent,
-    ToolCall, ToolDef, UsageInfo,
+    ToolCall, UsageInfo,
 };
 
 const TOOL_DELIMITER_START: &str = "✿FUNCTION✿";

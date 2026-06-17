@@ -18,7 +18,6 @@ pub struct MatrixPlatform {
     user_id: String,
     password: String,
     device_id: Option<String>,
-    state_dir: String,
 }
 
 impl MatrixPlatform {
@@ -28,7 +27,6 @@ impl MatrixPlatform {
             user_id: config.user_id.clone(),
             password: config.password.clone(),
             device_id: config.device_id.clone(),
-            state_dir: config.state_dir.clone(),
         }
     }
 }

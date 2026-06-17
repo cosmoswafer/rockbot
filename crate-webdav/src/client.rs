@@ -118,7 +118,7 @@ impl WebDavClient {
             let seven_days = now + time::Duration::days(7);
             seven_days
                 .date()
-                .format(&time::format_description::parse("[year]-[month]-[day]").unwrap())
+                .format(&time::format_description::parse_borrowed::<1>("[year]-[month]-[day]").unwrap())
                 .unwrap_or_default()
         };
         let body = format!(
