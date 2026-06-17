@@ -549,7 +549,7 @@ per-event `args[1].fname` field; there is no secondary cache lookup.
 
 The `display_name` is set via `set_display_name()` before `connect_and_run()`.
 It is sourced from the rocketbot harness's soul memory (`any_display_name()`)
-and run through `utils::strip_emoji()` to remove emoji codepoints (e.g. "零夢 ✨"
+and run through `types::strip_emoji()` (in `crate-rocketchat/src/types.rs`) to remove emoji codepoints (e.g. "零夢 ✨"
 → "零夢"). When set, the event loop also dispatches messages whose text
 contains the display name, even without an `@username` mention.
 

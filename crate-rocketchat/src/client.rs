@@ -134,7 +134,7 @@ impl RocketChatClient {
     }
 
     pub fn set_display_name(&mut self, name: Option<String>) {
-        self.display_name = name;
+        self.display_name = name.map(|n| crate::types::strip_emoji(&n));
     }
 
     pub fn from_config_file(path: &str) -> Result<Self> {
@@ -241,8 +241,7 @@ impl RocketChatClient {
                 let filter = MessageFilter::new(user_id.as_str());
                 if let Some(msg) = filter.filter(&value) {
                     let display_match = self.display_name.as_ref().is_some_and(|dn| {
-                        let stripped = crate::types::strip_emoji(dn);
-                        !stripped.is_empty() && msg.text.to_lowercase().contains(&stripped.to_lowercase())
+                        !dn.is_empty() && msg.text.to_lowercase().contains(&dn.to_lowercase())
                     });
                     let should_dispatch = msg.is_dm
                         || (!msg.room_name.is_empty()
