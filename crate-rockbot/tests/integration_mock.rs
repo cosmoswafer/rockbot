@@ -2648,4 +2648,160 @@ dav_path = "remote.php/dav"
         // Second call: cached as empty — should skip WebDAV entirely
         harness.refresh_knowledge_context("room2", "r-emptyroom").await.unwrap();
     }
+
+    #[tokio::test]
+    async fn test_knowledge_priority_bonus_sorting() {
+        let mock_server = MockServer::start().await;
+        let base_url = mock_server.uri();
+
+        let index_json = serde_json::json!({
+            "version": "rockbot-knowledge/1",
+            "room_id": "r-priority",
+            "entries": [
+                {
+                    "filename": "p3_item.md",
+                    "when_useful": "When working with databases",
+                    "priority": "P3",
+                    "last_promoted_at": null
+                },
+                {
+                    "filename": "p0_critical.md",
+                    "when_useful": "When working with databases",
+                    "priority": "P0",
+                    "last_promoted_at": "2026-06-17T00:00:00Z"
+                },
+                {
+                    "filename": "p1_common.md",
+                    "when_useful": "When working with databases",
+                    "priority": "P1",
+                    "last_promoted_at": null
+                }
+            ]
+        });
+
+        let p0_body = "# P0 Critical\n\nAlways-loaded content.";
+        let p1_body = "# P1 Common\n\nDefault priority content.";
+        let p3_body = "# P3 Item\n\nLow priority content.";
+
+        Mock::given(method("GET"))
+            .and(path("/r-priority/knowledge/index.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&index_json))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/r-priority/knowledge/p0_critical.md"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(p0_body))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/r-priority/knowledge/p1_common.md"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(p1_body))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/r-priority/knowledge/p3_item.md"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(p3_body))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let config = make_knowledge_test_config(&base_url);
+        let provider = Box::new(MockMinProvider);
+        let webdav = webdav::WebDavClient::new(&base_url, "testuser", "testpass").unwrap();
+        let image_cache = Arc::new(ImageCache::new());
+        let mut harness = AgentHarness::new(config, provider, Some(webdav), image_cache);
+
+        harness.memory_mut().get_or_create("room1", "priority", "", false)
+            .history.append(ChatMessage::user("tell me about databases"));
+
+        harness.refresh_knowledge_context("room1", "r-priority").await.unwrap();
+
+        let knowledge = harness.memory().get_knowledge("room1");
+        assert!(knowledge.is_some(), "knowledge should be injected");
+        let text = knowledge.unwrap();
+        assert!(text.contains("[Knowledge: p0_critical]"), "P0 should always be loaded");
+        assert!(text.contains("[Knowledge: p1_common]"), "P1 matched keyword with bonus");
+        assert!(text.contains("[Knowledge: p3_item]"), "P3 matched keyword with no bonus");
+
+        let p0_pos = text.find("[Knowledge: p0_critical]").unwrap();
+        let p1_pos = text.find("[Knowledge: p1_common]").unwrap();
+        let p3_pos = text.find("[Knowledge: p3_item]").unwrap();
+        assert!(p0_pos < p1_pos, "P0 should sort before P1");
+        assert!(p0_pos < p3_pos, "P0 should sort before P3");
+    }
+
+    #[tokio::test]
+    async fn test_knowledge_p0_always_loaded_no_keyword_match() {
+        let mock_server = MockServer::start().await;
+        let base_url = mock_server.uri();
+
+        let index_json = serde_json::json!({
+            "version": "rockbot-knowledge/1",
+            "room_id": "r-p0always",
+            "entries": [
+                {
+                    "filename": "p0_critical.md",
+                    "when_useful": "When deploying to production servers",
+                    "priority": "P0",
+                    "last_promoted_at": "2026-06-17T00:00:00Z"
+                },
+                {
+                    "filename": "p1_skipped.md",
+                    "when_useful": "When deploying to production servers",
+                    "priority": "P1",
+                    "last_promoted_at": null
+                }
+            ]
+        });
+
+        let p0_body = "# P0 Critical\n\nContent for deployment.";
+        let p1_body = "# P1 Skipped\n\nShould not appear.";
+
+        Mock::given(method("GET"))
+            .and(path("/r-p0always/knowledge/index.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&index_json))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        // P0 .md file will be loaded
+        Mock::given(method("GET"))
+            .and(path("/r-p0always/knowledge/p0_critical.md"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(p0_body))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        // P1 .md should NOT be requested (no keyword match, P1 excluded)
+        Mock::given(method("GET"))
+            .and(path("/r-p0always/knowledge/p1_skipped.md"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(p1_body))
+            .expect(0)
+            .mount(&mock_server)
+            .await;
+
+        let config = make_knowledge_test_config(&base_url);
+        let provider = Box::new(MockMinProvider);
+        let webdav = webdav::WebDavClient::new(&base_url, "testuser", "testpass").unwrap();
+        let image_cache = Arc::new(ImageCache::new());
+        let mut harness = AgentHarness::new(config, provider, Some(webdav), image_cache);
+
+        // Conversation about lunch — no keyword match for "deploying to production"
+        harness.memory_mut().get_or_create("room2", "p0always", "", false)
+            .history.append(ChatMessage::user("what should I eat for lunch?"));
+
+        harness.refresh_knowledge_context("room2", "r-p0always").await.unwrap();
+
+        let knowledge = harness.memory().get_knowledge("room2");
+        assert!(knowledge.is_some(), "P0 knowledge should be injected");
+        let text = knowledge.unwrap();
+        assert!(text.contains("[Knowledge: p0_critical]"), "P0 should always be loaded");
+        assert!(!text.contains("p1_skipped"), "P1 should be excluded without keyword match");
+    }
 }
