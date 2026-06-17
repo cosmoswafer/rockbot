@@ -31,5 +31,4 @@ provider = "exa"
 [search.exa]
 api_key = "EDITME"
 
-[tools.exa]
-api_key = "EDITME"
+

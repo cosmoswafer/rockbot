@@ -118,7 +118,7 @@ root = ""
 dav_path = "/remote.php/dav"
 
 [search]
-provider = "exa"
+provider = "brave"
 
 [search.exa]
 api_key = ""
@@ -126,5 +126,4 @@ api_key = ""
 [search.brave]
 api_key = ""
 
-[tools.exa]
-api_key = ""
+
