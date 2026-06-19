@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Once};
+use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::Mutex;
@@ -12,6 +13,11 @@ use crate::error::{Result, RocketChatError};
 use crate::types::{IncomingMessage, MessageFilter};
 
 const SUBSCRIPTION_ID: &str = "ABCROCK";
+
+const PING_INTERVAL_SECS: u64 = 30;
+const READ_TIMEOUT_SECS: u64 = 300;
+const TCP_KEEPALIVE_IDLE_SECS: u64 = 60;
+const TCP_KEEPALIVE_INTERVAL_SECS: u64 = 10;
 
 static INIT_CRYPTO: Once = Once::new();
 
@@ -106,6 +112,31 @@ impl WriteHalf {
         self.inner.send(Message::Text(text.into())).await?;
         Ok(())
     }
+
+    async fn send_ping(&mut self) -> Result<()> {
+        debug!("WS>>> PING");
+        self.inner.send(Message::Ping(vec![].into())).await?;
+        Ok(())
+    }
+}
+
+fn set_tcp_keepalive(stream: &WsStream) {
+    use std::os::unix::io::AsRawFd;
+
+    let inner_maybe_tls = stream.get_ref();
+    let tcp_ref: &tokio::net::TcpStream = inner_maybe_tls.get_ref();
+
+    let ka = socket2::TcpKeepalive::new()
+        .with_time(Duration::from_secs(TCP_KEEPALIVE_IDLE_SECS))
+        .with_interval(Duration::from_secs(TCP_KEEPALIVE_INTERVAL_SECS));
+
+    let sock_ref = socket2::SockRef::from(tcp_ref);
+    if let Err(e) = sock_ref.set_tcp_keepalive(&ka) {
+        warn!("Failed to set TCP keepalive: {}", e);
+    } else {
+        let _raw_fd = tcp_ref.as_raw_fd();
+        debug!("TCP keepalive set: idle={}s interval={}s fd={}", TCP_KEEPALIVE_IDLE_SECS, TCP_KEEPALIVE_INTERVAL_SECS, _raw_fd);
+    }
 }
 
 pub struct RocketChatClient {
@@ -167,6 +198,7 @@ impl RocketChatClient {
 
         let (ws_stream, _response) = connect_async(&uri).await?;
         info!("WebSocket connected");
+        set_tcp_keepalive(&ws_stream);
 
         let (write, mut read) = ws_stream.split();
         let writer = Arc::new(Mutex::new(WriteHalf { inner: write }));
@@ -194,26 +226,53 @@ impl RocketChatClient {
         let _ready = Self::expect_msg(&mut read, "ready").await?;
         info!("Subscription confirmed");
 
+        let ping_writer = writer.clone();
+        let ping_task = tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(PING_INTERVAL_SECS)).await;
+                let mut w = ping_writer.lock().await;
+                if w.send_ping().await.is_err() {
+                    debug!("WebSocket ping failed, ping task exiting");
+                    break;
+                }
+            }
+        });
+
         let bot_name = self.bot_name.clone();
         let _username = self.username.clone();
         let registered_rooms = self.registered_rooms.clone();
 
         info!("Entering event loop");
         loop {
-            let frame = match read.next().await {
-                Some(Ok(Message::Text(text))) => text,
-                Some(Ok(Message::Close(_))) => {
+            let frame_result = tokio::time::timeout(
+                Duration::from_secs(READ_TIMEOUT_SECS),
+                read.next(),
+            )
+            .await;
+
+            let frame = match frame_result {
+                Ok(Some(Ok(Message::Text(text)))) => text,
+                Ok(Some(Ok(Message::Close(_)))) => {
                     info!("WebSocket closed by server");
                     break;
                 }
-                Some(Ok(_)) => continue,
-                Some(Err(e)) => {
+                Ok(Some(Ok(_))) => continue,
+                Ok(Some(Err(e))) => {
                     error!("WebSocket error: {}", e);
+                    ping_task.abort();
                     return Err(e.into());
                 }
-                None => {
+                Ok(None) => {
                     info!("WebSocket stream ended");
                     break;
+                }
+                Err(_elapsed) => {
+                    warn!(
+                        "WebSocket read timeout (no frame for {}s) — treating as dead connection",
+                        READ_TIMEOUT_SECS
+                    );
+                    ping_task.abort();
+                    return Err(RocketChatError::ReadTimeout(READ_TIMEOUT_SECS));
                 }
             };
 
@@ -262,6 +321,7 @@ impl RocketChatClient {
                 }
         }
 
+        ping_task.abort();
         Ok(())
     }
 

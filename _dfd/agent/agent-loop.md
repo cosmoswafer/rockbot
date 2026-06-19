@@ -90,6 +90,7 @@ flowchart TD
 flowchart TD
     START(BootSystem)
     CONN(MessagingPlatform Connection)
+    TIMEOUT[ConnectionTimeout<br/>tokio::time::timeout]
     AI[AI Provider API]
     DAV[(NextCloud WebDAV)]
     RECONNECT(ReconnectWithBackoff)
@@ -103,6 +104,7 @@ flowchart TD
     START -.->|"auth failure error"| RECONNECT
     CONN -.->|"connection lost error"| RECONNECT
     CONN -.->|"connection closed ok"| SHUTDOWN
+    TIMEOUT -.->|"silent hang timeout"| RECONNECT
     RECONNECT -.->|"reconnect signal"| CONN
     RECONNECT -.->|"max retries exhausted"| SHUTDOWN
     AI -.->|"api error response"| FALLBACK
@@ -118,6 +120,54 @@ On graceful shutdown (SIGINT, SIGTERM, normal connection close, or max reconnect
 2. Acquires the harness lock and calls `flush_all_snapshots()`, which iterates every dirty room (soul/knowledge/summary changes), builds a `PersistSnapshot`, serializes to JSON, and uploads `snapshot.json` to WebDAV via `write_file_with_fallback`.
 
 Typing indicator failures are non-critical: if `sender.typing()` returns an error (e.g. WebSocket disconnected), the heartbeat task silently catches it and stops refreshing. The main agent loop is unaffected — it continues processing and sends the reply without typing cleanup.
+
+### 2c. Connection Health Monitoring
+
+Level 2 decomposition of the reconnect loop, showing how connection hangs (silent TCP drops, stalled event loops) are detected and recovered from. The primary defense is a `tokio::time::timeout()` wrapping `connect_and_run()`, combined with an optional watchdog timer that monitors for prolonged silence from the agent log stream.
+
+```mermaid
+flowchart TD
+    CONNECT_FUT[connect_and_run future]
+    TIMEOUT_DUR[ConnectionTimeout<br/>e.g. 10 minutes]
+    RUN(WaitConnectOrTimeout)
+    SHUTDOWN_SIG[ShutdownSignal]
+    RECONNECT(ReconnectWithBackoff)
+    WATCHDOG[WatchdogTimer<br/>optional, detects stall]
+    LOG_MONITOR{Log output<br/>within interval?}
+    ALERT[StallDetected<br/>force reconnect]
+    PLATFORM[MessagingPlatform]
+
+    CONNECT_FUT --> RUN
+    TIMEOUT_DUR --> RUN
+    SHUTDOWN_SIG --> RUN
+    RUN -->|"connect_and_run returned Ok"| PLATFORM
+    RUN -->|"connect_and_run returned Err"| RECONNECT
+    RUN -->|"timed out (silent hang)"| RECONNECT
+    RUN -->|"shutdown signal"| SHUTDOWN
+    WATCHDOG -->|"periodic check"| LOG_MONITOR
+    LOG_MONITOR -->|"yes, healthy"| WATCHDOG
+    LOG_MONITOR -->|"no output > threshold"| ALERT
+    ALERT -->|"drop connection, trigger reconnect"| RECONNECT
+    RECONNECT -->|"after backoff delay"| CONNECT_FUT
+```
+
+**Timeout wrapping** (`main.rs`): `connect_fut` is wrapped in `tokio::time::timeout(Duration::from_secs(600))`. If the WebSocket event loop stalls (silent TCP drop, no keepalive, no ping), the timeout fires, `connect_and_run` is cancelled, and the reconnect loop activates with exponential backoff.
+
+**Watchdog timer** (optional, `main.rs`): A separate `tokio::spawn` task tracks the timestamp of the last agent log output. If no log line is emitted for `watchdog_interval_secs` (default 300s), it signals a stall by dropping the `connect_fut` handle (via `JoinHandle::abort()` or by closing the underlying platform connection), causing the reconnect loop to activate.
+
+**Connection timeout duration**: configurable via `[agent] connection_timeout_secs` in `config.toml`, defaulting to 600s (10 minutes). This is long enough to tolerate slow LLM responses (DeepSeek reasoning >120s), but short enough to recover from stalls.
+
+**Data flow summary**:
+
+| Path | Trigger | Action |
+|------|---------|--------|
+| `connect_and_run` returns `Ok(())` | Normal close (server Close frame, FIN) | Clean exit, flush snapshots |
+| `connect_and_run` returns `Err` | Transport error (RST, 401, auth failure) | Reconnect with backoff |
+| `tokio::time::timeout` fires | Silent hang (no frame for 10min) | Force reconnect |
+| Watchdog fires | No log output for 5min | Force reconnect |
+| `shutdown` future fires | SIGTERM / SIGINT | Graceful shutdown |
+
+The watchdog is an additional defense-in-depth. The primary recovery mechanism is the timeout wrapper — it covers the silent-TCP-drop case that the reconnect loop previously could not detect.
 
 ### 2c. Typing Indicator Heartbeat
 

@@ -194,14 +194,30 @@ Images are detected by `headers.contentType` starting with `"image/"` — the ha
 ### 2d. Ping/Pong Keepalive Deep Dive
 
 The RocketChat server periodically sends `{"msg": "ping"}` to keep the
-WebSocket alive. The bot responds immediately with `{"msg": "pong"}`. This
-diagram decomposes the `StreamEvents` (STREAM) process from Level 1, showing
+WebSocket alive. The bot responds immediately with `{"msg": "pong"}`.
+
+**In addition**, the bot proactively sends its own pings every `ping_interval_secs`
+(default 30s) and expects a pong response within `ping_timeout_secs` (default 10s).
+If no pong arrives in time, the bot considers the connection dead and triggers a
+reconnect. TCP keepalive (`SO_KEEPALIVE`) is also enabled on the underlying
+`socket2`-configured `TcpStream` with `tcp_keepalive` parameters (default:
+`TCP_KEEPIDLE=60s`, `TCP_KEEPINTVL=10s`, `TCP_KEEPCNT=5`).
+
+The event loop also wraps `read.next()` in a `tokio::time::timeout()` so that
+if the WebSocket produces no frame (text, ping, close) within a configurable
+`read_timeout_secs` (default 300s), the connection is treated as dead and the
+loop exits.
+
+This diagram decomposes the `StreamEvents` (STREAM) process from Level 1, showing
 the internal dispatch that routes frames by `msg` field.
 
 ```mermaid
 flowchart TD
-    WS[RocketChat DDP over WebSocket]
-    RECV(ReceiveFrame)
+    WS[RocketChat DDP over WebSocket<br/>TCP keepalive enabled]
+    CLI_PING[ClientPingTimer<br/>every ping_interval_secs]
+    PONG_TIMEOUT{Pong received<br/>within timeout?}
+    RECONNECT(ReconnectLoop)
+    RECV(ReceiveFrame<br/>wrapped in read_timeout)
     PARSE(ParseJson)
     ROUTE(RouteByMsgField)
     CMD[(DispatchTable)]
@@ -209,8 +225,12 @@ flowchart TD
     FORWARD(ForwardChanged)
     ACK_READY(ConfirmSubReady)
     ACK_NOSUB(HandleSubLost)
+    READ_TIMEOUT{Read timeout<br/>exceeded?}
 
-    WS -->|"raw frame"| RECV
+    WS -->|"raw frame / timeout"| RECV
+    RECV -->|"timeout (no frame)"| READ_TIMEOUT
+    READ_TIMEOUT -->|"yes"| RECONNECT
+    READ_TIMEOUT -->|"read completed"| RECV
     RECV -->|"frame string"| PARSE
     PARSE -->|"json object"| ROUTE
     CMD -->|"msg to callback mapping"| ROUTE
@@ -222,6 +242,9 @@ flowchart TD
     ACK_READY -->|"subscription confirmed"| STREAM_PROC[StreamEvents]
     ROUTE -->|"nosub event"| ACK_NOSUB
     ACK_NOSUB -->|"re-subscribe"| WS
+    CLI_PING -->|"proactive ping"| WS
+    WS -->|"pong / timeout"| PONG_TIMEOUT
+    PONG_TIMEOUT -->|"no pong"| RECONNECT
 ```
 
 **Dispatch table** — the `msg` field routes to inline handling in the event loop:
@@ -243,9 +266,14 @@ subscription and re-subscribes on `"nosub"`.
 > event loop. The event loop (`client.rs:151-207`) only handles `"ping"`,
 > `"changed"`, and `"nosub"`.
 
-Note: the bot does **not** proactively send pings or monitor ping intervals —
-it only responds to server-initiated pings. A missing server ping will not be
-detected; a WebSocket read returning `None` or `Err` terminates the loop.
+The bot now **proactively sends pings** on its own timer and monitors the
+connection health via three independent mechanisms:
+
+| Mechanism | Configuration | Default | Detects |
+|-----------|---------------|---------|---------|
+| TCP keepalive | `tcp_keepalive` params (idle/intvl/cnt) | 60s/10s/5 | Kernel-level dead connections |
+| Client WebSocket ping | `ping_interval_secs` / `ping_timeout_secs` | 30s / 10s | Application-level dead connections |
+| Read timeout | `read_timeout_secs` on `read.next()` | 300s | Silent stream stall (no frames at all) |
 
 ### 2e. Subscription Deep Dive
 

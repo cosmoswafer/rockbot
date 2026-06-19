@@ -8,6 +8,14 @@ use async_trait::async_trait;
 use crate::error::Result;
 use crate::types::{ChatRequest, CompletionResult, ImageGenParams};
 
+pub(crate) fn default_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(300))
+        .build()
+        .expect("reqwest::Client builder with timeouts should always succeed")
+}
+
 #[async_trait]
 pub trait AiProvider: Send + Sync {
     async fn complete(&self, request: ChatRequest) -> Result<CompletionResult>;

@@ -1333,6 +1333,7 @@ fn make_test_config(webdav_url: &str) -> rockbot::config::AppConfig {
         tools: HashMap::new(),
         search: Default::default(),
         webdav: Some(webdav_cfg),
+        agent: Default::default(),
     }
 }
 

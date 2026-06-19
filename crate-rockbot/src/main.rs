@@ -7,6 +7,7 @@ use tracing::{debug, error, info, warn};
 use tracing_subscriber::EnvFilter;
 
 use rockbot::config::AppConfig;
+use rockbot::error::RockBotError;
 use rockbot::harness::AgentHarness;
 use rockbot::image_cache::ImageCache;
 use rockbot::provider::{AiProvider, DeepSeekProvider, FalAiProvider, ImageProvider, LlamaCppProvider, OpenRouterImageProvider, OpenRouterProvider};
@@ -369,6 +370,11 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     let max_retries: u32 = 5;
     let mut retry_count: u32 = 0;
 
+    let connection_timeout = {
+        let h = harness.lock().await;
+        h.config().agent.connection_timeout_secs
+    };
+
     let shutdown = async {
         let mut sigterm =
             tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
@@ -569,7 +575,19 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
         }));
 
         let result = tokio::select! {
-            r = connect_fut => r,
+            r = tokio::time::timeout(
+                Duration::from_secs(connection_timeout.max(1)),
+                connect_fut,
+            ) => match r {
+                Ok(inner) => inner,
+                Err(_elapsed) => {
+                    warn!(
+                        "Connection timed out after {}s (silent hang detected), forcing reconnect",
+                        connection_timeout
+                    );
+                    Err(RockBotError::ConnectionTimedOut(connection_timeout))
+                }
+            },
             _ = &mut shutdown => {
                 info!("Received shutdown signal, flushing snapshots...");
                 timer_handle.abort();

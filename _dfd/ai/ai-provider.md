@@ -82,6 +82,7 @@ flowchart TD
     RETRY(RetryWithBackoff)
     CTX_ERR{ContextLength<br/>Exceeded?}
     CTX_RET(ContextLengthExceeded<br/>returned to harness)
+    ERR_TIMEOUT[Error: Request Timeout]
     ERR_API[Error: API Unreachable]
     ERR_PARSE[Error: Malformed Response]
     ERR_AUTH[Error: Invalid API Key]
@@ -92,12 +93,14 @@ flowchart TD
     HTTP -.->|"429 rate limited"| RATE
     RATE -.->|"backoff signal"| RETRY
     HTTP -.->|"5xx server error"| RETRY
+    HTTP -.->|"connect / read timeout"| ERR_TIMEOUT
     RETRY -.->|"retries exhausted"| ERR_API
     HTTP -->|"400 context length"| CTX_ERR
     CTX_ERR -->|"yes"| CTX_RET
     CTX_ERR -->|"no (other 400)"| AGENT
     HTTP -->|"401 unauthorized"| ERR_AUTH
     PARSE -->|"invalid json error"| ERR_PARSE
+    ERR_TIMEOUT -->|"timeout error"| AGENT
     ERR_API -->|"api error"| AGENT
     ERR_AUTH -->|"auth error"| AGENT
     ERR_PARSE -->|"parse error"| AGENT
@@ -110,6 +113,30 @@ flowchart TD
 `RockBotError::ContextLengthExceeded` instead of `InvalidRequest`. The harness
 uses this to trigger aggressive memory compression and a one-time retry. This
 applies to OpenRouter, DeepSeek, and llama.cpp providers.
+
+**HTTP timeouts**: Every `reqwest::Client` used by AI providers is built with
+`connect_timeout` and request-level `timeout` to prevent indefinite hangs from
+silent TCP drops or unresponsive provider endpoints.
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `connect_timeout` | 10s | TCP/TLS handshake timeout |
+| `request_timeout` | 300s | Total request duration from first byte sent to response completion |
+
+These timeouts apply to all providers: `DeepSeekProvider`, `OpenRouterProvider`,
+`LlamaCppProvider`, and `FalAiProvider` (both submit/poll and image download).
+A timeout produces `RockBotError::HttpTimeout` which the harness treats as a
+transient failure — it sends an error reply and moves on, releasing the harness
+lock for the next message.
+
+The Fal image generation poll loop additionally uses a separate per-HTTP-request
+timeout (30s for status polls, 600s for image downloads) to prevent individual
+polling requests from blocking the task.
+
+A `tokio::time::timeout()` wrapper at the harness call site provides an additional
+defense-in-depth layer: if the provider's own timeout fails to fire (e.g., due to
+a bug in `reqwest`'s timeout implementation), the wrapper cancels the future after
+a hard deadline (default 360s, one minute longer than the client request timeout).
 
 **llama.cpp error handling**: The local server does not rate-limit (no 429).
 Connection errors (server not running, port unreachable) map to `ServerError`

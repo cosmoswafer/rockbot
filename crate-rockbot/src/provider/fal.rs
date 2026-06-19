@@ -44,7 +44,7 @@ impl FalAiProvider {
             base_url: config.base_url.trim_end_matches('/').to_string(),
             storage_url,
             model_id: model_id.into(),
-            http_client: reqwest::Client::new(),
+            http_client: super::default_http_client(),
         })
     }
 

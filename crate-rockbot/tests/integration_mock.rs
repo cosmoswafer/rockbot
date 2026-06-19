@@ -2326,6 +2326,7 @@ mod compression_tests {
             tools: HashMap::new(),
             search: Default::default(),
             webdav: None,
+            agent: Default::default(),
         }
     }
 
@@ -2551,6 +2552,7 @@ dav_path = "remote.php/dav"
             tools: HashMap::new(),
             search: Default::default(),
             webdav: webdav_cfg,
+            agent: Default::default(),
         }
     }
 

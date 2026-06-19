@@ -36,7 +36,7 @@ impl DeepSeekProvider {
             api_key,
             base_url: full_url,
             model: model.into(),
-            http_client: reqwest::Client::new(),
+            http_client: super::default_http_client(),
         })
     }
 

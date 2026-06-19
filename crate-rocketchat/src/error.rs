@@ -34,6 +34,9 @@ pub enum RocketChatError {
 
     #[error("TLS error: {0}")]
     Tls(String),
+
+    #[error("WebSocket read timeout after {0}s")]
+    ReadTimeout(u64),
 }
 
 impl From<tokio_tungstenite::tungstenite::Error> for RocketChatError {

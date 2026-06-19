@@ -58,6 +58,9 @@ pub enum RockBotError {
 
     #[error("WebDAV error: {0}")]
     WebDav(#[from] webdav::WebDavError),
+
+    #[error("Connection timed out after {0}s")]
+    ConnectionTimedOut(u64),
 }
 
 pub type Result<T> = std::result::Result<T, RockBotError>;

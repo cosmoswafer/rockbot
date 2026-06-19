@@ -33,7 +33,7 @@ impl OpenRouterProvider {
             api_key,
             base_url: full_url,
             model: model.into(),
-            http_client: reqwest::Client::new(),
+            http_client: super::default_http_client(),
         })
     }
 
@@ -380,7 +380,7 @@ impl OpenRouterImageProvider {
             api_key: config.api_key.clone(),
             base_url: full_url,
             model: model.into(),
-            http_client: reqwest::Client::new(),
+            http_client: super::default_http_client(),
         })
     }
 

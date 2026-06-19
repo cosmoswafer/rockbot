@@ -35,7 +35,7 @@ impl LlamaCppProvider {
         Ok(Self {
             base_url: full_url,
             model: model.into(),
-            http_client: reqwest::Client::new(),
+            http_client: super::default_http_client(),
         })
     }
 

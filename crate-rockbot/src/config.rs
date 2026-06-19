@@ -30,6 +30,26 @@ pub struct AppConfig {
     pub search: SearchConfig,
     #[serde(default)]
     pub webdav: Option<WebDavConfig>,
+    #[serde(default)]
+    pub agent: AgentConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AgentConfig {
+    #[serde(default = "default_connection_timeout_secs")]
+    pub connection_timeout_secs: u64,
+}
+
+impl Default for AgentConfig {
+    fn default() -> Self {
+        Self {
+            connection_timeout_secs: default_connection_timeout_secs(),
+        }
+    }
+}
+
+fn default_connection_timeout_secs() -> u64 {
+    600
 }
 
 #[derive(Debug, Clone, Deserialize)]
