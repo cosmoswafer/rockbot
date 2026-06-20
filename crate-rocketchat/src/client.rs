@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Once};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::Mutex;
@@ -18,6 +18,8 @@ const PING_INTERVAL_SECS: u64 = 30;
 const READ_TIMEOUT_SECS: u64 = 300;
 const TCP_KEEPALIVE_IDLE_SECS: u64 = 60;
 const TCP_KEEPALIVE_INTERVAL_SECS: u64 = 10;
+const APP_ACTIVITY_TIMEOUT_SECS: u64 = 1800;
+const SETUP_TIMEOUT_SECS: u64 = 60;
 
 static INIT_CRYPTO: Once = Once::new();
 
@@ -243,6 +245,7 @@ impl RocketChatClient {
         let registered_rooms = self.registered_rooms.clone();
 
         info!("Entering event loop");
+        let mut last_changed = Instant::now();
         loop {
             let frame_result = tokio::time::timeout(
                 Duration::from_secs(READ_TIMEOUT_SECS),
@@ -291,6 +294,7 @@ impl RocketChatClient {
                 writer.lock().await.send(&pong).await?;
                 debug!("Sent pong to server");
             } else if ddp::is_changed(&value) {
+                last_changed = Instant::now();
                 let filter = MessageFilter::new(user_id.as_str());
                 if let Some(msg) = filter.filter(&value) {
                     let should_dispatch = msg.is_dm
@@ -319,6 +323,14 @@ impl RocketChatClient {
                     let sub_msg = ddp::subscribe_message(SUBSCRIPTION_ID);
                     writer.lock().await.send(&sub_msg).await?;
                 }
+            if last_changed.elapsed() > Duration::from_secs(APP_ACTIVITY_TIMEOUT_SECS) {
+                warn!(
+                    "No application messages for {}s — DDP subscription may be dead",
+                    APP_ACTIVITY_TIMEOUT_SECS
+                );
+                ping_task.abort();
+                return Err(RocketChatError::AppActivityTimeout(APP_ACTIVITY_TIMEOUT_SECS));
+            }
         }
 
         ping_task.abort();
@@ -330,11 +342,14 @@ impl RocketChatClient {
         expected_msg: &str,
     ) -> Result<serde_json::Value> {
         loop {
-            let frame = read
-                .next()
-                .await
-                .ok_or(RocketChatError::Protocol("Connection closed".into()))?
-                .map_err(|e| RocketChatError::WebSocket(Box::new(e)))?;
+            let frame = tokio::time::timeout(
+                Duration::from_secs(SETUP_TIMEOUT_SECS),
+                read.next(),
+            )
+            .await
+            .map_err(|_| RocketChatError::SetupTimeout(SETUP_TIMEOUT_SECS))?
+            .ok_or(RocketChatError::Protocol("Connection closed".into()))?
+            .map_err(|e| RocketChatError::WebSocket(Box::new(e)))?;
 
             match frame {
                 Message::Text(text) => {

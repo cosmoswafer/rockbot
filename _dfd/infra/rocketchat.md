@@ -272,8 +272,17 @@ connection health via three independent mechanisms:
 | Mechanism | Configuration | Default | Detects |
 |-----------|---------------|---------|---------|
 | TCP keepalive | `tcp_keepalive` params (idle/intvl/cnt) | 60s/10s/5 | Kernel-level dead connections |
-| Client WebSocket ping | `ping_interval_secs` / `ping_timeout_secs` | 30s / 10s | Application-level dead connections |
+| Client WebSocket ping | `ping_interval_secs` | 30s | Dead connections via send failure |
 | Read timeout | `read_timeout_secs` on `read.next()` | 300s | Silent stream stall (no frames at all) |
+| Application activity timeout | `app_activity_timeout_secs` on last `changed` event | 1800s (30 min) | Silent DDP subscription drop (WebSocket alive, no messages) |
+
+The read timeout only detects "no frames at all". WebSocket Ping/Pong frames
+(transparently handled by the WebSocket library) and DDP `{"msg":"ping"}`
+frames both reset this timer, so a dead DDP subscription with a healthy
+WebSocket transport can persist indefinitely. The **application activity
+timeout** (see [2h](#2h-application-activity-timeout)) closes this gap by
+tracking the time since the last `changed` event independently of transport
+frames.
 
 ### 2e. Subscription Deep Dive
 
@@ -434,6 +443,91 @@ The alias is a plain string (supports Chinese/emoji like `"零夢✨"`). When se
 the RocketChat server replaces the bot's display name with the alias value in
 the message UI and event broadcasts. Self-messages (where `sender_id ==
 bot_user_id`) are still filtered out regardless of alias.
+
+### 2h. Application Activity Timeout
+
+The event loop tracks the timestamp of the last `changed` event. After
+processing each non-`changed` frame (ping, pong, nosub, etc.), it checks
+whether the elapsed time since the last `changed` exceeds
+`APP_ACTIVITY_TIMEOUT_SECS` (default 1800s). If exceeded, the event loop
+returns `RocketChatError::AppActivityTimeout`, which triggers the reconnect
+loop in `main.rs`.
+
+This mechanism is independent of the read timeout — WebSocket Ping/Pong
+frames and DDP-level `{"msg":"ping"}` frames continue to reset the read
+timeout but do **not** reset the application activity timer. Only a genuine
+`changed` event (an incoming chat message) resets it.
+
+```mermaid
+flowchart TD
+    EVENT_LOOP(EventLoop)
+    READ(ReceiveFrame<br/>read_timeout wrapper)
+    PARSE(ParseJson)
+    ROUTE(RouteByMsgField)
+    CHANGED{msg ==<br/>changed?}
+    RESET(ResetActivityTimer)
+    OTHER(ProcessOtherFrame<br/>ping / pong / nosub)
+    CHECK{Elapsed ><br/>APP_ACTIVITY_TIMEOUT?}
+    RECONNECT(ReconnectLoop)
+
+    EVENT_LOOP --> READ
+    READ --> PARSE
+    PARSE --> ROUTE
+    ROUTE --> CHANGED
+    CHANGED -->|"yes"| RESET
+    RESET -->|"last_changed = now"| EVENT_LOOP
+    CHANGED -->|"no"| OTHER
+    OTHER --> CHECK
+    CHECK -->|"within limit"| EVENT_LOOP
+    CHECK -->|"exceeded"| RECONNECT
+```
+
+**Timer semantics**:
+
+| Timer | Reset by | Detects |
+|-------|----------|---------|
+| `READ_TIMEOUT_SECS` (300s) | Any WebSocket frame (Text, Ping, Pong, Binary) | Dead transport — no bytes at all |
+| `APP_ACTIVITY_TIMEOUT_SECS` (1800s) | Only `changed` frames (incoming messages) | Dead subscription — transport alive, no content |
+
+If the timer fires, the event loop returns
+`RocketChatError::AppActivityTimeout(APP_ACTIVITY_TIMEOUT_SECS)`. The ping
+task is aborted, and the error propagates up to `main.rs` which enters the
+reconnect loop with exponential backoff.
+
+### 2i. Setup Phase Timeout
+
+During connection establishment, `expect_msg()` calls `read.next()` in a loop
+to wait for specific DDP messages (`connected`, login `result`, subscription
+`ready`). Each `expect_msg()` call is now wrapped in a per-call timeout
+(default 60s). If the expected message does not arrive within the timeout,
+`expect_msg()` returns `RocketChatError::SetupTimeout`, which triggers the
+reconnect loop.
+
+```mermaid
+flowchart TD
+    SETUP(ExpectMsg<br/>timeout wrapper)
+    READ(ReadFrame)
+    DISCARD{Is expected<br/>msg?}
+    TIMEOUT{Timeout<br/>elapsed?}
+    PING{Is ping?}
+    RECONNECT(ReconnectLoop)
+    DONE[Return expected msg]
+
+    SETUP -->|"read.next()"| READ
+    READ -->|"frame"| DISCARD
+    READ -->|"timeout"| TIMEOUT
+    DISCARD -->|"yes"| DONE
+    DISCARD -->|"no"| PING
+    PING -->|"yes"| READ
+    PING -->|"no (close/error)"| RECONNECT
+    TIMEOUT -->|"yes"| RECONNECT
+    TIMEOUT -->|"no"| READ
+```
+
+The setup timeout prevents indefinite hangs during the DDP handshake phase
+(connect, authenticate, subscribe). Previously only the outer
+`connection_timeout_secs` (600s) protected this phase; now each protocol step
+has its own deadline.
 
 ## 3. Data Structures
 
