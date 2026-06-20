@@ -135,7 +135,13 @@ impl<'a> MessageFilter<'a> {
 
         let (room_name, is_dm) = if args.len() > 1 {
             let name = args[1].get("roomName").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            (name.clone(), name.is_empty() || name == "DIRECT_MESSAGES")
+            let room_type = args[1].get("t").and_then(|v| v.as_str());
+            let dm = match room_type {
+                Some("d") => true,
+                Some(_) => false,
+                None => name.is_empty() || name == "DIRECT_MESSAGES",
+            };
+            (name, dm)
         } else {
             (String::new(), true)
         };
@@ -558,5 +564,82 @@ mod tests {
         let msg = MessageFilter::new("bot").filter(&event).unwrap();
         assert_eq!(msg.urls.len(), 1);
         assert!(msg.urls[0].headers.is_none());
+    }
+
+    #[test]
+    fn test_parse_dm_with_t_field() {
+        let event = serde_json::json!({
+            "msg": "changed", "fields": {
+                "eventName": "room1",
+                "args": [
+                    {"_id": "m1", "rid": "r1", "msg": "hi", "u": {"_id": "u1", "username": "user1"}, "ts": {"$date": 1000i64}},
+                    {"roomName": "user1", "t": "d"}
+                ]
+            }
+        });
+        let msg = MessageFilter::new("bot").filter(&event).unwrap();
+        assert!(msg.is_dm, "DM with t=d must be detected as DM");
+        assert_eq!(msg.room_name, "user1");
+    }
+
+    #[test]
+    fn test_parse_channel_with_t_field() {
+        let event = serde_json::json!({
+            "msg": "changed", "fields": {
+                "eventName": "room1",
+                "args": [
+                    {"_id": "m1", "rid": "r1", "msg": "hello", "u": {"_id": "u1", "username": "user1"}, "ts": {"$date": 1000i64}},
+                    {"roomName": "general", "t": "c"}
+                ]
+            }
+        });
+        let msg = MessageFilter::new("bot").filter(&event).unwrap();
+        assert!(!msg.is_dm, "Channel with t=c must not be detected as DM");
+        assert_eq!(msg.room_name, "general");
+    }
+
+    #[test]
+    fn test_parse_private_group_with_t_field() {
+        let event = serde_json::json!({
+            "msg": "changed", "fields": {
+                "eventName": "room1",
+                "args": [
+                    {"_id": "m1", "rid": "r1", "msg": "secret", "u": {"_id": "u1", "username": "user1"}, "ts": {"$date": 1000i64}},
+                    {"roomName": "private-room", "t": "p"}
+                ]
+            }
+        });
+        let msg = MessageFilter::new("bot").filter(&event).unwrap();
+        assert!(!msg.is_dm, "Private group with t=p must not be detected as DM");
+    }
+
+    #[test]
+    fn test_parse_dm_legacy_no_t_field() {
+        let event = serde_json::json!({
+            "msg": "changed", "fields": {
+                "eventName": "room1",
+                "args": [
+                    {"_id": "m1", "rid": "r1", "msg": "hi", "u": {"_id": "u1", "username": "user1"}, "ts": {"$date": 1000i64}},
+                    {"roomName": ""}
+                ]
+            }
+        });
+        let msg = MessageFilter::new("bot").filter(&event).unwrap();
+        assert!(msg.is_dm, "Legacy DM without t field and empty roomName must be detected as DM");
+    }
+
+    #[test]
+    fn test_parse_channel_legacy_no_t_field() {
+        let event = serde_json::json!({
+            "msg": "changed", "fields": {
+                "eventName": "room1",
+                "args": [
+                    {"_id": "m1", "rid": "r1", "msg": "hello", "u": {"_id": "u1", "username": "user1"}, "ts": {"$date": 1000i64}},
+                    {"roomName": "general"}
+                ]
+            }
+        });
+        let msg = MessageFilter::new("bot").filter(&event).unwrap();
+        assert!(!msg.is_dm, "Legacy channel without t field must not be detected as DM");
     }
 }

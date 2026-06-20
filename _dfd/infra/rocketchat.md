@@ -541,11 +541,11 @@ definition and how it is populated.
 | ------------- | ----------------- | --------------------------------------------------- |
 | `msg_id`      | `Option<String>`  | `raw["id"]` — DDP message ID                        |
 | `room_id`     | `String`          | `args[0]["rid"]` — RocketChat room ID               |
-| `room_name`   | `String`          | `args[1]["roomName"]` — URL slug (ASCII, e.g. `sen1-lin2-sheng1-tai4`). `""` or `"DIRECT_MESSAGES"` for DMs |
+| `room_name`   | `String`          | `args[1]["roomName"]` — URL slug (ASCII, e.g. `sen1-lin2-sheng1-tai4`). For DMs: `""` or `"DIRECT_MESSAGES"` on legacy servers, or the other user's username on servers that send the `t` field |
 | `room_fname`  | `String`          | Per-event `args[1]["fname"]`. Empty when absent from the DDP event or for rooms without a custom fname |
 | `sender_name` | `String`          | `args[0]["u"]["username"]` — sender's RocketChat username |
 | `text`        | `String`          | `args[0]["msg"]` — message body text                |
-| `is_dm`       | `bool`            | `true` if `room_name` is empty or `"DIRECT_MESSAGES"` |
+| `is_dm`       | `bool`            | `true` when `args[1]["t"] == "d"` (room type), falling back to `room_name` empty or `"DIRECT_MESSAGES"` for legacy servers without the `t` field |
 | `timestamp`   | `Option<i64>`     | `args[0]["ts"]` — message timestamp (`$date`)       |
 | `sender_id`   | `String`          | `args[0]["u"]["_id"]` — sender's RocketChat user ID |
 | `alias`       | `Option<String>`  | `args[0]["alias"]` — sender alias                   |
