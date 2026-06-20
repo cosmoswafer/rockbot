@@ -121,12 +121,7 @@ impl RestApiClient {
     }
 
     pub async fn get_room_info(&mut self, room_id: &str) -> Result<Option<RoomInfo>> {
-        let query = if room_id.len() > 30 && !room_id.contains(' ') {
-            format!("rooms.info?roomId={room_id}")
-        } else {
-            // Short IDs or space-containing strings use roomName (ASCII slug)
-            format!("rooms.info?roomName={room_id}")
-        };
+        let query = format!("rooms.info?roomId={room_id}");
         let url = self.api_url(&query);
         debug!("REST GET {}", url);
 
