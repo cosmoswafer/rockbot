@@ -1,6 +1,7 @@
 use std::env;
 use std::sync::Arc;
-use std::time::Duration;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
@@ -388,13 +389,35 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     tokio::pin!(shutdown);
 
     loop {
+        // Track last message activity with an atomic timestamp shared
+        // between the outer reconnect loop and each per-message handler.
+        // Reset on every incoming message so a continuously active
+        // connection never triggers the timeout.
+        let last_activity = Arc::new(AtomicU64::new(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        ));
+
         let connect_fut = platform.connect_and_run(Box::new({
             let harness = harness.clone();
             let bot_name = bot_name.clone();
+            let last_activity = last_activity.clone();
             move |msg: rocketchat::IncomingMessage, sender: Box<dyn PlatformSender>| {
                 let harness = harness.clone();
                 let bot_name = bot_name.clone();
+                let last_activity = last_activity.clone();
                 Box::pin(async move {
+                    // Reset activity timestamp on every incoming message
+                    last_activity.store(
+                        SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs(),
+                        Ordering::Relaxed,
+                    );
+
                     if let Err(e) = sender.send_typing(true).await {
                         warn!("Failed to send typing indicator: {}", e);
                     }
@@ -574,20 +597,40 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
             }
         }));
 
-        let result = tokio::select! {
-            r = tokio::time::timeout(
-                Duration::from_secs(connection_timeout.max(1)),
-                connect_fut,
-            ) => match r {
-                Ok(inner) => inner,
-                Err(_elapsed) => {
-                    warn!(
-                        "Connection timed out after {}s (silent hang detected), forcing reconnect",
-                        connection_timeout
+        // Activity-based timeout: fires only if no incoming message
+        // for connection_timeout_secs. Polls periodically (every 10s)
+        // so the check is cheap and resets on each handler invocation.
+        let activity_timeout = {
+            let last_activity = last_activity.clone();
+            async move {
+                loop {
+                    let elapsed = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs()
+                        .saturating_sub(last_activity.load(Ordering::Relaxed));
+                    if elapsed >= connection_timeout {
+                        warn!(
+                            "No incoming message for {}s (activity timeout), forcing reconnect",
+                            elapsed
+                        );
+                        return Err(RockBotError::ConnectionTimedOut(connection_timeout));
+                    }
+                    let remaining = Duration::from_secs(
+                        connection_timeout.saturating_sub(elapsed),
                     );
-                    Err(RockBotError::ConnectionTimedOut(connection_timeout))
+                    tokio::time::sleep(std::cmp::min(
+                        remaining,
+                        Duration::from_secs(10),
+                    ))
+                    .await;
                 }
-            },
+            }
+        };
+
+        let result = tokio::select! {
+            r = connect_fut => r,
+            r = activity_timeout => r,
             _ = &mut shutdown => {
                 info!("Received shutdown signal, flushing snapshots...");
                 timer_handle.abort();

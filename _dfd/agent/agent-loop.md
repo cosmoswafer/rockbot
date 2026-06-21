@@ -125,36 +125,43 @@ Typing indicator failures are non-critical: if `sender.typing()` returns an erro
 
 Level 2 decomposition of the reconnect loop, showing how connection hangs
 (silent TCP drops, stalled event loops, silent DDP subscription drops) are
-detected and recovered from. The primary defense is a `tokio::time::timeout()`
-wrapping `connect_and_run()`, complemented by three transport-level health
-checks and one application-level heartbeat inside the RocketChat client.
+detected and recovered from. The primary defense is an **activity-based timeout**
+that tracks the last incoming message timestamp (via `Arc<AtomicU64>` shared
+between the outer reconnect loop and each per-message handler closure).
+The activity timeout is complemented by three transport-level health checks
+and one application-level heartbeat inside the RocketChat client.
 
 ```mermaid
 flowchart TD
     CONNECT_FUT[connect_and_run future]
-    TIMEOUT_DUR[ConnectionTimeout<br/>e.g. 10 minutes]
-    RUN(WaitConnectOrTimeout)
+    LAST_MSG[last_message_activity<br/>Arc/AtomicU64]
+    ACTIVITY_TIMEOUT[ActivityTimeout<br/>fires if no message for N seconds]
     SHUTDOWN_SIG[ShutdownSignal]
     RECONNECT(ReconnectWithBackoff)
     PLATFORM[MessagingPlatform]
     RC_CLIENT[RocketChatClient<br/>internal health checks]
 
-    CONNECT_FUT --> RUN
-    TIMEOUT_DUR --> RUN
+    CONNECT_FUT --> RUN{{tokio::select!}}
+    ACTIVITY_TIMEOUT --> RUN
     SHUTDOWN_SIG --> RUN
     RUN -->|"connect_and_run returned Ok"| PLATFORM
     RUN -->|"connect_and_run returned Err"| RECONNECT
-    RUN -->|"timed out (silent hang)"| RECONNECT
+    RUN -->|"no message for timeout_secs"| RECONNECT
     RUN -->|"shutdown signal"| SHUTDOWN
+    LAST_MSG -->|"updated on each incoming message"| ACTIVITY_TIMEOUT
     RC_CLIENT -.->|"detected dead connection<br/>(read timeout / activity timeout)"| RECONNECT
     RECONNECT -->|"after backoff delay"| CONNECT_FUT
 ```
 
-**Timeout wrapping** (`main.rs`): `connect_fut` is wrapped in
-`tokio::time::timeout(Duration::from_secs(600))`. If the WebSocket event loop
-stalls (silent TCP drop, no keepalive, no ping), the timeout fires,
-`connect_and_run` is cancelled, and the reconnect loop activates with
-exponential backoff.
+**Activity-based timeout** (`main.rs`): An `Arc<AtomicU64>` stores the Unix
+timestamp of the last received message, updated at the start of each handler
+invocation. A separate `timeout_fut` polls this timestamp periodically
+(every 10s) and returns an error if `now - last_activity >= connection_timeout_secs`.
+This races against `connect_fut` via `tokio::select!`. Unlike a fixed
+`tokio::time::timeout` wrapping the entire connection, this approach resets on
+every incoming message — a continuously active connection never triggers the
+timeout, while a truly silent connection (no messages for `connection_timeout_secs`)
+correctly triggers a reconnect.
 
 **Built-in health checks** (RocketChat `client.rs`, see
 [rocketchat.md:2d](../infra/rocketchat.md#2d-pingpong-keepalive-deep-dive) and
@@ -170,9 +177,10 @@ When any of these detect a dead connection, `connect_and_run()` returns an
 which the reconnect loop catches and handles with backoff.
 
 **Connection timeout duration**: configurable via `[agent] connection_timeout_secs`
-in `config.toml`, defaulting to 600s (10 minutes). This is long enough to
-tolerate slow LLM responses (DeepSeek reasoning >120s), but short enough to
-recover from stalls.
+in `config.toml`, defaulting to 600s (10 minutes). This is the allowed gap
+between incoming messages before the connection is considered silently hung.
+A continuously active connection will never trigger this timeout regardless
+of total uptime.
 
 **Data flow summary**:
 
@@ -180,7 +188,7 @@ recover from stalls.
 |------|---------|--------|
 | `connect_and_run` returns `Ok(())` | Normal close (server Close frame, FIN) | Clean exit, flush snapshots |
 | `connect_and_run` returns `Err` | Transport error (RST, auth failure, read timeout, activity timeout) | Reconnect with backoff |
-| `tokio::time::timeout` fires | Silent hang (no frame for 10min) | Force reconnect |
+| Activity timeout fires | No incoming message for `connection_timeout_secs` | Force reconnect |
 | `shutdown` future fires | SIGTERM / SIGINT | Graceful shutdown |
 
 ### 2c. Typing Indicator Heartbeat
