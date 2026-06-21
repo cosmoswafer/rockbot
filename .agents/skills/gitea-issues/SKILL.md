@@ -84,7 +84,7 @@ For complex bodies (backticks, quotes, newlines), write the JSON payload to a te
 
 ```bash
 # 1. Write JSON to a temp file
-cat > /tmp/issue.json << 'JSONEOF'
+cat > ./tmp/issue.json << 'JSONEOF'
 {
   "title": "Issue title",
   "body": "Body with `backticks`, \"quotes\", and\nnewlines",
@@ -96,7 +96,7 @@ JSONEOF
 source .env && curl -s -X POST \
   -H "Authorization: token $GITEA_TOKEN" \
   -H "Content-Type: application/json" \
-  -d @/tmp/issue.json \
+  -d @./tmp/issue.json \
   "https://git.tokyofy.top/api/v1/repos/Atom/rockbot/issues" \
   | jq '{number, title, html_url}'
 ```
