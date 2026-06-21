@@ -125,43 +125,30 @@ Typing indicator failures are non-critical: if `sender.typing()` returns an erro
 
 Level 2 decomposition of the reconnect loop, showing how connection hangs
 (silent TCP drops, stalled event loops, silent DDP subscription drops) are
-detected and recovered from. The primary defense is an **activity-based timeout**
-that tracks the last incoming message timestamp (via `Arc<AtomicU64>` shared
-between the outer reconnect loop and each per-message handler closure).
-The activity timeout is complemented by three transport-level health checks
-and one application-level heartbeat inside the RocketChat client.
+detected and recovered from. All health checking is handled internally by the
+RocketChat client (`connect_and_run`). The application layer (`main.rs`) simply
+races `connect_fut` against the shutdown signal — there is no app-level
+activity timeout.
+
+This design reflects that the WebSocket session is only needed for two things:
+receiving incoming user messages (DDP `changed` events) and ping/pong keepalive.
+Replies are sent via REST API independently. "No user messages" is normal idle,
+not a connection failure.
 
 ```mermaid
 flowchart TD
-    CONNECT_FUT[connect_and_run future]
-    LAST_MSG[last_message_activity<br/>Arc/AtomicU64]
-    ACTIVITY_TIMEOUT[ActivityTimeout<br/>fires if no message for N seconds]
+    CONNECT_FUT[connect_and_run future<br/>contains RocketChat client<br/>with 4 built-in health checks]
     SHUTDOWN_SIG[ShutdownSignal]
-    RECONNECT(ReconnectWithBackoff)
-    PLATFORM[MessagingPlatform]
-    RC_CLIENT[RocketChatClient<br/>internal health checks]
+    RECONNECT(ReconnectWithBackoff<br/>infinite retries, capped delay)
+    RUN{{tokio::select!}}
 
-    CONNECT_FUT --> RUN{{tokio::select!}}
-    ACTIVITY_TIMEOUT --> RUN
+    CONNECT_FUT --> RUN
     SHUTDOWN_SIG --> RUN
-    RUN -->|"connect_and_run returned Ok"| PLATFORM
-    RUN -->|"connect_and_run returned Err"| RECONNECT
-    RUN -->|"no message for timeout_secs"| RECONNECT
-    RUN -->|"shutdown signal"| SHUTDOWN
-    LAST_MSG -->|"updated on each incoming message"| ACTIVITY_TIMEOUT
-    RC_CLIENT -.->|"detected dead connection<br/>(read timeout / activity timeout)"| RECONNECT
+    RUN -->|"connect_and_run returned Ok"| CLEAN_EXIT[Clean exit, flush snapshots]
+    RUN -->|"connect_and_run returned Err<br/>(read timeout, activity timeout,<br/>auth failure, etc.)"| RECONNECT
+    RUN -->|"shutdown signal"| SHUTDOWN[GracefulShutdown]
     RECONNECT -->|"after backoff delay"| CONNECT_FUT
 ```
-
-**Activity-based timeout** (`main.rs`): An `Arc<AtomicU64>` stores the Unix
-timestamp of the last received message, updated at the start of each handler
-invocation. A separate `timeout_fut` polls this timestamp periodically
-(every 10s) and returns an error if `now - last_activity >= connection_timeout_secs`.
-This races against `connect_fut` via `tokio::select!`. Unlike a fixed
-`tokio::time::timeout` wrapping the entire connection, this approach resets on
-every incoming message — a continuously active connection never triggers the
-timeout, while a truly silent connection (no messages for `connection_timeout_secs`)
-correctly triggers a reconnect.
 
 **Built-in health checks** (RocketChat `client.rs`, see
 [rocketchat.md:2d](../infra/rocketchat.md#2d-pingpong-keepalive-deep-dive) and
@@ -170,25 +157,25 @@ correctly triggers a reconnect.
 1. **TCP keepalive** (60s idle, 10s interval) — kernel-level dead peer detection
 2. **WebSocket Ping frames** (30s interval) — detects transport dead via send failure
 3. **Read timeout** (300s) — detects complete silence (no bytes on socket)
-4. **Application activity timeout** (1800s) — detects silent DDP subscription drops where the transport is alive but no `changed` events arrive. Tracks the timestamp of the last incoming message independently of WebSocket control frames.
+4. **Application activity timeout** (1800s) — detects silent DDP subscription drops where the transport is alive but no `changed` events arrive. Tracks the timestamp of the last incoming DDP message independently of WebSocket control frames.
 
 When any of these detect a dead connection, `connect_and_run()` returns an
 `Err` variant (`ReadTimeout`, `AppActivityTimeout`, `SetupTimeout`, etc.),
 which the reconnect loop catches and handles with backoff.
 
-**Connection timeout duration**: configurable via `[agent] connection_timeout_secs`
-in `config.toml`, defaulting to 600s (10 minutes). This is the allowed gap
-between incoming messages before the connection is considered silently hung.
-A continuously active connection will never trigger this timeout regardless
-of total uptime.
+**Reconnect strategy** (`main.rs`): The reconnect loop has no retry limit —
+it reconnects indefinitely on any error. Backoff delay is capped at 120s
+(`2^retry_count` seconds, max 120). Only a shutdown signal (SIGTERM/SIGINT)
+or a successful normal close (`Ok(())`) exits the loop. This prevents the bot
+from permanently self-terminating during idle periods or transient network
+issues.
 
 **Data flow summary**:
 
 | Path | Trigger | Action |
 |------|---------|--------|
 | `connect_and_run` returns `Ok(())` | Normal close (server Close frame, FIN) | Clean exit, flush snapshots |
-| `connect_and_run` returns `Err` | Transport error (RST, auth failure, read timeout, activity timeout) | Reconnect with backoff |
-| Activity timeout fires | No incoming message for `connection_timeout_secs` | Force reconnect |
+| `connect_and_run` returns `Err` | Transport error, read timeout, activity timeout, auth failure, etc. | Reconnect with capped backoff (no retry limit) |
 | `shutdown` future fires | SIGTERM / SIGINT | Graceful shutdown |
 
 ### 2c. Typing Indicator Heartbeat

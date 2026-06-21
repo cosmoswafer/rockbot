@@ -1,14 +1,12 @@
 use std::env;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::EnvFilter;
 
 use rockbot::config::AppConfig;
-use rockbot::error::RockBotError;
 use rockbot::harness::AgentHarness;
 use rockbot::image_cache::ImageCache;
 use rockbot::provider::{AiProvider, DeepSeekProvider, FalAiProvider, ImageProvider, LlamaCppProvider, OpenRouterImageProvider, OpenRouterProvider};
@@ -368,13 +366,7 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    let max_retries: u32 = 5;
-    let mut retry_count: u32 = 0;
-
-    let connection_timeout = {
-        let h = harness.lock().await;
-        h.config().agent.connection_timeout_secs
-    };
+    let mut retry_count: u64 = 0;
 
     let shutdown = async {
         let mut sigterm =
@@ -389,35 +381,13 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     tokio::pin!(shutdown);
 
     loop {
-        // Track last message activity with an atomic timestamp shared
-        // between the outer reconnect loop and each per-message handler.
-        // Reset on every incoming message so a continuously active
-        // connection never triggers the timeout.
-        let last_activity = Arc::new(AtomicU64::new(
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-        ));
-
         let connect_fut = platform.connect_and_run(Box::new({
             let harness = harness.clone();
             let bot_name = bot_name.clone();
-            let last_activity = last_activity.clone();
             move |msg: rocketchat::IncomingMessage, sender: Box<dyn PlatformSender>| {
                 let harness = harness.clone();
                 let bot_name = bot_name.clone();
-                let last_activity = last_activity.clone();
                 Box::pin(async move {
-                    // Reset activity timestamp on every incoming message
-                    last_activity.store(
-                        SystemTime::now()
-                            .duration_since(UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_secs(),
-                        Ordering::Relaxed,
-                    );
-
                     if let Err(e) = sender.send_typing(true).await {
                         warn!("Failed to send typing indicator: {}", e);
                     }
@@ -597,40 +567,12 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
             }
         }));
 
-        // Activity-based timeout: fires only if no incoming message
-        // for connection_timeout_secs. Polls periodically (every 10s)
-        // so the check is cheap and resets on each handler invocation.
-        let activity_timeout = {
-            let last_activity = last_activity.clone();
-            async move {
-                loop {
-                    let elapsed = SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs()
-                        .saturating_sub(last_activity.load(Ordering::Relaxed));
-                    if elapsed >= connection_timeout {
-                        warn!(
-                            "No incoming message for {}s (activity timeout), forcing reconnect",
-                            elapsed
-                        );
-                        return Err(RockBotError::ConnectionTimedOut(connection_timeout));
-                    }
-                    let remaining = Duration::from_secs(
-                        connection_timeout.saturating_sub(elapsed),
-                    );
-                    tokio::time::sleep(std::cmp::min(
-                        remaining,
-                        Duration::from_secs(10),
-                    ))
-                    .await;
-                }
-            }
-        };
-
+        // All connection health checking is handled internally by
+        // connect_and_run (TCP keepalive, WS ping/pong, 300s read
+        // timeout, 1800s DDP activity timeout). No app-level activity
+        // timeout — "no user messages" is normal idle, not a hang.
         let result = tokio::select! {
             r = connect_fut => r,
-            r = activity_timeout => r,
             _ = &mut shutdown => {
                 info!("Received shutdown signal, flushing snapshots...");
                 timer_handle.abort();
@@ -651,15 +593,9 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
             }
             Err(e) => {
                 retry_count += 1;
-                if retry_count >= max_retries {
-                    error!("Max reconnect retries ({}) reached, shutting down", max_retries);
-                    timer_handle.abort();
-                    let mut h = harness.lock().await;
-                    h.flush_all_snapshots().await;
-                    return Err(e.into());
-                }
-                let delay = Duration::from_secs(2u64.pow(retry_count));
-                warn!("Disconnected: {}. Reconnecting in {:?} (attempt {}/{})", e, delay, retry_count, max_retries);
+                let delay_secs = std::cmp::min(2u64.saturating_pow(retry_count as u32), 120);
+                let delay = Duration::from_secs(delay_secs);
+                warn!("Disconnected: {}. Reconnecting in {:?} (attempt {})", e, delay, retry_count);
                 tokio::time::sleep(delay).await;
             }
         }

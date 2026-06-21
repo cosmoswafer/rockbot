@@ -36,20 +36,12 @@ pub struct AppConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AgentConfig {
-    #[serde(default = "default_connection_timeout_secs")]
-    pub connection_timeout_secs: u64,
 }
 
 impl Default for AgentConfig {
     fn default() -> Self {
-        Self {
-            connection_timeout_secs: default_connection_timeout_secs(),
-        }
+        Self {}
     }
-}
-
-fn default_connection_timeout_secs() -> u64 {
-    600
 }
 
 #[derive(Debug, Clone, Deserialize)]
