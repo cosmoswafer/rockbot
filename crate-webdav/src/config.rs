@@ -2,7 +2,7 @@ use serde::Deserialize;
 
 use crate::client::WebDavClient;
 use crate::error::{Result, WebDavError};
-use crate::validated::{DavRoot, DavUrl};
+use crate::validated::{DavPassword, DavRoot, DavUrl, DavUsername};
 
 fn default_dav_path() -> String {
     "/remote.php/dav".to_string()
@@ -11,8 +11,8 @@ fn default_dav_path() -> String {
 #[derive(Debug, Clone, Deserialize)]
 pub struct WebDavConfig {
     pub url: DavUrl,
-    pub username: String,
-    pub password: String,
+    pub username: DavUsername,
+    pub password: DavPassword,
     pub root: DavRoot,
     #[serde(default = "default_dav_path")]
     pub dav_path: String,

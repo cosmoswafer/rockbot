@@ -1,6 +1,6 @@
+use crate::validated::{Password, ServerUrl, Username};
 use serde::{Deserialize, Serialize};
 
-/// Configuration for connecting to a RocketChat server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RocketChatConfig {
     pub server: ServerConfig,
@@ -8,9 +8,9 @@ pub struct RocketChatConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerConfig {
-    pub url: String,
-    pub username: String,
-    pub password: String,
+    pub url: ServerUrl,
+    pub username: Username,
+    pub password: Password,
     #[serde(default = "default_true")]
     pub use_tls: bool,
 }

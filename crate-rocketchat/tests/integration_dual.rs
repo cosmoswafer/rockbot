@@ -85,7 +85,7 @@ async fn raw_connect(config: &RocketChatConfig) -> Result<(WsWrite, WsRead, Stri
     let (user_id, _token) = ddp::extract_login_result(&result)
         .ok_or_else(|| format!("no id/token in result: {result}"))?;
 
-    Ok((write, read, user_id, config.server.username.clone()))
+    Ok((write, read, user_id, config.server.username.clone().into_inner()))
 }
 
 async fn subscribe_my_messages(write: &mut WsWrite, read: &mut WsRead, sub_id: &str) -> Result<(), String> {

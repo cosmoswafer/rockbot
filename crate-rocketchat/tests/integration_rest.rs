@@ -1,5 +1,5 @@
 /// Integration tests for the REST API client using wiremock.
-use rocketchat::{RestApiClient, RocketChatConfig, ServerConfig};
+use rocketchat::{RestApiClient, RocketChatConfig, ServerConfig, ServerUrl, Username, Password};
 use serde_json::json;
 use wiremock::{Mock, MockServer, ResponseTemplate};
 use wiremock::matchers::{method, path};
@@ -7,9 +7,9 @@ use wiremock::matchers::{method, path};
 fn test_config(host: &str) -> RocketChatConfig {
     RocketChatConfig {
         server: ServerConfig {
-            url: host.to_string(),
-            username: "bot".into(),
-            password: "pw".into(),
+            url: ServerUrl::try_new(host.to_string()).unwrap(),
+            username: Username::try_new("bot".into()).unwrap(),
+            password: Password::try_new("pw".into()).unwrap(),
             use_tls: false,
         },
     }

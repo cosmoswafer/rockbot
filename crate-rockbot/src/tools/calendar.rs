@@ -61,7 +61,7 @@ impl CalendarTool {
             client,
             server_url: config.url.to_string(),
             dav_path: config.dav_path.clone(),
-            username: config.username.clone(),
+            username: config.username.clone().into_inner(),
             room_calendars: Mutex::new(HashMap::new()),
         }
     }

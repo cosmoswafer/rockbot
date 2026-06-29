@@ -1,12 +1,16 @@
 use serde::{Deserialize, Serialize};
+use serde_valid::Validate;
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 pub struct FileInfo {
     #[serde(rename = "_id")]
+    #[validate(min_length = 1)]
     pub id: String,
+    #[validate(min_length = 1)]
     pub name: String,
     #[serde(rename = "type")]
+    #[validate(min_length = 1)]
     pub mime_type: String,
     pub size: u64,
     pub format: Option<String>,
@@ -14,20 +18,23 @@ pub struct FileInfo {
     pub type_group: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 pub struct ImageDim {
+    #[validate(minimum = 1)]
     pub width: u64,
+    #[validate(minimum = 1)]
     pub height: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 pub struct MessageUrl {
+    #[validate(min_length = 1)]
     pub url: String,
     pub meta: Option<serde_json::Value>,
     pub headers: Option<UrlHeaders>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 pub struct UrlHeaders {
     #[serde(rename = "contentLength")]
     pub content_length: Option<String>,
@@ -35,7 +42,7 @@ pub struct UrlHeaders {
     pub content_type: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 pub struct AttachmentInfo {
     pub title: Option<String>,
     #[serde(rename = "title_link")]
@@ -49,6 +56,7 @@ pub struct AttachmentInfo {
     #[serde(rename = "image_size")]
     pub image_size: Option<u64>,
     #[serde(rename = "image_dimensions")]
+    #[validate]
     pub image_dimensions: Option<ImageDim>,
     #[serde(rename = "image_preview")]
     pub image_preview: Option<String>,
@@ -58,27 +66,33 @@ pub struct AttachmentInfo {
     pub file_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 pub struct IncomingMessage {
     pub msg_id: Option<String>,
+    #[validate(min_length = 1)]
     pub room_id: String,
     pub room_name: String,
     pub room_fname: String,
+    #[validate(min_length = 1)]
     pub sender_name: String,
     pub text: String,
     pub is_dm: bool,
     pub timestamp: Option<i64>,
+    #[validate(min_length = 1)]
     pub sender_id: String,
     pub alias: Option<String>,
+    #[validate]
     pub file: Option<FileInfo>,
     pub files: Vec<FileInfo>,
     pub attachments: Vec<AttachmentInfo>,
     pub urls: Vec<MessageUrl>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 pub struct BotReply {
+    #[validate(min_length = 1)]
     pub room_id: String,
+    #[validate(min_length = 1)]
     pub text: String,
     pub alias: Option<String>,
     pub thread_id: Option<String>,
@@ -86,11 +100,15 @@ pub struct BotReply {
 
 impl BotReply {
     pub fn new(room_id: impl Into<String>, text: impl Into<String>) -> Self {
-        Self { room_id: room_id.into(), text: text.into(), alias: None, thread_id: None }
+        let reply = Self { room_id: room_id.into(), text: text.into(), alias: None, thread_id: None };
+        reply.validate().expect("BotReply::new invariant: room_id and text must be non-empty");
+        reply
     }
 
     pub fn with_alias(room_id: impl Into<String>, text: impl Into<String>, alias: impl Into<String>) -> Self {
-        Self { room_id: room_id.into(), text: text.into(), alias: Some(alias.into()), thread_id: None }
+        let reply = Self { room_id: room_id.into(), text: text.into(), alias: Some(alias.into()), thread_id: None };
+        reply.validate().expect("BotReply::with_alias invariant: room_id and text must be non-empty");
+        reply
     }
 }
 
@@ -106,6 +124,9 @@ impl<'a> MessageFilter<'a> {
     pub fn filter(&self, raw: &serde_json::Value) -> Option<IncomingMessage> {
         let msg = Self::parse_message(raw)?;
         if msg.sender_id == self.bot_user_id {
+            return None;
+        }
+        if !Self::validate_message(&msg) {
             return None;
         }
         Some(msg)
@@ -208,6 +229,14 @@ impl<'a> MessageFilter<'a> {
             msg_id, room_id, room_name, room_fname, sender_name, text, is_dm, timestamp, sender_id, alias,
             file, files, attachments, urls,
         })
+    }
+
+    fn validate_message(msg: &IncomingMessage) -> bool {
+        if let Err(e) = msg.validate() {
+            tracing::warn!("rocketchat: IncomingMessage validation failed: {e}");
+            return false;
+        }
+        true
     }
 
     pub fn is_dm_or_mention(

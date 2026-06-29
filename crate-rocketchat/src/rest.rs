@@ -1,14 +1,16 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
+use serde_valid::Validate;
 use tracing::{debug, warn};
 
 use crate::config::RocketChatConfig;
 use crate::error::{Result, RocketChatError};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 pub struct RoomInfo {
     #[serde(rename = "_id")]
+    #[validate(min_length = 1)]
     pub id: String,
     #[serde(default)]
     pub name: String,
@@ -18,15 +20,16 @@ pub struct RoomInfo {
     pub t: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Validate)]
 struct RoomsGetResponse {
     update: Vec<RoomInfo>,
     #[serde(default)]
     success: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Validate)]
 struct RoomInfoResponse {
+    #[validate]
     room: RoomInfo,
     success: bool,
 }
@@ -54,6 +57,8 @@ pub struct RestApiClient {
 
 impl RestApiClient {
     pub fn new(config: &RocketChatConfig, user_id: String, auth_token: String) -> Self {
+        assert!(!user_id.is_empty(), "RestApiClient: user_id must not be empty");
+        assert!(!auth_token.is_empty(), "RestApiClient: auth_token must not be empty");
         let host = config.host().to_string();
         let use_tls = config.server.use_tls;
         Self {
@@ -352,12 +357,14 @@ mod tests {
     use super::*;
     use crate::config::ServerConfig;
 
+    use crate::validated::{Password, ServerUrl, Username};
+
     fn test_config() -> RocketChatConfig {
         RocketChatConfig {
             server: ServerConfig {
-                url: "chat.example.com".into(),
-                username: "bot".into(),
-                password: "pw".into(),
+                url: ServerUrl::try_new("chat.example.com".into()).unwrap(),
+                username: Username::try_new("bot".into()).unwrap(),
+                password: Password::try_new("pw".into()).unwrap(),
                 use_tls: true,
             },
         }

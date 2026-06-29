@@ -541,9 +541,9 @@ fn test_sha256_digest_known_value() {
 fn test_client_new() {
     let config = rocketchat::RocketChatConfig {
         server: rocketchat::ServerConfig {
-            url: "chat.example.com".into(),
-            username: "bot".into(),
-            password: "pw".into(),
+            url: rocketchat::ServerUrl::try_new("chat.example.com".into()).unwrap(),
+            username: rocketchat::Username::try_new("bot".into()).unwrap(),
+            password: rocketchat::Password::try_new("pw".into()).unwrap(),
             use_tls: true,
         },
     };

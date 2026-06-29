@@ -12,5 +12,7 @@ pub use error::{Result, RocketChatError};
 pub use rest::RestApiClient;
 pub use types::{AttachmentInfo, BotReply, FileInfo, ImageDim, IncomingMessage, MessageFilter, MessageUrl, UrlHeaders};
 
+pub use validated::{Password, ServerUrl, Username, ValidationError};
+
 /// Re-export of serde_json for convenience.
 pub use serde_json;

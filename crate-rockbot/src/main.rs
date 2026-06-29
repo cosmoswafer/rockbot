@@ -355,9 +355,12 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
             _ => {
                 let rc_config = rocketchat::RocketChatConfig {
                     server: rocketchat::config::ServerConfig {
-                        url: h.config().rocketchat.server.url.clone(),
-                        username: h.config().rocketchat.server.username.clone(),
-                        password: h.config().rocketchat.server.password.clone(),
+                        url: rocketchat::ServerUrl::try_new(h.config().rocketchat.server.url.clone())
+                            .expect("rockbot config validation guarantees url is non-empty"),
+                        username: rocketchat::Username::try_new(h.config().rocketchat.server.username.clone())
+                            .expect("rockbot config validation guarantees username is non-empty"),
+                        password: rocketchat::Password::try_new(h.config().rocketchat.server.password.clone())
+                            .expect("rockbot config validation guarantees password is non-empty"),
                         use_tls: true,
                     },
                 };
@@ -506,9 +509,12 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                                         debug!("Sending with alias={:?} via REST", alias_name);
                                         let rc_config = rocketchat::RocketChatConfig {
                                             server: rocketchat::config::ServerConfig {
-                                                url: h.config().rocketchat.server.url.clone(),
-                                                username: h.config().rocketchat.server.username.clone(),
-                                                password: String::new(),
+                                                url: rocketchat::ServerUrl::try_new(h.config().rocketchat.server.url.clone())
+                                                    .expect("rockbot config validation guarantees url is non-empty"),
+                                                username: rocketchat::Username::try_new(h.config().rocketchat.server.username.clone())
+                                                    .expect("rockbot config validation guarantees username is non-empty"),
+                                                password: rocketchat::Password::try_new("rest-only".into())
+                                                    .expect("hardcoded password is non-empty"),
                                                 use_tls: true,
                                             },
                                         };

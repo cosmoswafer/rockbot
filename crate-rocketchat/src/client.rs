@@ -153,7 +153,7 @@ pub struct RocketChatClient {
 impl RocketChatClient {
     pub fn new(config: RocketChatConfig) -> Self {
         let bot_name = format!("@{}", config.server.username);
-        let username = config.server.username.clone();
+        let username = config.server.username.clone().into_inner();
         Self {
             config,
             user_id: None,

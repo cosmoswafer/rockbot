@@ -30,40 +30,48 @@ type is shared with the [Matrix platform](matrix.md).
 
 ### 2a. Happy Flow (Main Success Path)
 
+The connection lifecycle has two phases.  **Setup** (authenticate, subscribe) is
+a single sequential path.  Once the subscription is confirmed, the runtime
+splits into **two concurrent data paths** — the event stream (incoming messages)
+and the ping keepalive — both sharing the same WebSocket.
+
 ```mermaid
 flowchart TD
     CFG[ServerConfig]
-    AUTH(Authenticate)
-    CONNECT(ConnectWebSocket)
-    SUB(SubscribeStream)
-    READY(ConfirmSubscription)
-    STREAM(StreamEvents)
-    PARSE(ParseEvent)
-    FILTER(FilterMentionOrDM)
-    DISPATCH(DispatchMessage)
-    SEND(SendReply)
+    AUTH(Authenticate DDP)
+    CONNECT(Connect WebSocket)
+    SUB(Subscribe Stream)
+    READY(Confirm Subscription)
+    STREAM(Stream Events)
+    PING(Ping Keepalive)
+    PARSE(Parse Event)
+    FILTER(Filter Mention Or DM)
+    DISPATCH(Dispatch Message)
+    SEND(Send Reply)
     HARNESS[Agent Loop]
     RC_DDP[RocketChat DDP over WebSocket]
 
     CFG -->|"credentials"| AUTH
     CONNECT -->|"DDP connect"| RC_DDP
-    RC_DDP -->|"msg: connected"| AUTH
-    AUTH -->|"login method + sha256 digest"| RC_DDP
-    RC_DDP -->|"msg: result {id, token}"| AUTH
+    RC_DDP -->|"connected"| AUTH
+    AUTH -->|"login + sha256"| RC_DDP
+    RC_DDP -->|"auth result"| AUTH
     AUTH -->|"subscription request"| SUB
-    SUB -->|"msg: sub stream-room-messages"| RC_DDP
-    RC_DDP -->|"msg: ready"| READY
-    READY -->|"subscription active"| STREAM
-    RC_DDP -->|"msg: changed"| STREAM
-    STREAM -->|"json event"| PARSE
+    SUB -->|"sub message"| RC_DDP
+    RC_DDP -->|"subscription ready"| READY
+
+    READY -->|"subscription ready"| PING
+    READY -->|"subscription ready"| STREAM
+
+    PING -->|"ping frame"| RC_DDP
+    RC_DDP -->|"incoming frames"| STREAM
+    STREAM -->|"raw event"| PARSE
     AUTH -->|"bot user id"| FILTER
-    PARSE -->|"raw event"| FILTER
-    FILTER -->|"incoming message"| DISPATCH
+    PARSE -->|"parsed event"| FILTER
+    FILTER -->|"IncomingMessage"| DISPATCH
     DISPATCH -->|"filtered message"| HARNESS
-    HARNESS -->|"typing indicator"| SEND
-    SEND -->|"typing payload"| RC_DDP
-    HARNESS -->|"bot reply"| SEND
-    SEND -->|"reply payload"| RC_DDP
+    HARNESS -->|"reply payload"| SEND
+    SEND -->|"outgoing frame"| RC_DDP
 ```
 
 ### 2b. Error Handling & Fallbacks
@@ -193,58 +201,61 @@ Images are detected by `headers.contentType` starting with `"image/"` — the ha
 
 ### 2d. Ping/Pong Keepalive Deep Dive
 
-The RocketChat server periodically sends `{"msg": "ping"}` to keep the
-WebSocket alive. The bot responds immediately with `{"msg": "pong"}`.
+The keepalive architecture uses **two concurrent processes** sharing the same
+WebSocket connection:
 
-**In addition**, the bot proactively sends its own pings every `ping_interval_secs`
-(default 30s) and expects a pong response within `ping_timeout_secs` (default 10s).
-If no pong arrives in time, the bot considers the connection dead and triggers a
-reconnect. TCP keepalive (`SO_KEEPALIVE`) is also enabled on the underlying
+1. **Ping keepalive** — a dedicated, independent process that proactively sends
+   WebSocket Ping frames every `ping_interval_secs` (default 30s). On send
+   failure the process exits (silent dropout — the main event loop detects the
+   dead connection via read timeout).
+
+2. **Main event loop** — reads all incoming DDP frames.  Responds to
+   server-initiated DDP `{"msg": "ping"}` with `{"msg": "pong"}`.  Each
+   `read.next()` is wrapped in a `read_timeout_secs` (default 300s) — if no
+   frame arrives, the connection is treated as dead.
+
+TCP keepalive (`SO_KEEPALIVE`) is also enabled on the underlying
 `socket2`-configured `TcpStream` with `tcp_keepalive` parameters (default:
 `TCP_KEEPIDLE=60s`, `TCP_KEEPINTVL=10s`, `TCP_KEEPCNT=5`).
 
-The event loop also wraps `read.next()` in a `tokio::time::timeout()` so that
-if the WebSocket produces no frame (text, ping, close) within a configurable
-`read_timeout_secs` (default 300s), the connection is treated as dead and the
-loop exits.
-
-This diagram decomposes the `StreamEvents` (STREAM) process from Level 1, showing
-the internal dispatch that routes frames by `msg` field.
-
 ```mermaid
 flowchart TD
-    WS[RocketChat DDP over WebSocket<br/>TCP keepalive enabled]
-    CLI_PING[ClientPingTimer<br/>every ping_interval_secs]
-    PONG_TIMEOUT{Pong received<br/>within timeout?}
-    RECONNECT(ReconnectLoop)
-    RECV(ReceiveFrame<br/>wrapped in read_timeout)
-    PARSE(ParseJson)
-    ROUTE(RouteByMsgField)
-    CMD[(DispatchTable)]
-    PONG(RespondPong)
-    FORWARD(ForwardChanged)
-    ACK_READY(ConfirmSubReady)
-    ACK_NOSUB(HandleSubLost)
-    READ_TIMEOUT{Read timeout<br/>exceeded?}
+    subgraph PING_TASK[Ping Keepalive]
+        SCHED(Ping Timer)
+        PING_SEND(Compose Ping Frame)
+        PING_EXIT([Drop])
 
-    WS -->|"raw frame / timeout"| RECV
-    RECV -->|"timeout (no frame)"| READ_TIMEOUT
-    READ_TIMEOUT -->|"yes"| RECONNECT
-    READ_TIMEOUT -->|"read completed"| RECV
-    RECV -->|"frame string"| PARSE
-    PARSE -->|"json object"| ROUTE
-    CMD -->|"msg to callback mapping"| ROUTE
-    ROUTE -->|"ping event"| PONG
-    PONG -->|"pong response"| WS
-    ROUTE -->|"changed event"| FORWARD
-    FORWARD -->|"raw event"| PARSE_PROC[ParseEvent]
-    ROUTE -->|"ready event"| ACK_READY
-    ACK_READY -->|"subscription confirmed"| STREAM_PROC[StreamEvents]
-    ROUTE -->|"nosub event"| ACK_NOSUB
-    ACK_NOSUB -->|"re-subscribe"| WS
-    CLI_PING -->|"proactive ping"| WS
-    WS -->|"pong / timeout"| PONG_TIMEOUT
-    PONG_TIMEOUT -->|"no pong"| RECONNECT
+        SCHED -->|"ping trigger"| PING_SEND
+        PING_SEND -.->|"send error"| PING_EXIT
+    end
+
+    subgraph EVENT_LOOP[Main Event Loop]
+        RECV(Receive Frame)
+        PARSE(Parse JSON)
+        ROUTE(Route By Msg)
+        CMD[(Dispatch Table)]
+        PONG(Respond DDP Pong)
+        FORWARD(Forward Changed)
+        ACK_NOSUB(Handle Sub Lost)
+        RECONNECT(Reconnect)
+
+        RECV -->|"frame text"| PARSE
+        PARSE -->|"json object"| ROUTE
+        CMD -->|"msg mapping"| ROUTE
+        ROUTE -->|"ping msg"| PONG
+        ROUTE -->|"changed msg"| FORWARD
+        ROUTE -->|"nosub msg"| ACK_NOSUB
+        ACK_NOSUB -->|"resub message"| WS
+    end
+
+    WS[RocketChat DDP over WebSocket]
+
+    PING_SEND -->|"ping frame"| WS
+    WS -->|"raw frame"| RECV
+    PONG -->|"pong frame"| WS
+    FORWARD -->|"IncomingMessage"| DISPATCH[Parse + Filter]
+    RECV -.->|"read timeout"| RECONNECT
+    RECONNECT -.->|"abort"| PING_EXIT
 ```
 
 **Dispatch table** — the `msg` field routes to inline handling in the event loop:
@@ -402,9 +413,15 @@ with no error.
 }
 ```
 
-The `tokenExpires` field is **not consumed** by the current implementation.
+The `tokenExpires` field is **not consumed** by the current implementation. If the
+server has `Accounts_LoginExpiration` enabled, the token has a finite TTL. Once
+expired, REST API calls using `X-Auth-Token`/`X-User-Id` return `401
+Unauthorized` — the REST client has no refresh mechanism and the DDP WebSocket
+session (kept alive independently via pings) does not automatically refresh the
+token for REST. See [RocketChat REST API](rocketchat-rest.md) §2f for the
+impact on REST calls.
 
-### 2g. Alias Impersonation
+### 2j. Alias Impersonation
 
 Messages can be sent with an optional `alias` field that overrides the displayed
 sender name. Two paths support this:
@@ -675,7 +692,7 @@ methods:
 | `MessagingClient` method | RocketChat implementation                                    |
 | ------------------------ | ------------------------------------------------------------ |
 | `connect_and_run()`      | Delegates to `RocketChatClient::connect_and_run()` with the handler callback |
-| `send_reply()`           | REST `chat.sendMessage` with `alias` from soul memory; falls back to DDP `MessageSender::reply()` on REST failure |
+| `send_reply()`           | DDP `MessageSender::reply()` — the REST-first alias send is orchestrated by `main.rs` outside the trait |
 | `send_typing()`          | DDP `stream-notify-room/typing` via `MessageSender::typing()` |
 | `bot_user_id()`          | `RocketChatClient.user_id` (set after authentication)        |
 
