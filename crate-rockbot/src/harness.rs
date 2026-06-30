@@ -256,6 +256,18 @@ impl AgentHarness {
             warn!("Failed to refresh knowledge context: {}", e);
         }
 
+        // Always refresh soul and summary from WebDAV (multi-instance sync)
+        if let Some(ref webdav_client) = self.webdav {
+            if let Ok(soul) = self.load_soul(webdav_client, &wd).await {
+                self.memory.set_soul(room_id, soul);
+            }
+            if let Ok(Some(summary)) = self.load_summary(webdav_client, &wd).await {
+                self.memory.set_summary(room_id, Some(summary));
+            } else {
+                self.memory.set_summary(room_id, None);
+            }
+        }
+
         let mut messages = self
             .memory
             .build_context(room_id, &system_prompt, None, None);
@@ -1121,21 +1133,18 @@ impl AgentHarness {
             None => return,
         };
 
-        // Cache-first: try snapshot.json for single-read restore
+        // Snapshot restores only Layer 1 (history) — soul and summary are always
+        // read fresh from their individual files for multi-instance consistency.
         let snap_path = format!("{}memory/snapshot.json", WebDavPath::new("").room_dir(&wd));
-        let mut got_soul = false;
-        let mut got_summary = false;
 
         if let Ok(content) = webdav_client.read_file_to_string(&snap_path).await {
             if let Ok(snapshot) = serde_json::from_str::<crate::memory::PersistSnapshot>(&content) {
                 // Schema version check: reject unknown schemas
                 if snapshot.schema.as_str() == "rockbot-snapshot/1" {
                     self.memory.restore_snapshot(&snapshot);
-                    got_soul = snapshot.soul.is_some();
-                    got_summary = snapshot.summary.is_some();
                     debug!(
-                        "Restored snapshot for room {} (soul={}, summary={})",
-                        room_name, got_soul, got_summary
+                        "Restored snapshot history for room {}",
+                        room_name
                     );
                 } else {
                     warn!(
@@ -1146,40 +1155,35 @@ impl AgentHarness {
             }
         }
 
-        // Fallback: load individual files for any missing layers
-        if !got_summary {
-            match self.load_summary(webdav_client, &wd).await {
-                Ok(Some(summary)) => {
-                    debug!("Loaded summary.md for room {}", room_name);
-                    self.memory.set_summary(room_id, Some(summary));
-                }
-                Ok(None) => {
-                    debug!("No summary.md found for room {}", room_name);
-                }
-                Err(e) => {
-                    warn!(
-                        "Failed to load summary.md for room {}: {}",
-                        room_name, e
-                    );
-                }
+        // Always read summary and soul from individual files
+        match self.load_summary(webdav_client, &wd).await {
+            Ok(Some(summary)) => {
+                debug!("Loaded summary.md for room {}", room_name);
+                self.memory.set_summary(room_id, Some(summary));
+            }
+            Ok(None) => {
+                debug!("No summary.md found for room {}", room_name);
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to load summary.md for room {}: {}",
+                    room_name, e
+                );
             }
         }
 
-        if !got_soul {
-            // Layer 3: load soul.md from WebDAV
-            match self.load_soul(webdav_client, &wd).await {
-                Ok(soul) => {
-                    if !soul.content.is_empty() {
-                        debug!("Loaded soul.md for room {}", room_name);
-                    }
-                    self.memory.set_soul(room_id, soul);
+        match self.load_soul(webdav_client, &wd).await {
+            Ok(soul) => {
+                if !soul.content.is_empty() {
+                    debug!("Loaded soul.md for room {}", room_name);
                 }
-                Err(e) => {
-                    warn!(
-                        "Failed to load soul.md for room {}: {}",
-                        room_name, e
-                    );
-                }
+                self.memory.set_soul(room_id, soul);
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to load soul.md for room {}: {}",
+                    room_name, e
+                );
             }
         }
 

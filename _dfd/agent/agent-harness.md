@@ -15,7 +15,7 @@ standard harness mechanisms are present:
 | Mechanism   | Coverage | Details |
 |-------------|----------|---------|
 | **Tools**   | Full     | Abstract tool calling via `ToolRegistry` — individual tools each have their own DFD |
-| **Context** | Full     | Per-room conversation history buffer, compression (see [Memory Compression](../memory/memory-compression.md)), archive loading — see [Memory Management](../memory/memory.md); plus iteration limits, room state routing, system prompt assembly (with live UTC time injection via `now_utc_human()`) |
+| **Context** | Full     | Per-room conversation history buffer, compression (see [Memory Compression](../memory/memory-compression.md)), archive loading — see [Memory Management](../memory/memory.md); plus iteration limits, room state routing, system prompt assembly (with live UTC time injection via `now_utc_human()`). Soul (`soul.md`) and summary (`summary.md`) are **re-read from WebDAV on every message** to ensure multi-instance consistency. |
 | **Knowledge** | Full     | `save_knowledge`, `forget_knowledge`, `recall_knowledge`; retrieval via keyword-matching against `when_useful` + filename — see [Knowledge Management](base/knowledge.md) |
 
 Intentionally absent — not needed for rockbot's scope:
@@ -46,6 +46,9 @@ Intentionally absent — not needed for rockbot's scope:
 flowchart TD
     RC[RocketChat]
     ROUTE(RouteByRoom)
+    SOUL["GET soul.md"]
+    SUMMARY["GET summary.md"]
+    KNOWLEDGE["GET knowledge/index.json"]
     CTX(BuildContext)
     MEM[(ConversationHistory)]
     TOOLS_DEF[(ToolRegistry)]
@@ -54,7 +57,10 @@ flowchart TD
     MRK_DIRTY(MarkSnapshotDirty)
 
     RC -->|"incoming message"| ROUTE
-    ROUTE -->|"routed message"| CTX
+    ROUTE -->|"routed message"| SOUL
+    SOUL -->|"fresh from WebDAV"| SUMMARY
+    SUMMARY -->|"fresh from WebDAV"| KNOWLEDGE
+    KNOWLEDGE -->|"fresh from WebDAV"| CTX
     MEM -->|"history for room"| CTX
     TOOLS_DEF -->|"tool definitions"| INTERACT
     CTX -->|"chat request"| INTERACT

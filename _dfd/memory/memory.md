@@ -6,12 +6,11 @@ Three-layer per-room conversation memory. Rooms stay in memory while actively
 communicating and are evicted after a configurable idle TTL — the snapshot is
 persisted to WebDAV before eviction, then restored on next interaction.
 
-All layers are loaded on room init and injected into the agent context as
-system messages. On restore, a single cached `snapshot.json` is read first
-(containing all three layers). Individual files (`soul.md`, `summary.md`)
-serve as the source of truth — the snapshot is a performance cache, rebuilt
-incrementally whenever any layer changes. If the snapshot is missing or stale,
-the system falls back to reading individual files.
+**Soul** and **summary** are re-read from WebDAV on every single message
+(not cached), exactly like the knowledge index. The snapshot restores only
+Layer 1 (conversation history) — soul and summary are always fetched from
+their individual files regardless of snapshot contents. This ensures zero
+staleness when multiple bot instances share the same WebDAV folder.
 
 | Layer | Name | Storage | Limit | Contents |
 |-------|------|---------|-------|----------|
@@ -148,12 +147,11 @@ flowchart TD
     WRITE -->|"confirmation"| REPLY
 ```
 
-### 2e. Restore Flow — Cache-First (Room Init)
+### 2e. Restore Flow — Snapshot for History Only (Room Init)
 
-Snapshot is read first as a single WebDAV call. If present and fresh, all three
-layers are restored from it. If the snapshot is missing (never written, deleted,
-or from an older schema version), the system falls back to reading individual
-files.
+Snapshot restores only Layer 1 (conversation history) for crash recovery.
+Soul and summary are always fetched fresh from their individual files —
+the snapshot's cached copies are ignored to avoid multi-instance staleness.
 
 ```mermaid
 flowchart TD
@@ -161,40 +159,31 @@ flowchart TD
     DAV[(NextCloud WebDAV)]
     GET_SNAP["1. GET snapshot.json"]
     SNAP_OK{snapshot.json<br/>exists?}
-    UNPACK[Unpack All 3 Layers<br/>from Snapshot]
-    CHECK{All layers<br/>present?}
-    RESTORED((Restored))
-    NEED_L2{Need Layer 2?}
-    NEED_L3{Need Layer 3?}
-    GET_SOUL["GET soul.md"]
-    GET_SUMMARY["GET summary.md"]
+    UNPACK["Unpack Layer 1<br/>(history only)"]
+    MISSING["No snapshot<br/>(empty history)"]
+    GET_SOUL["2. GET soul.md"]
+    GET_SUMMARY["3. GET summary.md"]
     INJECT[Inject into<br/>MemoryManager]
 
     INIT --> GET_SNAP
     GET_SNAP --> DAV
     DAV --> SNAP_OK
-    SNAP_OK -->|"yes (cache hit)"| UNPACK
-    SNAP_OK -->|"no (cache miss)"| NEED_L2
-    UNPACK --> CHECK
-    CHECK -->|"yes"| RESTORED
-    CHECK -->|"partial"| NEED_L2
-
-    NEED_L2 -->|"GET soul.md"| GET_SOUL
-    NEED_L2 -->|"GET summary.md"| GET_SUMMARY
-    GET_SOUL --> DAV
-    GET_SUMMARY --> DAV
-    DAV -->|"soul content or 404"| INJECT
-    DAV -->|"summary.md or 404"| INJECT
-
-    RESTORED --> INJECT
+    SNAP_OK -->|"yes"| UNPACK
+    SNAP_OK -->|"no"| MISSING
+    UNPACK --> GET_SOUL
+    MISSING --> GET_SOUL
+    GET_SOUL -->|"soul.md (fresh)"| DAV
+    DAV -->|"content or empty"| GET_SUMMARY
+    GET_SUMMARY -->|"summary.md (fresh)"| DAV
+    DAV -->|"content or empty"| INJECT
     INJECT -->|"soul + summary + history"| CTX[Agent Context]
 ```
 
 Knowledge entries are also restored during room init — see [Knowledge Management](knowledge.md).
 
 Key properties:
-- **Single read on cache hit**: one `GET snapshot.json` replaces 3 WebDAV round trips
-- **Graceful degradation**: if snapshot is missing or partial, falls back to individual file reads
+- **History-only snapshot**: snapshot restores only Layer 1 (chat history) — soul and summary are always fetched from their dedicated files
+- **No staleness**: every message re-reads soul.md and summary.md from WebDAV, ensuring multi-instance consistency
 - **No snapshot blocking**: if snapshot write fails, the system continues operating — next timer tick retries
 
 ### 2f. Error Handling
@@ -269,14 +258,15 @@ One file per room. Caches all three layers for single-read restore.
 | `messages`         | `Vec<ChatMessage>`      | Raw Layer 1 messages (in-memory buffer)                |
 | `char_count`       | `usize`                 | Running Layer 1 character count                        |
 | `archive_seq`      | `u64`                   | Compression sequence number (monotonic, for staleness checks) |
-| `soul`             | `Option<String>`        | Layer 3: full soul.md content (None if no soul)       |
-| `summary`          | `Option<String>`        | Layer 2: compressed summary.md content (None if no summary) |
+| `soul`             | `Option<String>`        | Layer 3: full soul.md content (None if no soul) — stored in snapshot but **ignored on restore**; always re-read from soul.md |
+| `summary`          | `Option<String>`        | Layer 2: compressed summary.md content (None if no summary) — stored in snapshot but **ignored on restore**; always re-read from summary.md |
 | `updated_at`       | `String`                | ISO 8601 timestamp of last write                       |
 
 Rebuilt whenever any layer is modified (soul edit, compression write).
 Written on the periodic persist timer (coalesced — not on every individual
 change). Source of truth for each layer remains its dedicated file
-(`soul.md`, `summary.md`).
+(`soul.md`, `summary.md`). Snapshot soul/summary fields are preserved for
+backward compatibility (existing snapshot files) but never consumed.
 
 ### `MemoryManager`
 
@@ -286,8 +276,8 @@ change). Source of truth for each layer remains its dedicated file
 | `max_chars`            | `usize`                      | Compression threshold (max_text_length)  |
 | `max_history_messages` | `usize`                      | Layer 1 message count limit for context  |
 | `max_soul_chars`       | `usize`                      | Layer 3 max chars for soul.md content    |
-| `summaries`            | `HashMap<String, Option<String>>` | Layer 2 in-memory cache: room_id → summary.md content |
-| `souls`                | `HashMap<String, SoulMemory>`| Layer 3 in-memory cache                  |
+| `summaries`            | `HashMap<String, Option<String>>` | Layer 2 in-memory holder: room_id → summary.md content (refreshed from WebDAV before each message — never stale) |
+| `souls`                | `HashMap<String, SoulMemory>`| Layer 3 in-memory holder (refreshed from WebDAV before each message — never stale) |
 | `dirty_snapshots`      | `HashSet<String>`            | Room IDs needing snapshot rebuild        |
 | `knowledge`            | `HashMap<String, String>`    | Pre-formatted knowledge system messages per room |
 | `persist_interval_secs`| `u64`                        | Timer interval for writing snapshots (default 60) |
@@ -397,7 +387,8 @@ Layer 2 is a single `summary.md` capped at 10 bullet points by LLM instruction.
 | **Timer evict**     | `maintenance_tick()` (Phase 2) | Every `persist_interval_secs`  | Room has ≥ 1 message AND `last_activity > 0` AND `now - last_activity > memory_ttl_secs` | Persist snapshot if dirty, then remove room from `HashMap` |
 | **Compression**     | `compress_room_if_needed()`    | After reply delivered (background)  | Checks flags (token pressure, byte pressure) | See [Memory Compression](memory-compression.md) |
 | **Safety net**      | `trim_context()`               | Before each LLM call           | `context_bytes > max_context_bytes`                              | Inline trim only; sets byte_pressure_flag. See [Memory Compression](memory-compression.md §2d) |
-| **Room init**       | `restore_history()`            | Once per room, on first message| Room not in memory (fresh or evicted)                        | Load snapshot (cache-first), fall back to individual files |
+| **Soul/summary refresh** | `process_message()`         | On every incoming message      | WebDAV configured (always)                                  | Re-read `soul.md` and `summary.md` from WebDAV, update in-memory holders |
+| **Room init**       | `restore_history()`            | Once per room, on first message| Room not in memory (fresh or evicted)                        | Load snapshot for history, always read soul + summary from individual files |
 | **Soul edit**       | `edit_soul()` tool             | On user request                | LLM invokes `edit_soul` tool                                 | Write `soul.md`, update in-memory soul, mark snapshot dirty |
 | **Touch activity**  | `process_message()`            | On every incoming message      | Room exists in memory                                        | Update `last_activity` timestamp to prevent eviction |
 
@@ -409,8 +400,9 @@ Layer 2 is a single `summary.md` capped at 10 bullet points by LLM instruction.
 
 ### Context Injection Order
 
-On room init, data is retrieved from WebDAV and injected into the agent
-context in this order:
+On every message, soul and summary are re-read from WebDAV (fresh) and
+injected into the agent context in this order (room init additionally
+restores history from snapshot):
 
 ```
 1. soul.md content      (Layer 3 — truncated to max_soul_chars)
