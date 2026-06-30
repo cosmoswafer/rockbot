@@ -32,6 +32,14 @@ cargo build --release
 ./target/release/rockbot
 ```
 
+### Install to user home
+
+Installs the `rockbot` binary to `~/.cargo/bin/` (add to `PATH` if not already):
+
+```bash
+cargo install --path crate-rockbot
+```
+
 ## Architecture
 
 ```mermaid
