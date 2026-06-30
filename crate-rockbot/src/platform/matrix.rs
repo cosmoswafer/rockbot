@@ -228,6 +228,22 @@ impl MessagingClient for MatrixPlatform {
                     let member_count = room.active_members_count();
                     let is_dm = member_count <= 2;
 
+                    if !is_dm {
+                        let localpart = user_id
+                            .strip_prefix('@')
+                            .and_then(|s| s.split(':').next())
+                            .unwrap_or(&user_id);
+                        let mentioned = body.contains(&format!("@{}", localpart))
+                            || body.contains(&user_id);
+                        if !mentioned {
+                            debug!(
+                                "Matrix: ignoring message without @mention in non-DM room (sender={})",
+                                sender
+                            );
+                            return;
+                        }
+                    }
+
                     let sender_name = sender
                         .strip_prefix('@')
                         .and_then(|s| s.split(':').next())

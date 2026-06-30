@@ -115,14 +115,15 @@ flowchart TD
 
 **Filter rules** (evaluated in order):
 
-1. **Skip self**: `event.sender == bot_user_id` → drop
-2. **Skip non-text**: `msgtype != "m.text"` → drop (images are handled in the `m.image`
-   branch; encrypted `m.room.encrypted` events also dropped — no handler registered for them)
-3. **Skip edits**: `m.relates_to.rel_type == "m.replace"` → drop (edits are not re-processed)
-4. **DM check**: room member count ≤ 2 → forward as DM (`is_dm = true`)
-5. **Mention check** *(spec, not yet implemented)*: message body contains `@bot_user_id`
-   or bot display name → forward
-7. **Otherwise**: drop *(spec, not yet implemented — currently dispatches all text messages from all joined rooms)*
+1. **Skip non-joined rooms**: `room.state() != Joined` → drop
+2. **Skip non-original events**: edits, reactions → drop
+3. **Skip self**: `event.sender == bot_user_id` → drop
+4. **Skip historical**: `origin_server_ts < startup_ts` → drop
+5. **Skip non-text/non-image**: `msgtype != "m.text"` and `msgtype != "m.image"` → drop
+   (encrypted `m.room.encrypted` events also dropped — no handler registered for them)
+6. **DM check**: room member count ≤ 2 → forward as DM (`is_dm = true`)
+7. **Mention check**: if not DM, message body must contain `@bot_user_id` (full MXID or
+   localpart `@username`) → forward, otherwise drop
 
 **Room invite handling** *(by design)*: The bot never auto-joins rooms.
 Only `RoomState::Joined` rooms are processed; `RoomState::Invited` is silently

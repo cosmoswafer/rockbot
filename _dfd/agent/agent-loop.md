@@ -257,6 +257,18 @@ pub trait MessagingClient: Send + Sync {
 > by the agent loop through platform-specific code paths or optional trait
 > extensions.
 
+#### `bot_name` Derivation (main.rs)
+
+`bot_name` is platform-aware, determined at startup before the reconnect loop:
+
+- **Matrix**: uses `[matrix.server] user_id` (e.g. `@zeroquokka:matrix.org`)
+- **RocketChat**: uses `@username` from `[rocketchat.server] username`
+
+It is used for prefix-stripping (RocketChat: remove `@botname ` prefix) and mention-checking
+(non-DM messages must contain `bot_name` to be processed). The Matrix platform handler
+performs its own mention check before dispatching, so by the time a Matrix-sourced
+`IncomingMessage` reaches the agent loop, it has already passed the mention filter.
+
 #### `AgentHarness` (harness.rs:55-65)
 
 | Field            | Type                  | Notes                                      |

@@ -341,7 +341,14 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
 
     let bot_name = {
         let h = harness.lock().await;
-        format!("@{}", h.config().rocketchat.server.username)
+        match h.config().platform.name.as_str() {
+            "matrix" => h.config()
+                .matrix
+                .as_ref()
+                .map(|m| m.server.user_id.clone())
+                .unwrap_or_default(),
+            _ => format!("@{}", h.config().rocketchat.server.username),
+        }
     };
 
     let platform: Box<dyn MessagingClient> = {
