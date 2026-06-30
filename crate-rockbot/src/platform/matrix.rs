@@ -155,7 +155,7 @@ impl MessagingClient for MatrixPlatform {
 
                     let sender = original.sender.to_string();
                     if sender == user_id {
-                        debug!("Matrix: ignoring own message");
+                        info!("Matrix: ignoring own message (user_id={})", user_id);
                         return;
                     }
 
@@ -235,24 +235,33 @@ impl MessagingClient for MatrixPlatform {
                         .unwrap_or_else(|| room_name.clone());
 
                     let is_dm = room.active_members_count() <= 2;
-                    {
+                    if !is_dm {
                         let localpart = user_id
                             .strip_prefix('@')
                             .and_then(|s| s.split(':').next())
                             .unwrap_or(&user_id);
                         let mention_at = format!("@{}", localpart);
+                        // Check: body contains @localpart, @user_id, or m.mentions includes bot
                         let mentioned = body.contains(&mention_at)
-                            || body.contains(&user_id);
+                            || body.contains(&user_id)
+                            || original
+                                .content
+                                .mentions
+                                .as_ref()
+                                .is_some_and(|m| m.user_ids.iter().any(|u| u.as_str() == user_id));
                         if !mentioned {
                             info!(
-                                "Matrix: ignoring message without @mention (sender={} user_id={} localpart={} body={:?} member_count={})",
-                                sender, user_id, localpart, body, room.active_members_count()
+                                "Matrix: ignoring message without @mention (sender={} user_id={} localpart={} body={:?} mentions={:?} member_count={})",
+                                sender, user_id, localpart, body,
+                                original.content.mentions.as_ref().map(|m| &m.user_ids),
+                                room.active_members_count()
                             );
                             return;
                         }
                         info!(
-                            "Matrix: mention match (user_id={} localpart={} body={:?})",
-                            user_id, localpart, body
+                            "Matrix: mention match (user_id={} localpart={} body={:?} mentions={:?})",
+                            user_id, localpart, body,
+                            original.content.mentions.as_ref().map(|m| &m.user_ids)
                         );
                     }
 
