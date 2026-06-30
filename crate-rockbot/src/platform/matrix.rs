@@ -161,7 +161,7 @@ impl MessagingClient for MatrixPlatform {
 
                     let msg_ts_secs: u64 = original.origin_server_ts.as_secs().into();
                     if msg_ts_secs + HISTORICAL_GRACE_SECS < startup_ts_secs {
-                        debug!(
+                        info!(
                             "Matrix: ignoring historical message (msg_ts={} + grace={} < startup_ts={})",
                             msg_ts_secs, HISTORICAL_GRACE_SECS, startup_ts_secs
                         );
@@ -234,10 +234,8 @@ impl MessagingClient for MatrixPlatform {
                         })
                         .unwrap_or_else(|| room_name.clone());
 
-                    let member_count = room.active_members_count();
-                    let is_dm = member_count <= 2;
-
-                    if !is_dm {
+                    let is_dm = room.active_members_count() <= 2;
+                    {
                         let localpart = user_id
                             .strip_prefix('@')
                             .and_then(|s| s.split(':').next())
@@ -246,14 +244,14 @@ impl MessagingClient for MatrixPlatform {
                         let mentioned = body.contains(&mention_at)
                             || body.contains(&user_id);
                         if !mentioned {
-                            debug!(
-                                "Matrix: ignoring message without @mention in non-DM room (sender={} user_id={} localpart={} body={:?})",
-                                sender, user_id, localpart, body
+                            info!(
+                                "Matrix: ignoring message without @mention (sender={} user_id={} localpart={} body={:?} member_count={})",
+                                sender, user_id, localpart, body, room.active_members_count()
                             );
                             return;
                         }
-                        debug!(
-                            "Matrix: mention match in non-DM room (user_id={} localpart={} body={:?})",
+                        info!(
+                            "Matrix: mention match (user_id={} localpart={} body={:?})",
                             user_id, localpart, body
                         );
                     }

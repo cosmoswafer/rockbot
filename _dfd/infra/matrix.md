@@ -91,9 +91,9 @@ to the agent loop, which applies its own exponential backoff reconnect.
 ### 2c. Message Filter Deep Dive
 
 Matrix rooms deliver all timeline events to the sync handler. The filter
-identifies messages that should be forwarded to the agent: DMs, @mentions,
-and messages in registered rooms. Self-messages (events from the bot's own
-user_id) are silently dropped.
+identifies messages that should be forwarded to the agent: only @mentions
+are forwarded (in all rooms, including DMs). Self-messages (events from the
+bot's own user_id) are silently dropped.
 
 ```mermaid
 flowchart TD
@@ -108,8 +108,8 @@ flowchart TD
     BOT_USER -->|"bot user_id"| FILTER
     ROOMS -->|"room membership"| FILTER
     FILTER -->|"self-message"| DROP
-    FILTER -->|"DM or @mention"| DISPATCH
-    FILTER -->|"other"| DROP
+    FILTER -->|"@mention (all rooms)"| DISPATCH
+    FILTER -->|"no @mention"| DROP
     DISPATCH -->|"IncomingMessage"| AGENT[Agent Loop]
 ```
 
@@ -122,10 +122,10 @@ flowchart TD
    allows messages sent shortly before restart to be processed)
 5. **Skip non-text/non-image**: `msgtype != "m.text"` and `msgtype != "m.image"` → drop
    (encrypted `m.room.encrypted` events also dropped — no handler registered for them)
-6. **DM check**: room member count ≤ 2 → forward as DM (`is_dm = true`)
-7. **Mention check**: if not DM, message body must contain `@bot_user_id` (full MXID or
-   localpart `@username`) → forward, otherwise drop. Debug logs `user_id`, `localpart`,
-   and `body` on both match and mismatch to simplify diagnosis.
+6. **Mention check** (all rooms, including DMs): message body must contain
+   `@bot_user_id` (full MXID or localpart `@username`) → forward, otherwise drop.
+   Logs `user_id`, `localpart`, `body`, and `member_count` at `info!` level on both
+   match and mismatch to simplify diagnosis.
 
 **Room invite handling** *(by design)*: The bot never auto-joins rooms.
 Only `RoomState::Joined` rooms are processed; `RoomState::Invited` is silently
@@ -321,7 +321,7 @@ flowchart TD
   if no canonical alias.
 - `room_fname` → room display name from `m.room.name` state event. Falls back
   to `room_name` if unset.
-- `is_dm` → `true` if room has exactly 2 joined members (bot + one other).
+- `is_dm` → `true` if room has exactly 2 joined members (bot + one other). Informational only — does not affect message filtering (mention check applies to all rooms).
 
 ## 3. Data Structures
 
