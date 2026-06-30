@@ -303,6 +303,7 @@ pub struct BraveSearchConfig {
 pub struct ProviderConfig {
     pub name: ProviderName,
     pub api_key: String,
+    #[serde(default = "default_base_url")]
     pub base_url: ConfigUrl,
     #[serde(default)]
     pub basecf_url: Option<String>,
@@ -312,6 +313,98 @@ pub struct ProviderConfig {
     pub draw_path: Option<String>,
     #[serde(default)]
     pub models: HashMap<String, String>,
+}
+
+fn default_base_url() -> ConfigUrl {
+    ConfigUrl::try_new("http://localhost".to_string()).expect("hardcoded default")
+}
+
+fn provider_defaults() -> HashMap<String, ProviderConfig> {
+    let mut map = HashMap::new();
+
+    map.insert(
+        "openrouter".to_string(),
+        ProviderConfig {
+            name: ProviderName::try_new("openrouter".to_string()).expect("hardcoded"),
+            api_key: String::new(),
+            base_url: ConfigUrl::try_new("https://openrouter.ai/api/v1".to_string())
+                .expect("hardcoded"),
+            basecf_url: None,
+            chat_path: Some("/chat/completions".to_string()),
+            draw_path: Some("/images/generations".to_string()),
+            models: {
+                let mut m = HashMap::new();
+                m.insert("gpt".to_string(), "openai/gpt-oss-120b:online".to_string());
+                m.insert("qwen".to_string(), "qwen/qwen3.7-plus".to_string());
+                m.insert("minimax".to_string(), "minimax/minimax-m3".to_string());
+                m.insert("mimo".to_string(), "xiaomi/mimo-v2.5".to_string());
+                m.insert("seedream".to_string(), "bytedance-seed/seedream-4.5".to_string());
+                m.insert("banana".to_string(), "google/gemini-3.1-flash-image-preview".to_string());
+                m.insert("mai".to_string(), "microsoft/mai-image-2.5".to_string());
+                m
+            },
+        },
+    );
+
+    map.insert(
+        "deepseek".to_string(),
+        ProviderConfig {
+            name: ProviderName::try_new("deepseek".to_string()).expect("hardcoded"),
+            api_key: String::new(),
+            base_url: ConfigUrl::try_new("https://api.deepseek.com/v1".to_string())
+                .expect("hardcoded"),
+            basecf_url: None,
+            chat_path: None,
+            draw_path: None,
+            models: {
+                let mut m = HashMap::new();
+                m.insert("flash".to_string(), "deepseek-v4-flash".to_string());
+                m.insert("pro".to_string(), "deepseek-v4-pro".to_string());
+                m
+            },
+        },
+    );
+
+    map.insert(
+        "llamacpp".to_string(),
+        ProviderConfig {
+            name: ProviderName::try_new("llamacpp".to_string()).expect("hardcoded"),
+            api_key: String::new(),
+            base_url: ConfigUrl::try_new("http://localhost:8080/v1".to_string())
+                .expect("hardcoded"),
+            basecf_url: None,
+            chat_path: Some("/chat/completions".to_string()),
+            draw_path: None,
+            models: {
+                let mut m = HashMap::new();
+                m.insert("local".to_string(), "local-model".to_string());
+                m
+            },
+        },
+    );
+
+    map.insert(
+        "fal".to_string(),
+        ProviderConfig {
+            name: ProviderName::try_new("fal".to_string()).expect("hardcoded"),
+            api_key: String::new(),
+            base_url: ConfigUrl::try_new("https://queue.fal.run".to_string())
+                .expect("hardcoded"),
+            basecf_url: None,
+            chat_path: None,
+            draw_path: None,
+            models: {
+                let mut m = HashMap::new();
+                m.insert("seedream".to_string(), "fal-ai/bytedance/seedream/v4.5/text-to-image".to_string());
+                m.insert("gptimage".to_string(), "openai/gpt-image-2".to_string());
+                m.insert("gptimage_edit".to_string(), "openai/gpt-image-2/edit".to_string());
+                m.insert("grok_edit".to_string(), "xai/grok-imagine-image/quality/edit".to_string());
+                m
+            },
+        },
+    );
+
+    map
 }
 
 impl Default for AppConfig {
@@ -345,12 +438,14 @@ impl AppConfig {
             ))),
         };
 
-        let config: Self = if raw.is_empty() {
+        let mut config: Self = if raw.is_empty() {
             AppConfig::default()
         } else {
             toml::from_str(&raw)
                 .map_err(|e| crate::error::RockBotError::Config(format!("toml parse: {}", e)))?
         };
+
+        config.apply_provider_defaults();
 
         if config.platform.name == "rocketchat" {
             config.rocketchat.server.validate().map_err(|e| {
@@ -368,6 +463,33 @@ impl AppConfig {
             crate::error::RockBotError::Config(format!("config validation: {e}"))
         })?;
         Ok(config)
+    }
+
+    fn apply_provider_defaults(&mut self) {
+        for p in &mut self.chat_providers {
+            Self::fill_provider_defaults(p);
+        }
+        for p in &mut self.image_providers {
+            Self::fill_provider_defaults(p);
+        }
+    }
+
+    fn fill_provider_defaults(p: &mut ProviderConfig) {
+        const SENTINEL: &str = "http://localhost";
+        if p.base_url.as_str() == SENTINEL {
+            if let Some(defaults) = provider_defaults().get(p.name.as_str()) {
+                p.base_url = defaults.base_url.clone();
+                if p.models.is_empty() {
+                    p.models = defaults.models.clone();
+                }
+                if p.chat_path.is_none() {
+                    p.chat_path = defaults.chat_path.clone();
+                }
+                if p.draw_path.is_none() {
+                    p.draw_path = defaults.draw_path.clone();
+                }
+            }
+        }
     }
 
     pub fn from_toml(content: &str) -> crate::error::Result<Self> {
