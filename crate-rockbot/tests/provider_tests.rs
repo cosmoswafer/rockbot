@@ -49,7 +49,7 @@ reasoner = "deepseek-reasoner"
 
     assert_eq!(config.model.default_provider.as_str(), "openrouter");
     assert_eq!(config.model.default_model, "deepseek");
-    assert_eq!(config.model.max_iterations, 28); // default
+    assert_eq!(config.model.max_iterations, 47); // default
 
     assert_eq!(config.chat_providers.len(), 2);
 
@@ -93,7 +93,7 @@ base_url = "https://mock.ai/v1"
 chat = "mock-model"
 "#;
     let config = AppConfig::from_toml(toml).unwrap();
-    assert_eq!(config.model.max_iterations, 28);
+    assert_eq!(config.model.max_iterations, 47);
 }
 
 #[test]
@@ -276,33 +276,31 @@ api_key = "vis-key-456"
 }
 
 #[test]
-fn test_config_from_file_missing_default() {
-    let dir = std::env::temp_dir().join("rockbot_test_missing_default");
+fn test_config_from_file_missing_user_config_fails_validation() {
+    let dir = std::env::temp_dir().join("rockbot_test_missing_user_config_val");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let old_cwd = std::env::current_dir().unwrap();
-    std::env::set_current_dir(&dir).unwrap();
 
-    let result = AppConfig::from_file("/nonexistent/default.config.toml");
+    let path = dir.join("config.toml");
+    let result = AppConfig::from_file(path.to_str().unwrap());
 
-    std::env::set_current_dir(&old_cwd).unwrap();
     let _ = std::fs::remove_dir_all(&dir);
 
     assert!(result.is_err());
     let msg = format!("{}", result.unwrap_err());
     assert!(
-        msg.contains("corrupt") || msg.contains("default"),
+        msg.contains("validation") || msg.contains("server"),
         "msg: {msg}"
     );
 }
 
 #[test]
-fn test_config_merge_user_wins() {
-    let dir = std::env::temp_dir().join("rockbot_test_merge_user_wins");
+fn test_config_user_overrides_embedded_defaults() {
+    let dir = std::env::temp_dir().join("rockbot_test_user_overrides");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
 
-    let default_toml = r#"
+    let user_toml = r#"
 [rocketchat.server]
 url = "test.example.com"
 username = "bot"
@@ -311,7 +309,7 @@ password = "secret"
 [model]
 default_provider = "p1"
 default_model = "chat"
-max_iterations = 8
+max_iterations = 100
 
 [[chat_providers]]
 name = "p1"
@@ -321,24 +319,11 @@ base_url = "https://test.ai/v1"
 [chat_providers.models]
 chat = "test-model"
 "#;
-    std::fs::write(dir.join("default.config.toml"), default_toml).unwrap();
-
-    let user_toml = r#"
-[model]
-max_iterations = 100
-"#;
     let user_path = dir.join("user.config.toml");
     std::fs::write(&user_path, user_toml).unwrap();
 
-    let old_cwd = std::env::current_dir().unwrap();
-    std::env::set_current_dir(&dir).unwrap();
+    let config = AppConfig::from_file(user_path.to_str().unwrap()).unwrap();
 
-    let config = AppConfig::from_file(
-        user_path.to_str().unwrap(),
-    )
-    .unwrap();
-
-    std::env::set_current_dir(&old_cwd).unwrap();
     let _ = std::fs::remove_dir_all(&dir);
 
     assert_eq!(config.model.max_iterations, 100);
@@ -368,32 +353,27 @@ base_url = "https://test.ai/v1"
 }
 
 #[test]
-fn test_config_merge_named_arrays_user_overrides() {
-    let default_toml = r#"
+fn test_config_embedded_defaults_applied() {
+    let toml = r#"
+[rocketchat.server]
+url = "test.example.com"
+username = "bot"
+password = "secret"
+
+[model]
+default_provider = "p1"
+default_model = "chat"
+
 [[chat_providers]]
 name = "p1"
-api_key = "default-key"
-base_url = "https://default.ai/v1"
+api_key = "sk-test"
+base_url = "https://test.ai/v1"
 "#;
-    let user_toml = r#"
-[[chat_providers]]
-name = "p1"
-api_key = "user-key"
-base_url = "https://user.ai/v1"
-"#;
-    let default_value: toml::Value = toml::from_str(default_toml).unwrap();
-    let user_value: toml::Value = toml::from_str(user_toml).unwrap();
-    let merged = rockbot::merge_toml(default_value, user_value);
-    let providers = merged
-        .get("chat_providers")
-        .unwrap()
-        .as_array()
-        .unwrap();
-    assert_eq!(providers.len(), 1);
-    assert_eq!(
-        providers[0].get("api_key").unwrap().as_str().unwrap(),
-        "user-key"
-    );
+    let config = AppConfig::from_toml(toml).unwrap();
+    assert_eq!(config.model.max_iterations, 47);
+    assert_eq!(config.model.max_soul_chars.as_usize(), 5000);
+    assert_eq!(config.model.persist_interval_secs, 120);
+    assert_eq!(config.model.memory_ttl_secs, 600);
 }
 
 #[test]

@@ -6,13 +6,12 @@ use webdav::WebDavConfig;
 
 use crate::validated::{BoundedUsize, ConfigUrl, ProviderName};
 
-const DEFAULT_CONFIG_PATH: &str = "default.config.toml";
-
 #[derive(Debug, Clone, Deserialize, ValidatorValidate)]
 #[validate(schema(function = "validate_app_config"))]
 pub struct AppConfig {
     #[serde(default)]
     pub platform: PlatformConfig,
+    #[serde(default)]
     pub rocketchat: RocketChatSection,
     #[serde(default)]
     pub matrix: Option<MatrixSection>,
@@ -64,9 +63,19 @@ fn default_platform_name() -> String {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct RocketChatSection {
+    #[serde(default)]
     pub server: ServerConfig,
     #[serde(default)]
     pub model: Option<ModelConfig>,
+}
+
+impl Default for RocketChatSection {
+    fn default() -> Self {
+        Self {
+            server: ServerConfig::default(),
+            model: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -97,13 +106,27 @@ fn default_matrix_state_dir() -> String {
 #[derive(Debug, Clone, Deserialize, Validate)]
 pub struct ServerConfig {
     #[validate(min_length = 1)]
+    #[serde(default)]
     pub url: String,
     #[validate(min_length = 1)]
+    #[serde(default)]
     pub username: String,
     #[validate(min_length = 1)]
+    #[serde(default)]
     pub password: String,
     #[serde(default)]
     pub debug: bool,
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            url: String::new(),
+            username: String::new(),
+            password: String::new(),
+            debug: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -127,7 +150,7 @@ pub struct ModelConfig {
 }
 
 fn default_model_context_length() -> u32 {
-    1_000_000
+    128_000
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -151,13 +174,13 @@ pub struct ImageModelConfig {
 }
 
 fn default_image_provider() -> ProviderName {
-    ProviderName::try_new("fal".to_string()).expect("hardcoded default")
+    ProviderName::try_new("openrouter".to_string()).expect("hardcoded default")
 }
 fn default_image_text_model() -> String {
-    "seedream".into()
+    "mai".into()
 }
 fn default_image_edit_model() -> String {
-    "fal-ai/nano-banana-pro/edit".into()
+    "mai".into()
 }
 fn default_image_quality() -> String {
     "medium".into()
@@ -195,19 +218,19 @@ impl Default for ImageModelConfig {
 }
 
 fn default_max_iterations() -> u32 {
-    28
+    47
 }
 
 fn default_max_soul_chars() -> BoundedUsize {
-    BoundedUsize::try_new(2000).expect("hardcoded default")
+    BoundedUsize::try_new(5000).expect("hardcoded default")
 }
 
 fn default_persist_interval_secs() -> u64 {
-    60
+    120
 }
 
 fn default_memory_ttl_secs() -> u64 {
-    300
+    600
 }
 
 fn default_max_context_bytes() -> BoundedUsize {
@@ -291,33 +314,44 @@ pub struct ProviderConfig {
     pub models: HashMap<String, String>,
 }
 
+impl Default for AppConfig {
+    fn default() -> Self {
+        Self {
+            platform: PlatformConfig::default(),
+            rocketchat: RocketChatSection::default(),
+            matrix: None,
+            model: ModelConfig::default(),
+            chat_providers: Vec::new(),
+            image_providers: Vec::new(),
+            image_model: ImageModelConfig::default(),
+            tools: HashMap::new(),
+            search: SearchConfig::default(),
+            webdav: None,
+            agent: AgentConfig::default(),
+        }
+    }
+}
+
 impl AppConfig {
     pub fn from_file(path: &str) -> crate::error::Result<Self> {
-        let default_raw = std::fs::read_to_string(DEFAULT_CONFIG_PATH)
-            .map_err(|e| crate::error::RockBotError::Config(format!(
-                "Failed to read default config ({}): {}. The install may be corrupt.",
-                DEFAULT_CONFIG_PATH, e
-            )))?;
-        let default_value: toml::Value = toml::from_str(&default_raw)
-            .map_err(|e| crate::error::RockBotError::Config(format!("default parse: {}", e)))?;
-
-        let user_value: toml::Value = match std::fs::read_to_string(path) {
-            Ok(raw) => toml::from_str(&raw)
-                .map_err(|e| crate::error::RockBotError::Config(format!("user parse: {}", e)))?,
+        let raw = match std::fs::read_to_string(path) {
+            Ok(raw) => raw,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 tracing::warn!("Config file '{}' not found, using defaults only", path);
-                toml::Value::Table(toml::value::Table::new())
+                String::new()
             }
             Err(e) => return Err(crate::error::RockBotError::Config(format!(
                 "Failed to read config '{}': {}", path, e
             ))),
         };
 
-        let merged = merge_toml(default_value, user_value);
-        let merged_str = toml::to_string(&merged)
-            .map_err(|e| crate::error::RockBotError::Config(format!("merge failed: {}", e)))?;
-        let config: Self = toml::from_str(&merged_str)
-            .map_err(|e| crate::error::RockBotError::Config(format!("merged parse: {}", e)))?;
+        let config: Self = if raw.is_empty() {
+            AppConfig::default()
+        } else {
+            toml::from_str(&raw)
+                .map_err(|e| crate::error::RockBotError::Config(format!("toml parse: {}", e)))?
+        };
+
         if config.platform.name == "rocketchat" {
             config.rocketchat.server.validate().map_err(|e| {
                 crate::error::RockBotError::Config(format!("server config validation: {e}"))
@@ -422,50 +456,6 @@ fn validate_app_config(config: &AppConfig) -> Result<(), validator::ValidationEr
     }
 
     Ok(())
-}
-
-/// Recursively merge two TOML values. `base` provides defaults, `override_` wins.
-pub fn merge_toml(base: toml::Value, override_: toml::Value) -> toml::Value {
-    match (base, override_) {
-        (toml::Value::Table(mut base), toml::Value::Table(over)) => {
-            for (k, v) in over {
-                let merged = match base.remove(&k) {
-                    Some(existing) => merge_toml(existing, v),
-                    None => v,
-                };
-                base.insert(k, merged);
-            }
-            toml::Value::Table(base)
-        }
-        (toml::Value::Array(base_arr), toml::Value::Array(over_arr)) => {
-            merge_named_arrays(base_arr, over_arr)
-        }
-        (_, over) => over,
-    }
-}
-
-/// Merge arrays of tables by matching `name` key. User entries override defaults;
-/// entries only in the default are kept; entries only in user config are appended.
-fn merge_named_arrays(default: Vec<toml::Value>, user: Vec<toml::Value>) -> toml::Value {
-    let mut merged: Vec<toml::Value> = default;
-    for user_entry in user {
-        let user_name = user_entry
-            .get("name")
-            .and_then(|n| n.as_str())
-            .map(|s| s.to_string());
-        if let Some(ref name) = user_name {
-            if let Some(pos) = merged.iter().position(|e| {
-                e.get("name").and_then(|n| n.as_str()) == Some(name)
-            }) {
-                // Merge user fields into the matching default entry
-                let default_entry = merged.remove(pos);
-                merged.push(merge_toml(default_entry, user_entry));
-                continue;
-            }
-        }
-        merged.push(user_entry);
-    }
-    toml::Value::Array(merged)
 }
 
 impl ProviderConfig {

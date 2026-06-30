@@ -38,8 +38,8 @@ flowchart TD
     DAV_INIT -->|"webdav client"| DAV
 ```
 
-Config is loaded from `config.toml` (or `CONFIG_FILE` env var), merged with
-`default.config.toml`, deserialized, and validated into an `AppConfig` instance.
+Config is loaded from `config.toml` (or `CONFIG_FILE` env var) with embedded
+Rust defaults (`#[serde(default)]`), deserialized, and validated into an `AppConfig` instance.
 The active model config selects which AI provider to instantiate
 (DeepSeek / OpenRouter / llama.cpp). WebDAV client creation is conditional on
 `[webdav]` config presence.
@@ -145,9 +145,9 @@ boot — tool registration variant, image model resolution, WebDAV/tool status,
 WebSocket/DDP wire traffic, memory/secret debugging internals, and
 per-invocation tool execution traces require `DEBUG`.
 
-**Config-only startup**: The application only reads `config.toml` (merged
-with `default.config.toml`) at startup. No other local files are read or
-created.
+**Config-only startup**: The application only reads `config.toml` (with
+embedded Rust defaults via `#[serde(default)]`) at startup. No other local
+files are read or created.
 
 **Fail-fast parse boundaries**: Config deserialization and validation
 occur at the boundary. If config is malformed or a required provider is

@@ -8,7 +8,7 @@ use rockbot::types::{ChatMessage, ChatRequest};
 fn project_root() -> PathBuf {
     let mut dir = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     loop {
-        if dir.join("default.config.toml").exists() {
+        if dir.join("Cargo.toml").exists() {
             return dir;
         }
         if let Some(parent) = dir.parent() {

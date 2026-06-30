@@ -1,3 +1,7 @@
+# default.config.toml — reference documentation only
+# This file is NOT read at runtime. All defaults are embedded in Rust source
+# (crate-rockbot/src/config.rs). Copy sections you need into your config.toml.
+
 [platform]
 name = "rocketchat"
 

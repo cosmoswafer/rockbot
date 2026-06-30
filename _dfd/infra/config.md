@@ -2,11 +2,10 @@
 
 ## 1. Purpose
 
-Loads two TOML files at startup — a bundled `default.config.toml` (shipped
-with the repo, no secrets) and a user `config.toml` (gitignored, holds
-passwords and API keys). The two are deep-merged via Serde's merge strategy
-(user values override defaults). The validated `AppConfig` struct is shared
-read-only across all subsystems.
+Loads the user's `config.toml` (gitignored, holds passwords and API keys) at
+startup. All default values are embedded in Rust source via `#[serde(default)]`
+attributes and `Default` trait impls — no second file is read at runtime.
+The validated `AppConfig` struct is shared read-only across all subsystems.
 
 The messaging platform is selected via `[platform] name = "rocketchat" | "matrix"`.
 Only the matching server section (`[rocketchat.server]` or `[matrix.server]`) is
@@ -27,22 +26,15 @@ type consumed by the agent harness.
 ```mermaid
 flowchart TD
     INIT(Initialize)
-    DEF_TOML[(default.config.toml\nbundled defaults\nno secrets)]
     USER_TOML[(config.toml\nuser overrides\npasswords + API keys)]
-    LOAD_DEF(LoadDefaults)
-    LOAD_USR(LoadUserConfig)
-    MERGE(MergeConfig\nuser wins)
+    LOAD_USR(DeserializeConfig\nwith serde defaults)
     VALIDATE(ValidateConfig)
     SHARE(DistributeAppConfig)
     SUBSYS[Subsystems]
 
-    INIT -->|"built-in path"| LOAD_DEF
-    DEF_TOML -->|"toml text"| LOAD_DEF
     INIT -->|"CONFIG_FILE env / 'config.toml'"| LOAD_USR
     USER_TOML -->|"toml text"| LOAD_USR
-    LOAD_DEF -->|"default appconfig"| MERGE
-    LOAD_USR -->|"user appconfig"| MERGE
-    MERGE -->|"merged appconfig"| VALIDATE
+    LOAD_USR -->|"appconfig with\nembedded defaults"| VALIDATE
     VALIDATE -->|"validated appconfig"| SHARE
     SHARE -->|"arc appconfig"| SUBSYS
 ```
@@ -51,18 +43,15 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    LOAD_DEF(LoadDefaults)
-    LOAD_USR(LoadUserConfig)
-    ERR_MISSING_DEF[Error: default.config.toml\nnot found – corrupt install]
+    LOAD_USR(DeserializeConfig\nwith serde defaults)
     ERR_PARSE[Error: TOML Parse]
     ERR_VALID[Error: Validation]
     VALIDATE(ValidateConfig)
 
-    LOAD_DEF -->|"error: file not found"| ERR_MISSING_DEF
-    LOAD_DEF -->|"error: parse failure"| ERR_PARSE
     LOAD_USR -->|"error: parse failure"| ERR_PARSE
-    LOAD_USR -->|"error: file not found\n(defaults used)"| VALIDATE
+    LOAD_USR -->|"error: file not found\n(empty defaults used)"| VALIDATE
     VALIDATE -->|"error: provider not found"| ERR_VALID
+    VALIDATE -->|"error: server credentials empty"| ERR_VALID
 ```
 
 ## 3. Data Structures
@@ -232,10 +221,10 @@ flowchart TD
 
 | File                  | Git   | Secrets | Purpose                                    |
 | --------------------- | ----- | ------- | ------------------------------------------ |
-| `default.config.toml` | Tracked | No   | Bundled defaults (model limits, URLs, empty secrets) |
+| `default.config.toml` | Tracked | No   | Human-readable reference documentation (not read at runtime) |
 | `config.toml`         | Ignored | Yes  | User overrides (passwords, API keys)       |
 
-- `default.config.toml` is loaded first from the workspace root (shipped with the repo).
-- `config.toml` is loaded second; its path comes from the `CONFIG_FILE` env var (default `"config.toml"`).
-- User-provided values deep-merge over defaults. Empty strings in user config override defaults.
+- All defaults live in Rust source (`#[serde(default)]` attributes + `Default` trait impls on each config struct).
+- `config.toml` is the only file read at runtime; its path comes from the `CONFIG_FILE` env var (default `"config.toml"`).
+- Missing fields in `config.toml` are filled from embedded Rust defaults.
 - If `config.toml` is missing, the bot runs with only default values (all secrets will be empty — startup may fail validation).

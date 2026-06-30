@@ -12,7 +12,7 @@ pub mod types;
 pub mod utils;
 pub mod validated;
 
-pub use config::{merge_toml, AppConfig, MatrixServerConfig, MatrixSection, PlatformConfig, ProviderConfig};
+pub use config::{AppConfig, MatrixServerConfig, MatrixSection, PlatformConfig, ProviderConfig};
 pub use error::{Result, RockBotError};
 pub use harness::AgentHarness;
 pub use image_cache::{GeneratedImage, ImageCache, image_markdown};
