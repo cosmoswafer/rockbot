@@ -118,12 +118,14 @@ flowchart TD
 1. **Skip non-joined rooms**: `room.state() != Joined` → drop
 2. **Skip non-original events**: edits, reactions → drop
 3. **Skip self**: `event.sender == bot_user_id` → drop
-4. **Skip historical**: `origin_server_ts < startup_ts` → drop
+4. **Skip historical**: `origin_server_ts + 600s < startup_ts` → drop (10-min grace window
+   allows messages sent shortly before restart to be processed)
 5. **Skip non-text/non-image**: `msgtype != "m.text"` and `msgtype != "m.image"` → drop
    (encrypted `m.room.encrypted` events also dropped — no handler registered for them)
 6. **DM check**: room member count ≤ 2 → forward as DM (`is_dm = true`)
 7. **Mention check**: if not DM, message body must contain `@bot_user_id` (full MXID or
-   localpart `@username`) → forward, otherwise drop
+   localpart `@username`) → forward, otherwise drop. Debug logs `user_id`, `localpart`,
+   and `body` on both match and mismatch to simplify diagnosis.
 
 **Room invite handling** *(by design)*: The bot never auto-joins rooms.
 Only `RoomState::Joined` rooms are processed; `RoomState::Invited` is silently
@@ -178,6 +180,11 @@ flowchart TD
 state store (SQLite by default, located at `state_dir` from config). On restart,
 the SDK restores the session from the store without re-authenticating, unless
 the token has expired.
+
+**User ID validation**: After login, `client.user_id()` is validated to ensure it
+returns `Some` — if `None` (corrupted session), the connection returns
+`AuthFailed` immediately rather than silently using an empty string for mention
+matching and self-message filtering.
 
 **E2EE**: The SDK automatically handles Olm/Megolm key exchange and message
 decryption **when the `e2e-encryption` feature is enabled**. Currently this feature
@@ -322,10 +329,15 @@ flowchart TD
 
 | Field          | Type                    | Purpose                                     |
 | -------------- | ----------------------- | ------------------------------------------- |
-| `client`       | `matrix_sdk::Client`    | Authenticated Matrix SDK client             |
-| `user_id`      | `OwnedUserId`           | Bot's Matrix user ID (for self-filtering)   |
-| `display_name` | `Option<String>`        | Bot display name (for mention matching)     |
-| `state_dir`    | `PathBuf`               | SDK state store directory (crypto + sync)   |
+| `homeserver`   | `String`                | Homeserver URL (e.g. `"https://matrix.org"`)|
+| `user_id`      | `String`                | Bot's Matrix user ID for login              |
+| `password`     | `String`                | Account password                            |
+| `device_id`    | `Option<String>`        | Device ID for session management            |
+
+The `matrix_sdk::Client` is created inside `connect_and_run()`, not stored in
+the struct. The authenticated user ID is extracted from `client.user_id()`
+after login and captured by the event handler closure. If `client.user_id()`
+returns `None`, the connection returns `AuthFailed`.
 
 #### Matrix → `IncomingMessage` Field Mapping
 

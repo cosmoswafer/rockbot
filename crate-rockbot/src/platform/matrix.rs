@@ -111,12 +111,21 @@ impl MessagingClient for MatrixPlatform {
             .await
             .map_err(|e| RockBotError::AuthFailed(format!("Matrix login failed: {e}")))?;
 
-        info!("Matrix: logged in as {}", self.user_id);
-
         let user_id_owned = client
             .user_id()
             .map(|u| u.to_string())
-            .unwrap_or_default();
+            .ok_or_else(|| {
+                RockBotError::AuthFailed(
+                    "Matrix: client.user_id() returned None after successful login".into(),
+                )
+            })?;
+
+        info!(
+            "Matrix: logged in as {} (user_id={})",
+            self.user_id, user_id_owned
+        );
+
+        const HISTORICAL_GRACE_SECS: u64 = 600;
 
         let startup_ts_secs: u64 = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -151,10 +160,10 @@ impl MessagingClient for MatrixPlatform {
                     }
 
                     let msg_ts_secs: u64 = original.origin_server_ts.as_secs().into();
-                    if msg_ts_secs < startup_ts_secs {
+                    if msg_ts_secs + HISTORICAL_GRACE_SECS < startup_ts_secs {
                         debug!(
-                            "Matrix: ignoring historical message (msg_ts={} < startup_ts={})",
-                            msg_ts_secs, startup_ts_secs
+                            "Matrix: ignoring historical message (msg_ts={} + grace={} < startup_ts={})",
+                            msg_ts_secs, HISTORICAL_GRACE_SECS, startup_ts_secs
                         );
                         return;
                     }
@@ -233,15 +242,20 @@ impl MessagingClient for MatrixPlatform {
                             .strip_prefix('@')
                             .and_then(|s| s.split(':').next())
                             .unwrap_or(&user_id);
-                        let mentioned = body.contains(&format!("@{}", localpart))
+                        let mention_at = format!("@{}", localpart);
+                        let mentioned = body.contains(&mention_at)
                             || body.contains(&user_id);
                         if !mentioned {
                             debug!(
-                                "Matrix: ignoring message without @mention in non-DM room (sender={})",
-                                sender
+                                "Matrix: ignoring message without @mention in non-DM room (sender={} user_id={} localpart={} body={:?})",
+                                sender, user_id, localpart, body
                             );
                             return;
                         }
+                        debug!(
+                            "Matrix: mention match in non-DM room (user_id={} localpart={} body={:?})",
+                            user_id, localpart, body
+                        );
                     }
 
                     let sender_name = sender
