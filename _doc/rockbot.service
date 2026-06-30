@@ -1,0 +1,53 @@
+#
+# rockbot systemd service
+#
+# ── USER mode (recommended) ─────────────────────────────────────────────
+#   mkdir -p ~/.config/systemd/user/
+#   cp rockbot.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now rockbot
+#
+# ── SYSTEM mode ─────────────────────────────────────────────────────────
+#   sudo cp rockbot.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now rockbot
+#
+# Paths assume the repo is at /home/rockbot/rockbot.  Adjust WorkingDirectory
+# and ExecStart to match your deployment path.
+#
+
+[Unit]
+Description=RockBot — AI-powered chat bot (RocketChat / Matrix)
+Documentation=https://github.com/anomalyco/rockbot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+# ── paths ───────────────────────────────────────────────────────────────
+WorkingDirectory=/home/rockbot/rockbot
+ExecStart=/home/rockbot/rockbot/target/release/rockbot
+Restart=on-failure
+RestartSec=10
+
+# ── config ──────────────────────────────────────────────────────────────
+# By default the binary reads config.toml from WorkingDirectory.
+# Set CONFIG_FILE to use a different path:
+#Environment=CONFIG_FILE=/home/rockbot/rockbot/config.toml
+
+# ── logging ─────────────────────────────────────────────────────────────
+# RUST_LOG accepts: error, warn, info, debug, trace (comma-separated per module)
+#Environment=RUST_LOG=info
+Environment=RUST_LOG=info
+
+# ── hardening (user mode) ───────────────────────────────────────────────
+# These are mild; for system-wide use you may want NoNewPrivileges, etc.
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/home/rockbot/rockbot
+
+[Install]
+# For user mode (--user), this should be "default.target"
+# For system mode, this should be "multi-user.target"
+WantedBy=default.target
