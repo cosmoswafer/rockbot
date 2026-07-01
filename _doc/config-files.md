@@ -13,16 +13,28 @@ All use the same homeserver (`mtx.tokyofy.top`) except `config.toml` which uses 
 
 ## Restart procedure
 
+**"restart"** — all four instances:
 ```bash
-# 1. Kill all running instances
 pkill rockbot 2>/dev/null
-
-# 2. Start each instance in background (no local logs)
 CONFIG_FILE=config.toml             nohup ./target/release/rockbot < /dev/null > /dev/null 2>&1 &
 CONFIG_FILE=config-local.toml       nohup ./target/release/rockbot < /dev/null > /dev/null 2>&1 &
 CONFIG_FILE=config-localfalcon.toml nohup ./target/release/rockbot < /dev/null > /dev/null 2>&1 &
 CONFIG_FILE=config-localshark.toml  nohup ./target/release/rockbot < /dev/null > /dev/null 2>&1 &
+pgrep -ax rockbot
+```
 
-# 3. Verify
+**"restart three bots"** — only the three `config-local*` instances (excludes vanilla `config.toml`):
+```bash
+pkill rockbot 2>/dev/null
+CONFIG_FILE=config-local.toml       nohup ./target/release/rockbot < /dev/null > /dev/null 2>&1 &
+CONFIG_FILE=config-localfalcon.toml nohup ./target/release/rockbot < /dev/null > /dev/null 2>&1 &
+CONFIG_FILE=config-localshark.toml  nohup ./target/release/rockbot < /dev/null > /dev/null 2>&1 &
+pgrep -ax rockbot
+```
+
+**"restart local bot"** — only the `config-local.toml` instance:
+```bash
+pkill rockbot 2>/dev/null
+CONFIG_FILE=config-local.toml nohup ./target/release/rockbot < /dev/null > /dev/null 2>&1 &
 pgrep -ax rockbot
 ```
