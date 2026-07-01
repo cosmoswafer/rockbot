@@ -100,6 +100,19 @@ impl PlatformSender for RcPlatformSender {
             self.rc_config.clone(),
         ))
     }
+
+    fn strip_mention_prefix(&self, text: &str) -> String {
+        strip_rc_mention_prefix(text, &self.username)
+    }
+}
+
+pub(crate) fn strip_rc_mention_prefix(text: &str, username: &str) -> String {
+    let prefix = format!("@{}", username);
+    text.strip_prefix(&format!("{} ", prefix))
+        .or_else(|| text.strip_prefix(&prefix))
+        .unwrap_or(text)
+        .trim()
+        .to_string()
 }
 
 #[async_trait]
@@ -123,5 +136,35 @@ impl MessagingClient for RocketChatPlatform {
             .map_err(|e| {
                 crate::error::RockBotError::Provider(format!("RocketChat connection error: {e}"))
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::strip_rc_mention_prefix;
+
+    #[test]
+    fn test_strip_mention_with_space() {
+        assert_eq!(strip_rc_mention_prefix("@rockai hello", "rockai"), "hello");
+    }
+
+    #[test]
+    fn test_strip_mention_without_space() {
+        assert_eq!(strip_rc_mention_prefix("@rockaihello", "rockai"), "hello");
+    }
+
+    #[test]
+    fn test_strip_mention_only() {
+        assert_eq!(strip_rc_mention_prefix("@rockai", "rockai"), "");
+    }
+
+    #[test]
+    fn test_strip_mention_no_match() {
+        assert_eq!(strip_rc_mention_prefix("hello world", "rockai"), "hello world");
+    }
+
+    #[test]
+    fn test_strip_mention_leading_spaces() {
+        assert_eq!(strip_rc_mention_prefix("  @rockai hello", "rockai"), "@rockai hello");
     }
 }

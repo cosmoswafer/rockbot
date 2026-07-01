@@ -340,6 +340,18 @@ the struct. The authenticated user ID is extracted from `client.user_id()`
 after login and captured by the event handler closure. If `client.user_id()`
 returns `None`, the connection returns `AuthFailed`.
 
+#### `MatrixSender` (implements `PlatformSender`)
+
+Per-message platform handle created in the event handler closure. Stores the
+`matrix_sdk::Room` for reply sending and the bot's `user_id` for mention
+prefix stripping.
+
+| Field      | Type              | Purpose                                              |
+| ---------- | ----------------- | ---------------------------------------------------- |
+| `room`     | `matrix_sdk::Room`| Room object for `send()`, `typing_notice()`          |
+| `room_id`  | `String`          | Room ID string (e.g. `!abc:example.org`)             |
+| `user_id`  | `String`          | Bot's full MXID (e.g. `@bot:example.org`) — used by `strip_mention_prefix` to strip `@bot:server` or `@bot` localpart from non-DM message text |
+
 #### Matrix → `IncomingMessage` Field Mapping
 
 | `IncomingMessage` field | Matrix source                                          |
@@ -349,7 +361,7 @@ returns `None`, the connection returns `AuthFailed`.
 | `room_name`             | Canonical alias localpart or room ID localpart          |
 | `room_fname`            | Room display name (`m.room.name`)                      |
 | `sender_name`           | `event.sender` localpart (e.g. `@alice` from `@alice:example.org`) |
-| `text`                  | `event.content.body` (plain text body)                 |
+| `text`                  | `event.content.body` (raw plain text body — may contain `@bot` mention prefix; stripped by `MatrixSender::strip_mention_prefix` in the agent loop) |
 | `is_dm`                 | Room joined member count ≤ 2                           |
 | `timestamp`             | `event.origin_server_ts` (milliseconds → seconds)      |
 | `sender_id`             | `event.sender` (full MXID, e.g. `@alice:example.org`)  |

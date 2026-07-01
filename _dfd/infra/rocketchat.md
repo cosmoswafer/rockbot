@@ -674,7 +674,7 @@ per-event `args[1].fname` field; there is no secondary cache lookup.
 
 | Field          | Type              | Purpose                            |
 | -------------- | ----------------- | ---------------------------------- |
-| `bot_name`       | `String`              | `@username` for mention matching            |
+| `bot_name`       | `String`              | `@username` for mention matching (not stripping — stripping is via `RcPlatformSender::strip_mention_prefix`) |
 | `config`         | `RocketChatConfig`   | Server connection configuration             |
 | `username`       | `String`             | Bot login username                          |
 | `user_id`        | `Option<String>`     | User ID received after authentication       |
@@ -686,16 +686,30 @@ per-event `args[1].fname` field; there is no secondary cache lookup.
 #### `RocketChatPlatform` (crate-rockbot/src/platform/rocketchat.rs)
 
 Wrapper that implements the `MessagingClient` trait for RocketChat. Composes
-`RocketChatClient` (DDP) and `RestApiClient` (REST) to provide the trait's
-methods:
+`RocketChatClient` (DDP) and `RestApiClient` (REST).
 
 | `MessagingClient` method | RocketChat implementation                                    |
 | ------------------------ | ------------------------------------------------------------ |
 | `connect_and_run()`      | Delegates to `RocketChatClient::connect_and_run()` with the handler callback |
-| `send_reply()`           | DDP `MessageSender::reply()` — the REST-first alias send is orchestrated by `main.rs` outside the trait |
-| `send_typing()`          | DDP `stream-notify-room/typing` via `MessageSender::typing()` |
-| `bot_user_id()`          | `RocketChatClient.user_id` (set after authentication)        |
 
 The platform wrapper is constructed in `main.rs::run_bot()` after config loading
 and provider wiring. It is passed to the reconnect loop which calls
-`connect_and_run()` with the message dispatch closure.
+`connect_and_run()` with the message dispatch closure. `bot_name` (`@username`)
+is passed to `RocketChatPlatform::new()` and used for mention **checking** in
+the DDP client (`client.rs` — `msg.text.starts_with(&bot_name)`). Mention
+**stripping** is handled by `RcPlatformSender::strip_mention_prefix()`.
+
+#### `RcPlatformSender` (implements `PlatformSender`)
+
+Per-message platform handle created inside the DDP event handler. Stores the
+DDP `MessageSender`, bot username, and RocketChat config for reply sending
+and mention stripping.
+
+| `PlatformSender` method   | RocketChat implementation                                    |
+| ------------------------- | ------------------------------------------------------------ |
+| `send_reply()`            | DDP `MessageSender::reply()` — REST-first alias send orchestrated by `main.rs` |
+| `send_reply_with_attachments()` | DDP `MessageSender::reply_with_attachments()`          |
+| `send_typing()`           | DDP `stream-notify-room/typing` via `MessageSender::typing()` |
+| `strip_mention_prefix()`  | Strips `@username ` or `@username` from text start (non-DM)  |
+| `room_id()`               | DDP `MessageSender.room_id`                                  |
+| `as_any()`                | Enables `main.rs` downcast for REST alias sends              |

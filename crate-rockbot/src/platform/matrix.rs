@@ -34,12 +34,13 @@ impl MatrixPlatform {
 pub struct MatrixSender {
     room: matrix_sdk::Room,
     room_id: String,
+    user_id: String,
 }
 
 impl MatrixSender {
-    fn new(room: matrix_sdk::Room) -> Self {
+    fn new(room: matrix_sdk::Room, user_id: String) -> Self {
         let room_id = room.room_id().to_string();
-        Self { room, room_id }
+        Self { room, room_id, user_id }
     }
 }
 
@@ -86,8 +87,28 @@ impl PlatformSender for MatrixSender {
     }
 
     fn clone_box(&self) -> Box<dyn PlatformSender> {
-        Box::new(MatrixSender::new(self.room.clone()))
+        Box::new(MatrixSender::new(self.room.clone(), self.user_id.clone()))
     }
+
+    fn strip_mention_prefix(&self, text: &str) -> String {
+        strip_matrix_mention_prefix(text, &self.user_id)
+    }
+}
+
+pub(crate) fn strip_matrix_mention_prefix(text: &str, bot_user_id: &str) -> String {
+    let localpart_mention = bot_user_id
+        .strip_prefix('@')
+        .and_then(|s| s.split(':').next())
+        .map(|local| format!("@{}", local))
+        .unwrap_or_else(|| bot_user_id.to_string());
+
+    text.strip_prefix(&format!("{} ", bot_user_id))
+        .or_else(|| text.strip_prefix(bot_user_id))
+        .or_else(|| text.strip_prefix(&format!("{} ", localpart_mention)))
+        .or_else(|| text.strip_prefix(&localpart_mention))
+        .unwrap_or(text)
+        .trim()
+        .to_string()
 }
 
 #[async_trait]
@@ -291,7 +312,7 @@ impl MessagingClient for MatrixPlatform {
                     };
 
                     let platform_sender: Box<dyn PlatformSender> =
-                        Box::new(MatrixSender::new(room));
+                        Box::new(MatrixSender::new(room, user_id.clone()));
                     handler(msg, platform_sender).await;
                 }
             },
@@ -305,5 +326,58 @@ impl MessagingClient for MatrixPlatform {
             .map_err(|e| RockBotError::Provider(format!("Matrix sync error: {e}")))?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::strip_matrix_mention_prefix;
+
+    #[test]
+    fn test_strip_full_mxid_with_space() {
+        assert_eq!(
+            strip_matrix_mention_prefix("@rockbot:matrix.org hello", "@rockbot:matrix.org"),
+            "hello"
+        );
+    }
+
+    #[test]
+    fn test_strip_localpart_with_space() {
+        assert_eq!(
+            strip_matrix_mention_prefix("@rockbot hello", "@rockbot:matrix.org"),
+            "hello"
+        );
+    }
+
+    #[test]
+    fn test_strip_localpart_without_space() {
+        assert_eq!(
+            strip_matrix_mention_prefix("@rockbothello", "@rockbot:matrix.org"),
+            "hello"
+        );
+    }
+
+    #[test]
+    fn test_strip_full_mxid_without_space() {
+        assert_eq!(
+            strip_matrix_mention_prefix("@rockbot:matrix.orghello", "@rockbot:matrix.org"),
+            "hello"
+        );
+    }
+
+    #[test]
+    fn test_strip_mention_only() {
+        assert_eq!(
+            strip_matrix_mention_prefix("@rockbot", "@rockbot:matrix.org"),
+            ""
+        );
+    }
+
+    #[test]
+    fn test_strip_no_match() {
+        assert_eq!(
+            strip_matrix_mention_prefix("hello world", "@rockbot:matrix.org"),
+            "hello world"
+        );
     }
 }

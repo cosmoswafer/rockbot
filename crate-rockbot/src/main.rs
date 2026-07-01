@@ -393,10 +393,8 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     loop {
         let connect_fut = platform.connect_and_run(Box::new({
             let harness = harness.clone();
-            let bot_name = bot_name.clone();
             move |msg: rocketchat::IncomingMessage, sender: Box<dyn PlatformSender>| {
                 let harness = harness.clone();
-                let bot_name = bot_name.clone();
                 Box::pin(async move {
                     if let Err(e) = sender.send_typing(true).await {
                         warn!("Failed to send typing indicator: {}", e);
@@ -424,11 +422,7 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                     let text = if msg.is_dm {
                         msg.text.clone()
                     } else {
-                        msg.text
-                            .strip_prefix(&bot_name)
-                            .unwrap_or(&msg.text)
-                            .trim()
-                            .to_string()
+                        sender.strip_mention_prefix(&msg.text)
                     };
 
                     let room_name = if msg.room_name.is_empty() {

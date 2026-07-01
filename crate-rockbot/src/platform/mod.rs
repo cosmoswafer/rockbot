@@ -30,6 +30,8 @@ pub trait PlatformSender: Send + Sync {
     fn as_any(&self) -> &dyn std::any::Any;
 
     fn clone_box(&self) -> Box<dyn PlatformSender>;
+
+    fn strip_mention_prefix(&self, text: &str) -> String;
 }
 
 impl Clone for Box<dyn PlatformSender> {

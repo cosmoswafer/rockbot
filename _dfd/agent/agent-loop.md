@@ -44,6 +44,7 @@ flowchart TD
     TIMER[Evict Timer]
     DISPATCH(ReceiveMessage)
     TYPING(ToggleTyping)
+    STRIP(StripMentionPrefix)
     LOOP(AgentLoop)
     DIRTY(MarkSnapshotDirty)
     SNAPSHOT(FlushSnapshots)
@@ -54,12 +55,13 @@ flowchart TD
     TOOLS[(ToolRegistry)]
     ROOMS[(RoomStateMap)]
 
-    PLATFORM -->|"incoming message"| DISPATCH
+    PLATFORM -->|"incoming message + PlatformSender"| DISPATCH
     ROOMS -->|"room state"| DISPATCH
     CFG -->|"app config"| DISPATCH
-    DISPATCH -->|"incoming message"| TYPING
+    DISPATCH -->|"incoming message + sender"| TYPING
     TYPING -->|"typing on"| PLATFORM
-    TYPING -->|"incoming message"| LOOP
+    TYPING -->|"incoming message + sender"| STRIP
+    STRIP -->|"non-DM: clean text<br/>DM: raw text"| LOOP
     CFG -->|"ai config"| LOOP
     HISTORY -->|"conversation history"| LOOP
     TOOLS -->|"tool definitions"| LOOP
@@ -212,31 +214,13 @@ Typing indicator state is intentionally not retried or persisted — it is a tra
 
 #### `MessagingClient` trait (platform/mod.rs)
 
-Async trait defining the contract between the agent loop and any messaging
-platform. Both `RocketChatPlatform` and `MatrixPlatform` implement this trait.
+Async trait defining the connection contract. Both `RocketChatPlatform` and
+`MatrixPlatform` implement this trait.
 
 ```rust
 #[async_trait]
 pub trait MessagingClient: Send + Sync {
-    async fn connect_and_run(
-        &self,
-        handler: impl Fn(IncomingMessage) -> Fut + Send + Sync,
-    ) -> Result<()>;
-
-    async fn send_reply(
-        &self,
-        room_id: &str,
-        text: &str,
-        alias: Option<&str>,
-    ) -> Result<()>;
-
-    async fn send_typing(
-        &self,
-        room_id: &str,
-        typing: bool,
-    ) -> Result<()>;
-
-    fn bot_user_id(&self) -> &str;
+    async fn connect_and_run(&self, handler: MessageHandler) -> Result<()>;
 }
 ```
 
@@ -245,29 +229,72 @@ pub trait MessagingClient: Send + Sync {
   Returns `Err` on connection failure (triggers reconnect in the agent loop).
   For RocketChat: DDP WebSocket connect → auth → subscribe → event loop.
   For Matrix: login → start `/sync` loop → dispatch room messages.
+
+#### `PlatformSender` trait (platform/mod.rs)
+
+Per-message platform handle passed to the handler alongside each
+`IncomingMessage`. Each platform's concrete sender implements this trait.
+The agent loop uses it for replies, typing indicators, and mention stripping.
+
+```rust
+#[async_trait]
+pub trait PlatformSender: Send + Sync {
+    async fn send_reply(&self, text: &str, alias: Option<&str>) -> Result<()>;
+    async fn send_reply_with_attachments(
+        &self, text: &str, attachments: &[serde_json::Value],
+        alias: Option<&str>,
+    ) -> Result<()>;
+    async fn send_typing(&self, typing: bool) -> Result<()>;
+    fn room_id(&self) -> &str;
+    fn as_any(&self) -> &dyn std::any::Any;
+    fn clone_box(&self) -> Box<dyn PlatformSender>;
+    fn strip_mention_prefix(&self, text: &str) -> String;
+}
+```
+
 - `send_reply` — send a text message to a room. For RocketChat: REST
   `chat.sendMessage` with alias fallback to DDP. For Matrix:
-  `Client::room_send()` with `RoomMessageEventContent::text_plain()`.
+  `Client::room_send()` with `RoomMessageEventContent::text_markdown()`.
 - `send_typing` — send typing indicator. For Matrix: `m.typing` state event.
-- `bot_user_id` — the platform-specific user ID used for self-message filtering.
+- `strip_mention_prefix` — strip the bot's @mention prefix from message text
+  (non-DM only). Platform-specific: RocketChat strips `@username`, Matrix
+  strips `@localpart` or full MXID. See [Mention Prefix Stripping](#mention-prefix-stripping-platformsenderstrip_mention_prefix) below.
 
-> **Design note**: The trait is intentionally narrow — it only covers the
-> bidirectional message flow. Platform-specific features (REST alias, file
-> uploads, room name resolution) remain on the concrete types and are accessed
-> by the agent loop through platform-specific code paths or optional trait
-> extensions.
+> **Design note**: The traits are intentionally narrow — they only cover the
+> bidirectional message flow and per-message text cleaning. Platform-specific
+> features (REST alias, file uploads, room name resolution) remain on the
+> concrete types and are accessed by the agent loop through platform-specific
+> code paths or `as_any()` downcasting.
 
-#### `bot_name` Derivation (main.rs)
+#### Mention Prefix Stripping (`PlatformSender::strip_mention_prefix`)
 
-`bot_name` is platform-aware, determined at startup before the reconnect loop:
+Non-DM messages arrive with the bot's @mention prefix in the text (e.g.
+`"@rockai hello"` on RocketChat, `"@rockbot hello"` on Matrix). The agent
+loop strips this prefix before passing the text to `process_message()` so
+the LLM receives clean user text.
 
-- **Matrix**: uses `[matrix.server] user_id` (e.g. `@zeroquokka:matrix.org`)
-- **RocketChat**: uses `@username` from `[rocketchat.server] username`
+The stripping logic is platform-specific and implemented as a
+`PlatformSender` trait method:
 
-It is used for prefix-stripping (RocketChat: remove `@botname ` prefix) and mention-checking
-(non-DM messages must contain `bot_name` to be processed). The Matrix platform handler
-performs its own mention check before dispatching, so by the time a Matrix-sourced
-`IncomingMessage` reaches the agent loop, it has already passed the mention filter.
+```rust
+fn strip_mention_prefix(&self, text: &str) -> String;
+```
+
+- **RocketChat** (`RcPlatformSender`): strips `@username ` or `@username`
+  (derived from `[rocketchat.server] username`).
+- **Matrix** (`MatrixSender`): strips the full MXID (`@bot:server`) or the
+  localpart (`@bot`), with or without trailing space. Matrix clients put the
+  localpart in the message body, not the full MXID — so both forms are tried.
+
+The agent loop calls `sender.strip_mention_prefix(&msg.text)` for non-DM
+messages only. DM messages are passed through unchanged (no @mention prefix
+to strip).
+
+`bot_name` is still derived at startup (Matrix: `[matrix.server] user_id`,
+RocketChat: `@username` from `[rocketchat.server] username`) and passed to
+`RocketChatPlatform::new()` for mention **checking** in the RocketChat DDP
+client. It is no longer used for prefix-stripping in the agent loop — that
+responsibility belongs to the `PlatformSender` trait.
 
 #### `AgentHarness` (harness.rs:55-65)
 
