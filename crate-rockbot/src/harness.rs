@@ -61,6 +61,8 @@ pub struct AgentHarness {
     rest_client: Option<RestApiClient>,
     max_iterations: u32,
     max_attachment_bytes: u64,
+    bot_id: String,
+    snapshot_prefix: String,
     image_pool: HashMap<String, Vec<CachedImage>>,
     pending_vision_images: HashMap<String, Vec<CachedImage>>,
     image_cache: Arc<ImageCache>,
@@ -81,6 +83,19 @@ impl AgentHarness {
         let persist_interval = active_model.persist_interval_secs;
         let max_context_bytes = *active_model.max_context_bytes;
         let max_attachment_bytes = active_model.max_attachment_bytes;
+        let bot_id = match config.platform.name.as_str() {
+            "matrix" => config
+                .matrix
+                .as_ref()
+                .map(|m| m.server.user_id.clone())
+                .unwrap_or_default(),
+            _ => config.rocketchat.server.username.clone(),
+        };
+        let snapshot_prefix = config
+            .webdav
+            .as_ref()
+            .map(|w| w.snapshot_prefix.clone())
+            .unwrap_or_else(|| ".snapshots".to_string());
         let config = Arc::new(config);
         Self {
             config,
@@ -91,6 +106,8 @@ impl AgentHarness {
             rest_client: None,
             max_iterations,
             max_attachment_bytes,
+            bot_id,
+            snapshot_prefix,
             image_pool: HashMap::new(),
             pending_vision_images: HashMap::new(),
             image_cache,
@@ -259,6 +276,13 @@ impl AgentHarness {
         // Always refresh soul and summary from WebDAV (multi-instance sync)
         if let Some(ref webdav_client) = self.webdav {
             if let Ok(soul) = self.load_soul(webdav_client, &wd).await {
+                let len = soul.content.chars().count();
+                let head: String = soul.content.chars().take(80).collect();
+                let tail: String = soul.content.chars().rev().take(200).collect::<Vec<_>>().into_iter().rev().collect();
+                debug!(
+                    "Refreshed soul.md for room {} (dir={}): len={} chars, head={:?}, tail={:?}",
+                    room_id, wd, len, head, tail
+                );
                 self.memory.set_soul(room_id, soul);
             }
             if let Ok(Some(summary)) = self.load_summary(webdav_client, &wd).await {
@@ -1133,9 +1157,9 @@ impl AgentHarness {
             None => return,
         };
 
-        // Snapshot restores only Layer 1 (history) — soul and summary are always
-        // read fresh from their individual files for multi-instance consistency.
-        let snap_path = format!("{}memory/snapshot.json", WebDavPath::new("").room_dir(&wd));
+        // Snapshot stores only Layer 1 (history) — bot-internal data under
+        // {snapshot_prefix}/{bot_id}/{wd}/snapshot.json, isolated per bot instance.
+        let snap_path = WebDavPath::new("").bot_snapshot_path(&self.snapshot_prefix, &self.bot_id, &wd);
 
         if let Ok(content) = webdav_client.read_file_to_string(&snap_path).await {
             if let Ok(snapshot) = serde_json::from_str::<crate::memory::PersistSnapshot>(&content) {
@@ -1366,7 +1390,14 @@ impl AgentHarness {
                 continue;
             }
 
-            let path = format!("{}memory/snapshot.json", WebDavPath::new("").room_dir(&wd));
+            let path = WebDavPath::new("").bot_snapshot_path(&self.snapshot_prefix, &self.bot_id, &wd);
+            let snap_soul_len = snapshot.soul.as_ref().map(|s| s.chars().count()).unwrap_or(0);
+            let snap_soul_tail: String = snapshot
+                .soul
+                .as_ref()
+                .map(|s| s.chars().rev().take(200).collect::<Vec<_>>().into_iter().rev().collect())
+                .unwrap_or_default();
+            let snap_room_id = snapshot.room_id.as_str().to_string();
             let json = match serde_json::to_vec(&snapshot) {
                 Ok(j) => j,
                 Err(e) => {
@@ -1374,6 +1405,11 @@ impl AgentHarness {
                     continue;
                 }
             };
+
+            debug!(
+                "flush_snapshot: room={} (dir={}, snap_room_id={}, soul_len={} chars, soul_tail={:?})",
+                room_id, wd, snap_room_id, snap_soul_len, snap_soul_tail
+            );
 
             match webdav_client.write_file_with_fallback(&path, json).await {
                 Ok(()) => {

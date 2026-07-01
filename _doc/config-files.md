@@ -11,6 +11,23 @@ Four bot instances, each driven by a separate `CONFIG_FILE`:
 
 All use the Matrix homeserver (`mtx.tokyofy.top`) except `config-atom.toml` which uses RocketChat (`rc.tokyofy.top`). The atom instance normally runs on a separate machine; it's only kept here for debugging.
 
+## Shared WebDAV root is intentional (localfalcon + localshark)
+
+localfalcon and localshark **intentionally** share WebDAV root `CLAW`. This is not a misconfiguration — it is the design for running two bots with **different LLMs** (a smarter one and a faster one) that present as **one shared identity** to the same DM user. Both DMs resolve to the same `d-{name}` WebDAV directory (e.g. `d-DTI` for DMs with `@dti:tokyofy.matrix`), so they read/write the same `soul.md` and `summary.md`. **Snapshot data is isolated per bot** — see below.
+
+Consequences and constraints of this design:
+
+- **One soul, two brains.** `soul.md` is shared; either bot's `edit_soul` updates the shared identity. Per-bot identity (e.g. a bot's own name) must not live in the shared `soul.md` unless both bots should present that same name.
+- **Sync is pull-based, not real-time.** Each bot re-reads `soul.md` from WebDAV on every incoming message (`harness.rs:261`), so staleness is bounded by the inter-message gap in the other bot's room. There is no background polling, file watch, or cross-instance push. If one room is idle, that bot keeps the last-read soul until its next message. See issue #46.
+- **No write coordination.** `edit_soul` does an unconditional PUT (last-write-wins, no ETag/If-Match). Concurrent edits from both bots can silently lose a write.
+- **`state_dir` must differ per instance** even when the WebDAV root is shared. localfalcon uses `./tmp/matrix-sdk-falcon`, localshark uses `./tmp/matrix-sdk-shark` (Matrix SDK session store must not collide).
+- **Snapshot isolation** (`snapshot.json`): each bot instance writes its own snapshot to `{root}/{snapshot_prefix}/{bot_id}/{wd}/snapshot.json` (default prefix `.snapshots`). Example:
+  ```
+  CLAW/.snapshots/threefalcon/d-DTI/snapshot.json    ← falcon's history only
+  CLAW/.snapshots/oneshark/d-DTI/snapshot.json       ← shark's history only
+  ```
+  This eliminates the snapshot clobbering race documented in issue #46 / #49.
+
 ## Restart procedure
 
 **"restart"** — all three regular instances (default + two locals):

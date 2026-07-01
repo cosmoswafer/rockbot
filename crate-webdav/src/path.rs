@@ -56,6 +56,18 @@ impl WebDavPath {
         format!("/{}/{}/", self.root, room_id)
     }
 
+    pub fn bot_snapshot_path(
+        &self,
+        snapshot_prefix: &str,
+        bot_id: &str,
+        room_key: &str,
+    ) -> String {
+        let prefix = snapshot_prefix.trim_matches('/');
+        let bot = bot_id.trim_matches('/');
+        let room = room_key.trim_matches('/');
+        format!("/{}/{}/{}/{}/snapshot.json", self.root, prefix, bot, room)
+    }
+
     pub fn memory_dir(&self, room_id: &str) -> String {
         format!("/{}/{}/memory/", self.root, room_id)
     }
@@ -118,6 +130,33 @@ mod tests {
     fn test_room_dir() {
         let p = WebDavPath::new("rockbot");
         assert_eq!(p.room_dir("general"), "/rockbot/general/");
+    }
+
+    #[test]
+    fn test_bot_snapshot_path() {
+        let p = WebDavPath::new("");
+        assert_eq!(
+            p.bot_snapshot_path(".snapshots", "threefalcon", "d-DTI"),
+            "//.snapshots/threefalcon/d-DTI/snapshot.json"
+        );
+    }
+
+    #[test]
+    fn test_bot_snapshot_path_with_root() {
+        let p = WebDavPath::new("CLAW");
+        assert_eq!(
+            p.bot_snapshot_path(".snapshots", "oneshark", "d-DTI"),
+            "/CLAW/.snapshots/oneshark/d-DTI/snapshot.json"
+        );
+    }
+
+    #[test]
+    fn test_bot_snapshot_path_trims_slashes() {
+        let p = WebDavPath::new("CLAW");
+        assert_eq!(
+            p.bot_snapshot_path("/.snapshots/", "/threefalcon/", "/d-DTI/"),
+            "/CLAW/.snapshots/threefalcon/d-DTI/snapshot.json"
+        );
     }
 
     #[test]

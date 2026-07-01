@@ -7,10 +7,12 @@ communicating and are evicted after a configurable idle TTL — the snapshot is
 persisted to WebDAV before eviction, then restored on next interaction.
 
 **Soul** and **summary** are re-read from WebDAV on every single message
-(not cached), exactly like the knowledge index. The snapshot restores only
-Layer 1 (conversation history) — soul and summary are always fetched from
-their individual files regardless of snapshot contents. This ensures zero
-staleness when multiple bot instances share the same WebDAV folder.
+(not cached), exactly like the knowledge index. The snapshot stores only
+Layer 1 (conversation history) — it is **bot-internal data** written to a
+separate WebDAV prefix (`{snapshot_prefix}/{bot_id}/{wd}/snapshot.json`),
+isolated per bot instance. Soul and summary are always fetched from their
+individual files in the shared room folder. This ensures zero staleness when
+multiple bot instances share the same WebDAV room folder.
 
 | Layer | Name | Storage | Limit | Contents |
 |-------|------|---------|-------|----------|
@@ -87,25 +89,26 @@ is documented in [Memory Compression](memory-compression.md).
 ### 2c. Persist & Evict Flow — Timer
 
 A single periodic timer handles both crash-recovery snapshot persistence and
-TTL-based eviction. The snapshot caches all three layers (chat history,
-compressed memory, soul) for single-read restore. After persisting, rooms idle
-longer than `memory_ttl_secs` are saved and removed from the in-memory map.
+TTL-based eviction. The snapshot stores only Layer 1 (conversation history) —
+it is bot-internal data written to a separate prefix
+(`{snapshot_prefix}/{bot_id}/{wd}/snapshot.json`), isolated per bot instance.
+After persisting, rooms idle longer than `memory_ttl_secs` are saved and
+removed from the in-memory map.
 
-When any layer changes (soul edit, summary write, compression), the snapshot is
-marked dirty and rebuilt on the next timer tick — writes are coalesced to
-avoid thrashing WebDAV.
+When Layer 1 changes (new message, compression), the snapshot is marked dirty
+and rebuilt on the next timer tick — writes are coalesced to avoid thrashing
+WebDAV. Soul and summary changes do NOT mark the snapshot dirty — they are
+shared room data stored in their own files.
 
 ```mermaid
 flowchart TD
     TIMER[Evict Timer]
     L1[(Layer 1<br/>Chat History)]
-    L2[(Layer 2<br/>Compressed Memory)]
-    L3[(Layer 3<br/>Soul)]
-    WEBDAV[(NextCloud WebDAV)]
+    WEBDAV[(NextCloud WebDAV<br/>snapshot_prefix)]
     LOAD_ROOM{More Rooms?}
     EMPTY{Room Empty?}
     DIRTY{Snapshot Dirty?}
-    BUILD[Build Full Snapshot<br/>L1 + L2 + L3]
+    BUILD[Build Snapshot<br/>L1 only]
     PERSIST(Persist Snapshot)
     STALE{"now - last_activity<br/>> memory_ttl_secs"}
     EVICT(Remove Room<br/>from Memory)
@@ -119,10 +122,10 @@ flowchart TD
     L1 -->|"room_id + messages + char_count"| EMPTY
     EMPTY -->|"no"| DIRTY
     EMPTY -->|"yes: skip"| LOAD_ROOM
-    DIRTY -->|"yes: collect L1+L2+L3"| BUILD
+    DIRTY -->|"yes: collect L1"| BUILD
     DIRTY -->|"no"| STALE
     BUILD --> PERSIST
-    PERSIST -->|"PUT snapshot.json"| WEBDAV
+    PERSIST -->|"PUT {snapshot_prefix}/{bot_id}/{wd}/snapshot.json"| WEBDAV
     PERSIST --> STALE
     STALE -->|"yes: evict"| EVICT
     STALE -->|"no: keep in memory"| LOAD_ROOM
@@ -149,16 +152,18 @@ flowchart TD
 
 ### 2e. Restore Flow — Snapshot for History Only (Room Init)
 
-Snapshot restores only Layer 1 (conversation history) for crash recovery.
-Soul and summary are always fetched fresh from their individual files —
-the snapshot's cached copies are ignored to avoid multi-instance staleness.
+Snapshot stores only Layer 1 (conversation history) for crash recovery.
+It is read from the bot-internal prefix
+(`{snapshot_prefix}/{bot_id}/{wd}/snapshot.json`), isolated per bot instance.
+Soul and summary are always fetched fresh from their individual files in the
+shared room folder.
 
 ```mermaid
 flowchart TD
     INIT[Room Initialization]
     DAV[(NextCloud WebDAV)]
-    GET_SNAP["1. GET snapshot.json"]
-    SNAP_OK{snapshot.json<br/>exists?}
+    GET_SNAP["1. GET {snapshot_prefix}/{bot_id}/{wd}/snapshot.json"]
+    SNAP_OK{snapshot<br/>exists?}
     UNPACK["Unpack Layer 1<br/>(history only)"]
     MISSING["No snapshot<br/>(empty history)"]
     GET_SOUL["2. GET soul.md"]
@@ -182,7 +187,8 @@ flowchart TD
 Knowledge entries are also restored during room init — see [Knowledge Management](knowledge.md).
 
 Key properties:
-- **History-only snapshot**: snapshot restores only Layer 1 (chat history) — soul and summary are always fetched from their dedicated files
+- **History-only snapshot**: snapshot stores only Layer 1 (chat history) — soul and summary are always fetched from their dedicated files
+- **Bot-internal isolation**: snapshot is written under `{snapshot_prefix}/{bot_id}/{wd}/`, separate from the shared room folder — two bot instances sharing the same room never clobber each other's snapshot
 - **No staleness**: every message re-reads soul.md and summary.md from WebDAV, ensuring multi-instance consistency
 - **No snapshot blocking**: if snapshot write fails, the system continues operating — next timer tick retries
 
@@ -211,62 +217,65 @@ flowchart TD
 
 ### 2g. Memory Partitioning
 
-Each room gets isolated three-layer memory under its own WebDAV directory.
+Each room gets isolated three-layer memory. Shared room data (`soul.md`,
+`summary.md`) lives under the room's WebDAV directory. Bot-internal snapshot
+data lives under a separate prefix, namespaced by `bot_id`, so two bot
+instances sharing the same room never clobber each other's snapshot.
 
 ```mermaid
 flowchart TD
-    ROOM_A["r-general"]
-    ROOM_B["d-alice"]
-    DAV_A[(WebDAV r-general/memory/)]
-    DAV_B[(WebDAV d-alice/memory/)]
-    L1_A[(Layer 1<br/>In-Memory)]
-    L1_B[(Layer 1<br/>In-Memory)]
-    SNAP_A[(snapshot.json)]
-    SNAP_B[(snapshot.json)]
-    L2_A[(Layer 2<br/>summary.md)]
-    L2_B[(Layer 2<br/>summary.md)]
-    L3_A[(Layer 3<br/>soul.md)]
-    L3_B[(Layer 3<br/>soul.md)]
+    BOT_A["Bot A (bot_id=threefalcon)"]
+    BOT_B["Bot B (bot_id=oneshark)"]
+    ROOM["Shared room d-DTI"]
+    DAV_ROOM[(WebDAV d-DTI/memory/)]
+    DAV_SNAP_A[(WebDAV .snapshots/threefalcon/d-DTI/)]
+    DAV_SNAP_B[(WebDAV .snapshots/oneshark/d-DTI/)]
+    L1_A[(Layer 1<br/>In-Memory Bot A)]
+    L1_B[(Layer 1<br/>In-Memory Bot B)]
+    SNAP_A[(snapshot.json<br/>Bot A)]
+    SNAP_B[(snapshot.json<br/>Bot B)]
+    L2[(Layer 2<br/>summary.md<br/>shared)]
+    L3[(Layer 3<br/>soul.md<br/>shared)]
 
-    ROOM_A --> L1_A
-    ROOM_B --> L1_B
-    L1_A -->|"overflow → compress"| L2_A
-    L1_B -->|"overflow → compress"| L2_B
+    BOT_A --> L1_A
+    BOT_B --> L1_B
+    ROOM --> DAV_ROOM
     L1_A -->|"timer → persist"| SNAP_A
     L1_B -->|"timer → persist"| SNAP_B
-    SNAP_A --> DAV_A
-    SNAP_B --> DAV_B
-    L2_A --> DAV_A
-    L2_B --> DAV_B
-    L3_A --> DAV_A
-    L3_B --> DAV_B
+    SNAP_A --> DAV_SNAP_A
+    SNAP_B --> DAV_SNAP_B
+    L2 --> DAV_ROOM
+    L3 --> DAV_ROOM
+    DAV_ROOM -->|"GET soul.md"| BOT_A
+    DAV_ROOM -->|"GET soul.md"| BOT_B
 ```
 
 ## 3. Data Structures
 
 All structs live in `crate-rockbot/src/memory.rs` unless noted.
 
-### `PersistSnapshot` (WebDAV checkpoint / cache)
+### `PersistSnapshot` (WebDAV checkpoint — bot-internal)
 
-A single JSON file stored at `{root}/{webdav_dir}/memory/snapshot.json`.
-One file per room. Caches all three layers for single-read restore.
+A single JSON file stored at `{root}/{snapshot_prefix}/{bot_id}/{webdav_dir}/snapshot.json`.
+One file per bot instance per room. Stores only Layer 1 (conversation history)
+for crash recovery. Soul and summary are NOT stored in the snapshot — they are
+shared room data, always read from their individual files.
 
 | Field              | Type                    | Notes                                                  |
 | ------------------ | ----------------------- | ------------------------------------------------------ |
 | `schema`           | `NonEmptyString`        | `"rockbot-snapshot/1"` version marker (validated at JSON boundary) |
-| `room_id`          | `NonEmptyString`        | RocketChat room UUID                                   |
+| `room_id`          | `NonEmptyString`        | Platform room identifier (Matrix room ID or RocketChat room ID) |
 | `messages`         | `Vec<ChatMessage>`      | Raw Layer 1 messages (in-memory buffer)                |
 | `char_count`       | `usize`                 | Running Layer 1 character count                        |
 | `archive_seq`      | `u64`                   | Compression sequence number (monotonic, for staleness checks) |
-| `soul`             | `Option<String>`        | Layer 3: full soul.md content (None if no soul) — stored in snapshot but **ignored on restore**; always re-read from soul.md |
-| `summary`          | `Option<String>`        | Layer 2: compressed summary.md content (None if no summary) — stored in snapshot but **ignored on restore**; always re-read from summary.md |
+| `soul`             | `Option<String>`        | Deprecated — always `None` in new writes; ignored on read. Retained in struct for deserialization compatibility with old snapshots. |
+| `summary`          | `Option<String>`        | Deprecated — always `None` in new writes; ignored on read. Retained in struct for deserialization compatibility with old snapshots. |
 | `updated_at`       | `String`                | ISO 8601 timestamp of last write                       |
 
-Rebuilt whenever any layer is modified (soul edit, compression write).
-Written on the periodic persist timer (coalesced — not on every individual
-change). Source of truth for each layer remains its dedicated file
-(`soul.md`, `summary.md`). Snapshot soul/summary fields are preserved for
-backward compatibility (existing snapshot files) but never consumed.
+Rebuilt when Layer 1 changes (new message, compression). Written on the
+periodic persist timer (coalesced — not on every individual change). The
+`snapshot_prefix` is configurable via `[webdav] snapshot_prefix` (default
+`.snapshots`), isolating bot-internal data from the shared room folder.
 
 ### `MemoryManager`
 
@@ -351,15 +360,26 @@ entire file.
 
 ### File Layout
 
-Memory is stored per-room under the prefixed `webdav_dir` key (see
+Shared room data is stored per-room under the prefixed `webdav_dir` key (see
 [rocketchat.md](rocketchat.md) for naming conventions — `r-` for channels,
-`d-` for DMs, preferring `room_fname` over `room_name`).
+`d-` for DMs, preferring `room_fname` over `room_name`). Bot-internal snapshot
+data is stored under a separate configurable prefix, namespaced by `bot_id`.
 
 ```
 {root}/{webdav_dir}/memory/
-├── snapshot.json               # Timer-based crash-recovery checkpoint
-├── soul.md                     # Layer 3: permanent core memory
-├── summary.md                  # Layer 2: AI-compressed memory (≤10 bullet points)
+├── soul.md                     # Layer 3: permanent core memory (shared)
+└── summary.md                  # Layer 2: AI-compressed memory (≤10 bullet points, shared)
+
+{root}/{snapshot_prefix}/{bot_id}/{webdav_dir}/
+└── snapshot.json               # Layer 1: bot-internal crash-recovery checkpoint
+```
+
+Example with `snapshot_prefix = ".snapshots"`, two bots sharing room `d-DTI`:
+```
+CLAW/d-DTI/memory/soul.md                          # shared soul
+CLAW/d-DTI/memory/summary.md                       # shared summary
+CLAW/.snapshots/threefalcon/d-DTI/snapshot.json    # falcon's history only
+CLAW/.snapshots/oneshark/d-DTI/snapshot.json       # shark's history only
 ```
 
 ## 4. Configuration
@@ -374,6 +394,12 @@ Fields from `ModelConfig` in [Configuration Management](config.md):
 | `max_context_bytes`    | `usize` | 4_000_000 | Max byte size for context (triggers inline trim + flags for compression) |
 | `model_context_length` | `u32`   | 1_000_000 | Model's max context tokens; 90% threshold triggers post-LLM compression |
 
+Field from `WebDavConfig` in [Configuration Management](config.md):
+
+| Field                  | Type    | Default      | Notes                                              |
+| ---------------------- | ------- | ------------ | -------------------------------------------------- |
+| `snapshot_prefix`      | `String`| `.snapshots` | WebDAV path prefix for bot-internal snapshot storage; isolates snapshot.json from shared room folder |
+
 Note: removed `max_summary_chars` and `summary_days` — no longer needed since
 Layer 2 is a single `summary.md` capped at 10 bullet points by LLM instruction.
 
@@ -383,12 +409,12 @@ Layer 2 is a single `summary.md` capped at 10 bullet points by LLM instruction.
 
 | Trigger             | Method                        | Frequency                      | Condition                                                    | Action                                        |
 | ------------------- | ----------------------------- | ------------------------------ | ------------------------------------------------------------ | --------------------------------------------- |
-| **Timer persist**   | `maintenance_tick()` (Phase 1) | Every `persist_interval_secs`  | `dirty_snapshots` is non-empty                               | Build full snapshot (L1+L2+L3), PUT `snapshot.json`, clear dirty flag |
+| **Timer persist**   | `maintenance_tick()` (Phase 1) | Every `persist_interval_secs`  | `dirty_snapshots` is non-empty                               | Build snapshot (L1 only), PUT `{snapshot_prefix}/{bot_id}/{wd}/snapshot.json`, clear dirty flag |
 | **Timer evict**     | `maintenance_tick()` (Phase 2) | Every `persist_interval_secs`  | Room has ≥ 1 message AND `last_activity > 0` AND `now - last_activity > memory_ttl_secs` | Persist snapshot if dirty, then remove room from `HashMap` |
 | **Compression**     | `compress_room_if_needed()`    | After reply delivered (background)  | Checks flags (token pressure, byte pressure) | See [Memory Compression](memory-compression.md) |
 | **Safety net**      | `trim_context()`               | Before each LLM call           | `context_bytes > max_context_bytes`                              | Inline trim only; sets byte_pressure_flag. See [Memory Compression](memory-compression.md §2d) |
 | **Soul/summary refresh** | `process_message()`         | On every incoming message      | WebDAV configured (always)                                  | Re-read `soul.md` and `summary.md` from WebDAV, update in-memory holders |
-| **Room init**       | `restore_history()`            | Once per room, on first message| Room not in memory (fresh or evicted)                        | Load snapshot for history, always read soul + summary from individual files |
+| **Room init**       | `restore_history()`            | Once per room, on first message| Room not in memory (fresh or evicted)                        | Load snapshot from `{snapshot_prefix}/{bot_id}/{wd}/snapshot.json` for history, always read soul + summary from individual files |
 | **Soul edit**       | `edit_soul()` tool             | On user request                | LLM invokes `edit_soul` tool                                 | Write `soul.md`, update in-memory soul, mark snapshot dirty |
 | **Touch activity**  | `process_message()`            | On every incoming message      | Room exists in memory                                        | Update `last_activity` timestamp to prevent eviction |
 
@@ -422,9 +448,9 @@ near-limit).
 
 | Step               | Harness method                     | Notes                                              |
 | ------------------ | ---------------------------------- | -------------------------------------------------- |
-| Timer persist      | `maintenance_tick()` (Phase 1)     | Called every `persist_interval_secs`; writes dirty snapshot.json |
+| Timer persist      | `maintenance_tick()` (Phase 1)     | Called every `persist_interval_secs`; writes dirty snapshot to `{snapshot_prefix}/{bot_id}/{wd}/snapshot.json` |
 | Timer evict        | `maintenance_tick()` (Phase 2)     | Called every `persist_interval_secs`; persists snapshot then removes stale rooms |
-| Room init          | `restore_history()`                | Cache-first: reads snapshot.json, falls back to individual files |
+| Room init          | `restore_history()`                | Cache-first: reads `{snapshot_prefix}/{bot_id}/{wd}/snapshot.json`, always reads soul + summary from individual files |
 | Soul edit          | `edit_soul()` tool                 | Writes soul.md, updates in-memory, marks snapshot dirty |
 | Touch activity     | `process_message()`                | Updates `last_activity` on every incoming message   |
 | Context injection  | `MemoryManager::build_context()`   | Prepend soul + summary + history                    |

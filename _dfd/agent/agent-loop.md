@@ -79,7 +79,7 @@ flowchart TD
     LOOP -->|"updated room state"| ROOMS
     TIMER -->|"every persist_interval_secs"| SNAPSHOT
     ROOMS -->|"dirty rooms"| SNAPSHOT
-    SNAPSHOT -->|"snapshot.json<br/>(history + summary + soul)"| DAV
+    SNAPSHOT -->|"snapshot.json<br/>(L1 history, bot-internal<br/>under {snapshot_prefix}/{bot_id}/{wd})"| DAV
     TIMER -->|"every persist_interval_secs"| EVICT_ROOMS
     ROOMS -->|"all rooms"| EVICT_ROOMS
     EVICT_ROOMS -->|"snapshot.json for stale rooms"| DAV
@@ -119,7 +119,7 @@ flowchart TD
 
 On graceful shutdown (SIGINT, SIGTERM, normal connection close, or max reconnect retries), the bot:
 1. Aborts the periodic maintenance timer to prevent races on the harness mutex.
-2. Acquires the harness lock and calls `flush_all_snapshots()`, which iterates every dirty room (soul/knowledge/summary changes), builds a `PersistSnapshot`, serializes to JSON, and uploads `snapshot.json` to WebDAV via `write_file_with_fallback`.
+2. Acquires the harness lock and calls `flush_all_snapshots()`, which iterates every dirty room, builds a `PersistSnapshot` (Layer 1 history only), serializes to JSON, and uploads to `{snapshot_prefix}/{bot_id}/{wd}/snapshot.json` on WebDAV via `write_file_with_fallback`.
 
 Typing indicator failures are non-critical: if `sender.typing()` returns an error (e.g. WebSocket disconnected), the heartbeat task silently catches it and stops refreshing. The main agent loop is unaffected — it continues processing and sends the reply without typing cleanup.
 

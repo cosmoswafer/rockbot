@@ -8,6 +8,10 @@ fn default_dav_path() -> String {
     "/remote.php/dav".to_string()
 }
 
+fn default_snapshot_prefix() -> String {
+    ".snapshots".to_string()
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct WebDavConfig {
     pub url: DavUrl,
@@ -16,6 +20,8 @@ pub struct WebDavConfig {
     pub root: DavRoot,
     #[serde(default = "default_dav_path")]
     pub dav_path: String,
+    #[serde(default = "default_snapshot_prefix")]
+    pub snapshot_prefix: String,
 }
 
 impl WebDavConfig {

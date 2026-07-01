@@ -120,6 +120,7 @@ username = ""
 password = ""
 root = ""
 dav_path = "/remote.php/dav"
+snapshot_prefix = ".snapshots"
 
 [search]
 provider = "exa"

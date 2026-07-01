@@ -503,7 +503,13 @@ impl MemoryManager {
                 content: soul_content.clone(),
                 updated_at: snapshot.updated_at.clone(),
             };
+            let slen = soul_content.chars().count();
+            let stail: String = soul_content.chars().rev().take(200).collect::<Vec<_>>().into_iter().rev().collect();
             let room_key: String = snapshot.room_id.to_string();
+            debug!(
+                "restore_snapshot: soul restored for room {} (len={} chars, tail={:?})",
+                room_key, slen, stail
+            );
             self.souls.insert(room_key, soul);
         }
 
