@@ -207,7 +207,7 @@ flowchart TD
     TRIM_SEP(Trim leading/trailing '/')
     VALID{Remaining path non-empty?}
     DEFAULT_ROOT[Accept: root dir '']
-    JOIN(Join {room_id}/{path})
+    JOIN("Join {room_id}/{path}")
     FINAL[Sanitized room-scoped path]
 
     RAW --> TRIM
