@@ -1695,8 +1695,9 @@ async fn load_secrets_from_webdav(webdav: Option<&WebDavClient>, room_dir: &str)
         Ok(content) => match toml::from_str::<SecretsToml>(&content) {
             Ok(parsed) if !parsed.secrets.is_empty() => {
                 let resolved: Vec<ResolvedSecret> = parsed.secrets.into_iter().map(|e| {
-                    let uuid = generate_secret_uuid(&e.host, &e.key);
-                    ResolvedSecret { uuid, host: e.host, key: e.key, value: e.value }
+                    let host = e.host.trim_end_matches('/').to_string();
+                    let uuid = generate_secret_uuid(&host, &e.key);
+                    ResolvedSecret { uuid, host, key: e.key, value: e.value }
                 }).collect();
                 debug!("Loaded {} secret(s) from WebDAV (hosts: {:?})",
                     resolved.len(),
@@ -2879,6 +2880,24 @@ value = "real_gitea_token_123"
         assert_ne!(a, c, "different keys must produce different UUIDs");
         let d = generate_secret_uuid("https://api.github.com", "gitea_token");
         assert_ne!(a, d, "different hosts must produce different UUIDs");
+    }
+
+    #[test]
+    fn test_trailing_slash_host_normalization() {
+        let trimmed_host = "https://example.com/".trim_end_matches('/');
+        assert_eq!(trimmed_host, "https://example.com");
+        let uuid_trimmed = generate_secret_uuid(trimmed_host, "token");
+        let uuid_plain = generate_secret_uuid("https://example.com", "token");
+        assert_eq!(uuid_trimmed, uuid_plain);
+        let entries = vec![ResolvedSecret {
+            uuid: uuid_trimmed,
+            host: trimmed_host.to_string(),
+            key: "token".into(),
+            value: "secret-val".into(),
+        }];
+        let args = r#"{"url":"https://example.com/api/v1"}"#;
+        let map = filter_secrets_by_host(&entries, args).unwrap();
+        assert_eq!(map.get(&uuid_plain).unwrap(), "secret-val");
     }
 
     #[test]

@@ -78,7 +78,7 @@ flowchart TD
     ENTRIES[(ResolvedSecrets<br/>Vec<ResolvedSecret><br/>uuid, key, host, value)]
     INJECT["Append UUID + key labels<br/>to system prompt<br/>'secret:uuid (key_label)'"]
     BUILD["Build system prompt<br/>DEFAULT_SYSTEM_PROMPT<br/>+ UUID references"]
-    PROMPT[System Prompt (LLM-visible)<br/>'... Available API secrets ...<br/>secret:uuid1 (gitea_token)<br/>secret:uuid2 (github_pat)']
+    PROMPT["System Prompt (LLM-visible)<br/>Available API secrets<br/>secret:uuid1 (gitea_token)<br/>secret:uuid2 (github_pat)"]
     LLM[LLM call<br/>model sees UUID references<br/>in system prompt + history]
     CALL["web_fetch ToolCall<br/>url, headers, body, body_json<br/>(contains secret:uuid)"]
     EXTRACT_HOST[Extract host from url arg]
@@ -154,12 +154,14 @@ flowchart TD
 flowchart LR
     TOML["secrets.toml<br/>host + key + value"]
     PARSE[Parse TOML → Vec<SecretEntry>]
+    NORM["Normalize host<br/>trim trailing '/'<br/>'https://host/' → 'https://host'"]
     UUID["uuid::Uuid::new_v5(UUID_NAMESPACE,<br/>format!('{}:{}', host, key))<br/>deterministic per entry"]
     MAP["ResolvedSecret<br/>{ uuid, key, host, value }"]
     REGISTRY["SecretRegistry<br/>Vec<ResolvedSecret><br/>stable UUIDs across<br/>messages and restarts"]
 
     TOML --> PARSE
-    PARSE --> UUID
+    PARSE --> NORM
+    NORM --> UUID
     UUID --> MAP
     MAP --> REGISTRY
 ```
