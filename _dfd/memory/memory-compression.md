@@ -126,9 +126,8 @@ on the room and returns an acknowledgment. The LLM then generates a natural
 reply using the **full conversation context** (no history cleared mid-conversation).
 After the reply is delivered, `compress_room_if_needed()` picks up the flag and
 runs full compression (`force=true`) — **all** Layer 1 messages are compressed
-into a replacement `summary.md`, then Layer 1 is cleared to zero. If the
-compression was explicit (`was_explicit`), the summary content is sent as a
-**follow-up message** so the user can see what was saved.
+into a replacement `summary.md`, then Layer 1 is cleared to zero. Both explicit
+and auto compression are silent — no follow-up message is sent to the user.
 
 ```mermaid
 flowchart TD
@@ -279,8 +278,8 @@ The LLM receives a structured prompt containing:
 ### `CompressionResult`
 
 Return type of `compress_room_if_needed()` and `compress_room_inner()`. Carries
-the compression outcome from the background pipeline back to the caller
-(`main.rs`) so the explicit-compress follow-up message path can read the summary.
+the compression outcome from the background pipeline to tests and to
+`compress_room_full()` (used in mock test assertions and for the intercept ack).
 
 | Field | Type | Description |
 |-------|------|-------------|

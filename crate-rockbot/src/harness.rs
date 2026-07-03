@@ -17,8 +17,9 @@ use crate::tool::ToolRegistry;
 use crate::types::{ChatMessage, ChatRequest, Role};
 use crate::utils::now_iso_string;
 
-/// Result of a compression operation, returned so the caller (main.rs) can
-/// send a follow-up message with the summary when compression was explicit.
+/// Result of a compression operation consumed by tests and
+/// `compress_room_full()`. Compression is always silent — no user-facing
+/// notification regardless of mode (auto or explicit).
 pub struct CompressionResult {
     pub did_compress: bool,
     pub summary: Option<String>,
