@@ -36,8 +36,7 @@ full conversation context; then `compress_room_if_needed()` executes the
 actual compression after the reply is sent. This avoids clearing history
 mid-conversation (which would make the LLM see an empty context).
 
-After compression completes, the summary content is sent as a **follow-up
-message** to the user via `main.rs`.
+Compression is **silent** — no follow-up message is sent to the user.
 
 ```mermaid
 flowchart TD
@@ -51,13 +50,11 @@ flowchart TD
     EXISTING[Existing summary.md]
     KNOWLEDGE[(Knowledge Entries)]
     COMPRESS["compress_for_summary<br/>→ bullets + used filenames"]
-    RESULT["CompressionResult<br/>{ summary, was_explicit }"]
     WRITE["PUT summary.md<br/>(full replace)"]
     PRIORITY["review_priorities<br/>(used entries)"]
     PRUNE["Prune ALL Messages<br/>(Layer 1 → 0)"]
     DAV[(NextCloud WebDAV)]
     DIRTY[Mark Snapshot Dirty]
-    SEND["Send Summary<br/>to User"]
 
     USER -->|"explicit request"| AI
     AI -->|"tool_call: compress_memory"| TOOL
@@ -69,22 +66,18 @@ flowchart TD
     EXTRACT -->|"all messages"| COMPRESS
     EXISTING -->|"GET summary.md"| COMPRESS
     KNOWLEDGE -->|"load_index entries"| COMPRESS
-    COMPRESS -->|"≤10 bullets"| RESULT
+    COMPRESS -->|"≤10 bullets"| WRITE
     COMPRESS -->|"used filenames"| PRIORITY
-    RESULT -->|"summary text"| WRITE
     WRITE -->|"PUT memory/summary.md"| DAV
     PRIORITY -->|"PUT index.json"| DAV
     PRIORITY --> PRUNE
     WRITE --> PRUNE
     PRUNE --> DIRTY
-    RESULT -->|"was_explicit"| SEND
-    SEND -->|"follow-up message"| USER
 ```
 
 The user receives the bot's reply immediately (no delay for compression).
-Compression runs asynchronously after the reply is delivered. Then, if
-compression was user-requested, the bot sends a second message containing
-the summary bullet points.
+Compression runs asynchronously after the reply is delivered (silent —
+no follow-up message).
 
 ### 2b. Tool Parameters
 
@@ -135,28 +128,12 @@ unchanged (no data loss).
 
 ### Tool Result (to LLM)
 
-The tool returns a **lightweight acknowledgment** — not the summary itself.
-The actual summary appears in a **follow-up message** sent after compression
-completes.
+The tool returns a **lightweight acknowledgment** — compression is deferred
+until after the reply is sent (silent — no user-facing notification).
 
 ```
 Memory compression scheduled. Reply to the user first — compression will
 execute after your reply is sent.
-```
-
-### Follow-Up Message (to User)
-
-After compression completes, the bot sends a second message containing the
-summary bullet points:
-
-```markdown
-Compression complete. Summary:
-
-# Memory Summary
-
-- User prefers short answers
-- Project X uses Rust
-- Database in 1Password
 ```
 
 ## 4. Integration
@@ -171,8 +148,7 @@ is sent (in `main.rs`). When the flag is set, `compress_room_inner` uses
 | Phase | Subsystem | Method | Purpose |
 |-------|-----------|--------|---------|
 | Tool call | `process_message` | `memory.set_explicit_compress(room_id)` | Set flag, return ack |
-| Post-reply | `main.rs` | `compress_room_if_needed(room_id)` | Checks flag, triggers compression; returns `CompressionResult` |
-| Post-reply | `main.rs` | `sender.send_reply(summary, None)` | Sends summary as follow-up message when `CompressionResult.was_explicit` |
+| Post-reply | `main.rs` | `compress_room_if_needed(room_id)` | Checks flag, triggers compression |
 | Post-reply | `MemoryManager` | `needs_compression(room_id)` | Includes `explicit_compress` |
 | Post-reply | `MemoryManager` | `check_and_archive(room_id, true)` | Extract all messages |
 | Post-reply | `MemoryManager` | `prune_archived(room_id, count)` | Clear Layer 1 |
@@ -214,6 +190,5 @@ context. After the reply is delivered (in `main.rs`), `compress_room_if_needed()
 detects the flag and runs full compression (`force=true`).
 
 The tool's own `execute()` is never reached in production — it exists solely
-for LLM registration. Calling it directly returns an error. After the reply
-and compression complete, `main.rs` sends the summary as a follow-up message
-when `CompressionResult.was_explicit` is true.
+for LLM registration. Calling it directly returns an error. Both explicit and
+auto compression are silent — no user-facing notification after compression.

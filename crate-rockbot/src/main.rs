@@ -543,17 +543,8 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                                     }
                                 }
                             }
-                            match h.compress_room_if_needed(&msg.room_id).await {
-                                Ok(cr) if cr.was_explicit => {
-                                    if let Some(summary) = &cr.summary {
-                                        let msg = format!("Compression complete. Summary:\n\n{}", summary);
-                                        if let Err(e) = sender.send_reply(&msg, None).await {
-                                            warn!("Failed to send compression summary: {}", e);
-                                        }
-                                    }
-                                }
-                                Ok(_) => {}
-                                Err(e) => warn!("Memory archiving failed: {}", e),
+                            if let Err(e) = h.compress_room_if_needed(&msg.room_id).await {
+                                warn!("Memory archiving failed: {}", e);
                             }
                         }
                         Ok(None) => {

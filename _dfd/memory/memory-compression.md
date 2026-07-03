@@ -139,10 +139,8 @@ flowchart TD
     LLM_REPLY["LLM generates reply<br/>(full context intact)"]
     POST["Post-reply:<br/>compress_room_if_needed<br/>(force=true)"]
     FULL["Compress ALL Messages<br/>(not just half)"]
-    RESULT["CompressionResult<br/>{ did_compress, summary, was_explicit }"]
     WRITE["PUT summary.md<br/>(full replace)"]
     CLEAR["Clear Layer 1<br/>(zero messages)"]
-    SEND["Send Summary<br/>to User"]
     DAV[(NextCloud WebDAV)]
 
     USER -->|"explicit request"| AI
@@ -152,22 +150,14 @@ flowchart TD
     LLM_REPLY -->|"bot reply (no delay)"| USER
     LLM_REPLY -->|"after reply"| POST
     POST -->|"force=true"| FULL
-    FULL -->|"summary text"| RESULT
     FULL --> WRITE
     FULL --> CLEAR
     WRITE -->|"summary.md"| DAV
-    RESULT -->|"was_explicit && summary"| SEND
-    SEND -->|"follow-up message"| USER
 ```
 
 The user receives the bot's reply immediately. Compression runs asynchronously
-after the reply is delivered. Then, if compression was user-requested, the
-bot sends a second message containing the summary bullet points. See
+after the reply is delivered (silent — no follow-up message). See
 [compress-memory.md](../tools/compress-memory.md) for the full tool flow.
-
-**Non-blocking:** the follow-up message is sent after compression completes.
-If the compression itself fails (LLM error, WebDAV write failure), a warning
-is logged and no follow-up is sent — the bot already replied to the user.
 
 ### 2c. Token-Based Trigger (Post-LLM Call → Checked After Reply)
 
@@ -377,7 +367,7 @@ and §2b2 above.
 | Procedure | Trigger | Scope | History Effect | User Feedback |
 |-----------|---------|-------|----------------|---------------|
 | **Auto** | Token/byte pressure flags (post-reply) or `ContextLengthExceeded` retry (inline) | Oldest half of L1 | Summarizes oldest half → writes `summary.md` → prunes compressed messages | None (background) |
-| **Manual** | User `!compress` / explicit (post-reply) | ALL of L1 | Summarizes all messages → writes `summary.md` → prunes all → history at zero | Follow-up message with summary bullet points |
+| **Manual** | User `!compress` / explicit (post-reply) | ALL of L1 | Summarizes all messages → writes `summary.md` → prunes all → history at zero | None (silent) |
 
 Both call `compress_for_summary()`, which uses `text_content()` to extract
 messages for the LLM prompt. See [agent-harness.md §2i2](agent-harness.md#2i2-context-length-exceeded-retry--provider-triggered-compression)
