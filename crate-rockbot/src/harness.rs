@@ -17,6 +17,14 @@ use crate::tool::ToolRegistry;
 use crate::types::{ChatMessage, ChatRequest, Role};
 use crate::utils::now_iso_string;
 
+/// Result of a compression operation, returned so the caller (main.rs) can
+/// send a follow-up message with the summary when compression was explicit.
+pub struct CompressionResult {
+    pub did_compress: bool,
+    pub summary: Option<String>,
+    pub was_explicit: bool,
+}
+
 const DEFAULT_SYSTEM_PROMPT: &str = "\
 You are {name}, a helpful AI assistant running on a RocketChat server. \
 **Always reply in the same language as the user's most recent message.** \
@@ -947,10 +955,14 @@ impl AgentHarness {
         result
     }
 
-    pub async fn compress_room_if_needed(&mut self, room_id: &str) -> Result<()> {
+    pub async fn compress_room_if_needed(&mut self, room_id: &str) -> Result<CompressionResult> {
         let needs_compress = self.memory.needs_compression(room_id);
         if !needs_compress {
-            return Ok(());
+            return Ok(CompressionResult {
+                did_compress: false,
+                summary: None,
+                was_explicit: false,
+            });
         }
         // explicit_compress flag triggers force=true (full compression, not half)
         let force = self.memory.has_explicit_compress(room_id);
@@ -959,12 +971,14 @@ impl AgentHarness {
 
     /// Force-compress all Layer 1 messages (user-triggered, synchronous)
     pub async fn compress_room_full(&mut self, room_id: &str) -> Result<String> {
-        self.compress_room_inner(room_id, true).await?;
-        let summary = self.memory.get_summary(room_id).unwrap_or("").to_string();
+        let cr = self.compress_room_inner(room_id, true).await?;
+        let summary = cr.summary
+            .or_else(|| self.memory.get_summary(room_id).map(|s| s.to_string()))
+            .unwrap_or_default();
         Ok(format!("Memory compressed. Summary:\n\n{}", summary))
     }
 
-    async fn compress_room_inner(&mut self, room_id: &str, force: bool) -> Result<()> {
+    async fn compress_room_inner(&mut self, room_id: &str, force: bool) -> Result<CompressionResult> {
         let needs_compress = self.memory.check_and_archive(room_id, force);
         if let Some((rid, msgs)) = needs_compress {
             if let Some(ref webdav_client) = self.webdav {
@@ -997,32 +1011,41 @@ impl AgentHarness {
                 let summary_ok = self.write_summary_md(webdav_client, &wd, &summary_text).await.is_ok();
                 if !summary_ok {
                     warn!("Failed to write summary.md, skipping prune");
+                    return Ok(CompressionResult {
+                        did_compress: false,
+                        summary: None,
+                        was_explicit: force,
+                    });
                 }
 
-                if summary_ok {
-                    self.memory.mark_snapshot_dirty(&rid);
+                self.memory.mark_snapshot_dirty(&rid);
 
-                    // Review knowledge priorities with LLM-identified used entries
-                    if let Ok(changed) = crate::knowledge::KnowledgeManager::review_priorities(
-                        webdav_client, &wd, &used_filenames,
-                    ).await {
-                        if changed {
-                            if let Ok(text) = self.load_knowledge_for_room(webdav_client, &rid, &wd).await {
-                                if !text.is_empty() {
-                                    self.memory.set_knowledge(&rid, text);
-                                }
+                // Review knowledge priorities with LLM-identified used entries
+                if let Ok(changed) = crate::knowledge::KnowledgeManager::review_priorities(
+                    webdav_client, &wd, &used_filenames,
+                ).await {
+                    if changed {
+                        if let Ok(text) = self.load_knowledge_for_room(webdav_client, &rid, &wd).await {
+                            if !text.is_empty() {
+                                self.memory.set_knowledge(&rid, text);
                             }
-                            self.memory.mark_snapshot_dirty(&rid);
                         }
+                        self.memory.mark_snapshot_dirty(&rid);
                     }
-
-                    // Update in-memory summary cache
-                    self.memory.set_summary(&rid, Some(summary_text));
-
-                    // Clear pressure flags after compression
-                    self.memory.prune_archived(&rid, count);
-                    self.memory.clear_pressure_flags(&rid);
                 }
+
+                // Update in-memory summary cache
+                self.memory.set_summary(&rid, Some(summary_text.clone()));
+
+                // Clear pressure flags after compression
+                self.memory.prune_archived(&rid, count);
+                self.memory.clear_pressure_flags(&rid);
+
+                Ok(CompressionResult {
+                    did_compress: true,
+                    summary: Some(summary_text),
+                    was_explicit: force,
+                })
             } else {
                 debug!(
                     "No WebDAV client, truncating instead of compressing for room {}",
@@ -1031,9 +1054,19 @@ impl AgentHarness {
                 let count = msgs.len();
                 self.memory.prune_archived(&rid, count);
                 self.memory.clear_pressure_flags(&rid);
+                Ok(CompressionResult {
+                    did_compress: true,
+                    summary: None,
+                    was_explicit: force,
+                })
             }
+        } else {
+            Ok(CompressionResult {
+                did_compress: false,
+                summary: None,
+                was_explicit: false,
+            })
         }
-        Ok(())
     }
 
     async fn compress_for_summary(
@@ -2091,14 +2124,44 @@ chat = "mock-model"
         for i in 0..10 {
             room.history.append(ChatMessage::user(format!("msg {}", i)));
         }
-        // Set byte_pressure_flag to trigger compression
+        // Set byte_pressure_flag to trigger compression (not explicit)
         harness.memory_mut().set_byte_pressure("room1");
 
         let result = harness.compress_room_if_needed("room1").await;
         assert!(result.is_ok());
+        let cr = result.unwrap();
+        assert!(cr.did_compress, "should have compressed messages");
+        assert!(!cr.was_explicit, "byte pressure is not explicit");
+        assert!(cr.summary.is_none(), "no WebDAV means no summary text");
         // History should be pruned (5 messages: oldest half of 10)
         let remaining = harness.memory().get("room1").map(|r| r.history.messages.len());
         assert_eq!(remaining, Some(5));
+    }
+
+    #[tokio::test]
+    async fn test_compress_room_if_needed_explicit_no_webdav() {
+        let config = make_test_config();
+        let provider = Box::new(MockProvider::new(vec![]));
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
+
+        let room = harness
+            .memory_mut()
+            .get_or_create("room2", "general", "", false);
+        for i in 0..10 {
+            room.history.append(ChatMessage::user(format!("msg {}", i)));
+        }
+        // Set explicit_compress flag to trigger full compression
+        harness.memory_mut().set_explicit_compress("room2");
+
+        let result = harness.compress_room_if_needed("room2").await;
+        assert!(result.is_ok());
+        let cr = result.unwrap();
+        assert!(cr.did_compress, "should have compressed messages");
+        assert!(cr.was_explicit, "explicit compress flag was set");
+        assert!(cr.summary.is_none(), "no WebDAV means no summary text");
+        // All messages should be pruned (force=true, count=10)
+        let remaining = harness.memory().get("room2").map(|r| r.history.messages.len());
+        assert_eq!(remaining, Some(0));
     }
 
     #[test]
