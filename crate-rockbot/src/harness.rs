@@ -223,6 +223,13 @@ impl AgentHarness {
             text.to_string()
         };
 
+        let trimmed = clean_text.trim();
+        if trimmed == "!reset" || trimmed == "!clearmemory" {
+            debug!("Reset shortcut: detected literal '{}' — skipping LLM", trimmed);
+            self.memory.set_explicit_reset(room_id);
+            return Ok(Some("Memory cleared.".to_string()));
+        }
+
         let needs_restore = {
             let room = self.memory.get_or_create(room_id, room_name, room_fname, is_dm);
             room.touch();
@@ -980,9 +987,10 @@ impl AgentHarness {
                 messages_cleared: count,
             })
         } else {
+            self.memory.clear_pressure_flags(room_id);
             Ok(ResetResult {
                 did_reset: false,
-                was_explicit: false,
+                was_explicit,
                 messages_cleared: 0,
             })
         }
@@ -2759,5 +2767,138 @@ You can now see the image."#;
         assert_eq!(images.len(), 1);
         assert_eq!(images[0].name, "photo.png");
         assert!(images[0].data_uri.starts_with("data:image/png;base64,"));
+    }
+
+    struct CountingMockProvider {
+        responses: std::sync::Mutex<Vec<Result<CompletionResult>>>,
+        call_counter: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl CountingMockProvider {
+        fn new(
+            responses: Vec<CompletionResult>,
+            counter: Arc<std::sync::atomic::AtomicUsize>,
+        ) -> Self {
+            Self {
+                responses: std::sync::Mutex::new(responses.into_iter().map(Ok).collect()),
+                call_counter: counter,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl AiProvider for CountingMockProvider {
+        async fn complete(&self, _request: ChatRequest) -> Result<CompletionResult> {
+            self.call_counter
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let mut responses = self.responses.lock().unwrap();
+            if responses.is_empty() {
+                Err(RockBotError::Provider("No mock responses".into()))
+            } else {
+                responses.remove(0)
+            }
+        }
+
+        fn provider_name(&self) -> &str {
+            "mock"
+        }
+
+        fn model_name(&self) -> &str {
+            "mock-model"
+        }
+    }
+
+    #[tokio::test]
+    async fn test_reset_shortcut_bang_reset() {
+        let counter = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let provider = Box::new(CountingMockProvider::new(vec![], counter.clone()));
+        let config = make_test_config();
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
+
+        let result = harness
+            .process_message("room1", "general", "General", false, "alice", "!reset", &[], &[])
+            .await
+            .unwrap();
+
+        assert_eq!(result, Some("Memory cleared.".to_string()));
+        assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), 0, "LLM must NOT be called for !reset shortcut");
+
+        assert!(harness.memory().needs_reset("room1"), "explicit_reset flag must be set");
+        let reset = harness.reset_room_if_needed("room1").await.unwrap();
+        assert!(reset.was_explicit);
+        assert!(!harness.memory().needs_reset("room1"), "flags must be cleared after reset");
+    }
+
+    #[tokio::test]
+    async fn test_reset_shortcut_clearmemory() {
+        let counter = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let provider = Box::new(CountingMockProvider::new(vec![], counter.clone()));
+        let config = make_test_config();
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
+
+        let result = harness
+            .process_message("room2", "general", "General", false, "bob", "!clearmemory", &[], &[])
+            .await
+            .unwrap();
+
+        assert_eq!(result, Some("Memory cleared.".to_string()));
+        assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), 0, "LLM must NOT be called for !clearmemory shortcut");
+    }
+
+    #[tokio::test]
+    async fn test_reset_shortcut_with_whitespace() {
+        let counter = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let provider = Box::new(CountingMockProvider::new(vec![], counter.clone()));
+        let config = make_test_config();
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
+
+        let result = harness
+            .process_message("room3", "general", "General", false, "alice", "  !reset  ", &[], &[])
+            .await
+            .unwrap();
+
+        assert_eq!(result, Some("Memory cleared.".to_string()));
+        assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn test_reset_shortcut_dm() {
+        let counter = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let provider = Box::new(CountingMockProvider::new(vec![], counter.clone()));
+        let config = make_test_config();
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
+
+        let result = harness
+            .process_message("dm-alice", "", "", true, "alice", "!reset", &[], &[])
+            .await
+            .unwrap();
+
+        assert_eq!(result, Some("Memory cleared.".to_string()));
+        assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn test_normal_message_still_calls_llm() {
+        let counter = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let provider = Box::new(CountingMockProvider::new(
+            vec![CompletionResult {
+                text: Some("Normal reply".into()),
+                tool_calls: vec![],
+                finish: FinishReason::Stop,
+                reasoning_content: None,
+                usage: None,
+            }],
+            counter.clone(),
+        ));
+        let config = make_test_config();
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
+
+        let result = harness
+            .process_message("room5", "general", "General", false, "alice", "Hello bot", &[], &[])
+            .await
+            .unwrap();
+
+        assert_eq!(result, Some("Normal reply".to_string()));
+        assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), 1, "LLM must be called for normal messages");
     }
 }

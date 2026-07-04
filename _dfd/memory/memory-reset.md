@@ -51,7 +51,7 @@ flowchart TD
 |------|-----------|-----------|-------|
 | `token_pressure_flag` | Each LLM provider response | `usage.total_tokens > model_context_length * 0.9` | Cleared after reset completes |
 | `byte_pressure_flag` | Context assembly (`trim_context`) | Serialized context bytes > `max_context_bytes` | Cleared after reset completes |
-| `explicit_reset` | `reset_memory` tool call (in `process_message`) | User says !reset / clear memory | Cleared after reset completes |
+| `explicit_reset` | Pre-LLM shortcut or `reset_memory` tool call (in `process_message`) | `!reset` / `!clearmemory` exact match, or natural-language request | Cleared after reset completes |
 
 All three flags trigger the same `reset_room_if_needed()` function after the
 reply is sent. All modes clear **all** Layer 1 messages. None of the flags
@@ -109,6 +109,40 @@ flowchart TD
 The user receives the bot's reply immediately. Reset runs after the reply is
 delivered (silent — no follow-up message). See
 [reset-memory.md](../tools/reset-memory.md) for the full tool flow.
+
+### 2b3. Explicit Reset Shortcut — Pre-LLM Fast Path
+
+When the user sends a literal `!reset` or `!clearmemory` command (exact match
+after trimming), the harness detects it **before the LLM call** and returns a
+canned reply immediately. No LLM round-trip, no tool call, no token cost.
+The `explicit_reset` flag is set and `reset_room_if_needed()` runs post-reply
+as usual — the same pipeline as §2b2, just without the LLM hop.
+
+Natural-language reset requests ("clear my memory", "start fresh") still go
+through the LLM tool-call path in §2b2 — the model handles intent detection.
+
+```mermaid
+flowchart TD
+    USER["User: !reset<br/>or !clearmemory"]
+    CHECK{"clean_text ==<br/>!reset or !clearmemory?"}
+    FLAG["Set explicit_reset<br/>flag on room"]
+    REPLY["Return canned reply<br/>(Memory cleared.)"]
+    POST["Post-reply:<br/>reset_room_if_needed"]
+    CLEAR["Clear Layer 1<br/>(zero messages)"]
+    LLM_PATH["Normal LLM path<br/>(§2b2 tool-call flow)"]
+
+    USER -->|"explicit command"| CHECK
+    CHECK -->|"yes (exact match)"| FLAG
+    FLAG --> REPLY
+    REPLY -->|"bot reply (instant)"| USER
+    REPLY -->|"after reply"| POST
+    POST --> CLEAR
+    CHECK -->|"no (other text)"| LLM_PATH
+```
+
+**Latency**: near-zero — no provider call, no tool dispatch. Just a flag set
+and a string return. The `reset_memory` tool registration is still needed for
+natural-language reset requests that the LLM handles via intent detection.
 
 ### 2c. Token-Based Trigger (Post-LLM Call → Checked After Reply)
 
@@ -236,7 +270,8 @@ All reset triggers are evaluated **after reply delivery**. The safety net
 |---------|-----------------|-----------|--------|
 | **Token near-limit** | Flag set during LLM call, checked after reply | `usage.total_tokens > model_context_length * 0.9` | Hard reset (clear all L1 messages) |
 | **Byte pressure** | Flag set during context assembly, checked after reply | `context_bytes > max_context_bytes` | Hard reset (clear all L1 messages) |
-| **User request** | Flag set by `reset_memory` tool, checked after reply | Tool called by LLM | Hard reset (clear all L1 messages) |
+| **User command shortcut** | Before LLM call (early return) | `clean_text == "!reset"` or `"!clearmemory"` | Hard reset (clear all L1 messages), no LLM call |
+| **User request (NL)** | Flag set by `reset_memory` tool, checked after reply | Tool called by LLM (intent detection) | Hard reset (clear all L1 messages) |
 | **Safety net** | Before each LLM call | `context_bytes > max_context_bytes` | Inline trim only (strip images, truncate); sets byte_pressure_flag |
 | **Provider error** | During LLM call | `ContextLengthExceeded` | Hard reset + hard truncate + retry (once) |
 

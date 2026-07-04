@@ -2,13 +2,21 @@
 
 ## 1. Purpose
 
-User-explicit memory reset tool. When the user says `!reset` or explicitly
-asks to clear/reset memory, the LLM invokes `reset_memory`. This tool
-**instantly clears all Layer 1 messages** — no LLM call, no WebDAV write,
-no summary generation. Zero overhead.
+User-explicit memory reset tool. Two paths converge on the same reset pipeline:
+
+1. **Shortcut path** — literal `!reset` or `!clearmemory` (exact match after
+   trimming) is detected in `process_message()` **before the LLM call**.
+   Returns a canned reply instantly — no LLM round-trip, no token cost.
+2. **LLM tool-call path** — natural-language reset requests ("clear my memory",
+   "start fresh") are recognized by the LLM, which invokes `reset_memory`.
+
+Both paths set the `explicit_reset` flag and defer clearing to
+`reset_room_if_needed()` (post-reply). **Instantly clears all Layer 1
+messages** — no LLM call, no WebDAV write, no summary generation. Zero overhead.
 
 - Upstream: [Agent Harness](../agent/agent-harness.md) dispatches the tool
-  call with room context (`room_id`) auto-injected
+  call with room context (`room_id`) auto-injected; also handles the shortcut
+  path as an early return in `process_message()`
 - Upstream: [Memory Management](../memory/memory.md) provides Layer 1
   messages for clearing
 - Downstream: [Memory Reset](../memory/memory-reset.md) — shares the same
@@ -48,6 +56,33 @@ flowchart TD
 
 The user receives the bot's reply immediately (no delay for reset).
 Reset runs after the reply is delivered (silent — no follow-up message).
+
+### 2a2. Shortcut Fast Path — Pre-LLM Detection
+
+When the user sends a literal `!reset` or `!clearmemory` command, the harness
+detects it before any LLM call and returns a canned reply. No token cost.
+
+```mermaid
+flowchart TD
+    USER["User: !reset<br/>or !clearmemory"]
+    CHECK{"clean_text ==<br/>!reset or !clearmemory?"}
+    SET_FLAG["Set explicit_reset<br/>flag on room"]
+    REPLY["Return canned reply<br/>(Memory cleared.)"]
+    POST["Post-reply:<br/>reset_room_if_needed()"]
+    CLEAR["Clear ALL Messages<br/>(Layer 1 → 0)"]
+    DIRTY[Mark Snapshot Dirty]
+
+    USER -->|"exact command"| CHECK
+    CHECK -->|"yes"| SET_FLAG
+    SET_FLAG --> REPLY
+    REPLY -->|"bot reply (instant)"| USER
+    REPLY -->|"after reply sent"| POST
+    POST --> CLEAR
+    CLEAR --> DIRTY
+```
+
+No LLM call, no tool dispatch. The `reset_memory` tool registration is still
+needed for natural-language reset requests handled by the LLM (§2a).
 
 ### 2b. Tool Parameters
 
@@ -97,15 +132,16 @@ after your reply is sent.
 
 ## 4. Integration
 
-### Flag-driven execution
+### Two paths, one pipeline
 
-The tool call sets the `explicit_reset` flag on the room. Actual reset is
-handled by `reset_room_if_needed()` which is called **after** the reply is
-sent (in `main.rs`).
+Both the shortcut and the LLM tool-call path set the same `explicit_reset`
+flag. Actual reset is handled by `reset_room_if_needed()` which is called
+**after** the reply is sent (in `main.rs`).
 
 | Phase | Subsystem | Method | Purpose |
 |-------|-----------|--------|---------|
-| Tool call | `process_message` | `memory.set_explicit_reset(room_id)` | Set flag, return ack |
+| Shortcut | `process_message` | `memory.set_explicit_reset(room_id)` | Detect literal `!reset`/`!clearmemory`, set flag, return canned reply |
+| Tool call | `process_message` | `memory.set_explicit_reset(room_id)` | Intercept `reset_memory` tool call, set flag, return ack |
 | Post-reply | `main.rs` | `reset_room_if_needed(room_id)` | Checks flag, clears L1 |
 | Post-reply | `MemoryManager` | `needs_reset(room_id)` | Includes `explicit_reset` |
 | Post-reply | `MemoryManager` | `clear_all_messages(room_id)` | Clear Layer 1 |

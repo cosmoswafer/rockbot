@@ -54,9 +54,16 @@ flowchart TD
     INTERACT(InteractWithAi)
     AI[AiProvider]
     MRK_DIRTY(MarkSnapshotDirty)
+    RESET_CMD{"!reset or<br/>!clearmemory?"}
+    RESET_REPLY["Return canned reply<br/>(Memory cleared.)"]
+    RESET_FLAG["Set explicit_reset<br/>flag"]
 
     RC -->|"incoming message"| ROUTE
-    ROUTE -->|"routed message"| SOUL
+    ROUTE -->|"routed message"| RESET_CMD
+    RESET_CMD -->|"yes (shortcut)"| RESET_FLAG
+    RESET_FLAG --> RESET_REPLY
+    RESET_REPLY -->|"instant reply"| RC
+    RESET_CMD -->|"no"| SOUL
     SOUL -->|"fresh from WebDAV"| KNOWLEDGE
     KNOWLEDGE -->|"fresh from WebDAV"| CTX
     MEM -->|"history for room"| CTX
