@@ -230,18 +230,19 @@ If the compression LLM call fails (API error, timeout), compression is
 skipped for this cycle. Messages remain in Layer 1 — they will be re-evaluated
 next cycle. No data is lost.
 
-If the LLM call succeeds but returns no text content (e.g. only tool calls
-or `content: null`), the placeholder `"N messages compressed"` is used and
-written to `summary.md`. If the LLM returns text but the parser cannot find
-a summary section (e.g. model put `## Used Knowledge` first), the full raw
-LLM output is used as the summary — this is always more useful than the
-placeholder.
+If the LLM call succeeds but `content` is empty or absent, the harness falls
+back to `reasoning_content` (populated by thinking models like llama.cpp's
+lfm25). Only if both `content` and `reasoning_content` are empty does the
+placeholder `"N messages compressed"` get written. If the LLM returns text
+but the parser cannot find a summary section (e.g. model put
+`## Used Knowledge` first), the full raw LLM output is used as the summary.
 
 ```mermaid
 flowchart TD
     AI[AiProvider]
     FAIL{Compression LLM<br/>Call Failed?}
-    NO_TEXT{"result.text<br/>is None?"}
+    NO_TEXT{"content<br/>empty or None?"}
+    HAS_RC{"reasoning_content<br/>has text?"}
     SKIP["Skip Compression<br/>(messages stay in L1)"]
     PLACEHOLDER["Write placeholder<br/>summary.md + Prune"]
     LOG[Log Warning]
@@ -251,8 +252,10 @@ flowchart TD
     AI -.->|"api error / timeout"| FAIL
     FAIL -->|"yes"| SKIP
     FAIL -->|"no: response ok"| NO_TEXT
-    NO_TEXT -->|"yes"| PLACEHOLDER
     NO_TEXT -->|"no: has text"| CONTINUE
+    NO_TEXT -->|"yes"| HAS_RC
+    HAS_RC -->|"yes (thinking model)"| CONTINUE
+    HAS_RC -->|"no"| PLACEHOLDER
     SKIP --> LOG
     LOG --> RETRY
     PLACEHOLDER --> LOG

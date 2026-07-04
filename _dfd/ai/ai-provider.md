@@ -25,6 +25,11 @@ with `OpenRouterProvider`. Key differences:
 
 - **No API key**: `api_key` is empty; the `Authorization` header is omitted
   when the key is empty.
+- **Reasoning content extracted**: the `reasoning_content` field from the
+  response message is extracted into `CompletionResult.reasoning_content`.
+  Thinking models (e.g. lfm25) may put their entire output in
+  `reasoning_content` and leave `content` empty. The harness uses this as
+  a fallback when `content` is absent.
 - **Native tool calling required**: tools are sent in the standard `tools`
   JSON field (same as OpenRouter and DeepSeek). The llama.cpp server must be
   started with `--jinja` so its Jinja2 chat template renders tool definitions
