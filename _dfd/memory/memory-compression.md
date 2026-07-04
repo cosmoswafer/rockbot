@@ -6,7 +6,7 @@ Single dedicated DFD for the Layer 1 → Layer 2 compression pipeline.
 Compression has two modes:
 
 1. **Background** — triggered by token or byte pressure flags after reply
-   delivery. Compresses oldest half of Layer 1 messages. Zero user delay.
+   delivery. Compresses ALL Layer 1 messages. Zero user delay.
 2. **Explicit** — user says `!compress` or asks to save memory. The
    `compress_memory` tool sets the `explicit_compress` flag; after the bot
    replies, `compress_room_if_needed()` compresses ALL messages into `summary.md`
@@ -58,28 +58,26 @@ flowchart TD
 
 | Flag | Set During | Condition | Force | Reset |
 |------|-----------|-----------|-------|-------|
-| `token_pressure_flag` | Each LLM provider response | `usage.total_tokens > model_context_length * 0.9` | No (oldest half) | Cleared after compression completes |
-| `byte_pressure_flag` | Context assembly (`build_context`) | Serialized context bytes > `max_context_bytes` | No (oldest half) | Cleared after compression completes |
+| `token_pressure_flag` | Each LLM provider response | `usage.total_tokens > model_context_length * 0.9` | No (all messages) | Cleared after compression completes |
+| `byte_pressure_flag` | Context assembly (`build_context`) | Serialized context bytes > `max_context_bytes` | No (all messages) | Cleared after compression completes |
 | `explicit_compress` | `compress_memory` tool call (in `process_message`) | User says !compress / save memory | **Yes** (all messages) | Cleared after compression completes |
 
 All three flags trigger the same background compression function via
-`compress_room_if_needed()` after the reply is sent. `explicit_compress`
-uses `force=true` for full compression (all Layer 1 messages, not just
-the oldest half). None of the flags block the user-facing response path.
+`compress_room_if_needed()` after the reply is sent. All modes compress
+ALL Layer 1 messages. None of the flags block the user-facing response path.
 
 ### 2b. Compression Deep Dive
 
-When triggered by token/byte pressure, the **oldest half** of Layer 1 messages
-is extracted, combined with the existing `summary.md` (if any) and the list of
-knowledge entries, then sent to the LLM. When triggered by `explicit_compress`
-(user-requested), **all** Layer 1 messages are extracted (`force=true`).
+When triggered by token/byte pressure or explicit_compress, **all** Layer 1
+messages are extracted, combined with the existing `summary.md` (if any) and
+the list of knowledge entries, then sent to the LLM. The `force` flag only
+controls whether to bypass the minimum message count guard (≤4 messages).
 
 ```mermaid
 flowchart TD
     L1[(Layer 1<br/>Chat History)]
     TRIGGER{Trigger Source}
-    EXTRACT_HALF["Extract Oldest Half<br/>(token/byte pressure)"]
-    EXTRACT_ALL["Extract ALL Messages<br/>(explicit_compress, force=true)"]
+    EXTRACT_ALL["Extract ALL Messages"]
     EXISTING[Existing summary.md]
     KNOWLEDGE[(Knowledge Entries<br/>filename + when_useful)]
     AI[AiProvider<br/>one-shot, tools=off]
@@ -94,9 +92,7 @@ flowchart TD
     DIRTY[Mark Snapshot Dirty]
 
     L1 --> TRIGGER
-    TRIGGER -->|"token/byte pressure"| EXTRACT_HALF
-    TRIGGER -->|"explicit_compress"| EXTRACT_ALL
-    EXTRACT_HALF -->|"oldest half"| PROMPT
+    TRIGGER -->|"token/byte pressure<br/>or explicit_compress"| EXTRACT_ALL
     EXTRACT_ALL -->|"all messages"| PROMPT
     EXISTING -->|"GET summary.md (or empty)"| PROMPT
     KNOWLEDGE -->|"load_index entries"| PROMPT
@@ -137,7 +133,7 @@ flowchart TD
     FLAG["Set explicit_compress<br/>flag on room"]
     LLM_REPLY["LLM generates reply<br/>(full context intact)"]
     POST["Post-reply:<br/>compress_room_if_needed<br/>(force=true)"]
-    FULL["Compress ALL Messages<br/>(not just half)"]
+    FULL["Compress ALL Messages"]
     WRITE["PUT summary.md<br/>(full replace)"]
     CLEAR["Clear Layer 1<br/>(zero messages)"]
     DAV[(NextCloud WebDAV)]
@@ -272,7 +268,7 @@ The LLM receives a structured prompt containing:
 | Component | Source | Notes |
 |-----------|--------|-------|
 | Existing summary | `GET summary.md` from WebDAV | Empty string if none exists |
-| Overflowed messages | Oldest half of Layer 1 | Up to 20 user+assistant messages, each trimmed to 300 chars |
+| Overflowed messages | All Layer 1 messages | Up to 20 user+assistant messages, each trimmed to 300 chars |
 | Knowledge entries | `load_index(webdav_dir)` | `filename` + `when_useful`, up to 30 entries |
 
 ### `CompressionResult`
@@ -316,8 +312,8 @@ The safety net (inline truncation) runs pre-LLM but is not a compression trigger
 
 | Trigger | Evaluation Point | Condition | Force | Action |
 |---------|-----------------|-----------|-------|--------|
-| **Token near-limit** | Flag set during LLM call, checked after reply | `usage.total_tokens > model_context_length * 0.9` | No | Background compression (oldest half) |
-| **Byte pressure** | Flag set during context assembly, checked after reply | `context_bytes > max_context_bytes` | No | Background compression (oldest half) |
+| **Token near-limit** | Flag set during LLM call, checked after reply | `usage.total_tokens > model_context_length * 0.9` | No | Background compression (all messages) |
+| **Byte pressure** | Flag set during context assembly, checked after reply | `context_bytes > max_context_bytes` | No | Background compression (all messages) |
 | **User request** | Flag set by `compress_memory` tool, checked after reply | Tool called by LLM | **Yes** | Full compression (all messages) |
 | **Safety net** | Before each LLM call | `context_bytes > max_context_bytes` | — | Inline trim only (strip images, truncate); sets byte_pressure_flag |
 
@@ -344,7 +340,7 @@ The safety net (inline truncation) runs pre-LLM but is not a compression trigger
 
 | Method | Purpose |
 |--------|---------|
-| `check_and_archive()` | Returns oldest half of L1 if overflowed |
+| `check_and_archive()` | Returns all L1 messages if overflowed |
 | `prune_archived()` | Removes compressed messages from L1 buffer |
 | `summary_path()` | Returns WebDAV path for `summary.md` |
 | `set_summary()` | Updates in-memory summary cache |
@@ -365,8 +361,8 @@ and §2b2 above.
 
 | Procedure | Trigger | Scope | History Effect | User Feedback |
 |-----------|---------|-------|----------------|---------------|
-| **Auto** | Token/byte pressure flags (post-reply) or `ContextLengthExceeded` retry (inline) | Oldest half of L1 | Summarizes oldest half → writes `summary.md` → prunes compressed messages | None (background) |
-| **Manual** | User `!compress` / explicit (post-reply) | ALL of L1 | Summarizes all messages → writes `summary.md` → prunes all → history at zero | None (silent) |
+| **Auto** | Token/byte pressure flags (post-reply) or `ContextLengthExceeded` retry (inline) | All of L1 | Summarizes all messages → writes `summary.md` → prunes compressed messages | None (background) |
+| **Manual** | User `!compress` / explicit (post-reply) | All of L1 | Summarizes all messages → writes `summary.md` → prunes all → history at zero | None (silent) |
 
 Both call `compress_for_summary()`, which uses `text_content()` to extract
 messages for the LLM prompt. See [agent-harness.md §2i2](agent-harness.md#2i2-context-length-exceeded-retry--provider-triggered-compression)

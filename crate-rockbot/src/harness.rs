@@ -1085,11 +1085,12 @@ impl AgentHarness {
             .filter(|m| m.role == Role::User || m.role == Role::Assistant)
             .filter_map(|m| m.text_content())
             .map(|t| t.chars().take(300).collect::<String>())
+            .filter(|s| !s.is_empty())
             .take(20)
             .collect();
 
         if user_msgs.is_empty() {
-            return (format!("{} messages compressed", messages.len()), Vec::new());
+            return (format!("Error: no compressible text in {} messages", messages.len()), Vec::new());
         }
 
         // Build knowledge entries reference for LLM
@@ -2134,9 +2135,9 @@ chat = "mock-model"
         assert!(cr.did_compress, "should have compressed messages");
         assert!(!cr.was_explicit, "byte pressure is not explicit");
         assert!(cr.summary.is_none(), "no WebDAV means no summary text");
-        // History should be pruned (5 messages: oldest half of 10)
+        // History should be pruned (all 10 messages removed)
         let remaining = harness.memory().get("room1").map(|r| r.history.messages.len());
-        assert_eq!(remaining, Some(5));
+        assert_eq!(remaining, Some(0));
     }
 
     #[tokio::test]
@@ -2180,7 +2181,7 @@ chat = "mock-model"
         assert!(result.is_some(), "Should archive with 10 messages (>4)");
         if let Some((rid, msgs)) = result {
             assert_eq!(rid, "room1");
-            assert_eq!(msgs.len(), 5, "Should return oldest half (5 of 10)");
+            assert_eq!(msgs.len(), 10, "Should return all messages (10 of 10)");
         }
     }
 

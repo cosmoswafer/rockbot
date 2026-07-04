@@ -191,12 +191,7 @@ impl MemoryManager {
         if room.history.messages.len() <= 4 && !force {
             return None;
         }
-        // Always take oldest half unless forced to take all
-        let take_count = if force {
-            room.history.messages.len()
-        } else {
-            room.history.messages.len() / 2
-        };
+        let take_count = room.history.messages.len();
         if take_count == 0 {
             return None;
         }

@@ -142,7 +142,7 @@ The prompt instructs the LLM to:
 ```mermaid
 flowchart TD
     ENTRIES["Knowledge Entries<br/>(filename + when_useful)"]
-    MESSAGES["Overflowed Messages<br/>(oldest half of Layer 1)"]
+    MESSAGES["Overflowed Messages<br/>(all of Layer 1)"]
     EXISTING["Existing summary.md<br/>(or empty)"]
     AI[AiProvider]
     PROMPT["Compression Prompt<br/>summary + identify used entries"]

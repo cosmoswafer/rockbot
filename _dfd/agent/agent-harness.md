@@ -412,7 +412,7 @@ complements the proactive `trim_context` byte-check.
 flowchart TD
     AI[AiProvider]
     CHECK{ContextLengthExceeded?}
-    COMPRESS["CompressRoomInner<br/>(LLM summarize + prune oldest half)"]
+    COMPRESS["CompressRoomInner<br/>(LLM summarize + prune all messages)"]
     TRIM["HardTruncate<br/>(keep system prefix + last 2 msgs)"]
     RETRY["Retry LLM Call"]
     FALLBACK["SendErrorFallback<br/>(already compressed once)"]
@@ -422,7 +422,7 @@ flowchart TD
     CHECK -->|"yes (first time)"| COMPRESS
     CHECK -->|"yes (already compressed)"| FALLBACK
     CHECK -->|"no (other error)"| FALLBACK
-    COMPRESS -->|"summary.md written,<br/>oldest half pruned"| TRIM
+    COMPRESS -->|"summary.md written,<br/>all messages pruned"| TRIM
     TRIM -->|"rebuilt messages"| RETRY
     RETRY --> AI
     FALLBACK --> REPLY
@@ -430,7 +430,7 @@ flowchart TD
 
 **Compression** (`compress_room_inner`): same auto procedure as described in
 [Memory Compression §2b](base/memory-compression.md#2b-compression-deep-dive) —
-LLM summarization of oldest half of Layer 1, write `summary.md` to WebDAV,
+LLM summarization of all Layer 1 messages, write `summary.md` to WebDAV,
 prune compressed messages from history.
 
 After compression, rebuilds context with `max_history: Some(4)` and applies

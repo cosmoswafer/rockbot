@@ -2358,13 +2358,13 @@ mod compression_tests {
         // Run background compression
         harness.compress_room_if_needed("room1").await.unwrap();
 
-        // History should be pruned (oldest half: 10 of 20 removed)
+        // History should be pruned (all 20 messages removed)
         let after = harness
             .memory()
             .get("room1")
             .map(|r| r.history.messages.len())
             .unwrap_or(0);
-        assert_eq!(after, 10, "Oldest half of 20 messages should be pruned");
+        assert_eq!(after, 0, "All 20 messages should be pruned");
     }
 
     /// Byte pressure flag triggers compression after context trim.
@@ -2391,13 +2391,13 @@ mod compression_tests {
 
         harness.compress_room_if_needed("room1").await.unwrap();
 
-        // Oldest half pruned (7 of 15, integer division)
+        // All messages pruned
         let after = harness
             .memory()
             .get("room1")
             .map(|r| r.history.messages.len())
             .unwrap_or(0);
-        assert_eq!(after, 8, "Oldest half (7) of 15 messages pruned");
+        assert_eq!(after, 0, "All 15 messages should be pruned");
     }
 
     /// Background compression does nothing when no pressure flags are set.

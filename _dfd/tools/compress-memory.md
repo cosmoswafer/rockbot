@@ -4,13 +4,11 @@
 
 User-explicit memory compression tool. When the user says `!compress` or
 explicitly asks to save/compress memory, the LLM invokes `compress_memory`.
-Unlike background compression (which takes only the oldest half), this tool
-compresses **all** Layer 1 messages into a replacement `summary.md` and
+This tool compresses **all** Layer 1 messages into a replacement `summary.md` and
 clears the conversation history entirely — zero messages remain.
 
-The tool uses the same LLM compression prompt as background compression but
-with `force=true`, extracting all messages instead of half. Knowledge priority
-is also reviewed: entries used in the conversation are promoted.
+The tool uses the same LLM compression prompt as background compression.
+Knowledge priority is also reviewed: entries used in the conversation are promoted.
 
 - Upstream: [Agent Harness](../agent/agent-harness.md) dispatches the tool call with
   room context (`room_id` + `webdav_dir`) auto-injected
