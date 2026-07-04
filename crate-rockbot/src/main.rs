@@ -543,8 +543,16 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                                     }
                                 }
                             }
-                            if let Err(e) = h.compress_room_if_needed(&msg.room_id).await {
-                                warn!("Memory archiving failed: {}", e);
+                            match h.compress_room_if_needed(&msg.room_id).await {
+                                Ok(cr) => {
+                                    if let Some(err_msg) = cr.error {
+                                        warn!("Memory compression error: {}", err_msg);
+                                        if let Err(e) = sender.send_reply(&format!("Memory compression failed: {}", err_msg), None).await {
+                                            warn!("Failed to send compression error reply: {}", e);
+                                        }
+                                    }
+                                }
+                                Err(e) => warn!("Memory archiving failed: {}", e),
                             }
                         }
                         Ok(None) => {
@@ -552,8 +560,16 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                             if let Err(e) = sender.send_typing(false).await {
                                 warn!("Failed to stop typing indicator: {}", e);
                             }
-                            if let Err(e) = h.compress_room_if_needed(&msg.room_id).await {
-                                warn!("Memory archiving failed: {}", e);
+                            match h.compress_room_if_needed(&msg.room_id).await {
+                                Ok(cr) => {
+                                    if let Some(err_msg) = cr.error {
+                                        warn!("Memory compression error: {}", err_msg);
+                                        if let Err(e) = sender.send_reply(&format!("Memory compression failed: {}", err_msg), None).await {
+                                            warn!("Failed to send compression error reply: {}", e);
+                                        }
+                                    }
+                                }
+                                Err(e) => warn!("Memory archiving failed: {}", e),
                             }
                         }
                         Err(e) => {
@@ -565,8 +581,16 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                             if let Err(re) = sender.send_reply(&format!("Error processing message: {}", e), None).await {
                                 warn!("Failed to send error reply: {}", re);
                             }
-                            if let Err(e) = h.compress_room_if_needed(&msg.room_id).await {
-                                warn!("Memory archiving failed: {}", e);
+                            match h.compress_room_if_needed(&msg.room_id).await {
+                                Ok(cr) => {
+                                    if let Some(err_msg) = cr.error {
+                                        warn!("Memory compression error: {}", err_msg);
+                                        if let Err(e) = sender.send_reply(&format!("Memory compression failed: {}", err_msg), None).await {
+                                            warn!("Failed to send compression error reply: {}", e);
+                                        }
+                                    }
+                                }
+                                Err(e) => warn!("Memory archiving failed: {}", e),
                             }
                         }
                     }

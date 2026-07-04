@@ -18,12 +18,13 @@ use crate::types::{ChatMessage, ChatRequest, Role};
 use crate::utils::now_iso_string;
 
 /// Result of a compression operation consumed by tests and
-/// `compress_room_full()`. Compression is always silent — no user-facing
-/// notification regardless of mode (auto or explicit).
+/// `compress_room_full()`. Compression errors are surfaced in `error`
+/// rather than as a placeholder summary.
 pub struct CompressionResult {
     pub did_compress: bool,
     pub summary: Option<String>,
     pub was_explicit: bool,
+    pub error: Option<String>,
 }
 
 const DEFAULT_SYSTEM_PROMPT: &str = "\
@@ -963,6 +964,7 @@ impl AgentHarness {
                 did_compress: false,
                 summary: None,
                 was_explicit: false,
+                error: None,
             });
         }
         // explicit_compress flag triggers force=true (full compression, not half)
@@ -973,6 +975,12 @@ impl AgentHarness {
     /// Force-compress all Layer 1 messages (user-triggered, synchronous)
     pub async fn compress_room_full(&mut self, room_id: &str) -> Result<String> {
         let cr = self.compress_room_inner(room_id, true).await?;
+        if let Some(err_msg) = cr.error {
+            return Ok(format!(
+                "Memory compression failed: {}\nHistory was cleared but summary.md was not updated.",
+                err_msg
+            ));
+        }
         let summary = cr.summary
             .or_else(|| self.memory.get_summary(room_id).map(|s| s.to_string()))
             .unwrap_or_default();
@@ -1006,16 +1014,31 @@ impl AgentHarness {
                 };
 
                 // LLM compress: summary + identify used knowledge
-                let (summary_text, used_filenames) = self.compress_for_summary(&msgs, existing_summary.as_deref(), &knowledge_entries).await;
+                let (summary_text, used_filenames) = match self.compress_for_summary(&msgs, existing_summary.as_deref(), &knowledge_entries).await {
+                    Ok(result) => result,
+                    Err(e) => {
+                        warn!("Compression LLM failed: {}, pruning without updating summary.md", e);
+                        self.memory.prune_archived(&rid, count);
+                        self.memory.clear_pressure_flags(&rid);
+                        return Ok(CompressionResult {
+                            did_compress: true,
+                            summary: None,
+                            was_explicit: force,
+                            error: Some(e.to_string()),
+                        });
+                    }
+                };
 
                 // Write summary.md
-                let summary_ok = self.write_summary_md(webdav_client, &wd, &summary_text).await.is_ok();
-                if !summary_ok {
-                    warn!("Failed to write summary.md, skipping prune");
+                if let Err(e) = self.write_summary_md(webdav_client, &wd, &summary_text).await {
+                    warn!("Failed to write summary.md: {}, pruning without updating summary.md", e);
+                    self.memory.prune_archived(&rid, count);
+                    self.memory.clear_pressure_flags(&rid);
                     return Ok(CompressionResult {
-                        did_compress: false,
+                        did_compress: true,
                         summary: None,
                         was_explicit: force,
+                        error: Some(format!("failed to write summary.md: {}", e)),
                     });
                 }
 
@@ -1046,6 +1069,7 @@ impl AgentHarness {
                     did_compress: true,
                     summary: Some(summary_text),
                     was_explicit: force,
+                    error: None,
                 })
             } else {
                 debug!(
@@ -1059,6 +1083,7 @@ impl AgentHarness {
                     did_compress: true,
                     summary: None,
                     was_explicit: force,
+                    error: None,
                 })
             }
         } else {
@@ -1066,6 +1091,7 @@ impl AgentHarness {
                 did_compress: false,
                 summary: None,
                 was_explicit: false,
+                error: None,
             })
         }
     }
@@ -1075,9 +1101,9 @@ impl AgentHarness {
         messages: &[ChatMessage],
         existing_summary: Option<&str>,
         knowledge_entries: &[crate::knowledge::IndexEntry],
-    ) -> (String, Vec<String>) {
+    ) -> Result<(String, Vec<String>)> {
         if messages.is_empty() {
-            return (String::new(), Vec::new());
+            return Err(RockBotError::Provider("no messages to compress".into()));
         }
 
         let user_msgs: Vec<String> = messages
@@ -1090,7 +1116,9 @@ impl AgentHarness {
             .collect();
 
         if user_msgs.is_empty() {
-            return (format!("Error: no compressible text in {} messages", messages.len()), Vec::new());
+            return Err(RockBotError::Provider(format!(
+                "no compressible text in {} messages", messages.len()
+            )));
         }
 
         // Build knowledge entries reference for LLM
@@ -1141,31 +1169,23 @@ impl AgentHarness {
             tool_choice: None,
         };
 
-        let default_summary = format!("{} messages compressed", messages.len());
-
-        match self.provider.complete(request).await {
-            Ok(result) => {
-                let text = match result.text {
-                    Some(t) if !t.trim().is_empty() => t,
-                    _ => {
-                        // Thinking models may put output in reasoning_content
-                        if let Some(rc) = result.reasoning_content.as_ref().filter(|s| !s.trim().is_empty()) {
-                            debug!("compress_for_summary: text empty, using reasoning_content ({} chars)", rc.len());
-                            rc.clone()
-                        } else {
-                            warn!("compress_for_summary: LLM returned no text content (finish={:?})", result.finish);
-                            return (default_summary, Vec::new());
-                        }
-                    }
-                };
-                debug!("compress_for_summary raw AI response text ({} chars):\n{}", text.len(), &text[..text.len().min(1000)]);
-                parse_compression_output(&text, &default_summary)
+        let result = self.provider.complete(request).await?;
+        let text = match result.text {
+            Some(t) if !t.trim().is_empty() => t,
+            _ => {
+                // Thinking models may put output in reasoning_content
+                if let Some(rc) = result.reasoning_content.as_ref().filter(|s| !s.trim().is_empty()) {
+                    debug!("compress_for_summary: text empty, using reasoning_content ({} chars)", rc.len());
+                    rc.clone()
+                } else {
+                    return Err(RockBotError::Provider(format!(
+                        "LLM returned no text content (finish={:?})", result.finish
+                    )));
+                }
             }
-            Err(e) => {
-                warn!("AI compression failed, using fallback: {}", e);
-                (default_summary, Vec::new())
-            }
-        }
+        };
+        debug!("compress_for_summary raw AI response text ({} chars):\n{}", text.len(), &text[..text.len().min(1000)]);
+        parse_compression_output(&text)
     }
 
     async fn write_summary_md(
@@ -1781,7 +1801,7 @@ fn compute_webdav_dir(room_name: &str, room_fname: &str, is_dm: bool) -> String 
     }
 }
 
-fn parse_compression_output(output: &str, default_summary: &str) -> (String, Vec<String>) {
+fn parse_compression_output(output: &str) -> Result<(String, Vec<String>)> {
     let cleaned = strip_code_fences(output);
     let trimmed = cleaned.trim();
 
@@ -1802,8 +1822,7 @@ fn parse_compression_output(output: &str, default_summary: &str) -> (String, Vec
             );
             strip_summary_header(trimmed).to_string()
         } else {
-            warn!("compress_for_summary: LLM output was completely empty");
-            default_summary.to_string()
+            return Err(RockBotError::Provider("LLM output was completely empty".into()));
         }
     } else {
         strip_summary_header(summary_part).to_string()
@@ -1821,7 +1840,7 @@ fn parse_compression_output(output: &str, default_summary: &str) -> (String, Vec
         })
         .collect();
 
-    (summary, used)
+    Ok((summary, used))
 }
 
 fn strip_code_fences(s: &str) -> &str {
@@ -2235,9 +2254,8 @@ chat = "mock-model"
             ChatMessage::user("Hello, I need help with something"),
             ChatMessage::assistant("Sure, what do you need?"),
         ];
-        let (summary, used) = harness.compress_for_summary(&msgs, None, &[]).await;
-        assert!(summary.contains("2 messages"));
-        assert!(used.is_empty());
+        let result = harness.compress_for_summary(&msgs, None, &[]).await;
+        assert!(result.is_err(), "mock provider with no responses should error");
     }
 
     #[test]
@@ -3057,7 +3075,7 @@ value = "real_gitea_token_123"
     #[test]
     fn test_parse_compression_output_well_formed() {
         let output = "# Memory Summary\n\n- user prefers dark mode\n- decided on Rust\n\n## Used Knowledge\n- preferences.md\n";
-        let (summary, used) = parse_compression_output(output, "fallback");
+        let (summary, used) = parse_compression_output(output).unwrap();
         assert_eq!(summary, "- user prefers dark mode\n- decided on Rust");
         assert_eq!(used, vec!["preferences.md"]);
     }
@@ -3065,7 +3083,7 @@ value = "real_gitea_token_123"
     #[test]
     fn test_parse_compression_output_no_knowledge_section() {
         let output = "# Memory Summary\n\n- discussed project layout\n- agreed on async Rust\n";
-        let (summary, used) = parse_compression_output(output, "fallback");
+        let (summary, used) = parse_compression_output(output).unwrap();
         assert_eq!(summary, "- discussed project layout\n- agreed on async Rust");
         assert!(used.is_empty());
     }
@@ -3073,7 +3091,7 @@ value = "real_gitea_token_123"
     #[test]
     fn test_parse_compression_output_knowledge_first() {
         let output = "## Used Knowledge\n- notes.md\n\n- user asked about compression\n- decided to fix bug";
-        let (summary, used) = parse_compression_output(output, "fallback");
+        let (summary, used) = parse_compression_output(output).unwrap();
         assert!(summary.contains("user asked about compression"), "got: {summary}");
         assert_eq!(used, vec!["notes.md"]);
     }
@@ -3081,22 +3099,21 @@ value = "real_gitea_token_123"
     #[test]
     fn test_parse_compression_output_code_fenced() {
         let output = "```markdown\n# Memory Summary\n\n- bullet one\n- bullet two\n\n## Used Knowledge\n- file.md\n```";
-        let (summary, used) = parse_compression_output(output, "fallback");
+        let (summary, used) = parse_compression_output(output).unwrap();
         assert_eq!(summary, "- bullet one\n- bullet two");
         assert_eq!(used, vec!["file.md"]);
     }
 
     #[test]
     fn test_parse_compression_output_empty() {
-        let (summary, used) = parse_compression_output("", "5 messages compressed");
-        assert_eq!(summary, "5 messages compressed");
-        assert!(used.is_empty());
+        let result = parse_compression_output("");
+        assert!(result.is_err(), "empty LLM output should return error");
     }
 
     #[test]
     fn test_parse_compression_output_no_markers() {
         let output = "The user discussed compression issues and we agreed to fix the parser.\nKey decision: use full output as fallback.";
-        let (summary, used) = parse_compression_output(output, "fallback");
+        let (summary, used) = parse_compression_output(output).unwrap();
         assert!(summary.contains("compression issues"), "got: {summary}");
         assert!(used.is_empty());
     }

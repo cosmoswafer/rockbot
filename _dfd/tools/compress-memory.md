@@ -94,24 +94,28 @@ flowchart TD
     TOOL[compress_memory Tool]
     NO_ROOM{room_id present?}
     NO_WEBDAV{WebDAV configured?}
-    LLM_FAIL{Compression LLM<br/>fails?}
+    LLM_FAIL{Compression LLM<br/>fails or empty?}
+    WRITE_FAIL{summary.md<br/>write fails?}
     ERR_PARSE["Error: room_id required"]
     ERR_NODAV["Error: WebDAV not available"]
-    FALLBACK["Warn + Skip<br/>(no data loss)"]
-    REPLY[Reply to User]
+    ERROR_PATH["Error Path:<br/>Prune L1 (strip to empty)<br/>summary.md unchanged<br/>Send error reply to user"]
+    REPLY[Write summary.md<br/>+ Prune L1]
 
     TOOL --> NO_ROOM
     NO_ROOM -->|"no"| ERR_PARSE
     NO_ROOM -->|"yes"| NO_WEBDAV
     NO_WEBDAV -->|"no"| ERR_NODAV
     NO_WEBDAV -->|"yes"| LLM_FAIL
-    LLM_FAIL -.->|"yes"| FALLBACK
-    LLM_FAIL -.->|"no"| REPLY
+    LLM_FAIL -->|"yes"| ERROR_PATH
+    LLM_FAIL -->|"no"| WRITE_FAIL
+    WRITE_FAIL -->|"yes"| ERROR_PATH
+    WRITE_FAIL -->|"no"| REPLY
 ```
 
-If WebDAV is not configured, the tool returns an error. If the compression LLM
-fails, the tool reports the error to the user — messages remain in Layer 1
-unchanged (no data loss).
+If the compression LLM fails (API error, empty response) or `summary.md`
+write fails, the harness follows the error path: Layer 1 messages are
+**pruned** (memory stripped to empty), `summary.md` is **left unchanged**
+(no placeholder written), and an **error reply** is sent to the user.
 
 ## 3. Data Structures
 

@@ -20,7 +20,7 @@
 - **RL6** Room state survives restart: cache-first `snapshot.json` (single GET), fallback to individual `soul.md` + `summary.md` files.
 - **RL7** DDP subscription loss (`nosub` message) triggers automatic re-subscribe (unlimited retries within connection lifetime).
 - **RL8** Tool execution errors produce `ToolResult` with `is_error: true` (fed back to LLM, not crash).
-- **RL9** AI summary failure falls back to static `"{count} messages compressed"` message.
+- **RL9** AI summary failure prunes messages (memory stripped), leaves `summary.md` unchanged, and sends error reply to user. No placeholder summary written.
 - **RL10** Knowledge load failure on room init skips knowledge gracefully (warn + continue).
 - **RL11** Max iterations exceeded appends apology fallback message and returns to user.
 - **RL12** Knowledge forget returns error to LLM if entry not found; underlying WebDAV delete is idempotent (accepts 404).

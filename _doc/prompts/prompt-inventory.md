@@ -425,10 +425,10 @@ Only list knowledge entries that were actually relevant to this conversation.
 
 **Output parsing:** `parse_compression_output()` (lines 1598-1627) splits the LLM output at `## Used Knowledge` to extract both the summary text and the list of referenced knowledge filenames.
 
-**Fallback (lines 939, 990):** If AI summarization fails or no user messages:
-```
-{messages.len()} messages compressed
-```
+**Error handling:** If AI summarization fails or returns empty output, `compress_for_summary()`
+returns `Err`. The caller (`compress_room_inner`) prunes messages (memory stripped) but leaves
+`summary.md` unchanged and surfaces the error in `CompressionResult.error` for the main loop
+to send an error reply to the user.
 
 ---
 
