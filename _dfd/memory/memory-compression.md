@@ -230,19 +230,32 @@ If the compression LLM call fails (API error, timeout), compression is
 skipped for this cycle. Messages remain in Layer 1 — they will be re-evaluated
 next cycle. No data is lost.
 
+If the LLM call succeeds but returns no text content (e.g. only tool calls
+or `content: null`), the placeholder `"N messages compressed"` is used and
+written to `summary.md`. If the LLM returns text but the parser cannot find
+a summary section (e.g. model put `## Used Knowledge` first), the full raw
+LLM output is used as the summary — this is always more useful than the
+placeholder.
+
 ```mermaid
 flowchart TD
     AI[AiProvider]
     FAIL{Compression LLM<br/>Call Failed?}
+    NO_TEXT{"result.text<br/>is None?"}
     SKIP["Skip Compression<br/>(messages stay in L1)"]
+    PLACEHOLDER["Write placeholder<br/>summary.md + Prune"]
     LOG[Log Warning]
     RETRY["Retry Next Cycle<br/>(same messages re-evaluated)"]
+    CONTINUE[Write summary.md + Prune]
 
     AI -.->|"api error / timeout"| FAIL
     FAIL -->|"yes"| SKIP
-    FAIL -->|"no: proceed normally"| CONTINUE[Write summary.md + Prune]
+    FAIL -->|"no: response ok"| NO_TEXT
+    NO_TEXT -->|"yes"| PLACEHOLDER
+    NO_TEXT -->|"no: has text"| CONTINUE
     SKIP --> LOG
     LOG --> RETRY
+    PLACEHOLDER --> LOG
 ```
 
 ## 3. Data Structures
@@ -285,7 +298,22 @@ the compression outcome from the background pipeline to tests and to
 
 ### Compression Output
 
-The LLM response is parsed via `parse_compression_output()`:
+The LLM response is parsed via `parse_compression_output()`, which applies
+three normalization steps before extracting the summary and used-knowledge
+sections:
+
+1. **Strip code fences** — if the entire response is wrapped in
+   `` ```markdown ... ``` `` (or any fenced block), the fences and optional
+   language tag are removed before parsing.
+2. **Split on `## Used Knowledge`** — text before the marker becomes the
+   summary; text after it is scanned for lines ending in `.md`.
+3. **Strip `# Memory Summary` header** — the leading header line is removed
+   from the summary text, leaving only the bullet points.
+
+**Fallback**: if the summary section is empty after splitting (e.g. the LLM
+put `## Used Knowledge` first or omitted the summary section), the **full
+raw LLM output** is used as the summary instead of a placeholder string.
+Only a completely empty LLM response falls back to `"N messages compressed"`.
 
 | Output | Format | Example |
 |--------|--------|---------|

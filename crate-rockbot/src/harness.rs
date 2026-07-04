@@ -1145,7 +1145,13 @@ impl AgentHarness {
 
         match self.provider.complete(request).await {
             Ok(result) => {
-                let text = result.text.unwrap_or_else(|| default_summary.clone());
+                let text = match result.text {
+                    Some(t) => t,
+                    None => {
+                        warn!("compress_for_summary: LLM returned no text content (finish={:?})", result.finish);
+                        return (default_summary, Vec::new());
+                    }
+                };
                 debug!("compress_for_summary raw AI response text ({} chars):\n{}", text.len(), &text[..text.len().min(1000)]);
                 if let Some(ref rc) = result.reasoning_content {
                     debug!("compress_for_summary reasoning_content ({} chars):\n{}", rc.len(), &rc[..rc.len().min(500)]);
@@ -1773,25 +1779,37 @@ fn compute_webdav_dir(room_name: &str, room_fname: &str, is_dm: bool) -> String 
 }
 
 fn parse_compression_output(output: &str, default_summary: &str) -> (String, Vec<String>) {
-    // Split at "## Used Knowledge" marker
-    let (summary_part, used_part) = if let Some(pos) = output.find("## Used Knowledge") {
-        let s = &output[..pos];
-        let u = &output[pos + "## Used Knowledge".len()..];
-        (s.trim(), u.trim())
+    let cleaned = strip_code_fences(output);
+    let trimmed = cleaned.trim();
+
+    let (summary_part, used_part) = if let Some(pos) = trimmed.find("## Used Knowledge") {
+        let s = trimmed[..pos].trim();
+        let u = trimmed[pos + "## Used Knowledge".len()..].trim();
+        (s, u)
     } else {
-        (output.trim(), "")
+        (trimmed, "")
     };
 
     let summary = if summary_part.is_empty() {
-        default_summary.to_string()
+        if !trimmed.is_empty() {
+            warn!(
+                "compress_for_summary: summary section empty after parsing, using full LLM output ({} chars): {}",
+                trimmed.len(),
+                &trimmed[..trimmed.len().min(200)]
+            );
+            strip_summary_header(trimmed).to_string()
+        } else {
+            warn!("compress_for_summary: LLM output was completely empty");
+            default_summary.to_string()
+        }
     } else {
-        summary_part.to_string()
+        strip_summary_header(summary_part).to_string()
     };
 
     let used: Vec<String> = used_part
         .lines()
         .filter_map(|line| {
-        let trimmed = line.trim().trim_start_matches(|c: char| c == '-' || c.is_whitespace());
+            let trimmed = line.trim().trim_start_matches(|c: char| c == '-' || c.is_whitespace());
             if trimmed.ends_with(".md") && !trimmed.is_empty() {
                 Some(trimmed.to_string())
             } else {
@@ -1801,6 +1819,25 @@ fn parse_compression_output(output: &str, default_summary: &str) -> (String, Vec
         .collect();
 
     (summary, used)
+}
+
+fn strip_code_fences(s: &str) -> &str {
+    let s = s.trim();
+    if let Some(rest) = s.strip_prefix("```") {
+        let after_tag = rest.find('\n').map(|i| &rest[i + 1..]).unwrap_or(rest);
+        if let Some(body) = after_tag.strip_suffix("```") {
+            return body.trim();
+        }
+    }
+    s
+}
+
+fn strip_summary_header(s: &str) -> &str {
+    let s = s.trim();
+    if let Some(rest) = s.strip_prefix("# Memory Summary") {
+        return rest.trim_start_matches(|c: char| c == '\n' || c == '\r').trim();
+    }
+    s
 }
 
 #[cfg(test)]
@@ -3012,6 +3049,53 @@ value = "real_gitea_token_123"
         let text = "![logo](https://example.com/logo.png) is not a data URI";
         let images = parse_markdown_images(text);
         assert_eq!(images.len(), 0);
+    }
+
+    #[test]
+    fn test_parse_compression_output_well_formed() {
+        let output = "# Memory Summary\n\n- user prefers dark mode\n- decided on Rust\n\n## Used Knowledge\n- preferences.md\n";
+        let (summary, used) = parse_compression_output(output, "fallback");
+        assert_eq!(summary, "- user prefers dark mode\n- decided on Rust");
+        assert_eq!(used, vec!["preferences.md"]);
+    }
+
+    #[test]
+    fn test_parse_compression_output_no_knowledge_section() {
+        let output = "# Memory Summary\n\n- discussed project layout\n- agreed on async Rust\n";
+        let (summary, used) = parse_compression_output(output, "fallback");
+        assert_eq!(summary, "- discussed project layout\n- agreed on async Rust");
+        assert!(used.is_empty());
+    }
+
+    #[test]
+    fn test_parse_compression_output_knowledge_first() {
+        let output = "## Used Knowledge\n- notes.md\n\n- user asked about compression\n- decided to fix bug";
+        let (summary, used) = parse_compression_output(output, "fallback");
+        assert!(summary.contains("user asked about compression"), "got: {summary}");
+        assert_eq!(used, vec!["notes.md"]);
+    }
+
+    #[test]
+    fn test_parse_compression_output_code_fenced() {
+        let output = "```markdown\n# Memory Summary\n\n- bullet one\n- bullet two\n\n## Used Knowledge\n- file.md\n```";
+        let (summary, used) = parse_compression_output(output, "fallback");
+        assert_eq!(summary, "- bullet one\n- bullet two");
+        assert_eq!(used, vec!["file.md"]);
+    }
+
+    #[test]
+    fn test_parse_compression_output_empty() {
+        let (summary, used) = parse_compression_output("", "5 messages compressed");
+        assert_eq!(summary, "5 messages compressed");
+        assert!(used.is_empty());
+    }
+
+    #[test]
+    fn test_parse_compression_output_no_markers() {
+        let output = "The user discussed compression issues and we agreed to fix the parser.\nKey decision: use full output as fallback.";
+        let (summary, used) = parse_compression_output(output, "fallback");
+        assert!(summary.contains("compression issues"), "got: {summary}");
+        assert!(used.is_empty());
     }
 
     #[test]
