@@ -74,7 +74,7 @@ Three crates: `rocketchat` (DDP WebSocket client), `rockbot` (bot logic + Matrix
 - **No local disk** — all persistent state on NextCloud WebDAV
 - **`AiProvider` trait** — single OpenAI-compatible interface; separate `[[chat_providers]]` and `[[image_providers]]` tables for text and image backends (DeepSeek, OpenRouter, Fal)
 - **`Tool` trait with `ToolRegistry`** — tools registered dynamically; agent loop dispatches and feeds results back
-- **Three-layer memory** — chat history (short-term), daily summaries (mid-term), soul archive (long-term) on WebDAV per room
+- **Two-layer memory** — chat history (short-term) and soul archive (long-term) on WebDAV per room; hard reset on overflow (no LLM summarization)
 - **Knowledge store** — persistent skill/secret/note entries per room with WebDAV-backed `index.json`
 
 ## Prerequisites
@@ -125,7 +125,7 @@ Test inventory and run instructions: [`_doc/test_suite/`](_doc/test_suite/).
 | Matrix client | [`_dfd/infra/matrix.md`](_dfd/infra/matrix.md) | — |
 | AI Provider | [`_dfd/ai/ai-provider.md`](_dfd/ai/ai-provider.md) | — |
 | Memory | [`_dfd/memory/memory.md`](_dfd/memory/memory.md) | — |
-| Memory compression | [`_dfd/memory/memory-compression.md`](_dfd/memory/memory-compression.md) | — |
+| Memory reset | [`_dfd/memory/memory-reset.md`](_dfd/memory/memory-reset.md) | — |
 | Knowledge | [`_dfd/knowledge/knowledge.md`](_dfd/knowledge/knowledge.md) | — |
 | Knowledge priority | [`_dfd/knowledge/knowledge-priority.md`](_dfd/knowledge/knowledge-priority.md) | — |
 | Image interception | [`_dfd/interception/image-interception.md`](_dfd/interception/image-interception.md) | — |
@@ -136,7 +136,7 @@ Test inventory and run instructions: [`_doc/test_suite/`](_doc/test_suite/).
 | Vision tool | [`_dfd/tools/vision.md`](_dfd/tools/vision.md) | — |
 | Calendar tool | [`_dfd/tools/calendar.md`](_dfd/tools/calendar.md) | — |
 | WebDAV tool | [`_dfd/tools/webdav.md`](_dfd/tools/webdav.md) | — |
-| Compress memory | [`_dfd/tools/compress-memory.md`](_dfd/tools/compress-memory.md) | — |
+| Reset memory | [`_dfd/tools/reset-memory.md`](_dfd/tools/reset-memory.md) | — |
 | Edit soul | [`_dfd/tools/edit-soul.md`](_dfd/tools/edit-soul.md) | — |
 | Knowledge tools | [`_dfd/tools/knowledge.md`](_dfd/tools/knowledge.md) | — |
 | Test suite | — | [`_doc/test_suite/running.md`](_doc/test_suite/running.md) |
