@@ -15,7 +15,7 @@ standard harness mechanisms are present:
 | Mechanism   | Coverage | Details |
 |-------------|----------|---------|
 | **Tools**   | Full     | Abstract tool calling via `ToolRegistry` — individual tools each have their own DFD |
-| **Context** | Full     | Per-room conversation history buffer, compression (see [Memory Compression](../memory/memory-compression.md)), archive loading — see [Memory Management](../memory/memory.md); plus iteration limits, room state routing, system prompt assembly (with live UTC time injection via `now_utc_human()`). Soul (`soul.md`) and summary (`summary.md`) are **re-read from WebDAV on every message** to ensure multi-instance consistency. |
+| **Context** | Full     | Per-room conversation history buffer, hard reset (see [Memory Reset](../memory/memory-reset.md)), archive loading — see [Memory Management](../memory/memory.md); plus iteration limits, room state routing, system prompt assembly (with live UTC time injection via `now_utc_human()`). Soul (`soul.md`) is **re-read from WebDAV on every message** to ensure multi-instance consistency. |
 | **Knowledge** | Full     | `save_knowledge`, `forget_knowledge`, `recall_knowledge`; retrieval via keyword-matching against `when_useful` + filename — see [Knowledge Management](base/knowledge.md) |
 
 Intentionally absent — not needed for rockbot's scope:
@@ -47,7 +47,6 @@ flowchart TD
     RC[RocketChat]
     ROUTE(RouteByRoom)
     SOUL["GET soul.md"]
-    SUMMARY["GET summary.md"]
     KNOWLEDGE["GET knowledge/index.json"]
     CTX(BuildContext)
     MEM[(ConversationHistory)]
@@ -58,8 +57,7 @@ flowchart TD
 
     RC -->|"incoming message"| ROUTE
     ROUTE -->|"routed message"| SOUL
-    SOUL -->|"fresh from WebDAV"| SUMMARY
-    SUMMARY -->|"fresh from WebDAV"| KNOWLEDGE
+    SOUL -->|"fresh from WebDAV"| KNOWLEDGE
     KNOWLEDGE -->|"fresh from WebDAV"| CTX
     MEM -->|"history for room"| CTX
     TOOLS_DEF -->|"tool definitions"| INTERACT
@@ -84,16 +82,16 @@ flowchart TD
     LOOP_LIMIT(CheckMaxIterations)
     APPEND(AppendToolResult)
     FALLBACK(SendFallbackReply)
-    COMPRESS{ContextLength<br/>Exceeded?}
-    STRIP(CompressHistoryForRetry<br/>strip images + prune to 6 msgs)
+    CHECK{ContextLength<br/>Exceeded?}
+    RESET(ResetHistory<br/>clear Layer 1)
     REBUILD(HardTruncate<br/>keep system prefix + last 2 msgs)
     RETRY(Retry LLM Call)
     REPLY[BotReply]
 
-    AI -.->|"api error response"| COMPRESS
-    COMPRESS -.->|"yes (first time)"| STRIP
-    COMPRESS -.->|"no (other error)"| FALLBACK
-    STRIP -.->|"rebuilt messages"| REBUILD
+    AI -.->|"api error response"| CHECK
+    CHECK -.->|"yes (first time)"| RESET
+    CHECK -.->|"no (other error)"| FALLBACK
+    RESET -.->|"empty history"| REBUILD
     REBUILD -.->|"retry"| RETRY
     RETRY -.-> AI
     TOOL_EXEC -.->|"tool execution error"| APPEND
@@ -115,9 +113,8 @@ flowchart TD
     EXEC(ExecuteTool)
     APPEND(AppendToolResult)
     LIMIT(CheckIterationLimit)
-    TRUNC(TruncateAndSummarize)
+    RESET(ResetHistory<br/>clear Layer 1)
     CTX_ERR{ContextLength<br/>Exceeded?}
-    STRIP_COMPRESS(CompressHistoryForRetry<br/>strip images + prune to 6 msgs)
     REBUILD(HardTruncate<br/>keep system prefix + last 2 msgs)
     REPLY_OUT[BotReply]
 
@@ -128,13 +125,11 @@ flowchart TD
     EXEC -->|"tool result"| APPEND
     APPEND -->|"updated messages"| CTX
     CTX -->|"context byte size"| LIMIT
-    LIMIT -.->|"exceeds max_context_bytes"| TRUNC
-    TRUNC -->|"summarized messages"| CTX
     EXEC -.->|"tool execution error"| APPEND
     AI -.->|"api error"| CTX_ERR
-    CTX_ERR -.->|"yes (first time)"| STRIP_COMPRESS
+    CTX_ERR -.->|"yes (first time)"| RESET
     CTX_ERR -.->|"no (other error)"| REPLY_OUT
-    STRIP_COMPRESS -.->|"stripped history"| REBUILD
+    RESET -.->|"empty history"| REBUILD
     REBUILD -.->|"retry request"| CTX
 ```
 
@@ -146,14 +141,14 @@ Stateless tools (web search, fetch, vision, etc.) receive raw arguments
 without room context. The `ToolRegistry` maps tool names to implementations;
 calls are dispatched generically via `execute_by_name()`.
 
-**Exception**: `compress_memory` is intercepted before `execute_by_name()`.
-Instead of running compression synchronously (which would clear history
-mid-conversation), it sets an `explicit_compress` flag on the room. Actual
-compression runs post-reply via `compress_room_if_needed()` with `force=true`. The
-tool's own `execute()` is a stub that returns an error — this avoids both
-the deadlock from re-acquiring `Arc<Mutex<AgentHarness>>` and the data loss
-from clearing history while the LLM is still generating a reply. See
-[memory-compression.md §2b2](base/memory-compression.md#2b2-explicit-compression--compress_memory-tool) for the full flow.
+**Exception**: `reset_memory` is intercepted before `execute_by_name()`.
+Instead of running reset synchronously (which would clear history
+mid-conversation), it sets an `explicit_reset` flag on the room. Actual
+reset runs post-reply via `reset_room_if_needed()`. The tool's own `execute()`
+is a stub that returns an error — this avoids both the deadlock from
+re-acquiring `Arc<Mutex<AgentHarness>>` and the data loss from clearing
+history while the LLM is still generating a reply. See
+[memory-reset.md §2b2](base/memory-reset.md#2b2-explicit-reset--reset_memory-tool) for the full flow.
 
 **Secret interception**: `web_fetch` arguments are scanned for `secret:<key>`
 references in header values before dispatch. The harness loads `secrets.toml`
@@ -167,8 +162,8 @@ flowchart TD
     INJECT{Stateful?}
     ROOM_CTX[(RoomState<br/>room_id + webdav_dir)]
     REG[(ToolRegistry)]
-    COMPRESS{compress_memory?}
-    SET_FLAG["Set explicit_compress<br/>flag (post-reply)"]
+    RESET{reset_memory?}
+    SET_FLAG["Set explicit_reset<br/>flag (post-reply)"]
     SECRETS{web_fetch?}
     SECRET_MAP[(secrets.toml)]
     INJECT_SECRETS(Resolve secret:key refs)
@@ -177,10 +172,10 @@ flowchart TD
 
     CALL -->|"tool name + args"| INJECT
     ROOM_CTX -->|"room_id + webdav_dir"| INJECT
-    INJECT -->|"stateful: enriched args"| COMPRESS
-    INJECT -->|"stateless: raw args"| COMPRESS
-    COMPRESS -->|"yes (set flag, return ack)"| SET_FLAG
-    COMPRESS -->|"no"| SECRETS
+    INJECT -->|"stateful: enriched args"| RESET
+    INJECT -->|"stateless: raw args"| RESET
+    RESET -->|"yes (set flag, return ack)"| SET_FLAG
+    RESET -->|"no"| SECRETS
     SECRETS -->|"yes"| INJECT_SECRETS
     SECRETS -->|"no"| EXEC
     SECRET_MAP -->|"key-value pairs"| INJECT_SECRETS
@@ -241,7 +236,7 @@ placeholders (see `memory.rs:strip_images_from_message`).
 additionally strip all `ImageUrl` parts from every message — including the
 most recent — replacing them with `[image]` placeholders via
 `strip_message_images()` at the provider layer. This is a provider-level
-concern separate from memory compression; the harness always embeds images
+concern separate from memory reset; the harness always embeds images
 in `ChatMessage` regardless of the provider. See
 [ai-provider.md §2c](../ai/ai-provider.md#2c-vision-payload-deep-dive).
 
@@ -341,32 +336,6 @@ This covers all image sources for editing:
 - DDP message URLs with image content types (via `current_image_urls` —
   auto-injected without prompt matching)
 
-### 2h. Memory Compression + Knowledge Priority Review
-
-After each compression cycle (which produces `summary.md` from overflowed
-Layer 1 messages), the harness calls `review_knowledge_priorities_for_room()`
-with the list of knowledge entry filenames that the LLM identified as relevant
-to the compressed conversation. Used entries are promoted one level; unused
-entries decay based on days since their last promotion. P0 requires consistent
-daily use — entries climb one step per compression cycle. See
-[Knowledge Priority Algorithm](base/knowledge-priority.md).
-
-```mermaid
-flowchart TD
-    COMPRESS["compress_room_if_needed()<br/>(after write_summary_md)"]
-    LLM_USED["LLM-identified<br/>used entry filenames"]
-    REVIEW["review_knowledge_priorities_for_room()"]
-    PROMOTE["Promote Used One Level<br/>Decay Unused by Recency"]
-    DAV[(NextCloud WebDAV)]
-    MARK["Mark Snapshot Dirty"]
-
-    COMPRESS -->|"used filenames"| LLM_USED
-    LLM_USED --> REVIEW
-    REVIEW --> PROMOTE
-    PROMOTE -->|"PUT index.json"| DAV
-    PROMOTE --> MARK
-```
-
 ### 2i. Safety Net — Inline Context Truncation (Pre-LLM, No Delay)
 
 Before each LLM call, the harness checks if the total JSON byte size of the
@@ -376,8 +345,8 @@ messages, stripping images from older entries. This is a fast in-memory
 operation that prevents provider rejection.
 
 When inline truncation fires, it also sets a `byte_pressure_flag` so the room
-receives full LLM compression **after the reply is delivered**. See
-[Memory Compression](base/memory-compression.md) for the full pipeline.
+receives a hard reset **after the reply is delivered**. See
+[Memory Reset](base/memory-reset.md) for the full pipeline.
 
 ```mermaid
 flowchart TD
@@ -398,51 +367,49 @@ flowchart TD
 manipulation. At least the last 2 messages plus the system prompt are always
 preserved. If the total message count is ≤ system prefix + 4, trimming is
 skipped entirely regardless of byte limit. Sets `byte_pressure_flag` so the
-room gets full LLM compression after reply delivery.
+room gets a hard reset after reply delivery.
 
-### 2i2. Context-Length-Exceeded Retry — Provider-Triggered Compression
+### 2i2. Context-Length-Exceeded Retry — Provider-Triggered Reset
 
 When the AI provider returns a `ContextLengthExceeded` error (HTTP 400 with
 "context length" or "maximum context" in the error message), the harness
-runs the auto compression pipeline (`compress_room_inner(force=false)`) and
-retries the request once. This is a provider-initiated recovery path that
-complements the proactive `trim_context` byte-check.
+runs a hard reset (clear Layer 1) and retries the request once. No LLM
+summarization — just wipe and retry.
 
 ```mermaid
 flowchart TD
     AI[AiProvider]
     CHECK{ContextLengthExceeded?}
-    COMPRESS["CompressRoomInner<br/>(LLM summarize + prune all messages)"]
+    RESET["ResetLayer1<br/>(clear all messages)"]
     TRIM["HardTruncate<br/>(keep system prefix + last 2 msgs)"]
     RETRY["Retry LLM Call"]
-    FALLBACK["SendErrorFallback<br/>(already compressed once)"]
+    FALLBACK["SendErrorFallback<br/>(already reset once)"]
     REPLY[BotReply]
 
     AI -->|"error response"| CHECK
-    CHECK -->|"yes (first time)"| COMPRESS
-    CHECK -->|"yes (already compressed)"| FALLBACK
+    CHECK -->|"yes (first time)"| RESET
+    CHECK -->|"yes (already reset)"| FALLBACK
     CHECK -->|"no (other error)"| FALLBACK
-    COMPRESS -->|"summary.md written,<br/>all messages pruned"| TRIM
+    RESET -->|"all messages cleared"| TRIM
     TRIM -->|"rebuilt messages"| RETRY
     RETRY --> AI
     FALLBACK --> REPLY
 ```
 
-**Compression** (`compress_room_inner`): same auto procedure as described in
-[Memory Compression §2b](base/memory-compression.md#2b-compression-deep-dive) —
-LLM summarization of all Layer 1 messages, write `summary.md` to WebDAV,
-prune compressed messages from history.
+**Reset** (`reset_room_if_needed`): clears all Layer 1 messages instantly —
+no LLM call, no WebDAV write. See
+[Memory Reset §2e](base/memory-reset.md#2e-context-length-exceeded-retry--provider-triggered-reset).
 
-After compression, rebuilds context with `max_history: Some(4)` and applies
+After reset, rebuilds context with `max_history: Some(4)` and applies
 **hard truncation**: keep system/front-matter messages at the front, and
 only the last 2 conversation messages at the end. After hard truncation,
 **per-message content truncation** caps each remaining conversation message
 at 200K chars to handle cases where individual tool results or user pastes
 are themselves enormous.
 
-**Retry limit**: compression is attempted at most once per call. If the
-provider still returns `ContextLengthExceeded` after compression, the
-harness falls back to the standard error reply. The `context_compressed`
+**Retry limit**: reset is attempted at most once per call. If the
+provider still returns `ContextLengthExceeded` after reset, the
+harness falls back to the standard error reply. The `context_reset`
 flag is per-`process_message` call, not per-room.
 
 This recovery path handles token-limit breaches that the byte-based

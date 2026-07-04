@@ -6,7 +6,6 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_valid::Validate;
 use tracing::debug;
-use webdav::WebDavPath;
 
 use crate::types::ChatMessage;
 use crate::utils::now_iso_string;
@@ -124,7 +123,6 @@ pub struct MemoryManager {
     rooms: HashMap<String, RoomState>,
     pub max_soul_chars: usize,
     max_context_bytes: usize,
-    summaries: HashMap<String, Option<String>>,
     souls: HashMap<String, SoulMemory>,
     knowledge: HashMap<String, String>,
     dirty_snapshots: HashSet<String>,
@@ -133,8 +131,8 @@ pub struct MemoryManager {
     token_pressure: HashSet<String>,
     /// Per-room flag: byte pressure detected (set during context assembly, checked after reply)
     byte_pressure: HashSet<String>,
-    /// Per-room flag: user explicitly requested compression (set during process_message, checked after reply)
-    explicit_compress: HashSet<String>,
+    /// Per-room flag: user explicitly requested reset (set during process_message, checked after reply)
+    explicit_reset: HashSet<String>,
 }
 
 /// Hardcoded max messages in context window (replaces configurable max_history_size)
@@ -150,14 +148,13 @@ impl MemoryManager {
             rooms: HashMap::new(),
             max_soul_chars,
             max_context_bytes,
-            summaries: HashMap::new(),
             souls: HashMap::new(),
             knowledge: HashMap::new(),
             dirty_snapshots: HashSet::new(),
             persist_interval_secs,
             token_pressure: HashSet::new(),
             byte_pressure: HashSet::new(),
-            explicit_compress: HashSet::new(),
+            explicit_reset: HashSet::new(),
         }
     }
 
@@ -217,24 +214,24 @@ impl MemoryManager {
         self.byte_pressure.contains(room_id)
     }
 
-    pub fn set_explicit_compress(&mut self, room_id: &str) {
-        self.explicit_compress.insert(room_id.to_string());
+    pub fn set_explicit_reset(&mut self, room_id: &str) {
+        self.explicit_reset.insert(room_id.to_string());
     }
 
-    pub fn has_explicit_compress(&self, room_id: &str) -> bool {
-        self.explicit_compress.contains(room_id)
+    pub fn has_explicit_reset(&self, room_id: &str) -> bool {
+        self.explicit_reset.contains(room_id)
     }
 
-    pub fn needs_compression(&self, room_id: &str) -> bool {
+    pub fn needs_reset(&self, room_id: &str) -> bool {
         self.has_token_pressure(room_id)
             || self.has_byte_pressure(room_id)
-            || self.has_explicit_compress(room_id)
+            || self.has_explicit_reset(room_id)
     }
 
     pub fn clear_pressure_flags(&mut self, room_id: &str) {
         self.token_pressure.remove(room_id);
         self.byte_pressure.remove(room_id);
-        self.explicit_compress.remove(room_id);
+        self.explicit_reset.remove(room_id);
     }
 
     pub fn prune_archived(&mut self, room_id: &str, count: usize) {
@@ -255,7 +252,6 @@ impl MemoryManager {
         messages.push(ChatMessage::system(system_prompt));
         let mut has_soul = false;
         let mut has_knowledge = false;
-        let mut has_summary = false;
 
         if let Some(soul) = self.souls.get(room_id) {
             if !soul.content.is_empty() {
@@ -280,16 +276,6 @@ impl MemoryManager {
             if !knowledge_text.is_empty() {
                 has_knowledge = true;
                 messages.push(ChatMessage::system(knowledge_text));
-            }
-        }
-
-        if let Some(Some(summary)) = self.summaries.get(room_id) {
-            if !summary.is_empty() {
-                has_summary = true;
-                messages.push(ChatMessage::system(format!(
-                    "[Recent conversation summary]\n{}",
-                    summary
-                )));
             }
         }
 
@@ -323,11 +309,11 @@ impl MemoryManager {
 
         let history_count = messages.iter().filter(|m| m.role != crate::types::Role::System).count();
         debug!(
-            "build_context room={}: total={} system_msgs={} history_msgs={} soul={} knowledge={} summary={}",
+            "build_context room={}: total={} system_msgs={} history_msgs={} soul={} knowledge={}",
             room_id, messages.len(),
             messages.iter().filter(|m| m.role == crate::types::Role::System).count(),
             history_count,
-            has_soul, has_knowledge, has_summary,
+            has_soul, has_knowledge,
         );
 
         // Enforce max_context_bytes: drop oldest images until under limit.
@@ -376,18 +362,6 @@ impl MemoryManager {
 
     pub fn room_count(&self) -> usize {
         self.rooms.len()
-    }
-
-    pub fn summary_path(&self, webdav_dir: &str) -> String {
-        format!("{}memory/summary.md", WebDavPath::new("").room_dir(webdav_dir))
-    }
-
-    pub fn set_summary(&mut self, room_id: &str, summary: Option<String>) {
-        self.summaries.insert(room_id.to_string(), summary);
-    }
-
-    pub fn get_summary(&self, room_id: &str) -> Option<&str> {
-        self.summaries.get(room_id)?.as_deref()
     }
 
     pub fn set_soul(&mut self, room_id: &str, soul: SoulMemory) {
@@ -474,10 +448,6 @@ impl MemoryManager {
             }
         }
 
-        if let Some(summary) = self.summaries.get(room_id) {
-            snapshot.summary = summary.clone();
-        }
-
         Some(snapshot)
     }
 
@@ -507,11 +477,6 @@ impl MemoryManager {
             );
             self.souls.insert(room_key, soul);
         }
-
-        if let Some(ref summary_content) = snapshot.summary {
-            let room_key: String = snapshot.room_id.to_string();
-            self.summaries.insert(room_key, Some(summary_content.clone()));
-        }
     }
 
     pub fn room_ids(&self) -> Vec<String> {
@@ -519,13 +484,12 @@ impl MemoryManager {
     }
 
     pub fn evict_room(&mut self, room_id: &str) -> Option<RoomState> {
-        self.summaries.remove(room_id);
         self.souls.remove(room_id);
         self.knowledge.remove(room_id);
         self.dirty_snapshots.remove(room_id);
         self.token_pressure.remove(room_id);
         self.byte_pressure.remove(room_id);
-        self.explicit_compress.remove(room_id);
+        self.explicit_reset.remove(room_id);
         self.rooms.remove(room_id)
     }
 

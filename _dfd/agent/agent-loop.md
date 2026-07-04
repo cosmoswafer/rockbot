@@ -27,7 +27,7 @@ platform-agnostic.
   resolution and alias message sending (RocketChat-only production path for bot replies)
 - Downstream: [AI Provider](../ai/ai-provider.md) handles chat completion requests
 - Downstream: [Memory Management](../memory/memory.md) manages per-room conversation history,
-  compression (threshold-based, produces summary.md — see [Memory Compression](../memory/memory-compression.md)),
+  hard reset (threshold-based, clears Layer 1 — see [Memory Reset](../memory/memory-reset.md)),
   snapshot persist, and TTL-based room eviction
 - Downstream: [WebDAV Tool](../tools/webdav.md) persists image assets
 
@@ -48,7 +48,7 @@ flowchart TD
     LOOP(AgentLoop)
     DIRTY(MarkSnapshotDirty)
     SNAPSHOT(FlushSnapshots)
-    ARCHIVE(CompressMemory)
+    RESET(ResetMemory)
 
     CFG[(AppConfig)]
     HISTORY[(ConversationHistory)]
@@ -71,11 +71,9 @@ flowchart TD
     LOOP -->|"bot reply"| PLATFORM
     LOOP -->|"reply produced<br/>(every response)"| DIRTY
     DIRTY -->|"dirty flag"| ROOMS
-    PLATFORM -->|"reply delivered"| ARCHIVE
-    ARCHIVE -->|"compress + identify prompt"| AI
-    AI -->|"summary.md + used knowledge"| ARCHIVE
-    ARCHIVE -->|"also marks dirty"| DIRTY
-    ARCHIVE -->|"pruned history"| HISTORY
+    PLATFORM -->|"reply delivered"| RESET
+    RESET -->|"clear Layer 1<br/>(no LLM call)"| HISTORY
+    RESET -->|"also marks dirty"| DIRTY
     LOOP -->|"updated room state"| ROOMS
     TIMER -->|"every persist_interval_secs"| SNAPSHOT
     ROOMS -->|"dirty rooms"| SNAPSHOT

@@ -56,7 +56,7 @@ flowchart TD
     IMG_PROV(InitImageProvider)
     TOOLS[(ToolRegistry)]
     ATTACH(AttachTools)
-    COMPRESS(RegisterCompressMemory)
+    RESET_REG(RegisterResetMemory)
 
     CFG_STORE -->|"tools + image model config"| REG_TOOLS
     DAV -->|"webdav client"| REG_TOOLS
@@ -67,8 +67,8 @@ flowchart TD
     TOOLS -->|"attach tools"| ATTACH
     HARNESS -->|"harness"| ATTACH
     ATTACH -->|"harness with tools"| HARNESS
-    HARNESS -->|"harness lock"| COMPRESS
-    COMPRESS -->|"register compress_memory"| HARNESS
+    HARNESS -->|"harness lock"| RESET_REG
+    RESET_REG -->|"register reset_memory"| HARNESS
 ```
 
 Tool registration is the core of boot. Every tool is registered conditionally
@@ -92,7 +92,7 @@ Tools registered when WebDAV is configured:
   aliases resolved via `resolve_image_model()`)
 
 After all tools are registered, they are attached to `AgentHarness`. The
-`CompressMemoryTool` is registered last (requires harness lock access).
+`ResetMemoryTool` is registered last (requires harness lock access).
 
 ### 2c. Platform Connect & Enter Loop
 

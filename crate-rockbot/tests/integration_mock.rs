@@ -2045,10 +2045,10 @@ fn test_memory_rapid_messages_no_loss() {
     }
 }
 
-/// Verifies that snapshot loading (history + summary + soul)
-/// doesn't conflict with in-memory state when all three are loaded together.
+/// Verifies that snapshot loading (history + soul)
+/// doesn't conflict with in-memory state when both are loaded together.
 #[test]
-fn test_memory_load_snapshot_with_soul_and_summaries_no_conflict() {
+fn test_memory_load_snapshot_with_soul_no_conflict() {
     let mut mm = rockbot::memory::MemoryManager::new(
         2000, 60, 0,
     );
@@ -2063,10 +2063,6 @@ fn test_memory_load_snapshot_with_soul_and_summaries_no_conflict() {
     };
     mm.set_soul(room_id, soul);
 
-    // Pre-populate summary (compressed memory)
-    let summary_text = "# Memory Summary\n\n- User asked about Rust macros\n- User asked about Docker".to_string();
-    mm.set_summary(room_id, Some(summary_text));
-
     // Add messages to history
     let room = mm.get_or_create(room_id, "snaproom", "SnapRoom", false);
     room.history.append(ChatMessage::user("alice: Hello"));
@@ -2079,9 +2075,8 @@ fn test_memory_load_snapshot_with_soul_and_summaries_no_conflict() {
     let snap = snap.unwrap();
     assert_eq!(snap.messages.len(), 2, "Snapshot should have both messages");
     assert_eq!(snap.soul.as_deref(), Some("# Soul Memory\n\n- My name is TestBot\n- likes Rust"));
-    assert!(snap.summary.is_some(), "Should have summary");
 
-    // Verify all data is consistent (soul, summaries, history coexist)
+    // Verify all data is consistent (soul, history coexist)
     let ctx = mm.build_context(room_id, "You are a helpful bot.", None, None);
     assert!(!ctx.is_empty(), "Context should not be empty");
 
@@ -2091,13 +2086,6 @@ fn test_memory_load_snapshot_with_soul_and_summaries_no_conflict() {
             && format!("{:?}", m.content).contains("likes Rust")
     });
     assert!(has_soul, "Context should include soul content");
-
-    // Verify summary is in context
-    let has_summary = ctx.iter().any(|m| {
-        let c = format!("{:?}", m.content);
-        c.contains("Rust macros") || c.contains("Docker")
-    });
-    assert!(has_summary, "Context should include summary.md content");
 }
 
 /// Tests that concurrent snapshot builds and memory mutations
@@ -2177,14 +2165,14 @@ fn test_memory_multi_room_no_cross_contamination() {
         updated_at: String::new(),
     });
 
-    // Set summary in room2
-    mm.set_summary("r2", Some("# Memory Summary\n\n- Room2 daily\n".to_string()));
+    // Set knowledge in room2
+    mm.set_knowledge("r2", "[Knowledge]\n- Room2 daily notes".to_string());
 
     // Build context for each room - should not cross-contaminate
     let ctx1 = mm.build_context("r1", "You are a bot.", None, None);
     let ctx2 = mm.build_context("r2", "You are a bot.", None, None);
 
-    // Room1 has soul but not room2's summary
+    // Room1 has soul but not room2's knowledge
     let room1_has_own_soul = ctx1.iter().any(|m| {
         format!("{:?}", m.content).contains("Room1Bot")
     });
@@ -2193,13 +2181,13 @@ fn test_memory_multi_room_no_cross_contamination() {
     let room1_has_room2_data = ctx1.iter().any(|m| {
         format!("{:?}", m.content).contains("Room2 daily")
     });
-    assert!(!room1_has_room2_data, "Room1 context should NOT include Room2's summary");
+    assert!(!room1_has_room2_data, "Room1 context should NOT include Room2's knowledge");
 
-    // Room2 has summary but not room1's soul
-    let room2_has_own_summary = ctx2.iter().any(|m| {
+    // Room2 has knowledge but not room1's soul
+    let room2_has_own_knowledge = ctx2.iter().any(|m| {
         format!("{:?}", m.content).contains("Room2 daily")
     });
-    assert!(room2_has_own_summary, "Room2 context should include its own summary");
+    assert!(room2_has_own_knowledge, "Room2 context should include its own knowledge");
 
     let room2_has_room1_data = ctx2.iter().any(|m| {
         format!("{:?}", m.content).contains("Room1Bot")
@@ -2423,7 +2411,7 @@ mod compression_tests {
         harness.memory_mut().set_token_pressure("room1");
 
         // Run background compression
-        harness.compress_room_if_needed("room1").await.unwrap();
+        harness.reset_room_if_needed("room1").await.unwrap();
 
         // History should be pruned (all 20 messages removed)
         let after = harness
@@ -2456,7 +2444,7 @@ mod compression_tests {
         // Set byte pressure flag (simulating context assembly overflow)
         harness.memory_mut().set_byte_pressure("room1");
 
-        harness.compress_room_if_needed("room1").await.unwrap();
+        harness.reset_room_if_needed("room1").await.unwrap();
 
         // All messages pruned
         let after = harness
@@ -2484,7 +2472,7 @@ mod compression_tests {
         let before = room.history.messages.len();
 
         // No pressure flags set
-        harness.compress_room_if_needed("room1").await.unwrap();
+        harness.reset_room_if_needed("room1").await.unwrap();
 
         let after = harness
             .memory()
@@ -2492,37 +2480,6 @@ mod compression_tests {
             .map(|r| r.history.messages.len())
             .unwrap_or(0);
         assert_eq!(after, before, "No flags → no compression, all messages remain");
-    }
-
-    /// compress_room_full forces all messages to be compressed regardless of flags.
-    #[tokio::test]
-    async fn test_compress_room_full_clears_history() {
-        let image_cache = Arc::new(ImageCache::new());
-        let config = make_compression_test_config();
-        let provider = Box::new(CountingMockProvider::new("ok"));
-        let mut harness = AgentHarness::new(config, provider, None, image_cache);
-
-        let room = harness
-            .memory_mut()
-            .get_or_create("room1", "general", "", false);
-        for i in 0..10 {
-            room.history.append(ChatMessage::user(format!("msg {}", i)));
-        }
-        assert_eq!(room.history.messages.len(), 10);
-
-        // Force full compression (no WebDAV, so just truncates)
-        let result = harness.compress_room_full("room1").await;
-        // Without WebDAV, compress_room_full returns summary via compress_room_inner
-        // which falls to the "No WebDAV client, truncating" path
-        assert!(result.is_ok(), "compress_room_full should succeed even without WebDAV");
-
-        // All messages should be cleared (force=true, count=10)
-        let after = harness
-            .memory()
-            .get("room1")
-            .map(|r| r.history.messages.len())
-            .unwrap_or(0);
-        assert_eq!(after, 0, "force=true should prune all 10 messages");
     }
 
     /// Pressure flags cleared after compression completes.
@@ -2543,7 +2500,7 @@ mod compression_tests {
         harness.memory_mut().set_token_pressure("room1");
         assert!(harness.memory().has_token_pressure("room1"));
 
-        harness.compress_room_if_needed("room1").await.unwrap();
+        harness.reset_room_if_needed("room1").await.unwrap();
 
         assert!(!harness.memory().has_token_pressure("room1"), "Token pressure should be cleared");
     }

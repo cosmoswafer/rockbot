@@ -17,14 +17,11 @@ use crate::tool::ToolRegistry;
 use crate::types::{ChatMessage, ChatRequest, Role};
 use crate::utils::now_iso_string;
 
-/// Result of a compression operation consumed by tests and
-/// `compress_room_full()`. Compression errors are surfaced in `error`
-/// rather than as a placeholder summary.
-pub struct CompressionResult {
-    pub did_compress: bool,
-    pub summary: Option<String>,
+/// Result of a memory reset operation.
+pub struct ResetResult {
+    pub did_reset: bool,
     pub was_explicit: bool,
-    pub error: Option<String>,
+    pub messages_cleared: usize,
 }
 
 const DEFAULT_SYSTEM_PROMPT: &str = "\
@@ -295,11 +292,6 @@ impl AgentHarness {
                 );
                 self.memory.set_soul(room_id, soul);
             }
-            if let Ok(Some(summary)) = self.load_summary(webdav_client, &wd).await {
-                self.memory.set_summary(room_id, Some(summary));
-            } else {
-                self.memory.set_summary(room_id, None);
-            }
         }
 
         let mut messages = self
@@ -323,7 +315,7 @@ impl AgentHarness {
 
         let mut iterations: u32 = 0;
         let mut image_ids_this_turn: Vec<String> = Vec::new();
-        let mut context_compressed = false;
+        let mut context_reset = false;
 
         loop {
             iterations += 1;
@@ -370,7 +362,7 @@ impl AgentHarness {
                         result.text.is_some(),
                     );
 
-                    // Check token pressure: if usage nears model context limit, flag for background compression
+                    // Check token pressure: if usage nears model context limit, flag for background reset
                     if let Some(ref usage) = result.usage {
                         let threshold = (self.config.active_model().model_context_length as f64 * 0.9) as u64;
                         if usage.total_tokens > threshold {
@@ -493,7 +485,7 @@ impl AgentHarness {
                                 || tool_call.function.name == "forget_knowledge"
                                 || tool_call.function.name == "recall_knowledge"
                                 || tool_call.function.name == "calendar"
-                                || tool_call.function.name == "compress_memory"
+                                || tool_call.function.name == "reset_memory"
                             {
                                 let wd = compute_webdav_dir(room_name, room_fname, is_dm);
                                 inject_room_context(&tool_call.function.arguments, room_id, &wd)
@@ -501,20 +493,20 @@ impl AgentHarness {
                                 tool_call.function.arguments.clone()
                             };
 
-                            // compress_memory sets a flag for post-reply
-                            // execution. Running compression now would clear
+                            // reset_memory sets a flag for post-reply
+                            // execution. Running reset now would clear
                             // the conversation history the LLM needs to
                             // generate a coherent reply.
-                            let tool_result = if tool_call.function.name == "compress_memory" {
+                            let tool_result = if tool_call.function.name == "reset_memory" {
                                 let call_id = crate::validated::NonEmptyString::try_new(tool_call.id.clone())
                                     .expect("non-empty tool call id from provider");
-                                self.memory.set_explicit_compress(room_id);
+                                self.memory.set_explicit_reset(room_id);
                                 crate::tool::ToolResult {
                                     call_id,
-                                    name: crate::validated::NonEmptyString::try_new("compress_memory".to_string())
+                                    name: crate::validated::NonEmptyString::try_new("reset_memory".to_string())
                                         .expect("non-empty tool name"),
                                     is_error: false,
-                                    content: "Memory compression scheduled. Reply to the user first — compression will execute after your reply is sent.".to_string(),
+                                    content: "Memory reset scheduled. Reply to the user first — memory will be cleared after your reply is sent.".to_string(),
                                 }
                             } else {
                                 self.tools
@@ -707,13 +699,20 @@ impl AgentHarness {
                 }
                 Err(e) => {
                     if matches!(e, RockBotError::ContextLengthExceeded(_)) {
-                        if !context_compressed {
+                        if !context_reset {
                             warn!(
-                                "Context length exceeded for room {}, compressing memory and retrying",
+                                "Context length exceeded for room {}, resetting memory and retrying",
                                 room_id
                             );
-                            let _ = self.compress_room_inner(room_id, false).await;
-                            context_compressed = true;
+                            // Direct hard reset: clear all messages, no LLM call
+                            if let Some((rid, msgs)) = self.memory.check_and_archive(room_id, true) {
+                                let count = msgs.len();
+                                self.memory.prune_archived(&rid, count);
+                                self.memory.clear_pressure_flags(&rid);
+                                self.memory.mark_snapshot_dirty(&rid);
+                                debug!("Emergency reset for room {}: cleared {} messages", rid, count);
+                            }
+                            context_reset = true;
                             // Rebuild with minimal history then hard-truncate
                             messages = self
                                 .memory
@@ -744,7 +743,7 @@ impl AgentHarness {
                             continue;
                         }
                         warn!(
-                            "Context length exceeded again after compression for room {}, giving up",
+                            "Context length exceeded again after reset for room {}, giving up",
                             room_id
                         );
                     }
@@ -893,7 +892,7 @@ impl AgentHarness {
 
     /// Fast in-memory safety net: strips images from oldest messages, keeps
     /// system prefix + last 2 messages. Sets byte_pressure_flag so the room
-    /// gets full LLM compression after reply delivery. No LLM call, no delay.
+    /// gets hard reset after reply delivery. No LLM call, no delay.
     async fn trim_context(
         &self,
         room_id: &str,
@@ -952,259 +951,41 @@ impl AgentHarness {
                 .sum::<usize>(),
         );
 
-        // Set flag for background compression after reply
+        // Set flag for background reset after reply
         // Access via self.memory (need mutable reference)
         result
     }
 
-    pub async fn compress_room_if_needed(&mut self, room_id: &str) -> Result<CompressionResult> {
-        let needs_compress = self.memory.needs_compression(room_id);
-        if !needs_compress {
-            return Ok(CompressionResult {
-                did_compress: false,
-                summary: None,
+    pub async fn reset_room_if_needed(&mut self, room_id: &str) -> Result<ResetResult> {
+        if !self.memory.needs_reset(room_id) {
+            return Ok(ResetResult {
+                did_reset: false,
                 was_explicit: false,
-                error: None,
+                messages_cleared: 0,
             });
         }
-        // explicit_compress flag triggers force=true (full compression, not half)
-        let force = self.memory.has_explicit_compress(room_id);
-        self.compress_room_inner(room_id, force).await
-    }
-
-    /// Force-compress all Layer 1 messages (user-triggered, synchronous)
-    pub async fn compress_room_full(&mut self, room_id: &str) -> Result<String> {
-        let cr = self.compress_room_inner(room_id, true).await?;
-        if let Some(err_msg) = cr.error {
-            return Ok(format!(
-                "Memory compression failed: {}\nHistory was cleared but summary.md was not updated.",
-                err_msg
-            ));
-        }
-        let summary = cr.summary
-            .or_else(|| self.memory.get_summary(room_id).map(|s| s.to_string()))
-            .unwrap_or_default();
-        Ok(format!("Memory compressed. Summary:\n\n{}", summary))
-    }
-
-    async fn compress_room_inner(&mut self, room_id: &str, force: bool) -> Result<CompressionResult> {
-        let needs_compress = self.memory.check_and_archive(room_id, force);
-        if let Some((rid, msgs)) = needs_compress {
-            if let Some(ref webdav_client) = self.webdav {
-                let count = msgs.len();
-
-                let wd = {
-                    let room = self.memory.get(&rid);
-                    let (rn, rf, dm) = room
-                        .map(|r| (r.room_name.as_str(), r.room_fname.as_str(), r.is_dm))
-                        .unwrap_or((&rid, "", false));
-                    compute_webdav_dir(rn, rf, dm)
-                };
-
-                // Load existing summary.md and knowledge entries
-                let existing_summary = {
-                    let path = self.memory.summary_path(&wd);
-                    webdav_client.read_file_to_string(&path).await.ok()
-                };
-
-                // Load knowledge index to give LLM context
-                let knowledge_entries = match crate::knowledge::KnowledgeManager::load_index(webdav_client, &wd).await {
-                    Ok(idx) => idx.entries,
-                    Err(_) => Vec::new(),
-                };
-
-                // LLM compress: summary + identify used knowledge
-                let (summary_text, used_filenames) = match self.compress_for_summary(&msgs, existing_summary.as_deref(), &knowledge_entries).await {
-                    Ok(result) => result,
-                    Err(e) => {
-                        warn!("Compression LLM failed: {}, pruning without updating summary.md", e);
-                        self.memory.prune_archived(&rid, count);
-                        self.memory.clear_pressure_flags(&rid);
-                        return Ok(CompressionResult {
-                            did_compress: true,
-                            summary: None,
-                            was_explicit: force,
-                            error: Some(e.to_string()),
-                        });
-                    }
-                };
-
-                // Write summary.md
-                if let Err(e) = self.write_summary_md(webdav_client, &wd, &summary_text).await {
-                    warn!("Failed to write summary.md: {}, pruning without updating summary.md", e);
-                    self.memory.prune_archived(&rid, count);
-                    self.memory.clear_pressure_flags(&rid);
-                    return Ok(CompressionResult {
-                        did_compress: true,
-                        summary: None,
-                        was_explicit: force,
-                        error: Some(format!("failed to write summary.md: {}", e)),
-                    });
-                }
-
-                self.memory.mark_snapshot_dirty(&rid);
-
-                // Review knowledge priorities with LLM-identified used entries
-                if let Ok(changed) = crate::knowledge::KnowledgeManager::review_priorities(
-                    webdav_client, &wd, &used_filenames,
-                ).await {
-                    if changed {
-                        if let Ok(text) = self.load_knowledge_for_room(webdav_client, &rid, &wd).await {
-                            if !text.is_empty() {
-                                self.memory.set_knowledge(&rid, text);
-                            }
-                        }
-                        self.memory.mark_snapshot_dirty(&rid);
-                    }
-                }
-
-                // Update in-memory summary cache
-                self.memory.set_summary(&rid, Some(summary_text.clone()));
-
-                // Clear pressure flags after compression
-                self.memory.prune_archived(&rid, count);
-                self.memory.clear_pressure_flags(&rid);
-
-                Ok(CompressionResult {
-                    did_compress: true,
-                    summary: Some(summary_text),
-                    was_explicit: force,
-                    error: None,
-                })
-            } else {
-                debug!(
-                    "No WebDAV client, truncating instead of compressing for room {}",
-                    rid
-                );
-                let count = msgs.len();
-                self.memory.prune_archived(&rid, count);
-                self.memory.clear_pressure_flags(&rid);
-                Ok(CompressionResult {
-                    did_compress: true,
-                    summary: None,
-                    was_explicit: force,
-                    error: None,
-                })
-            }
+        let was_explicit = self.memory.has_explicit_reset(room_id);
+        if let Some((rid, msgs)) = self.memory.check_and_archive(room_id, true) {
+            let count = msgs.len();
+            self.memory.prune_archived(&rid, count);
+            self.memory.clear_pressure_flags(&rid);
+            self.memory.mark_snapshot_dirty(&rid);
+            debug!(
+                "Reset memory for room {}: cleared {} messages (explicit={})",
+                rid, count, was_explicit
+            );
+            Ok(ResetResult {
+                did_reset: true,
+                was_explicit,
+                messages_cleared: count,
+            })
         } else {
-            Ok(CompressionResult {
-                did_compress: false,
-                summary: None,
+            Ok(ResetResult {
+                did_reset: false,
                 was_explicit: false,
-                error: None,
+                messages_cleared: 0,
             })
         }
-    }
-
-    async fn compress_for_summary(
-        &self,
-        messages: &[ChatMessage],
-        existing_summary: Option<&str>,
-        knowledge_entries: &[crate::knowledge::IndexEntry],
-    ) -> Result<(String, Vec<String>)> {
-        if messages.is_empty() {
-            return Err(RockBotError::Provider("no messages to compress".into()));
-        }
-
-        let user_msgs: Vec<String> = messages
-            .iter()
-            .filter(|m| m.role == Role::User || m.role == Role::Assistant)
-            .filter_map(|m| m.text_content())
-            .map(|t| t.chars().take(300).collect::<String>())
-            .filter(|s| !s.is_empty())
-            .take(20)
-            .collect();
-
-        if user_msgs.is_empty() {
-            return Err(RockBotError::Provider(format!(
-                "no compressible text in {} messages", messages.len()
-            )));
-        }
-
-        // Build knowledge entries reference for LLM
-        let mut knowledge_ref = String::new();
-        if !knowledge_entries.is_empty() {
-            knowledge_ref.push_str("\n## Knowledge Entries (identify which were relevant)\n");
-            for entry in knowledge_entries.iter().take(30) {
-                knowledge_ref.push_str(&format!(
-                    "- `{}` — {}\n",
-                    entry.filename,
-                    entry.when_useful
-                ));
-            }
-        }
-
-        let existing_block = existing_summary
-            .filter(|s| !s.is_empty())
-            .map(|s| format!("\n## Existing Summary\n{}", s))
-            .unwrap_or_default();
-
-        let prompt = format!(
-            "Compress this conversation excerpt into at most 10 bullet points for a memory summary.\n\
-             Focus on key facts, decisions, user preferences, and persistent information.\n\
-             Output format:\n\
-             # Memory Summary\n\n\
-             - bullet point 1\n\
-             - bullet point 2\n\
-             ...\n\n\
-             ## Used Knowledge\n\
-             - filename1.md\n\
-             - filename2.md\n\n\
-             Only list knowledge entries that were actually relevant to this conversation.\n\
-             {}\n\
-             ## Conversation\n{}\n",
-            existing_block,
-            user_msgs.join("\n")
-        );
-
-        let request = ChatRequest {
-            model: self.resolve_model(),
-            messages: vec![ChatMessage::user(&prompt)],
-            tools: None,
-            stream: false,
-            temperature: Some(0.3),
-            max_tokens: Some(512),
-            thinking: None,
-            reasoning_effort: None,
-            tool_choice: None,
-        };
-
-        let result = self.provider.complete(request).await?;
-        let text = match result.text {
-            Some(t) if !t.trim().is_empty() => t,
-            _ => {
-                // Thinking models may put output in reasoning_content
-                if let Some(rc) = result.reasoning_content.as_ref().filter(|s| !s.trim().is_empty()) {
-                    debug!("compress_for_summary: text empty, using reasoning_content ({} chars)", rc.len());
-                    rc.clone()
-                } else {
-                    return Err(RockBotError::Provider(format!(
-                        "LLM returned no text content (finish={:?})", result.finish
-                    )));
-                }
-            }
-        };
-        debug!("compress_for_summary raw AI response text ({} chars):\n{}", text.len(), &text[..text.len().min(1000)]);
-        parse_compression_output(&text)
-    }
-
-    async fn write_summary_md(
-        &self,
-        webdav: &WebDavClient,
-        webdav_dir: &str,
-        summary: &str,
-    ) -> Result<()> {
-        let path = self.memory.summary_path(webdav_dir);
-        let folder = format!("{}memory/", WebDavPath::new("").room_dir(webdav_dir));
-        if let Err(e) = webdav.ensure_directory_all(&folder).await {
-            warn!("Failed to ensure memory directory {}: {}", folder, e);
-        }
-        webdav
-            .write_file_with_fallback(&path, summary.as_bytes().to_vec())
-            .await
-            .map_err(|e| crate::error::RockBotError::Provider(format!("summary.md write failed: {e}")))?;
-        debug!("Wrote summary.md at {}", path);
-        Ok(())
     }
 
     pub async fn restore_history(
@@ -1243,23 +1024,7 @@ impl AgentHarness {
             }
         }
 
-        // Always read summary and soul from individual files
-        match self.load_summary(webdav_client, &wd).await {
-            Ok(Some(summary)) => {
-                debug!("Loaded summary.md for room {}", room_name);
-                self.memory.set_summary(room_id, Some(summary));
-            }
-            Ok(None) => {
-                debug!("No summary.md found for room {}", room_name);
-            }
-            Err(e) => {
-                warn!(
-                    "Failed to load summary.md for room {}: {}",
-                    room_name, e
-                );
-            }
-        }
-
+        // Always read soul from individual files
         match self.load_soul(webdav_client, &wd).await {
             Ok(soul) => {
                 if !soul.content.is_empty() {
@@ -1288,27 +1053,6 @@ impl AgentHarness {
                     "Failed to load knowledge for room {}: {}",
                     room_name, e
                 );
-            }
-        }
-    }
-
-    async fn load_summary(
-        &self,
-        webdav: &WebDavClient,
-        webdav_dir: &str,
-    ) -> Result<Option<String>> {
-        let path = self.memory.summary_path(webdav_dir);
-        match webdav.read_file_to_string(&path).await {
-            Ok(content) => {
-                if content.trim().is_empty() {
-                    Ok(None)
-                } else {
-                    Ok(Some(content))
-                }
-            }
-            Err(e) => {
-                debug!("No summary.md at {} yet: {}", path, e);
-                Ok(None)
             }
         }
     }
@@ -1801,67 +1545,6 @@ fn compute_webdav_dir(room_name: &str, room_fname: &str, is_dm: bool) -> String 
     }
 }
 
-fn parse_compression_output(output: &str) -> Result<(String, Vec<String>)> {
-    let cleaned = strip_code_fences(output);
-    let trimmed = cleaned.trim();
-
-    let (summary_part, used_part) = if let Some(pos) = trimmed.find("## Used Knowledge") {
-        let s = trimmed[..pos].trim();
-        let u = trimmed[pos + "## Used Knowledge".len()..].trim();
-        (s, u)
-    } else {
-        (trimmed, "")
-    };
-
-    let summary = if summary_part.is_empty() {
-        if !trimmed.is_empty() {
-            warn!(
-                "compress_for_summary: summary section empty after parsing, using full LLM output ({} chars): {}",
-                trimmed.len(),
-                &trimmed[..trimmed.len().min(200)]
-            );
-            strip_summary_header(trimmed).to_string()
-        } else {
-            return Err(RockBotError::Provider("LLM output was completely empty".into()));
-        }
-    } else {
-        strip_summary_header(summary_part).to_string()
-    };
-
-    let used: Vec<String> = used_part
-        .lines()
-        .filter_map(|line| {
-            let trimmed = line.trim().trim_start_matches(|c: char| c == '-' || c.is_whitespace());
-            if trimmed.ends_with(".md") && !trimmed.is_empty() {
-                Some(trimmed.to_string())
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    Ok((summary, used))
-}
-
-fn strip_code_fences(s: &str) -> &str {
-    let s = s.trim();
-    if let Some(rest) = s.strip_prefix("```") {
-        let after_tag = rest.find('\n').map(|i| &rest[i + 1..]).unwrap_or(rest);
-        if let Some(body) = after_tag.strip_suffix("```") {
-            return body.trim();
-        }
-    }
-    s
-}
-
-fn strip_summary_header(s: &str) -> &str {
-    let s = s.trim();
-    if let Some(rest) = s.strip_prefix("# Memory Summary") {
-        return rest.trim_start_matches(|c: char| c == '\n' || c == '\r').trim();
-    }
-    s
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1871,7 +1554,7 @@ mod tests {
     use crate::provider::AiProvider;
     use crate::tool::Tool;
     use crate::tools::WebFetchTool;
-    use crate::types::{CompletionResult, ContentPart, FinishReason, MessageContent, ToolCall};
+    use crate::types::{CompletionResult, FinishReason, ToolCall};
     use async_trait::async_trait;
 
     struct MockProvider {
@@ -2174,7 +1857,7 @@ chat = "mock-model"
     }
 
     #[tokio::test]
-    async fn test_compress_room_if_needed_no_webdav() {
+    async fn test_reset_room_if_needed_no_webdav() {
         let config = make_test_config();
         let provider = Box::new(MockProvider::new(vec![]));
         let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
@@ -2185,22 +1868,22 @@ chat = "mock-model"
         for i in 0..10 {
             room.history.append(ChatMessage::user(format!("msg {}", i)));
         }
-        // Set byte_pressure_flag to trigger compression (not explicit)
+        // Set byte_pressure_flag to trigger reset (not explicit)
         harness.memory_mut().set_byte_pressure("room1");
 
-        let result = harness.compress_room_if_needed("room1").await;
+        let result = harness.reset_room_if_needed("room1").await;
         assert!(result.is_ok());
-        let cr = result.unwrap();
-        assert!(cr.did_compress, "should have compressed messages");
-        assert!(!cr.was_explicit, "byte pressure is not explicit");
-        assert!(cr.summary.is_none(), "no WebDAV means no summary text");
+        let rr = result.unwrap();
+        assert!(rr.did_reset, "should have reset messages");
+        assert!(!rr.was_explicit, "byte pressure is not explicit");
+        assert_eq!(rr.messages_cleared, 10);
         // History should be pruned (all 10 messages removed)
         let remaining = harness.memory().get("room1").map(|r| r.history.messages.len());
         assert_eq!(remaining, Some(0));
     }
 
     #[tokio::test]
-    async fn test_compress_room_if_needed_explicit_no_webdav() {
+    async fn test_reset_room_if_needed_explicit_no_webdav() {
         let config = make_test_config();
         let provider = Box::new(MockProvider::new(vec![]));
         let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
@@ -2211,16 +1894,16 @@ chat = "mock-model"
         for i in 0..10 {
             room.history.append(ChatMessage::user(format!("msg {}", i)));
         }
-        // Set explicit_compress flag to trigger full compression
-        harness.memory_mut().set_explicit_compress("room2");
+        // Set explicit_reset flag to trigger full reset
+        harness.memory_mut().set_explicit_reset("room2");
 
-        let result = harness.compress_room_if_needed("room2").await;
+        let result = harness.reset_room_if_needed("room2").await;
         assert!(result.is_ok());
-        let cr = result.unwrap();
-        assert!(cr.did_compress, "should have compressed messages");
-        assert!(cr.was_explicit, "explicit compress flag was set");
-        assert!(cr.summary.is_none(), "no WebDAV means no summary text");
-        // All messages should be pruned (force=true, count=10)
+        let rr = result.unwrap();
+        assert!(rr.did_reset, "should have reset messages");
+        assert!(rr.was_explicit, "explicit reset flag was set");
+        assert_eq!(rr.messages_cleared, 10);
+        // All messages should be pruned
         let remaining = harness.memory().get("room2").map(|r| r.history.messages.len());
         assert_eq!(remaining, Some(0));
     }
@@ -2242,20 +1925,6 @@ chat = "mock-model"
             assert_eq!(rid, "room1");
             assert_eq!(msgs.len(), 10, "Should return all messages (10 of 10)");
         }
-    }
-
-    #[tokio::test]
-    async fn test_summarize_for_archive() {
-        let config = make_test_config();
-        let provider = Box::new(MockProvider::new(vec![]));
-        let harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
-
-        let msgs = vec![
-            ChatMessage::user("Hello, I need help with something"),
-            ChatMessage::assistant("Sure, what do you need?"),
-        ];
-        let result = harness.compress_for_summary(&msgs, None, &[]).await;
-        assert!(result.is_err(), "mock provider with no responses should error");
     }
 
     #[test]
@@ -2624,7 +2293,7 @@ chat = "mock-model"
     // ----- ContextLengthExceeded retry tests (agent-harness.md §2i2) -----
 
     #[tokio::test]
-    async fn test_context_length_exceeded_retry_compresses_and_succeeds() {
+    async fn test_context_length_exceeded_retry_resets_and_succeeds() {
         let config = make_test_config();
 
         // Provider: first call returns ContextLengthExceeded, second call succeeds
@@ -3070,52 +2739,6 @@ value = "real_gitea_token_123"
         let text = "![logo](https://example.com/logo.png) is not a data URI";
         let images = parse_markdown_images(text);
         assert_eq!(images.len(), 0);
-    }
-
-    #[test]
-    fn test_parse_compression_output_well_formed() {
-        let output = "# Memory Summary\n\n- user prefers dark mode\n- decided on Rust\n\n## Used Knowledge\n- preferences.md\n";
-        let (summary, used) = parse_compression_output(output).unwrap();
-        assert_eq!(summary, "- user prefers dark mode\n- decided on Rust");
-        assert_eq!(used, vec!["preferences.md"]);
-    }
-
-    #[test]
-    fn test_parse_compression_output_no_knowledge_section() {
-        let output = "# Memory Summary\n\n- discussed project layout\n- agreed on async Rust\n";
-        let (summary, used) = parse_compression_output(output).unwrap();
-        assert_eq!(summary, "- discussed project layout\n- agreed on async Rust");
-        assert!(used.is_empty());
-    }
-
-    #[test]
-    fn test_parse_compression_output_knowledge_first() {
-        let output = "## Used Knowledge\n- notes.md\n\n- user asked about compression\n- decided to fix bug";
-        let (summary, used) = parse_compression_output(output).unwrap();
-        assert!(summary.contains("user asked about compression"), "got: {summary}");
-        assert_eq!(used, vec!["notes.md"]);
-    }
-
-    #[test]
-    fn test_parse_compression_output_code_fenced() {
-        let output = "```markdown\n# Memory Summary\n\n- bullet one\n- bullet two\n\n## Used Knowledge\n- file.md\n```";
-        let (summary, used) = parse_compression_output(output).unwrap();
-        assert_eq!(summary, "- bullet one\n- bullet two");
-        assert_eq!(used, vec!["file.md"]);
-    }
-
-    #[test]
-    fn test_parse_compression_output_empty() {
-        let result = parse_compression_output("");
-        assert!(result.is_err(), "empty LLM output should return error");
-    }
-
-    #[test]
-    fn test_parse_compression_output_no_markers() {
-        let output = "The user discussed compression issues and we agreed to fix the parser.\nKey decision: use full output as fallback.";
-        let (summary, used) = parse_compression_output(output).unwrap();
-        assert!(summary.contains("compression issues"), "got: {summary}");
-        assert!(used.is_empty());
     }
 
     #[test]

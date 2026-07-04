@@ -1,5 +1,5 @@
 pub mod calendar;
-pub mod compress_memory;
+pub mod reset_memory;
 pub mod edit_soul;
 pub mod forget_knowledge;
 pub mod image_gen;
@@ -11,7 +11,7 @@ pub mod web_search;
 pub mod webdav;
 
 pub use calendar::CalendarTool;
-pub use compress_memory::CompressMemoryTool;
+pub use reset_memory::ResetMemoryTool;
 pub use edit_soul::EditSoulTool;
 pub use forget_knowledge::ForgetKnowledgeTool;
 pub use image_gen::ImageGenTool;

@@ -51,8 +51,8 @@ agent fetch additional entries on demand during the agent loop.
 - Downstream: [AI Provider](ai-provider.md) synthesizes knowledge entries from
   user instructions via `save_knowledge` tool calls
 - Downstream: `BuildContext` receives injected knowledge as system messages
-- Downstream: [Knowledge Priority Algorithm](knowledge-priority.md) updates entry
-  priorities based on LLM-identified usage during memory compression
+- Downstream: [Knowledge Priority Algorithm](knowledge-priority.md) — static
+  priority system (dormant since compression removed; entries stay at P1)
 
 ## 2. Diagram
 
@@ -233,8 +233,8 @@ Machine-readable JSON file at `{root}/{webdav_dir}/knowledge/index.json`.
 | ------------- | ------------------ | ---------------------------------------------- |
 | `filename`    | `String`           | `{slug}.md` — unique key and display identifier. Validates `min_length = 1` via `serde_valid`. |
 | `when_useful` | `String`           | Situation description (retrieval trigger). Defaults to `""` (serde default). |
-| `priority`    | `KnowledgePriority`| Current priority level. Updated by compression cycles; default for new entries is `P1`. |
-| `last_promoted_at` | `Option<String>` | ISO 8601 timestamp of last promotion; `None` if never promoted. Used for recency-based decay. |
+| `priority`    | `KnowledgePriority`| Current priority level. Static (dormant — see knowledge-priority.md); default for new entries is `P1`. |
+| `last_promoted_at` | `Option<String>` | ISO 8601 timestamp of last promotion; `None` if never promoted. Dormant field. |
 
 The `filename` doubles as the display key — `display_title()` strips the `.md`
 suffix. Knowledge context is formatted as `[Knowledge: {display_title}]\n{body}`
@@ -256,10 +256,9 @@ enum KnowledgePriority {
 
 **Priority**: the `priority` field lives exclusively in `index.json`'s `IndexEntry` —
 not in `.md` file frontmatter. This keeps `.md` files as pure user-editable
-knowledge content. Priority is updated by the
-[Knowledge Priority Algorithm](knowledge-priority.md) during memory
-compression — when the LLM generates `summary.md` it simultaneously identifies
-which knowledge entries were relevant to the compressed conversation. Priority
+knowledge content. Priority is defined by the
+[Knowledge Priority Algorithm](knowledge-priority.md) — currently dormant
+(no compression cycle to trigger promotion). Priority
 affects retrieval: P0 entries are always loaded; P1-P3 get score bonuses added
 to keyword overlap scores.
 

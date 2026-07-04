@@ -118,7 +118,7 @@ flowchart TD
 **Context-length detection**: HTTP 400 responses whose error message contains
 "context length" or "maximum context" (case-insensitive) are mapped to
 `RockBotError::ContextLengthExceeded` instead of `InvalidRequest`. The harness
-uses this to trigger aggressive memory compression and a one-time retry. This
+uses this to trigger a hard memory reset and a one-time retry. This
 applies to OpenRouter, DeepSeek, and llama.cpp providers.
 
 **HTTP timeouts**: Every `reqwest::Client` used by AI providers is built with
