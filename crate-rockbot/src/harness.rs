@@ -1146,16 +1146,19 @@ impl AgentHarness {
         match self.provider.complete(request).await {
             Ok(result) => {
                 let text = match result.text {
-                    Some(t) => t,
-                    None => {
-                        warn!("compress_for_summary: LLM returned no text content (finish={:?})", result.finish);
-                        return (default_summary, Vec::new());
+                    Some(t) if !t.trim().is_empty() => t,
+                    _ => {
+                        // Thinking models may put output in reasoning_content
+                        if let Some(rc) = result.reasoning_content.as_ref().filter(|s| !s.trim().is_empty()) {
+                            debug!("compress_for_summary: text empty, using reasoning_content ({} chars)", rc.len());
+                            rc.clone()
+                        } else {
+                            warn!("compress_for_summary: LLM returned no text content (finish={:?})", result.finish);
+                            return (default_summary, Vec::new());
+                        }
                     }
                 };
                 debug!("compress_for_summary raw AI response text ({} chars):\n{}", text.len(), &text[..text.len().min(1000)]);
-                if let Some(ref rc) = result.reasoning_content {
-                    debug!("compress_for_summary reasoning_content ({} chars):\n{}", rc.len(), &rc[..rc.len().min(500)]);
-                }
                 parse_compression_output(&text, &default_summary)
             }
             Err(e) => {

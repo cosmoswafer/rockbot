@@ -201,6 +201,11 @@ impl LlamaCppProvider {
             (raw_text, vec![], finish)
         };
 
+        let reasoning = message
+            .get("reasoning_content")
+            .and_then(|c| c.as_str())
+            .map(String::from);
+
         let usage = body.get("usage").and_then(|u| {
             Some(UsageInfo {
                 prompt_tokens: u.get("prompt_tokens")?.as_u64()?,
@@ -213,7 +218,7 @@ impl LlamaCppProvider {
             text,
             tool_calls,
             finish,
-            reasoning_content: None,
+            reasoning_content: reasoning,
             usage,
         })
     }
