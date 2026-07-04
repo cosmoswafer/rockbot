@@ -4,7 +4,7 @@
 
 Configurable `AiProvider` trait abstracting over OpenAI-compatible chat
 completion APIs and `ImageProvider` trait for image generation. Concrete
-implementations include OpenRouter, DeepSeek, llama.cpp (text), OpenRouterImageProvider,
+implementations include OpenRouter, DeepSeek, llama.cpp, OpenRouterImageProvider,
 and FalAiProvider (image). Each handles provider-specific headers, model naming,
 and payload formatting. Supports both base64 data URIs and remote URLs via
 `ContentPart::ImageUrl`. The `stream` field is sent in request bodies but SSE
@@ -34,8 +34,10 @@ with `OpenRouterProvider`. Key differences:
   `finish_reason: "tool_calls"`. A text-based fallback parser
   (`✿FUNCTION✿` / `✿ARGS✿` / `✿END✿` delimiter scan) is retained for
   safety but should not trigger with properly configured servers.
-- **No vision**: `ContentPart::ImageUrl` parts are stripped and replaced with
-  `[image]` text placeholders (same as DeepSeek).
+- **Vision**: `ContentPart::ImageUrl` parts (data URIs) flow through to the
+  server in the standard OpenAI multipart format. Vision works when the
+  loaded GGUF is a multimodal model (e.g. llava, llava-llama3). For
+  text-only models the server ignores or rejects the image part.
 - **Single model**: `models` map typically has one entry. The model alias
   is required by config but the server ignores the `model` field in the
   request body (the loaded GGUF determines the model).
@@ -176,18 +178,20 @@ flowchart TD
     IMG_URL -->|"image url part"| MULTI
     IMG_B64 -->|"image base64 part"| MULTI
     MULTI -->|"content array"| STRIP
-    STRIP -->|"yes (OpenRouter)"| REQ
-    STRIP -->|"no (DeepSeek / llama.cpp)"| CONVERT
+    STRIP -->|"yes (OpenRouter / llama.cpp)"| REQ
+    STRIP -->|"no (DeepSeek)"| CONVERT
     CONVERT -->|"text-only content"| REQ
 ```
 
-**Provider-specific handling**: DeepSeek and llama.cpp models currently do not
-support vision (multimodal) input. `DeepSeekProvider::build_request_body()` and
-`LlamaCppProvider::build_request_body()` strip all `ContentPart::ImageUrl` parts
-from every `ChatMessage`, converting multipart content to plain text with
-`[image]` placeholders. This keeps the shared `ChatMessage`/`ContentPart` data
-structures intact across all providers while preventing 400 errors from
-`unknown variant 'image_url', expected 'text'`. OpenRouter passes vision payloads
+**Provider-specific handling**: DeepSeek models do not support vision
+(multimodal) input. `DeepSeekProvider::build_request_body()` strips all
+`ContentPart::ImageUrl` parts from every `ChatMessage`, converting multipart
+content to plain text with `[image]` placeholders. This keeps the shared
+`ChatMessage`/`ContentPart` data structures intact across all providers while
+preventing 400 errors from `unknown variant 'image_url', expected 'text'`.
+`LlamaCppProvider::build_request_body()` passes multipart content through as-is
+— llama.cpp servers with a multimodal GGUF (llava, llava-llama3, etc.) handle
+the OpenAI-compatible image format natively. OpenRouter passes vision payloads
 through as-is — any model-specific vision support is handled by OpenRouter's API.
 
 ## 3. Data Structures

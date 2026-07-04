@@ -2225,6 +2225,73 @@ async fn test_nextcloud_share_link_compiles_and_handles_no_server() {
     assert!(result.is_none(), "No server available → None");
 }
 
+// ─── Mock HTTP Tests: LlamaCppProvider.complete() ────────────────────────────
+
+#[tokio::test]
+async fn test_llamacpp_complete_passes_image_through_to_server() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .and(body_string_contains("\"type\":\"image_url\""))
+        .and(body_string_contains("data:image/png;base64,iVBOR"))
+        .and(body_string_contains("\"type\":\"text\""))
+        .and(body_string_contains("describe this"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "chatcmpl-local",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "I see a red apple on a wooden table."
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": 120,
+                "completion_tokens": 10,
+                "total_tokens": 130
+            }
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let config = ProviderConfig {
+        name: ProviderName::try_new("llamacpp".to_string()).unwrap(),
+        api_key: "".into(),
+        base_url: ConfigUrl::try_new(mock_server.uri()).unwrap(),
+        basecf_url: None,
+        chat_path: Some("/v1/chat/completions".into()),
+        draw_path: None,
+        models: HashMap::new(),
+    };
+    let provider =
+        rockbot::provider::LlamaCppProvider::new(&config, "local-model").unwrap();
+
+    let request = ChatRequest {
+        model: "local-model".into(),
+        messages: vec![ChatMessage::user_with_image(
+            "describe this",
+            "data:image/png;base64,iVBOR",
+        )],
+        tools: None,
+        stream: false,
+        temperature: None,
+        max_tokens: None,
+        thinking: None,
+        reasoning_effort: None,
+        tool_choice: None,
+    };
+
+    let result = provider.complete(request).await.unwrap();
+    assert_eq!(
+        result.text,
+        Some("I see a red apple on a wooden table.".into())
+    );
+    assert_eq!(result.finish, FinishReason::Stop);
+    assert!(result.tool_calls.is_empty());
+}
+
 // ─── Mock HTTP Tests: Memory Compression Pipeline ─────────────────────────────
 
 use rockbot::harness::AgentHarness;

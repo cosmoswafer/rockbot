@@ -92,12 +92,15 @@ The actual pixels are embedded as `ContentPart::ImageUrl { url: "data:..." }` in
 the same message.
 
 **Provider-level handling** (see [ai-provider.md §2c](../ai/ai-provider.md#2c-vision-payload-deep-dive)):
-- **Vision-capable providers** (OpenRouter): multipart messages with `ImageUrl`
-  parts pass through unchanged — the LLM sees the actual image pixels.
+- **Vision-capable providers** (OpenRouter, llama.cpp with a multimodal GGUF):
+  multipart messages with `ImageUrl` parts pass through unchanged — the LLM
+  sees the actual image pixels. llama.cpp servers running a text-only GGUF
+  silently ignore or reject image parts.
 - **Text-only providers** (DeepSeek): `ImageUrl` parts are stripped from every
   message and replaced with `[image]` text placeholders via
-  `strip_message_images()`. The LLM cannot see image content but can still call
-  `image_gen` to edit images via `current_image_urls` auto-injection.
+  `DeepSeekProvider::strip_message_images()`. The LLM cannot see image content
+  but can still call `image_gen` to edit images via `current_image_urls`
+  auto-injection.
 
 ### 2c. Vision/WebDAV → LLM Direct Consumption
 

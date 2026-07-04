@@ -5,8 +5,7 @@ use crate::config::ProviderConfig;
 use crate::error::{Result, RockBotError};
 use crate::provider::AiProvider;
 use crate::types::{
-    ChatMessage, ChatRequest, CompletionResult, ContentPart, FinishReason, MessageContent,
-    ToolCall, UsageInfo,
+    ChatRequest, CompletionResult, FinishReason, ToolCall, UsageInfo,
 };
 
 const TOOL_DELIMITER_START: &str = "✿FUNCTION✿";
@@ -53,26 +52,33 @@ impl LlamaCppProvider {
         })
     }
 
-    fn strip_message_images(mut msg: ChatMessage) -> ChatMessage {
-        let MessageContent::Multipart(ref parts) = msg.content else {
-            return msg;
-        };
-        if !parts.iter().any(|p| matches!(p, ContentPart::ImageUrl { .. })) {
-            return msg;
+    pub(crate) fn build_request_body(&self, request: &ChatRequest) -> serde_json::Value {
+        let mut body = serde_json::json!({
+            "model": request.model,
+            "messages": request.messages,
+            "stream": request.stream,
+        });
+
+        if let Some(ref tools) = request.tools {
+            body["tools"] = serde_json::json!(tools);
         }
-        let text = parts
-            .iter()
-            .map(|p| match p {
-                ContentPart::Text { text } => text.as_str(),
-                ContentPart::ImageUrl { .. } => "[image]",
-            })
-            .collect::<Vec<_>>()
-            .join(" ");
-        msg.content = MessageContent::Text(text);
-        msg
+
+        if let Some(ref tool_choice) = request.tool_choice {
+            body["tool_choice"] = tool_choice.clone();
+        }
+
+        if let Some(temp) = request.temperature {
+            body["temperature"] = serde_json::json!(temp);
+        }
+
+        if let Some(max_tok) = request.max_tokens {
+            body["max_tokens"] = serde_json::json!(max_tok);
+        }
+
+        body
     }
 
-    fn parse_tool_calls_from_text(text: &str) -> Vec<ToolCall> {
+    pub(crate) fn parse_tool_calls_from_text(text: &str) -> Vec<ToolCall> {
         let mut calls = Vec::new();
         let mut remaining = text;
         let mut call_index = 0;
@@ -131,38 +137,6 @@ impl LlamaCppProvider {
             }
         }
         result.trim().to_string()
-    }
-
-    pub(crate) fn build_request_body(&self, request: &ChatRequest) -> serde_json::Value {
-        let messages: Vec<ChatMessage> = request
-            .messages
-            .iter()
-            .map(|m| Self::strip_message_images(m.clone()))
-            .collect();
-
-        let mut body = serde_json::json!({
-            "model": request.model,
-            "messages": messages,
-            "stream": request.stream,
-        });
-
-        if let Some(ref tools) = request.tools {
-            body["tools"] = serde_json::json!(tools);
-        }
-
-        if let Some(ref tool_choice) = request.tool_choice {
-            body["tool_choice"] = tool_choice.clone();
-        }
-
-        if let Some(temp) = request.temperature {
-            body["temperature"] = serde_json::json!(temp);
-        }
-
-        if let Some(max_tok) = request.max_tokens {
-            body["max_tokens"] = serde_json::json!(max_tok);
-        }
-
-        body
     }
 
     pub(crate) fn parse_response_body(body: &serde_json::Value) -> Result<CompletionResult> {
@@ -416,7 +390,7 @@ mod tests {
     }
 
     #[test]
-    fn test_build_request_body_strips_images() {
+    fn test_build_request_body_passes_images_through() {
         let provider = test_provider();
         let request = ChatRequest {
             model: "local-model".into(),
@@ -434,10 +408,12 @@ mod tests {
         };
 
         let body = provider.build_request_body(&request);
-        assert_eq!(
-            body["messages"][0]["content"],
-            "Look at this [image]"
-        );
+        let content = body["messages"][0]["content"].as_array().expect("multipart");
+        assert_eq!(content.len(), 2);
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[0]["text"], "Look at this");
+        assert_eq!(content[1]["type"], "image_url");
+        assert_eq!(content[1]["image_url"]["url"], "data:image/png;base64,abc");
     }
 
     #[test]
@@ -673,13 +649,6 @@ mod tests {
         let provider = test_provider();
         assert_eq!(provider.provider_name(), "llamacpp");
         assert_eq!(provider.model_name(), "local-model");
-    }
-
-    #[test]
-    fn test_strip_message_images() {
-        let msg = ChatMessage::user_with_image("Look", "data:image/png;base64,abc");
-        let result = LlamaCppProvider::strip_message_images(msg);
-        assert_eq!(result.content, MessageContent::Text("Look [image]".into()));
     }
 
     #[test]

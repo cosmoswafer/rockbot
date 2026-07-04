@@ -196,11 +196,25 @@ impl MessagingClient for MatrixPlatform {
                             (text.body.clone(), vec![])
                         }
                         MessageType::Image(image_content) => {
+                            let mime_for_log = image_content
+                                .info
+                                .as_ref()
+                                .and_then(|i| i.mimetype.as_deref())
+                                .unwrap_or("image/png");
+                            let source_for_log = format!("{:?}", image_content.source);
+                            debug!(
+                                "Matrix: m.image event body={:?} mime={} source={}",
+                                image_content.body, mime_for_log, source_for_log
+                            );
                             match media_client.media().get_file(image_content, false).await {
                                 Ok(Some(bytes)) => {
-                                    let mime = image_content.info.as_ref()
-                                        .and_then(|i| i.mimetype.as_deref())
-                                        .unwrap_or("image/png");
+                                    info!(
+                                        "Matrix: downloaded image bytes={} mime={} body={:?}",
+                                        bytes.len(),
+                                        mime_for_log,
+                                        image_content.body
+                                    );
+                                    let mime = mime_for_log;
                                     let data_uri = format!(
                                         "data:{};base64,{}",
                                         mime,
@@ -226,14 +240,37 @@ impl MessagingClient for MatrixPlatform {
                                     };
                                     (title, vec![att])
                                 }
-                                _ => {
-                                    // Download failed — treat as text-only
+                                Ok(None) => {
+                                    warn!(
+                                        "Matrix: m.image get_file returned Ok(None) — no bytes downloaded (body={:?}, mime={}, source={}). Possible cause: allow_redirect=false rejected a redirect, or media missing source/info.",
+                                        image_content.body, mime_for_log, source_for_log
+                                    );
+                                    (image_content.body.clone(), vec![])
+                                }
+                                Err(e) => {
+                                    warn!(
+                                        "Matrix: m.image get_file failed (body={:?}, mime={}, source={}): {e:?}",
+                                        image_content.body, mime_for_log, source_for_log
+                                    );
                                     (image_content.body.clone(), vec![])
                                 }
                             }
                         }
-                        _ => {
-                            debug!("Matrix: ignoring non-text, non-image message");
+                        other => {
+                            let msgtype_name = match other {
+                                MessageType::File(_) => "m.file",
+                                MessageType::Video(_) => "m.video",
+                                MessageType::Audio(_) => "m.audio",
+                                MessageType::Emote(_) => "m.emote",
+                                MessageType::Notice(_) => "m.notice",
+                                MessageType::Location(_) => "m.location",
+                                MessageType::ServerNotice(_) => "m.server_notice",
+                                _ => "<unknown>",
+                            };
+                            debug!(
+                                "Matrix: ignoring msgtype={} (only m.text and m.image are handled)",
+                                msgtype_name
+                            );
                             return;
                         }
                     };
