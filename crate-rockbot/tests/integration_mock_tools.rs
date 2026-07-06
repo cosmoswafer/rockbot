@@ -1099,7 +1099,7 @@ async fn test_harness_constructs_and_registers_tools() {
     let provider = Box::new(MockProvider::new_text("Hello!"));
     let webdav = webdav::WebDavClient::new(&webdav_url, "test", "pass").unwrap();
     let image_cache = Arc::new(ImageCache::new());
-    let mut harness = AgentHarness::new(config, provider, Some(webdav), image_cache);
+    let mut harness = AgentHarness::new(config, provider, Some(webdav), image_cache, "@testbot");
 
     // Register some tools
     harness.register_tool(Box::new(VisionTool::with_max_bytes(10_000_000)));
@@ -1123,7 +1123,7 @@ async fn test_harness_get_or_create_room() {
     let provider = Box::new(MockProvider::new_text("Hi! How can I help?"));
     let webdav = webdav::WebDavClient::new(&webdav_url, "test", "pass").unwrap();
     let image_cache = Arc::new(ImageCache::new());
-    let mut harness = AgentHarness::new(config, provider, Some(webdav), image_cache);
+    let mut harness = AgentHarness::new(config, provider, Some(webdav), image_cache, "@testbot");
     harness.register_tool(Box::new(VisionTool::with_max_bytes(10_000_000)));
 
     // MemoryManager::get_or_create creates rooms on first access
@@ -1147,7 +1147,7 @@ async fn test_harness_image_pool_starts_empty() {
     let provider = Box::new(MockProvider::new_text("ok"));
     let webdav = webdav::WebDavClient::new(&webdav_url, "test", "pass").unwrap();
     let image_cache = Arc::new(ImageCache::new());
-    let harness = AgentHarness::new(config, provider, Some(webdav), image_cache);
+    let harness = AgentHarness::new(config, provider, Some(webdav), image_cache, "@testbot");
 
     // Image pool starts empty — verify harness constructs successfully
     assert!(harness.provider().provider_name() == "mock");
@@ -1214,7 +1214,7 @@ async fn test_harness_vision_result_cached_in_image_pool_and_injected() {
         },
     ]);
 
-    let mut harness = AgentHarness::new(config, Box::new(sequential), Some(webdav), image_cache.clone());
+    let mut harness = AgentHarness::new(config, Box::new(sequential), Some(webdav), image_cache.clone(), "@testbot");
     harness.register_tool(Box::new(VisionTool::with_max_bytes(10_000_000)));
 
     let result = harness

@@ -219,6 +219,7 @@ Async trait defining the connection contract. Both `RocketChatPlatform` and
 #[async_trait]
 pub trait MessagingClient: Send + Sync {
     async fn connect_and_run(&self, handler: MessageHandler) -> Result<()>;
+    fn bot_id(&self) -> &str;
 }
 ```
 
@@ -227,6 +228,16 @@ pub trait MessagingClient: Send + Sync {
   Returns `Err` on connection failure (triggers reconnect in the agent loop).
   For RocketChat: DDP WebSocket connect → auth → subscribe → event loop.
   For Matrix: login → start `/sync` loop → dispatch room messages.
+- `bot_id` — platform-canonical identifier of this bot instance, used as the
+  per-bot namespace in WebDAV snapshot paths
+  (`{snapshot_prefix}/{bot_id}/{wd}/snapshot.json`). The platform owns the
+  canonical form: RocketChat returns `@username` (the `bot_name` passed to
+  `RocketChatPlatform::new`), Matrix returns the full MXID `@bot:server`
+  (from `[matrix.server] user_id`). Non-emptiness is guaranteed by each
+  platform's config validation (`#[validate(min_length = 1)]` on
+  `ServerConfig.username` and `MatrixServerConfig.user_id`). The harness
+  receives this value as a constructor parameter and never derives it from
+  `config.platform.name` itself.
 
 #### `PlatformSender` trait (platform/mod.rs)
 
@@ -288,13 +299,18 @@ The agent loop calls `sender.strip_mention_prefix(&msg.text)` for non-DM
 messages only. DM messages are passed through unchanged (no @mention prefix
 to strip).
 
-`bot_name` is still derived at startup (Matrix: `[matrix.server] user_id`,
-RocketChat: `@username` from `[rocketchat.server] username`) and passed to
+`bot_name` is obtained from `MessagingClient::bot_id()` at boot (the
+platform is constructed before the harness; the resulting `bot_id` is passed
+into `AgentHarness::new()`). For RocketChat it is `@username` from
+`[rocketchat.server] username`; for Matrix it is the full MXID from
+`[matrix.server] user_id`. The value is passed to
 `RocketChatPlatform::new()` for mention **checking** in the RocketChat DDP
 client. It is no longer used for prefix-stripping in the agent loop — that
-responsibility belongs to the `PlatformSender` trait.
+responsibility belongs to the `PlatformSender` trait. The harness no longer
+matches on `config.platform.name` to derive `bot_id`; the platform is the
+single source of truth.
 
-#### `AgentHarness` (harness.rs:55-65)
+#### `AgentHarness` (harness.rs:55-78)
 
 | Field            | Type                  | Notes                                      |
 | ---------------- | --------------------- | ------------------------------------------ |
@@ -306,10 +322,31 @@ responsibility belongs to the `PlatformSender` trait.
 | `rest_client`    | `Option<RestApiClient>`| Optional REST API client for alias sends  |
 | `max_iterations` | `u32`                 | Max agent loop iterations per message      |
 | `max_attachment_bytes` | `u64`           | Max size for attachment download           |
+| `bot_id`         | `String`              | Platform-canonical bot identifier, passed into `AgentHarness::new()` (obtained from `MessagingClient::bot_id()` in `main.rs`). Used as the per-bot namespace in WebDAV snapshot paths. The harness does **not** derive this from `config.platform.name`. |
+| `snapshot_prefix`| `String`              | WebDAV path prefix for snapshots (default `.snapshots`) |
 | `image_pool`     | `HashMap<String, Vec<CachedImage>>` | Per-room cached images from vision/webdav tool results and image_gen (for edit name-matching) |
+| `pending_vision_images` | `HashMap<String, Vec<CachedImage>>` | Vision-fetched images awaiting ContentPart injection into the next user message |
 | `image_cache`    | `Arc<ImageCache>`     | Generated image cache (by call_id)         |
 | `last_image_ids` | `Vec<String>`         | IDs of images generated this turn          |
 | `current_image_urls` | `Vec<String>`     | Image URLs from current message (auto-injected into image_gen) |
+
+`AgentHarness::new` signature:
+
+```rust
+pub fn new(
+    config: AppConfig,
+    provider: Box<dyn AiProvider>,
+    webdav: Option<WebDavClient>,
+    image_cache: Arc<ImageCache>,
+    bot_id: String,
+) -> Self
+```
+
+`bot_id` is supplied by the caller (`main.rs` at boot, test harnesses in
+unit/integration tests). In `main.rs`, the `MessagingClient` is constructed
+**before** the harness and its `bot_id()` trait method supplies the value,
+removing the previous `match config.platform.name.as_str() { "matrix" => ..., _ => ... }`
+block from the harness constructor (issue #58).
 
 #### `RoomState`
 

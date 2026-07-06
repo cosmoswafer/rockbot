@@ -83,6 +83,7 @@ impl AgentHarness {
         provider: Box<dyn AiProvider>,
         webdav: Option<WebDavClient>,
         image_cache: Arc<ImageCache>,
+        bot_id: impl Into<String>,
     ) -> Self {
         let active_model = config.active_model();
         let max_soul_chars = *active_model.max_soul_chars;
@@ -90,14 +91,6 @@ impl AgentHarness {
         let persist_interval = active_model.persist_interval_secs;
         let max_context_bytes = *active_model.max_context_bytes;
         let max_attachment_bytes = active_model.max_attachment_bytes;
-        let bot_id = match config.platform.name.as_str() {
-            "matrix" => config
-                .matrix
-                .as_ref()
-                .map(|m| m.server.user_id.clone())
-                .unwrap_or_default(),
-            _ => config.rocketchat.server.username.clone(),
-        };
         let snapshot_prefix = config
             .webdav
             .as_ref()
@@ -113,7 +106,7 @@ impl AgentHarness {
             rest_client: None,
             max_iterations,
             max_attachment_bytes,
-            bot_id,
+            bot_id: bot_id.into(),
             snapshot_prefix,
             image_pool: HashMap::new(),
             pending_vision_images: HashMap::new(),
@@ -1647,7 +1640,7 @@ chat = "mock-model"
             usage: None,
         }]));
 
-        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()), "@testbot");
         let result = harness
             .process_message("room1", "general", "", false, "user", "Hi", &[], &[])
             .await;
@@ -1669,7 +1662,7 @@ chat = "mock-model"
             usage: None,
         }]));
 
-        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()), "@testbot");
         let result = harness
             .process_message("dm-alice", "", "", true, "alice", "Hello bot", &[], &[])
             .await;
@@ -1683,7 +1676,7 @@ chat = "mock-model"
         let config = make_test_config();
         let provider = Box::new(MockProvider::new(vec![]));
 
-        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()), "@testbot");
         let result = harness
             .process_message("room1", "general", "", false, "user", "Hi", &[], &[])
             .await;
@@ -1730,7 +1723,7 @@ chat = "mock-model"
 
         let provider = Box::new(MockProvider::new(vec![tool_result.clone(), tool_result]));
 
-        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()), "@testbot");
 
         let result = harness
             .process_message("room1", "general", "", false, "user", "search something", &[], &[])
@@ -1751,7 +1744,7 @@ chat = "mock-model"
     fn test_harness_construction() {
         let config = make_test_config();
         let provider = Box::new(MockProvider::new(vec![]));
-        let harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
+        let harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()), "@testbot");
         assert_eq!(harness.memory().room_count(), 0);
         assert_eq!(harness.tools().len(), 0);
     }
@@ -1760,7 +1753,7 @@ chat = "mock-model"
     fn test_system_prompt_contains_soul_template() {
         let config = make_test_config();
         let provider = Box::new(MockProvider::new(vec![]));
-        let harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
+        let harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()), "@testbot");
         let prompt = harness.build_system_prompt();
         assert!(
             prompt.contains("edit_soul tool"),
@@ -1796,7 +1789,7 @@ chat = "mock-model"
     fn test_last_image_ids_empty_by_default() {
         let config = make_test_config();
         let provider = Box::new(MockProvider::new(vec![]));
-        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()), "@testbot");
         let ids = harness.take_last_image_ids();
         assert!(ids.is_empty());
     }
@@ -1805,7 +1798,7 @@ chat = "mock-model"
     fn test_take_image_ids_drains() {
         let config = make_test_config();
         let provider = Box::new(MockProvider::new(vec![]));
-        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()), "@testbot");
         // Store some ids
         harness.last_image_ids = vec!["call_a".into(), "call_b".into()];
         let ids = harness.take_last_image_ids();
@@ -1826,7 +1819,7 @@ chat = "mock-model"
             mime_type: NonEmptyString::try_new("image/png".to_string()).unwrap(),
             share_url: Some("https://example.com/s/abc/download".into()),
         });
-        let harness = AgentHarness::new(config, provider, None, cache.clone());
+        let harness = AgentHarness::new(config, provider, None, cache.clone(), "@testbot");
         let img = harness.take_image("call_test");
         assert!(img.is_some());
         let img = img.unwrap();
@@ -1848,7 +1841,7 @@ chat = "mock-model"
             mime_type: NonEmptyString::try_new("image/png".to_string()).unwrap(),
             share_url: None,
         });
-        let harness = AgentHarness::new(config, provider, None, cache);
+        let harness = AgentHarness::new(config, provider, None, cache, "@testbot");
         let img = harness.take_image("call_no_share").unwrap();
         assert!(img.share_url.is_none());
         // data_uri fallback should still work
@@ -1859,7 +1852,7 @@ chat = "mock-model"
     fn test_resolve_model() {
         let config = make_test_config();
         let provider = Box::new(MockProvider::new(vec![]));
-        let harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
+        let harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()), "@testbot");
         let model = harness.resolve_model();
         assert_eq!(model, "mock-model");
     }
@@ -1868,7 +1861,7 @@ chat = "mock-model"
     async fn test_reset_room_if_needed_no_webdav() {
         let config = make_test_config();
         let provider = Box::new(MockProvider::new(vec![]));
-        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()), "@testbot");
 
         let room = harness
             .memory_mut()
@@ -1894,7 +1887,7 @@ chat = "mock-model"
     async fn test_reset_room_if_needed_explicit_no_webdav() {
         let config = make_test_config();
         let provider = Box::new(MockProvider::new(vec![]));
-        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()), "@testbot");
 
         let room = harness
             .memory_mut()
@@ -2056,7 +2049,7 @@ chat = "mock-model"
     async fn test_trim_context_below_limit() {
         let config = make_test_config();
         let provider = Box::new(MockProvider::new(vec![]));
-        let harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
+        let harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()), "@testbot");
 
         let messages = vec![
             ChatMessage::system("You are a helpful assistant."),
@@ -2079,7 +2072,7 @@ chat = "mock-model"
     async fn test_trim_context_above_limit() {
         let config = make_test_config();
         let provider = Box::new(MockProvider::new(vec![]));
-        let harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
+        let harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()), "@testbot");
 
         // Build messages that exceed the 1-byte limit (always triggers trim)
         let messages: Vec<ChatMessage> = (0..10)
@@ -2108,7 +2101,7 @@ chat = "mock-model"
     async fn test_trim_context_preserves_system_prompt() {
         let config = make_test_config();
         let provider = Box::new(MockProvider::new(vec![]));
-        let harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
+        let harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()), "@testbot");
 
         let system_msg = ChatMessage::system("You are a helpful assistant.");
         let mut messages: Vec<ChatMessage> = vec![system_msg.clone()];
@@ -2131,7 +2124,7 @@ chat = "mock-model"
     async fn test_trim_context_preserves_last_messages() {
         let config = make_test_config();
         let provider = Box::new(MockProvider::new(vec![]));
-        let harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
+        let harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()), "@testbot");
 
         let last_user = ChatMessage::user("LAST user message to keep");
         let last_assistant = ChatMessage::assistant("LAST assistant message to keep");
@@ -2163,7 +2156,7 @@ chat = "mock-model"
             usage: None,
         }]));
 
-        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()), "@testbot");
         harness
             .process_message("room1", "general", "", false, "user", "Hi", &[], &[])
             .await
@@ -2188,7 +2181,7 @@ chat = "mock-model"
             usage: None,
         }]));
 
-        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()), "@testbot");
         harness
             .process_message("room1", "general", "", false, "user", "Hi", &[], &[])
             .await
@@ -2218,7 +2211,7 @@ chat = "mock-model"
             reasoning_content: None,
             usage: None,
         }]));
-        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()), "@testbot");
 
         let msg_urls = vec![
             rocketchat::MessageUrl {
@@ -2260,7 +2253,7 @@ chat = "mock-model"
             reasoning_content: None,
             usage: None,
         }]));
-        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()), "@testbot");
 
         let msg_urls = vec![
             rocketchat::MessageUrl {
@@ -2288,7 +2281,7 @@ chat = "mock-model"
             reasoning_content: None,
             usage: None,
         }]));
-        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()), "@testbot");
 
         let result = harness
             .process_message("room1", "general", "", false, "user", "Hi", &[], &[])
@@ -2318,7 +2311,7 @@ chat = "mock-model"
             }),
         ]));
 
-        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()), "@testbot");
         let result = harness
             .process_message("room1", "general", "", false, "user", "Long context message", &[], &[])
             .await;
@@ -2339,7 +2332,7 @@ chat = "mock-model"
             Err(RockBotError::ContextLengthExceeded("still too long".into())),
         ]));
 
-        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()), "@testbot");
         let result = harness
             .process_message("room1", "general", "", false, "user", "Hi", &[], &[])
             .await;
@@ -2813,7 +2806,7 @@ You can now see the image."#;
         let counter = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let provider = Box::new(CountingMockProvider::new(vec![], counter.clone()));
         let config = make_test_config();
-        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()), "@testbot");
 
         let result = harness
             .process_message("room1", "general", "General", false, "alice", "!reset", &[], &[])
@@ -2834,7 +2827,7 @@ You can now see the image."#;
         let counter = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let provider = Box::new(CountingMockProvider::new(vec![], counter.clone()));
         let config = make_test_config();
-        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()), "@testbot");
 
         let result = harness
             .process_message("room2", "general", "General", false, "bob", "!clearmemory", &[], &[])
@@ -2850,7 +2843,7 @@ You can now see the image."#;
         let counter = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let provider = Box::new(CountingMockProvider::new(vec![], counter.clone()));
         let config = make_test_config();
-        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()), "@testbot");
 
         let result = harness
             .process_message("room3", "general", "General", false, "alice", "  !reset  ", &[], &[])
@@ -2866,7 +2859,7 @@ You can now see the image."#;
         let counter = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let provider = Box::new(CountingMockProvider::new(vec![], counter.clone()));
         let config = make_test_config();
-        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()), "@testbot");
 
         let result = harness
             .process_message("dm-alice", "", "", true, "alice", "!reset", &[], &[])
@@ -2891,7 +2884,7 @@ You can now see the image."#;
             counter.clone(),
         ));
         let config = make_test_config();
-        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()));
+        let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()), "@testbot");
 
         let result = harness
             .process_message("room5", "general", "General", false, "alice", "Hello bot", &[], &[])

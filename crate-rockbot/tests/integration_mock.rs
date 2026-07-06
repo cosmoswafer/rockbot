@@ -2392,7 +2392,7 @@ mod compression_tests {
         let config = make_compression_test_config();
         // Provider returns text with low token count (10 << 900K threshold)
         let provider = Box::new(CountingMockProvider::new("Hello!"));
-        let mut harness = AgentHarness::new(config, provider, None, image_cache);
+        let mut harness = AgentHarness::new(config, provider, None, image_cache, "@testbot");
 
         // Create room with enough messages to trigger compression
         let room = harness
@@ -2428,7 +2428,7 @@ mod compression_tests {
         let image_cache = Arc::new(ImageCache::new());
         let config = make_compression_test_config();
         let provider = Box::new(CountingMockProvider::new("ok"));
-        let mut harness = AgentHarness::new(config, provider, None, image_cache);
+        let mut harness = AgentHarness::new(config, provider, None, image_cache, "@testbot");
 
         let room = harness
             .memory_mut()
@@ -2461,7 +2461,7 @@ mod compression_tests {
         let image_cache = Arc::new(ImageCache::new());
         let config = make_compression_test_config();
         let provider = Box::new(CountingMockProvider::new("ok"));
-        let mut harness = AgentHarness::new(config, provider, None, image_cache);
+        let mut harness = AgentHarness::new(config, provider, None, image_cache, "@testbot");
 
         let room = harness
             .memory_mut()
@@ -2488,7 +2488,7 @@ mod compression_tests {
         let image_cache = Arc::new(ImageCache::new());
         let config = make_compression_test_config();
         let provider = Box::new(CountingMockProvider::new("ok"));
-        let mut harness = AgentHarness::new(config, provider, None, image_cache);
+        let mut harness = AgentHarness::new(config, provider, None, image_cache, "@testbot");
 
         let room = harness
             .memory_mut()
@@ -2656,7 +2656,7 @@ dav_path = "remote.php/dav"
         let provider = Box::new(MockMinProvider);
         let webdav = webdav::WebDavClient::new(&base_url, "testuser", "testpass").unwrap();
         let image_cache = Arc::new(ImageCache::new());
-        let mut harness = AgentHarness::new(config, provider, Some(webdav), image_cache);
+        let mut harness = AgentHarness::new(config, provider, Some(webdav), image_cache, "@testbot");
 
         harness.memory_mut().get_or_create("room1", "priority", "", false)
             .history.append(ChatMessage::user("tell me about databases"));
@@ -2731,7 +2731,7 @@ dav_path = "remote.php/dav"
         let provider = Box::new(MockMinProvider);
         let webdav = webdav::WebDavClient::new(&base_url, "testuser", "testpass").unwrap();
         let image_cache = Arc::new(ImageCache::new());
-        let mut harness = AgentHarness::new(config, provider, Some(webdav), image_cache);
+        let mut harness = AgentHarness::new(config, provider, Some(webdav), image_cache, "@testbot");
 
         // Conversation about lunch — no keyword match for "deploying to production"
         harness.memory_mut().get_or_create("room2", "p0always", "", false)

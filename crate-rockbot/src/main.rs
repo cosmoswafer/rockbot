@@ -118,7 +118,34 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     let search_provider_name = config.search.provider.clone();
 
     let image_cache = Arc::new(ImageCache::new());
-    let mut harness = AgentHarness::new(config, provider, webdav.clone(), image_cache.clone());
+
+    let platform: Box<dyn MessagingClient> = match config.platform.name.as_str() {
+        "matrix" => {
+            let matrix_config = config
+                .matrix
+                .as_ref()
+                .ok_or("Matrix config missing")?;
+            Box::new(MatrixPlatform::new(&matrix_config.server))
+        }
+        _ => {
+            let rc_config = rocketchat::RocketChatConfig {
+                server: rocketchat::config::ServerConfig {
+                    url: rocketchat::ServerUrl::try_new(config.rocketchat.server.url.clone())
+                        .expect("rockbot config validation guarantees url is non-empty"),
+                    username: rocketchat::Username::try_new(config.rocketchat.server.username.clone())
+                        .expect("rockbot config validation guarantees username is non-empty"),
+                    password: rocketchat::Password::try_new(config.rocketchat.server.password.clone())
+                        .expect("rockbot config validation guarantees password is non-empty"),
+                    use_tls: true,
+                },
+            };
+            let bot_name = format!("@{}", config.rocketchat.server.username);
+            Box::new(RocketChatPlatform::new(rc_config, bot_name))
+        }
+    };
+    let bot_id = platform.bot_id().to_string();
+
+    let mut harness = AgentHarness::new(config, provider, webdav.clone(), image_cache.clone(), bot_id);
 
     let mut tool_registry = ToolRegistry::new();
 
@@ -338,43 +365,6 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
             h.config().model.memory_ttl_secs
         }
     );
-
-    let bot_name = {
-        let h = harness.lock().await;
-        match h.config().platform.name.as_str() {
-            "matrix" => h.config()
-                .matrix
-                .as_ref()
-                .map(|m| m.server.user_id.clone())
-                .unwrap_or_default(),
-            _ => format!("@{}", h.config().rocketchat.server.username),
-        }
-    };
-
-    let platform: Box<dyn MessagingClient> = {
-        let h = harness.lock().await;
-        match h.config().platform.name.as_str() {
-            "matrix" => {
-                let matrix_config = h.config().matrix.as_ref()
-                    .ok_or("Matrix config missing")?;
-                Box::new(MatrixPlatform::new(&matrix_config.server))
-            }
-            _ => {
-                let rc_config = rocketchat::RocketChatConfig {
-                    server: rocketchat::config::ServerConfig {
-                        url: rocketchat::ServerUrl::try_new(h.config().rocketchat.server.url.clone())
-                            .expect("rockbot config validation guarantees url is non-empty"),
-                        username: rocketchat::Username::try_new(h.config().rocketchat.server.username.clone())
-                            .expect("rockbot config validation guarantees username is non-empty"),
-                        password: rocketchat::Password::try_new(h.config().rocketchat.server.password.clone())
-                            .expect("rockbot config validation guarantees password is non-empty"),
-                        use_tls: true,
-                    },
-                };
-                Box::new(RocketChatPlatform::new(rc_config, bot_name.clone()))
-            }
-        }
-    };
 
     let mut retry_count: u64 = 0;
 

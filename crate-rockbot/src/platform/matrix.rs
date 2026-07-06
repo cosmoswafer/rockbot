@@ -364,6 +364,10 @@ impl MessagingClient for MatrixPlatform {
 
         Ok(())
     }
+
+    fn bot_id(&self) -> &str {
+        &self.user_id
+    }
 }
 
 #[cfg(test)]

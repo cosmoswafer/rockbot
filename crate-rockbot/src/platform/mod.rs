@@ -53,4 +53,13 @@ pub type MessageHandler = Box<
 #[async_trait]
 pub trait MessagingClient: Send + Sync {
     async fn connect_and_run(&self, handler: MessageHandler) -> Result<()>;
+
+    /// Platform-canonical identifier of this bot instance.
+    ///
+    /// Used as the per-bot namespace in WebDAV snapshot paths
+    /// (`{snapshot_prefix}/{bot_id}/{wd}/snapshot.json`) and as the value
+    /// passed to `AgentHarness::new()`. The platform owns the canonical
+    /// form (RocketChat: `@username`, Matrix: full MXID `@bot:server`).
+    /// Non-emptiness is guaranteed by each platform's config validation.
+    fn bot_id(&self) -> &str;
 }

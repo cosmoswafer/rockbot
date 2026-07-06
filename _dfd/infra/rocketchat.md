@@ -691,6 +691,7 @@ Wrapper that implements the `MessagingClient` trait for RocketChat. Composes
 | `MessagingClient` method | RocketChat implementation                                    |
 | ------------------------ | ------------------------------------------------------------ |
 | `connect_and_run()`      | Delegates to `RocketChatClient::connect_and_run()` with the handler callback |
+| `bot_id()`               | Returns `&self.bot_name` (the `@username` value passed to `RocketChatPlatform::new()`). Used by `main.rs` as the per-bot namespace for WebDAV snapshot paths and as the canonical bot identifier passed to `AgentHarness::new()`. Non-emptiness is guaranteed by `ServerConfig.username` validation (`#[validate(min_length = 1)]`). |
 
 The platform wrapper is constructed in `main.rs::run_bot()` after config loading
 and provider wiring. It is passed to the reconnect loop which calls
@@ -698,6 +699,11 @@ and provider wiring. It is passed to the reconnect loop which calls
 is passed to `RocketChatPlatform::new()` and used for mention **checking** in
 the DDP client (`client.rs` — `msg.text.starts_with(&bot_name)`). Mention
 **stripping** is handled by `RcPlatformSender::strip_mention_prefix()`.
+
+`bot_name` is also exposed via the `MessagingClient::bot_id()` trait method,
+which `main.rs` calls to obtain the `bot_id` value passed to
+`AgentHarness::new()` (issue #58 — the harness no longer derives `bot_id`
+from `config.platform.name`).
 
 #### `RcPlatformSender` (implements `PlatformSender`)
 

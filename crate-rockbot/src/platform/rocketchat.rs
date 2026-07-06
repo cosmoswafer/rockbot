@@ -137,6 +137,10 @@ impl MessagingClient for RocketChatPlatform {
                 crate::error::RockBotError::Provider(format!("RocketChat connection error: {e}"))
             })
     }
+
+    fn bot_id(&self) -> &str {
+        &self.bot_name
+    }
 }
 
 #[cfg(test)]

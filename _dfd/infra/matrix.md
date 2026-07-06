@@ -340,6 +340,12 @@ the struct. The authenticated user ID is extracted from `client.user_id()`
 after login and captured by the event handler closure. If `client.user_id()`
 returns `None`, the connection returns `AuthFailed`.
 
+`MatrixPlatform` implements `MessagingClient::bot_id()` by returning
+`&self.user_id` (the configured `@bot:server` MXID). `main.rs` calls this at
+boot to obtain the `bot_id` value passed to `AgentHarness::new()` (issue #58).
+Non-emptiness is guaranteed by `MatrixServerConfig.user_id` validation
+(`#[validate(min_length = 1)]`).
+
 #### `MatrixSender` (implements `PlatformSender`)
 
 Per-message platform handle created in the event handler closure. Stores the
