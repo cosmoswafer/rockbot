@@ -139,6 +139,40 @@ to make data flow violations compile-time errors rather than runtime surprises:
 | `_dfd/tools/edit-soul.md` | `tools/edit_soul.rs` | `memory.rs`, webdav crate |
 | `_dfd/tools/knowledge.md` | `tools/save_knowledge.rs`, `tools/forget_knowledge.rs`, `tools/recall_knowledge.rs` | `knowledge.rs`, webdav crate |
 
+## Gitea issue investigation
+
+When the user asks to **investigate a Gitea issue** (e.g. "investigate issue #42",
+"debug #17", "look into gitea issue 23"):
+
+1. **Do NOT modify source code.** No edits to `crate-*/`, `_dfd/`, `_doc/`,
+   config files, or any other tracked source. The deliverable is analysis only.
+2. **Use the `gitea-issues` skill** to fetch the issue body, comments, labels,
+   and linked PRs. Read every comment — earlier discussion often contains the
+   key clue.
+3. **Do deep analysis.** Trace the relevant code paths (Read / Grep / Glob),
+   consult the matching DFDs in `_dfd/`, inspect recent `git log` history for
+   the affected modules, and correlate the symptoms against the implementation.
+   Surface the *root cause*, not just the surface symptom.
+4. **Probe real data when useful.** You may write and run throwaway test
+   scripts, `cargo test -- --ignored` probes, or small debugging binaries under
+   `./tmp/` to capture actual request/response shapes, log output, or error
+   traces from the live server. Treat these as disposable — delete or leave in
+   `./tmp/`; never commit them.
+5. **Post full findings as a comment on the Gitea issue.** Use the
+   `gitea-issues` skill to add the comment. The comment must include:
+   - **Summary** (1–2 sentences): what is actually happening.
+   - **Root cause**: which module/function/DFD is responsible, with
+     `file_path:line_number` references.
+   - **Evidence**: relevant log snippets, probe output, code excerpts, or DFD
+     mismatches that prove the diagnosis.
+   - **Recommended fix**: concrete next steps (which file to change, what to
+     change, and why). Do *not* implement it.
+   - **Risks / open questions**: anything the implementer should watch for
+     (regressions, DFD updates needed, related issues).
+6. **Keep the user informed.** Before posting, give the user a one-sentence
+   heads-up in chat that the analysis is being posted to the issue. Do not
+   surprise-post without context.
+
 ## OpenCode skills
 
 - `dfd-md` — Creates Data Flow Diagrams as `.md` files using Mermaid flowchart syntax.
