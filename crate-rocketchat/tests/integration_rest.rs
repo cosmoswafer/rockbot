@@ -232,6 +232,114 @@ async fn test_resolve_room_fname_returns_none_for_missing_room() {
 }
 
 #[tokio::test]
+async fn test_resolve_room_fname_real_production_shape() {
+    let server = MockServer::start().await;
+    let host = server.address().to_string();
+
+    // Simulate a room that has roomName="sen1-lin2-sheng1-tai4", fname="🐵🌴🐷森林生態"
+    // This is the exact production shape from rc.tokyofy.top
+    Mock::given(method("GET"))
+        .and(path("/api/v1/rooms.info"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "room": {
+                "_id": "sPBHTuspPKwPRQdes",
+                "name": "sen1-lin2-sheng1-tai4",
+                "fname": "🐵🌴🐷森林生態",
+                "t": "p"
+            },
+            "success": true
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let config = test_config(&host);
+    let mut client = RestApiClient::new(&config, "uid".into(), "tok".into());
+    let fname = client.resolve_room_fname("sPBHTuspPKwPRQdes").await;
+
+    assert_eq!(fname, Some("🐵🌴🐷森林生態".to_string()));
+}
+
+#[tokio::test]
+async fn test_resolve_room_fname_falls_back_to_rooms_get() {
+    let server = MockServer::start().await;
+    let host = server.address().to_string();
+
+    // rooms.info returns success=false (no fname known)
+    Mock::given(method("GET"))
+        .and(path("/api/v1/rooms.info"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "room": {
+                "_id": "target_room",
+                "name": "target",
+                "fname": "",
+                "t": "p"
+            },
+            "success": true
+        })))
+        .mount(&server)
+        .await;
+
+    // rooms.get has the target room with the actual fname
+    Mock::given(method("GET"))
+        .and(path("/api/v1/rooms.get"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "update": [
+                {"_id": "other_room", "name": "general", "fname": "", "t": "c"},
+                {"_id": "target_room", "name": "target", "fname": "實際中文名", "t": "p"}
+            ],
+            "success": true
+        })))
+        .mount(&server)
+        .await;
+
+    let config = test_config(&host);
+    let mut client = RestApiClient::new(&config, "uid".into(), "tok".into());
+    let fname = client.resolve_room_fname("target_room").await;
+
+    assert_eq!(fname, Some("實際中文名".to_string()));
+}
+
+#[tokio::test]
+async fn test_resolve_room_fname_rooms_info_empty_fname_falls_through() {
+    let server = MockServer::start().await;
+    let host = server.address().to_string();
+
+    // rooms.info returns success with empty fname (e.g. #general has no display name)
+    Mock::given(method("GET"))
+        .and(path("/api/v1/rooms.info"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "room": {
+                "_id": "general_room",
+                "name": "general",
+                "fname": "",
+                "t": "c"
+            },
+            "success": true
+        })))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/rooms.get"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "update": [
+                {"_id": "general_room", "name": "general", "fname": "", "t": "c"}
+            ],
+            "success": true
+        })))
+        .mount(&server)
+        .await;
+
+    let config = test_config(&host);
+    let mut client = RestApiClient::new(&config, "uid".into(), "tok".into());
+    let fname = client.resolve_room_fname("general_room").await;
+
+    // Both endpoints returned empty fname — falls through to None
+    assert_eq!(fname, None);
+}
+
+#[tokio::test]
 async fn test_get_message_parses_response() {
     let server = MockServer::start().await;
     let host = server.address().to_string();

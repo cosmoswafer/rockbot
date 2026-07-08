@@ -94,16 +94,47 @@ flowchart TD
 > stays alive independently (pings keep it up), but does not trigger a token
 > refresh for REST. See §2f for the failure diagram.
 
-### 2d. Room Name Resolution — REMOVED
+### 2d. Room Name Resolution — REST Fallback
 
-⚠️ **This flow was removed.** The REST fallback for room name resolution
-was implemented (commit `6d4526e`) but **crashes the bot** due to an `assert!`
-in `RestApiClient::new()` that panics when `auth_token` is empty.
+When the DDP `stream-room-messages` subscription delivers a `"changed"` event
+without `fname` in `args[1]`, the message handler in `main.rs` falls back to
+REST API room name resolution via `resolve_room_fname()`. The flow is gated by
+a non-empty `auth_token` check to avoid the `assert!` panic that broke the
+earlier attempt.
+
+```mermaid
+flowchart TD
+    DDP[RocketChat DDP]
+    PARSE(ParseIncomingMessage)
+    CHECK{room_fname<br/>is empty?}
+    DOWNCAST{Is RcPlatformSender?}
+    AUTH{Has auth_token?}
+    REST(RestApiClient<br/>resolve_room_fname)
+    RC_API[RocketChat REST API]
+    CACHE[(room_name_cache)]
+    USE_FNAME["Use resolved fname"]
+    PANIC[Panic with clear error]
+
+    DDP -->|"changed event"| PARSE
+    PARSE -->|"IncomingMessage"| CHECK
+    CHECK -->|"no"| USE_FNAME
+    CHECK -->|"yes"| DOWNCAST
+    DOWNCAST -->|"yes (RocketChat)"| AUTH
+    DOWNCAST -->|"no (Matrix)"| PANIC
+    AUTH -->|"non-empty"| REST
+    AUTH -->|"empty"| PANIC
+    REST -->|"check cache"| CACHE
+    CACHE -->|"miss"| REST
+    REST -->|"GET rooms.info?roomId="| RC_API
+    RC_API -->|"RoomInfo {fname}"| REST
+    REST -->|"fallback: GET rooms.get"| RC_API
+    REST -->|"fname resolved"| USE_FNAME
+    REST -->|"not found"| PANIC
+```
 
 See [`_doc/rocketchat/room-name-fields.md`](../../_doc/rocketchat/room-name-fields.md)
-for the full rationale. Room names are resolved solely from DDP `args[1].fname`;
-when `fname` is absent, the bot panics rather than falling back to the pinyin
-slug or REST API.
+for the full rationale. The bot still panics if REST resolution fails — channels
+without display names should be fixed at the server level.
 
 ### 2e. Alias Source — Soul Memory to REST Send
 
@@ -292,7 +323,7 @@ Wraps `reqwest::Client` and holds auth headers. Created once per send from the
 | `user_id`    | `String`          | `X-User-Id` header value          |
 | `auth_token` | `String`          | `X-Auth-Token` header value       |
 | `http`       | `reqwest::Client` | Reusable HTTP client              |
-| `room_name_cache` | `HashMap<String, String>` | Unused for room name resolution — see `room-name-fields.md` |
+| `room_name_cache` | `HashMap<String, String>` | Caches resolved `fname` values from `rooms.info`/`rooms.get` — currently per-client-instance (created fresh per message handler call), shared across the `resolve_room_fname` → `get_room_info` → `get_rooms` cascade |
 
 #### `RoomInfo`
 

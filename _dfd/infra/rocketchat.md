@@ -573,16 +573,16 @@ definition and how it is populated.
 
 Room name precedence:
 - **Matching/registration**: use `room_name` (slug) — always ASCII, deterministic
-- **Display/log messages**: use `room_fname` — must be non-empty (bot panics if absent)
+- **Display/log messages**: use `room_fname` — must be non-empty (bot panics if absent and REST resolve fails)
 - **WebDAV directory naming**: `compute_webdav_dir` uses `room_fname` exclusively — **panics** if empty (no fallback to `room_name`)
 
 The agent harness computes `webdav_dir` using `room_fname`:
-- **Channel with fname** (e.g. `#森林生態`): DDP supplies `roomName: "sen1-lin2-sheng1-tai4"` + `fname: "森林生態"` → `webdav_dir: "r-森林生態"`
-- **Channel without fname** (e.g. `#general`): DDP supplies `roomName: "general"` + `fname: ""` → **bot panics** — rooms must have a display name configured on the RocketChat server
+- **Channel with fname** (e.g. `#森林生態`): DDP supplies `roomName: "sen1-lin2-sheng1-tai4"` + `fname: "🐵🌴🐷森林生態"` → `webdav_dir: "r-🐵🌴🐷森林生態"`
+- **Channel without fname in DDP** (e.g. `#general`, or any channel where `args[1]` omits `fname`): `room_fname` is resolved via REST API fallback (`resolve_room_fname` in `crate-rockbot/src/main.rs:417-451`) — calls `GET /api/v1/rooms.info?roomId=` to fetch the display name. If REST fails, the bot panics.
 
-The flat `r-`/`d-` prefixes prevent collisions. Room name resolution relies
-solely on `args[1].fname` from DDP — no fallback to URL slug (see
-[`room-name-fields.md`](../../_doc/rocketchat/room-name-fields.md) for rationale).
+The flat `r-`/`d-` prefixes prevent collisions. Room name resolution prefers
+`args[1].fname` from DDP, with a REST fallback when `fname` is absent (see
+[`room-name-fields.md`](../../_doc/rocketchat/room-name-fields.md) for details).
 
 > **Important distinction**: `room_id` (the RocketChat UUID from DDP `args[0].rid`)
 > and `webdav_dir` (the `r-`/`d-`-prefixed path key) are **separate values**.
@@ -668,7 +668,9 @@ filters a raw DDP event, returning `None` for self-messages and `Some` for
 valid incoming messages. The dispatch decision (DM, mention, display name,
 registered rooms) is implemented inline in `client.rs:226-235` at the
 `connect_and_run` event loop level. `room_fname` is parsed directly from the
-per-event `args[1].fname` field; there is no secondary cache lookup.
+per-event `args[1].fname` field; when absent, the `main.rs` message handler
+performs a secondary REST API lookup via `resolve_room_fname()` (see
+[rocketchat-rest.md §2d](rocketchat-rest.md#2d-room-name-resolution--rest-fallback)).
 
 #### `RocketChatClient`
 
@@ -681,12 +683,14 @@ per-event `args[1].fname` field; there is no secondary cache lookup.
 | `auth_token`     | `Option<String>`     | Auth token received after login             |
 | `registered_rooms` | `HashMap<String, bool>` | Rooms the bot should listen in regardless of mentions |
 
-*(Room name cache removed — see `room-name-fields.md` for the rationale.)*
+*(Room name cache replaced with REST-based resolution — see [rocketchat-rest.md §2d](rocketchat-rest.md#2d-room-name-resolution--rest-fallback) and `room-name-fields.md` for details.)*
 
 #### `RocketChatPlatform` (crate-rockbot/src/platform/rocketchat.rs)
 
 Wrapper that implements the `MessagingClient` trait for RocketChat. Composes
-`RocketChatClient` (DDP) and `RestApiClient` (REST).
+`RocketChatClient` (DDP) and `RestApiClient` (REST). Room name resolution is
+handled by the `main.rs` message handler via `RcPlatformSender` downcast —
+see [rocketchat-rest.md §2d](rocketchat-rest.md#2d-room-name-resolution--rest-fallback).
 
 | `MessagingClient` method | RocketChat implementation                                    |
 | ------------------------ | ------------------------------------------------------------ |
