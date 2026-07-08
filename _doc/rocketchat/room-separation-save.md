@@ -14,7 +14,9 @@ An allowlist mechanism that limits which rooms the bot responds in without an `@
 The `RoomCache` / `CachedRoom` mechanism was removed because the RocketChat
 server at `rc.tokyofy.top` doesn't respond to the `"rooms"` DDP subscription.
 See [`_docs/rocketchat/room-name-fields.md`](../../_docs/rocketchat/room-name-fields.md)
-for details. `room_fname` is now sourced solely from the per-event `args[1].fname`.
+for details. `room_fname` is now sourced from the per-event `args[1].fname`
+first, with a REST API fallback (`rooms.info`/`rooms.get`) when `fname` is
+absent from the DDP message (wired in `crate-rockbot/src/main.rs:417-451`).
 
 ## File Locations
 

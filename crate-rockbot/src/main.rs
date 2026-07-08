@@ -415,10 +415,36 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                     };
 
                     let display_name = if msg.room_fname.is_empty() {
-                        panic!(
-                            "Room {} has no fname (roomName={:?}) — RocketChat server must set a display name for every room",
-                            msg.room_id, room_name,
-                        )
+                        if let Some(rc_sender) = sender.as_any().downcast_ref::<RcPlatformSender>() {
+                            let rc_config = rc_sender.rc_config();
+                            let auth_token = rc_sender.sender().auth_token_for_rest();
+                            if !auth_token.is_empty() {
+                                let mut rest = rc_sender.sender().rest_client(rc_config);
+                                match rest.resolve_room_fname(&msg.room_id).await {
+                                    Some(fname) => {
+                                        debug!(
+                                            "Resolved room fname via REST for {}: {}",
+                                            msg.room_id, fname
+                                        );
+                                        fname
+                                    }
+                                    None => panic!(
+                                        "Room {} has no fname (roomName={:?}) and REST resolve failed",
+                                        msg.room_id, room_name,
+                                    ),
+                                }
+                            } else {
+                                panic!(
+                                    "Room {} has no fname (roomName={:?}) and no auth token for REST fallback",
+                                    msg.room_id, room_name,
+                                )
+                            }
+                        } else {
+                            panic!(
+                                "Room {} has no fname (roomName={:?}) — not a RocketChat platform",
+                                msg.room_id, room_name,
+                            )
+                        }
                     } else {
                         msg.room_fname.clone()
                     };

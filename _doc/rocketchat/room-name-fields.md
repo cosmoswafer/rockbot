@@ -107,23 +107,39 @@ Without the cache, `room_fname` is sourced **only** from the per-event
 `args[1].fname` field. When absent, `room_fname` stays empty and the bot
 **crashes** — no fallback to pinyin slug.
 
-### REST fallback attempted — breaks the application (2026-06-11)
+### REST fallback via `rooms.info` (2026-07-08)
 
 A REST fallback (`resolve_room_fname` via `rooms.info` / `rooms.get`) was
-added in commit `6d4526e` as the replacement for RoomCache. However, it
-**crashes the bot** because:
+added in commit `6d4526e` and is now **safely wired into the message handler**
+in `crate-rockbot/src/main.rs:417-451`.
 
-1. `RestApiClient::new()` uses `assert!` to check that `user_id` and
-   `auth_token` are non-empty (`crate-rocketchat/src/rest.rs:59-61`)
-2. `auth_token` comes from `MessageSender.auth_token` which is populated
-   with `self.auth_token.as_deref().unwrap_or("")` (`client.rs:313`)
-3. If the DDP auth token is missing (reconnection edge case, or login
-   response lacks a token), an empty string is passed, the `assert!` fires,
-   and the bot panics
+**How it works:**
 
-This REST fallback must **not** be used. Room name resolution relies
-solely on `args[1].fname` from DDP. When `fname` is absent, the bot
-crashes — no fallback to `roomName` (pinyin slug) and no REST API call.
+1. When `room_fname` is empty in a DDP message, the handler checks whether
+   the sender is an `RcPlatformSender` (RocketChat platform).
+2. It retrieves the `auth_token` via `MessageSender::auth_token_for_rest()`
+   — this is always non-empty after a successful login.
+3. It creates a `RestApiClient` via `MessageSender::rest_client()` and calls
+   `resolve_room_fname(room_id)` which:
+   - First checks an in-memory cache (stale per-client instance, so cache
+     hits only within the same message handler call).
+   - Falls back to `GET /api/v1/rooms.info?roomId=...`.
+   - Falls back further to `GET /api/v1/rooms.get` for a full room listing.
+4. If resolved, the `fname` is used as the display name. If the REST call
+   fails or returns no `fname`, the bot **panics** with a clear message
+   (identical to the old panic, preserving the crash-fast policy).
 
-Any future improvement to room name handling must avoid REST API calls
-from the message handler and must not use `assert!` for runtime data.
+**Safety invariant:** The auth token check (`!auth_token.is_empty()`)
+prevents calling `RestApiClient::new()` with empty credentials, avoiding
+the `assert!` panic that plagued the earlier attempt. The `assert!`s remain
+in `RestApiClient::new()` as a safety net for other callers.
+
+**Cache note:** Each call creates a fresh `RestApiClient`, so the
+`room_name_cache` within it starts empty. Future optimization could store a
+shared `Arc<Mutex<RestApiClient>>` on `RcPlatformSender` to share the cache
+across messages.
+
+**Panic still possible:** If the REST API is unreachable, the room has no
+`fname` in RocketChat's database either, or the auth token is missing (edge
+case), the bot still panics. This is intentional — channels without display
+names should be fixed at the RocketChat server level.
