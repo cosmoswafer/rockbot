@@ -1218,7 +1218,7 @@ async fn test_harness_vision_result_cached_in_image_pool_and_injected() {
     harness.register_tool(Box::new(VisionTool::with_max_bytes(10_000_000)));
 
     let result = harness
-        .process_message("room1", "general", "", false, "user", "Look at cat.png", &[], &[])
+        .process_message("room1", "general", "General", false, "user", "Look at cat.png", &[], &[])
         .await;
 
     assert!(result.is_ok());

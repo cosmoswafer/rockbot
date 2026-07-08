@@ -278,7 +278,7 @@ periodic persist timer (coalesced — not on every individual change). The
 | --------------- | --------------------- | --------------------------------------------- |
 | `room_id`       | `String`              | RocketChat room UUID                          |
 | `room_name`     | `String`              | URL slug (ASCII)                              |
-| `room_fname`    | `String`              | Friendly display name (Unicode); used for WebDAV directory naming when non-empty |
+| `room_fname`    | `String`              | Friendly display name (Unicode); **must be non-empty** — `compute_webdav_dir` panics if absent (no fallback to `room_name`) |
 | `is_dm`         | `bool`                | Direct message flag                           |
 | `history`       | `ConversationHistory` | Layer 1: in-memory buffer                     |
 | `last_activity` | `u64`                 | Unix timestamp of last interaction; checked against `memory_ttl_secs` for eviction |
@@ -312,8 +312,9 @@ entire file.
 
 Shared room data is stored per-room under the prefixed `webdav_dir` key (see
 [rocketchat.md](rocketchat.md) for naming conventions — `r-` for channels,
-`d-` for DMs, preferring `room_fname` over `room_name`). Bot-internal snapshot
-data is stored under a separate configurable prefix, namespaced by `bot_id`.
+`d-` for DMs, using `room_fname` exclusively). `compute_webdav_dir` panics if
+`room_fname` is empty — no fallback to `room_name`. Bot-internal snapshot data
+is stored under a separate configurable prefix, namespaced by `bot_id`.
 
 ```
 {root}/{webdav_dir}/memory/

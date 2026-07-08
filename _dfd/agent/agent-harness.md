@@ -255,6 +255,10 @@ pipeline. Room context (`room_id` UUID + `webdav_dir` path key) is computed from
 `room_name`, `room_fname`, and `is_dm` and injected into stateful tool calls
 (tools backed by WebDAV or room-scoped storage).
 
+> **Note**: `compute_webdav_dir` **panics** if `room_fname` is empty — there is
+> no fallback to `room_name`. Rooms must have a display name (`fname`) configured
+> on the RocketChat server. See [`room-name-fields.md`](../../_doc/rocketchat/room-name-fields.md).
+
 ```mermaid
 flowchart TD
     RC[IncomingMessage]

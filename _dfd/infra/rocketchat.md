@@ -573,16 +573,16 @@ definition and how it is populated.
 
 Room name precedence:
 - **Matching/registration**: use `room_name` (slug) — always ASCII, deterministic
-- **Display/log messages**: prefer `room_fname` when non-empty, fall back to `room_name`
-- **WebDAV directory naming**: prefer `room_fname` when non-empty, fall back to `room_name` (slug) for safe filesystem paths
+- **Display/log messages**: use `room_fname` — must be non-empty (bot panics if absent)
+- **WebDAV directory naming**: `compute_webdav_dir` uses `room_fname` exclusively — **panics** if empty (no fallback to `room_name`)
 
-The agent harness computes `webdav_dir` using the friendly name when available:
-- **Channel** (e.g. `#森林生態` with slug `sen1-lin2-sheng1-tai4`): DDP supplies `roomName: "sen1-lin2-sheng1-tai4"` + `fname: "森林生態"` → `webdav_dir: "r-森林生態"`
-- **Channel without fname** (e.g. `#general`): DDP supplies `roomName: "general"` + `fname: ""` → `webdav_dir: "r-general"`
-- **Direct message** (e.g. from `saru`): DDP `roomName` empty, `fname` empty → falls back to `sender_name: "saru"` → `webdav_dir: "d-saru"`
+The agent harness computes `webdav_dir` using `room_fname`:
+- **Channel with fname** (e.g. `#森林生態`): DDP supplies `roomName: "sen1-lin2-sheng1-tai4"` + `fname: "森林生態"` → `webdav_dir: "r-森林生態"`
+- **Channel without fname** (e.g. `#general`): DDP supplies `roomName: "general"` + `fname: ""` → **bot panics** — rooms must have a display name configured on the RocketChat server
 
-The flat `r-`/`d-` prefixes prevent collisions. When per-event `args[1].fname`
-is available, the display name is used; otherwise the URL slug is the fallback.
+The flat `r-`/`d-` prefixes prevent collisions. Room name resolution relies
+solely on `args[1].fname` from DDP — no fallback to URL slug (see
+[`room-name-fields.md`](../../_doc/rocketchat/room-name-fields.md) for rationale).
 
 > **Important distinction**: `room_id` (the RocketChat UUID from DDP `args[0].rid`)
 > and `webdav_dir` (the `r-`/`d-`-prefixed path key) are **separate values**.

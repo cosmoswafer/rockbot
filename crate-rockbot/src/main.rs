@@ -402,13 +402,6 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
 
                     let mut h = harness.lock().await;
 
-                    if !h.has_rest_client() {
-                        if let Some(rc_sender) = sender.as_any().downcast_ref::<RcPlatformSender>() {
-                            let rc_config = rc_sender.rc_config().clone();
-                            h.set_rest_client(rc_sender.sender().rest_client(&rc_config));
-                        }
-                    }
-
                     let text = if msg.is_dm {
                         msg.text.clone()
                     } else {
@@ -422,19 +415,12 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                     };
 
                     let display_name = if msg.room_fname.is_empty() {
-                        room_name.clone()
+                        panic!(
+                            "Room {} has no fname (roomName={:?}) — RocketChat server must set a display name for every room",
+                            msg.room_id, room_name,
+                        )
                     } else {
                         msg.room_fname.clone()
-                    };
-
-                    let display_name = if !msg.is_dm && (display_name.is_empty() || display_name == room_name) {
-                        if let Some(fname) = h.resolve_room_fname(&msg.room_id).await {
-                            fname
-                        } else {
-                            display_name
-                        }
-                    } else {
-                        display_name
                     };
 
                     debug!(

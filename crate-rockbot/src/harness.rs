@@ -174,14 +174,6 @@ impl AgentHarness {
         self.image_cache.take(key)
     }
 
-    pub async fn resolve_room_fname(&mut self, room_id: &str) -> Option<String> {
-        if let Some(ref mut client) = self.rest_client {
-            client.resolve_room_fname(room_id).await
-        } else {
-            None
-        }
-    }
-
     #[allow(clippy::too_many_arguments)]
     pub async fn process_message(
         &mut self,
@@ -1534,15 +1526,11 @@ async fn load_secrets_from_webdav(webdav: Option<&WebDavClient>, room_dir: &str)
 }
 
 fn compute_webdav_dir(room_name: &str, room_fname: &str, is_dm: bool) -> String {
-    let name = if room_fname.is_empty() {
-        room_name
-    } else {
-        room_fname
-    };
+    assert!(!room_fname.is_empty(), "compute_webdav_dir: room_fname must not be empty (room_name={room_name:?}) — no fallback to pinyin slug");
     if is_dm {
-        format!("d-{}", name)
+        format!("d-{}", room_fname)
     } else {
-        format!("r-{}", name)
+        format!("r-{}", room_fname)
     }
 }
 
@@ -1642,7 +1630,7 @@ chat = "mock-model"
 
         let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()), "@testbot");
         let result = harness
-            .process_message("room1", "general", "", false, "user", "Hi", &[], &[])
+            .process_message("room1", "general", "General", false, "user", "Hi", &[], &[])
             .await;
 
         assert!(result.is_ok());
@@ -1664,7 +1652,7 @@ chat = "mock-model"
 
         let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()), "@testbot");
         let result = harness
-            .process_message("dm-alice", "", "", true, "alice", "Hello bot", &[], &[])
+            .process_message("dm-alice", "alice", "Alice", true, "alice", "Hello bot", &[], &[])
             .await;
 
         assert!(result.is_ok());
@@ -1678,7 +1666,7 @@ chat = "mock-model"
 
         let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()), "@testbot");
         let result = harness
-            .process_message("room1", "general", "", false, "user", "Hi", &[], &[])
+            .process_message("room1", "general", "General", false, "user", "Hi", &[], &[])
             .await;
 
         assert!(result.is_ok());
@@ -1726,7 +1714,7 @@ chat = "mock-model"
         let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()), "@testbot");
 
         let result = harness
-            .process_message("room1", "general", "", false, "user", "search something", &[], &[])
+            .process_message("room1", "general", "General", false, "user", "search something", &[], &[])
             .await;
 
         assert!(result.is_ok());
@@ -1992,56 +1980,21 @@ chat = "mock-model"
     }
 
     #[test]
-    fn test_compute_webdav_dir_channel() {
-        assert_eq!(compute_webdav_dir("atomkb", "", false), "r-atomkb");
+    #[test]
+    #[should_panic(expected = "room_fname must not be empty")]
+    fn test_compute_webdav_dir_panics_when_fname_empty() {
+        compute_webdav_dir("general", "", false);
     }
 
     #[test]
-    fn test_compute_webdav_dir_dm() {
-        assert_eq!(compute_webdav_dir("saru", "", true), "d-saru");
-    }
-
-    #[test]
-    fn test_compute_webdav_dir_channel_with_hyphens() {
-        assert_eq!(
-            compute_webdav_dir("my-team-room", "", false),
-            "r-my-team-room"
-        );
-    }
-
-    #[test]
-    fn test_compute_webdav_dir_dm_with_dots() {
-        assert_eq!(
-            compute_webdav_dir("john.doe", "", true),
-            "d-john.doe"
-        );
-    }
-
-    #[test]
-    fn test_compute_webdav_dir_unicode_name() {
-        assert_eq!(compute_webdav_dir("日本語", "", false), "r-日本語");
-        assert_eq!(compute_webdav_dir("中文", "", true), "d-中文");
-    }
-
-    #[test]
-    fn test_compute_webdav_dir_empty_name() {
-        assert_eq!(compute_webdav_dir("", "", false), "r-");
-        assert_eq!(compute_webdav_dir("", "", true), "d-");
-    }
-
-    #[test]
-    fn test_compute_webdav_dir_prefers_fname() {
+    fn test_compute_webdav_dir_uses_fname() {
         assert_eq!(
             compute_webdav_dir("sen1-lin2-sheng1-tai4", "森林生態", false),
             "r-森林生態"
         );
-    }
-
-    #[test]
-    fn test_compute_webdav_dir_fallback_when_fname_empty() {
         assert_eq!(
-            compute_webdav_dir("general", "", false),
-            "r-general"
+            compute_webdav_dir("saru", "Saru", true),
+            "d-Saru"
         );
     }
 
@@ -2158,7 +2111,7 @@ chat = "mock-model"
 
         let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()), "@testbot");
         harness
-            .process_message("room1", "general", "", false, "user", "Hi", &[], &[])
+            .process_message("room1", "general", "General", false, "user", "Hi", &[], &[])
             .await
             .unwrap();
 
@@ -2183,7 +2136,7 @@ chat = "mock-model"
 
         let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()), "@testbot");
         harness
-            .process_message("room1", "general", "", false, "user", "Hi", &[], &[])
+            .process_message("room1", "general", "General", false, "user", "Hi", &[], &[])
             .await
             .unwrap();
 
@@ -2233,7 +2186,7 @@ chat = "mock-model"
         ];
 
         harness
-            .process_message("room1", "general", "", false, "user", "edit this", &[], &msg_urls)
+            .process_message("room1", "general", "General", false, "user", "edit this", &[], &msg_urls)
             .await
             .unwrap();
 
@@ -2264,7 +2217,7 @@ chat = "mock-model"
         ];
 
         harness
-            .process_message("room1", "general", "", false, "user", "Hi", &[], &msg_urls)
+            .process_message("room1", "general", "General", false, "user", "Hi", &[], &msg_urls)
             .await
             .unwrap();
 
@@ -2284,7 +2237,7 @@ chat = "mock-model"
         let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()), "@testbot");
 
         let result = harness
-            .process_message("room1", "general", "", false, "user", "Hi", &[], &[])
+            .process_message("room1", "general", "General", false, "user", "Hi", &[], &[])
             .await;
 
         assert!(result.is_ok());
@@ -2313,7 +2266,7 @@ chat = "mock-model"
 
         let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()), "@testbot");
         let result = harness
-            .process_message("room1", "general", "", false, "user", "Long context message", &[], &[])
+            .process_message("room1", "general", "General", false, "user", "Long context message", &[], &[])
             .await;
 
         assert!(result.is_ok());
@@ -2334,7 +2287,7 @@ chat = "mock-model"
 
         let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()), "@testbot");
         let result = harness
-            .process_message("room1", "general", "", false, "user", "Hi", &[], &[])
+            .process_message("room1", "general", "General", false, "user", "Hi", &[], &[])
             .await;
 
         assert!(result.is_ok());
@@ -2862,7 +2815,7 @@ You can now see the image."#;
         let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()), "@testbot");
 
         let result = harness
-            .process_message("dm-alice", "", "", true, "alice", "!reset", &[], &[])
+            .process_message("dm-alice", "alice", "Alice", true, "alice", "!reset", &[], &[])
             .await
             .unwrap();
 

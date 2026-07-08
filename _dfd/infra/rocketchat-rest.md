@@ -94,34 +94,16 @@ flowchart TD
 > stays alive independently (pings keep it up), but does not trigger a token
 > refresh for REST. See §2f for the failure diagram.
 
-### 2d. Room Name Resolution Deep Dive
+### 2d. Room Name Resolution — REMOVED
 
-The DDP `changed` events from a direct room subscription (`stream-room-messages`
-with a specific `rid`) deliver `args` with only one element (the message), not
-two. Room metadata (`roomName`, `fname`) is only available from the
-`__my_messages__` subscription. The REST API fills this gap.
+⚠️ **This flow was removed.** The REST fallback for room name resolution
+was implemented (commit `6d4526e`) but **crashes the bot** due to an `assert!`
+in `RestApiClient::new()` that panics when `auth_token` is empty.
 
-```mermaid
-flowchart TD
-    HARNESS[Agent Harness]
-    REST_CLIENT(REST Client)
-    RC_API[RocketChat REST API]
-    CACHE[(Room Name Cache)]
-
-    HARNESS -->|"resolve_name(room_id)"| REST_CLIENT
-    CACHE -->|"cache hit: fname"| REST_CLIENT
-    REST_CLIENT -->|"cache miss → GET /rooms.info?roomId=X"| RC_API
-    RC_API -->|"200: {room: {name, fname}}"| REST_CLIENT
-    RC_API -.->|"error / timeout → fallback: GET /rooms.get"| REST_CLIENT
-    REST_CLIENT -->|"store (room_id → fname)"| CACHE
-    CACHE -->|"resolved fname"| HARNESS
-```
-
-Room name precedence rules:
-1. Cache hit by `room_id` → return cached `fname`
-2. `rooms.info` by `roomId` → return `room.fname`
-3. `rooms.get` scan by `_id` → return matching `fname`
-4. Fallback: empty string or ASCII `room.name` slug
+See [`_doc/rocketchat/room-name-fields.md`](../../_doc/rocketchat/room-name-fields.md)
+for the full rationale. Room names are resolved solely from DDP `args[1].fname`;
+when `fname` is absent, the bot panics rather than falling back to the pinyin
+slug or REST API.
 
 ### 2e. Alias Source — Soul Memory to REST Send
 
@@ -310,7 +292,7 @@ Wraps `reqwest::Client` and holds auth headers. Created once per send from the
 | `user_id`    | `String`          | `X-User-Id` header value          |
 | `auth_token` | `String`          | `X-Auth-Token` header value       |
 | `http`       | `reqwest::Client` | Reusable HTTP client              |
-| `room_name_cache` | `HashMap<String, String>` | Per-request cache of resolved fnames |
+| `room_name_cache` | `HashMap<String, String>` | Unused for room name resolution — see `room-name-fields.md` |
 
 #### `RoomInfo`
 
@@ -330,5 +312,5 @@ Wraps `reqwest::Client` and holds auth headers. Created once per send from the
 | `rest_client()`    | `crate-rocketchat/src/client.rs`   |
 | Token capture      | `crate-rocketchat/src/client.rs`   |
 | Room name cache    | `crate-rocketchat/src/rest.rs`     |
-| Alias + fallback   | `crate-rockbot/src/main.rs`        |
+| Alias send         | `crate-rockbot/src/main.rs`        |
 | `self_display_name`| `crate-rockbot/src/memory.rs`      |
