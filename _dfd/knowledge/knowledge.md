@@ -8,11 +8,11 @@ WebDAV-backed tools.
 ## 1. Purpose
 
 Persistent per-room knowledge stored as `.md` files on WebDAV with a JSON
-index for situational retrieval. Each entry lives in its own `.md` file
+index for on-demand retrieval. Each entry lives in its own `.md` file
 named `{slug}.md`. The `index.json` file lists every entry with a
 `when_useful` field — a short description of the situation that makes this
-knowledge relevant. This serves as a retrieval trigger so the agent only
-loads knowledge that matches the current conversation.
+knowledge relevant. The index is injected as a compact summary into agent
+context; the AI uses `recall_knowledge` to fetch full `.md` bodies on demand.
 
 ### Write triggers
 
@@ -37,11 +37,13 @@ No frequency-based or periodic background extraction is planned.
 
 ### Retrieval
 
-On room initialization the harness loads `index.json` and evaluates which
-entries match the current conversation context (via tags and `when_useful`
-keyword overlap). Matching entries' `.md` files are downloaded and injected
-into `BuildContext` as system messages. A `recall_knowledge` tool lets the
-agent fetch additional entries on demand during the agent loop.
+On room initialization (and on each `refresh_knowledge_context` call) the
+harness loads `index.json` from WebDAV and injects a compact **index summary**
+as a single system message. The summary lists every entry's priority,
+`display_title`, and `when_useful` — enough metadata for the AI to decide
+whether to recall a full entry. The AI uses the `recall_knowledge` tool to
+fetch individual `.md` bodies on demand when it determines an entry is
+relevant to the current conversation.
 
 - Upstream: [Agent Harness](../agent/agent-harness.md) detects `save_knowledge` tool
   calls and loads knowledge on room init
@@ -68,7 +70,7 @@ flowchart TD
     IDX_UPDATE[Update Index Entry]
     IDX_SER[Serialize index.json]
     DAV[(NextCloud WebDAV)]
-    CTX_REFRESH[refresh_knowledge_context<br/>reload matching entries]
+    CTX_REFRESH[refresh_knowledge_context<br/>reload index summary]
 
     USER -->|"!remember / !note / !save / natural chat"| AI
     AI -->|"tool_call: save_knowledge"| TOOL
@@ -85,28 +87,25 @@ flowchart TD
 ### 2b. Happy Flow — Load
 
 On each call to `refresh_knowledge_context`, the harness loads the room's
-`index.json` from WebDAV, scores entries against recent conversation
-messages, downloads matching `.md` files, and injects them into
-`BuildContext` as system messages.
+`index.json` from WebDAV, formats a compact summary (one line per entry:
+priority, title, `when_useful`), and injects it as a single system message.
+No `.md` body files are downloaded during context injection — the AI fetches
+full entries on demand via the `recall_knowledge` tool.
 
 ```mermaid
 flowchart TD
     INIT[Room Initialization<br/>or refresh_knowledge_context]
     GET_IDX[GET index.json]
     DAV[(NextCloud WebDAV)]
-    MATCH{Match when_useful<br/>against context}
-    LOAD_MD[GET matching .md files]
+    SUMMARIZE[Format Index Summary]
     INJECT[Inject into BuildContext]
     CTX[AgentContext]
 
     INIT --> GET_IDX
     GET_IDX -->|"GET knowledge/index.json"| DAV
-    DAV -->|"index entries"| MATCH
-    MATCH -->|"tags + when_useful overlap"| LOAD_MD
-    MATCH -->|"no matches: skip"| CTX
-    LOAD_MD -->|"GET each .md"| DAV
-    DAV -->|"markdown content"| INJECT
-    INJECT -->|"system messages"| CTX
+    DAV -->|"index entries"| SUMMARIZE
+    SUMMARIZE -->|"[P0] title — when_useful<br/>(one line per entry)"| INJECT
+    INJECT -->|"single system message"| CTX
 ```
 
 ### 2c. Error Handling
@@ -164,58 +163,53 @@ flowchart TD
     PUT_MD -->|"PUT knowledge/{file}"| DAV
 ```
 
-### 2e. Retrieval Deep Dive — Matching When Useful
+### 2e. Retrieval Deep Dive — Index Summary and On-Demand Recall
 
-Knowledge is scoped per-room: `index.json` and `.md` files live under
-`{root}/{webdav_dir}/knowledge/`. Retrieval loads the calling room's
-index and scores entries against that room's recent conversation
-messages.
+Knowledge retrieval has two distinct paths:
+
+1. **Context injection** (automatic, every turn): loads `index.json`,
+   formats a compact summary, and injects it as a system message. No `.md`
+   bodies are downloaded. The AI sees all entry titles, priorities, and
+   `when_useful` descriptions.
+
+2. **On-demand recall** (tool call): when the AI calls `recall_knowledge`
+   with a query, the harness loads `index.json`, scores entries via keyword
+   overlap against the query, downloads matching `.md` files, and returns
+   their full content as a tool result.
 
 ```mermaid
 flowchart TD
-    INIT[Room Init or<br/>recall_knowledge Call]
-    ROOM["webdav_dir<br/>(r-general / d-alice)"]
-    GET_IDX["GET<br/>{root}/{webdav_dir}/knowledge/index.json"]
-    DAV[(NextCloud WebDAV)]
-    CTX_MSGS[Recent Conversation Messages]
-    EXTRACT_KW[Extract Keywords]
-    SCORE{Score Each Entry}
-    RELEVANT[Relevant Entries]
-    LOAD[GET .md Files]
-    CONCAT[Concatenate as System Messages]
-    INJECT[BuildContext]
-    SKIP[Skip]
+    subgraph CTX_INJECT["Context Injection (every turn)"]
+        INIT1[refresh_knowledge_context]
+        GET_IDX1["GET index.json"]
+        DAV1[(NextCloud WebDAV)]
+        FMT[Format Index Summary]
+        SYS[Inject as System Message]
 
-    INIT --> ROOM
-    ROOM -->|"room-scoped path"| GET_IDX
-    GET_IDX -->|"parse entries"| SCORE
-    CTX_MSGS -->|"text of last N messages"| EXTRACT_KW
-    EXTRACT_KW -->|"tokenized keywords"| SCORE
-    SCORE -->|"keywords overlap"| RELEVANT
-    SCORE -->|"no overlap"| SKIP
-    RELEVANT -->|"filename list"| LOAD
-    LOAD -->|"GET each .md"| DAV
-    DAV -->|"markdown content"| CONCAT
-    CONCAT -->|"system messages"| INJECT
+        INIT1 --> GET_IDX1
+        GET_IDX1 -->|"GET knowledge/index.json"| DAV1
+        DAV1 -->|"index entries"| FMT
+        FMT -->|"[P0] title — when_useful"| SYS
+    end
+
+    subgraph ON_DEMAND["On-Demand Recall (tool call)"]
+        TOOL["recall_knowledge(query)"]
+        GET_IDX2["GET index.json"]
+        DAV2[(NextCloud WebDAV)]
+        SCORE["Score entries<br/>by keyword overlap"]
+        LOAD["GET matching .md files"]
+        RESULT["Return full .md content<br/>as tool result"]
+
+        TOOL --> GET_IDX2
+        GET_IDX2 -->|"GET knowledge/index.json"| DAV2
+        DAV2 -->|"index entries"| SCORE
+        SCORE -->|"matching filenames"| LOAD
+        LOAD -->|"GET each .md"| DAV2
+        DAV2 -->|"markdown content"| RESULT
+    end
 ```
 
 ## 3. Data Structures
-
-### `KnowledgeEntry`
-
-A single `.md` file stored at `{root}/{webdav_dir}/knowledge/{slug}.md`.
-`webdav_dir` is the type-prefixed room key (`r-`/`d-` prefix, see [rocketchat.md](rocketchat.md)).
-
-| Field        | Type             | Notes                                     |
-| ------------ | ---------------- | ----------------------------------------- |
-| `id`         | `String`         | Unique slug, e.g. `db_api`                |
-| `room_id`    | `String`         | WebDAV directory key (`r-general`, `d-alice`, etc.) |
-| `title`      | `String`         | Human-readable title                      |
-| `content`    | `String`         | Full markdown body                        |
-| `when_useful`| `String`         | Situation description for retrieval       |
-| `tags`       | `Vec<String>`    | Searchable keywords                       |
-| `created_at` | `String`         | ISO 8601 timestamp                        |
-| `updated_at` | `String`         | ISO 8601 timestamp                        |
 
 ### `KnowledgeIndex`
 
@@ -237,9 +231,10 @@ Machine-readable JSON file at `{root}/{webdav_dir}/knowledge/index.json`.
 | `last_promoted_at` | `Option<String>` | ISO 8601 timestamp of last promotion; `None` if never promoted. Dormant field. |
 
 The `filename` doubles as the display key — `display_title()` strips the `.md`
-suffix. Knowledge context is formatted as `[Knowledge: {display_title}]\n{body}`
-in system messages. Retrieval matching uses keyword overlap against
-`when_useful` and the filename-derived title. `when_useful`, `priority`, and
+suffix. The index summary injected into context is formatted as one line per
+entry: `[{priority}] {display_title} — {when_useful}`. The AI uses this summary
+to decide which entries to recall via the `recall_knowledge` tool, which
+downloads the full `.md` body on demand. `when_useful`, `priority`, and
 `last_promoted_at` are denormalized into the index for fast retrieval
 and priority updates without reading every `.md` file.
 
@@ -247,10 +242,10 @@ and priority updates without reading every `.md` file.
 
 ```rust
 enum KnowledgePriority {
-    P0, // promoted within last 1 day — always loaded (regardless of keyword overlap)
-    P1, // promoted within 3 days — strong boost (+5 score)
-    P2, // promoted within 7 days — moderate boost (+2 score)
-    P3, // promoted >7 days ago or never — baseline (+0)
+    P0, // highest priority — always included in recall_knowledge results
+    P1, // default — strong recall bonus (+5)
+    P2, // moderate recall bonus (+2)
+    P3, // baseline (+0)
 }
 ```
 
@@ -258,9 +253,10 @@ enum KnowledgePriority {
 not in `.md` file frontmatter. This keeps `.md` files as pure user-editable
 knowledge content. Priority is defined by the
 [Knowledge Priority Algorithm](knowledge-priority.md) — currently dormant
-(no compression cycle to trigger promotion). Priority
-affects retrieval: P0 entries are always loaded; P1-P3 get score bonuses added
-to keyword overlap scores.
+(no compression cycle to trigger promotion). Priority appears as a `[P0]`/`[P1]`
+/`[P2]`/`[P3]` tag in the index summary, helping the AI identify high-priority
+entries to recall. In `recall_knowledge` results, P0 entries are always included
+regardless of keyword overlap; P1-P3 get score bonuses added to keyword overlap.
 
 ### Markdown Entry Format
 
@@ -339,9 +335,12 @@ Returns the matching `.md` content (or all entries if no query).
 
 During `BuildContext` assembly (`MemoryManager::build_context`):
 1. If WebDAV is configured, load `index.json` from WebDAV
-2. Score each `IndexEntry` against recent conversation messages
-3. For entries scoring above threshold, `GET` the `.md` file
-4. Prepend each loaded entry as a system message:
+2. Format a compact summary — one line per entry:
    ```
-   [Knowledge: {display_title}]\n{body}
+   [Knowledge Index — use recall_knowledge to retrieve full entries]
+   [P0] critical — Always important
+   [P1] db_api — When working with database APIs
+   [P1] openai_key — When authenticating with OpenAI
    ```
+3. Inject the summary as a single system message
+4. The AI calls `recall_knowledge` to fetch full `.md` bodies on demand

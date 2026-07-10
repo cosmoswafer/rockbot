@@ -55,7 +55,9 @@ already exists. If one does, update or append to the existing note instead of cr
 duplicate. If no related note exists, you MUST ask the user for explicit permission before \
 creating a new knowledge note — do NOT create new notes without user consent. Use the \
 save_knowledge tool to persist entries and the forget_knowledge tool to remove them. \
-When you need to recall previously saved knowledge, use the recall_knowledge tool. \
+A knowledge index summary is provided in your system context listing all saved entries with \
+their priority, title, and when_useful description. When you need the full content of a \
+knowledge entry, use the recall_knowledge tool to retrieve it. \
 Keep responses clear and to the point.\
 ";
 
@@ -1033,12 +1035,10 @@ impl AgentHarness {
             }
         }
 
-        // Knowledge: load index and match against context
-        match self.load_knowledge_for_room(webdav_client, room_id, &wd).await {
+        // Knowledge: load index summary for context injection
+        match self.load_knowledge_for_room(webdav_client, &wd).await {
             Ok(text) => {
-                if !text.is_empty() {
-                    self.memory.set_knowledge(room_id, text);
-                }
+                self.memory.set_knowledge(room_id, text);
                 debug!("Loaded knowledge context for room {}", room_name);
             }
             Err(e) => {
@@ -1080,62 +1080,10 @@ impl AgentHarness {
     async fn load_knowledge_for_room(
         &self,
         webdav: &WebDavClient,
-        room_id: &str,
         webdav_dir: &str,
     ) -> Result<String> {
         let index = KnowledgeManager::load_index(webdav, webdav_dir).await?;
-        if index.entries.is_empty() {
-            return Ok(String::new());
-        }
-
-        let recent: Vec<String> = {
-            self.memory
-                .get(room_id)
-                .map(|r| {
-                    r.history
-                        .messages
-                        .iter()
-                        .filter(|m| m.role == crate::types::Role::User)
-                        .filter_map(|m| m.text_content())
-                        .map(|t| t.to_string())
-                        .rev()
-                        .take(10)
-                        .collect()
-                })
-                .unwrap_or_default()
-        };
-
-        let recent_refs: Vec<&str> = recent.iter().map(|s| s.as_str()).collect();
-        let matching = KnowledgeManager::match_relevant(&index, &recent_refs);
-
-        let mut parts = Vec::new();
-        for entry in &matching {
-            let md_path = format!(
-                "{}knowledge/{}",
-                WebDavPath::new("").room_dir(webdav_dir),
-                entry.filename
-            );
-            match webdav.read_file_to_string(&md_path).await {
-                Ok(body) => {
-                    parts.push(format!(
-                        "[Knowledge: {}]\n{}",
-                        entry.display_title(), body
-                    ));
-                }
-                Err(e) => {
-                    warn!("Failed to read knowledge entry {}: {}", entry.filename, e);
-                }
-            }
-        }
-
-        if parts.is_empty() {
-            return Ok(String::new());
-        }
-
-        Ok(format!(
-            "[Knowledge — automatically recalled for this conversation]\n{}",
-            parts.join("\n---\n")
-        ))
+        Ok(index.format_summary())
     }
 
     pub async fn refresh_knowledge_context(
@@ -1146,11 +1094,9 @@ impl AgentHarness {
         let webdav = self.webdav.clone();
         if let Some(ref webdav) = webdav {
             let text = self
-                .load_knowledge_for_room(webdav, room_id, webdav_dir)
+                .load_knowledge_for_room(webdav, webdav_dir)
                 .await?;
-            if !text.is_empty() {
-                self.memory.set_knowledge(room_id, text);
-            }
+            self.memory.set_knowledge(room_id, text);
         }
         Ok(())
     }

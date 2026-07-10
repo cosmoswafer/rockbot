@@ -268,7 +268,7 @@ periodic persist timer (coalesced — not on every individual change). The
 | `max_soul_chars`       | `usize`                      | Layer 2 max chars for soul.md content    |
 | `souls`                | `HashMap<String, SoulMemory>`| Layer 2 in-memory holder (refreshed from WebDAV before each message — never stale) |
 | `dirty_snapshots`      | `HashSet<String>`            | Room IDs needing snapshot rebuild        |
-| `knowledge`            | `HashMap<String, String>`    | Pre-formatted knowledge system messages per room |
+| `knowledge`            | `HashMap<String, String>`    | Knowledge index summary per room          |
 | `persist_interval_secs`| `u64`                        | Timer interval for writing snapshots (default 60) |
 | `max_context_bytes`    | `usize`                      | Byte limit that triggers inline trim and post-reply reset (default 4MB ≈ 1M tokens) |
 

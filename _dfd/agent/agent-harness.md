@@ -16,7 +16,7 @@ standard harness mechanisms are present:
 |-------------|----------|---------|
 | **Tools**   | Full     | Abstract tool calling via `ToolRegistry` — individual tools each have their own DFD |
 | **Context** | Full     | Per-room conversation history buffer, hard reset (see [Memory Reset](../memory/memory-reset.md)), archive loading — see [Memory Management](../memory/memory.md); plus iteration limits, room state routing, system prompt assembly (with live UTC time injection via `now_utc_human()`). Soul (`soul.md`) is **re-read from WebDAV on every message** to ensure multi-instance consistency. |
-| **Knowledge** | Full     | `save_knowledge`, `forget_knowledge`, `recall_knowledge`; retrieval via keyword-matching against `when_useful` + filename — see [Knowledge Management](base/knowledge.md) |
+| **Knowledge** | Full     | `save_knowledge`, `forget_knowledge`, `recall_knowledge`; index summary injected as context, AI uses `recall_knowledge` for on-demand full-entry retrieval — see [Knowledge Management](base/knowledge.md) |
 
 Intentionally absent — not needed for rockbot's scope:
 
@@ -33,7 +33,7 @@ Intentionally absent — not needed for rockbot's scope:
 - Downstream: [Memory Management](base/memory.md) provides `ConversationHistory` per
   room and receives new messages for archival
 - Downstream: [Knowledge Management](base/knowledge.md) extracts and persists
-  domain facts, loads entries into agent context on room init
+  domain facts, loads index summary into agent context on room init
  - Downstream: Individual tools (see `tools/` directory) are registered in
    `ToolRegistry` and invoked by the agent loop via `execute_by_name()`
  - Shared: `ImageCache` (`image_cache.rs`) stores `GeneratedImage` entries keyed by call_id for the image upload pipeline (§2i)

@@ -64,16 +64,27 @@ pub struct KnowledgeIndex {
     pub entries: Vec<IndexEntry>,
 }
 
-#[derive(Debug, Clone)]
-pub struct KnowledgeEntry {
-    pub id: String,
-    pub room_id: String,
-    pub title: String,
-    pub content: String,
-    pub when_useful: String,
-    pub tags: Vec<String>,
-    pub created_at: String,
-    pub updated_at: String,
+impl KnowledgeIndex {
+    /// Format a compact one-line-per-entry summary for context injection.
+    /// The AI uses this to decide which entries to recall via `recall_knowledge`.
+    pub fn format_summary(&self) -> String {
+        if self.entries.is_empty() {
+            return String::new();
+        }
+        let mut lines = Vec::with_capacity(self.entries.len());
+        for entry in &self.entries {
+            lines.push(format!(
+                "[{}] {} — {}",
+                entry.priority,
+                entry.display_title(),
+                entry.when_useful
+            ));
+        }
+        format!(
+            "[Knowledge Index — use recall_knowledge to retrieve full entries]\n{}",
+            lines.join("\n")
+        )
+    }
 }
 
 /// Parsed tool arguments for save_knowledge — typed boundary for "parse, don't validate".

@@ -89,7 +89,7 @@ flowchart TD
 ### 2c. Happy Flow — recall_knowledge
 
 When `query` is non-empty, entries are matched by keyword overlap against
-`when_useful`, `tags`, and topic. When `query` is empty, all entries in the
+`when_useful` and topic title. When `query` is empty, all entries in the
 index are returned without filtering — the MATCH step is bypassed. Result
 format: `[Knowledge: {display_title}]\n{body}`.
 
@@ -111,7 +111,7 @@ flowchart TD
     HTTP -->|"GET request"| DAV
     DAV -->|"200 index.json"| GET_IDX
     GET_IDX -->|"parsed index entries"| MATCH
-    MATCH -->|"topic / when_useful / tags match"| GET_MD
+    MATCH -->|"topic / when_useful match"| GET_MD
     GET_MD -->|"GET each .md"| HTTP
     HTTP -->|"http request"| DAV
     DAV -->|"200 .md bodies"| GET_MD

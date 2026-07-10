@@ -23,9 +23,9 @@ impl Tool for RecallKnowledgeTool {
     }
 
     fn description(&self) -> &str {
-        "Search the knowledge index for entries matching a query. \
+        "Retrieve the full content of knowledge entries matching a query. \
          If no query is given, returns all stored knowledge entries. \
-         Matches by topic title, when_useful description, and tags."
+         Matches by topic title and when_useful description."
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -66,7 +66,7 @@ mod tests {
         let webdav = webdav::WebDavClient::new("https://example.com", "user", "pass").unwrap();
         let tool = RecallKnowledgeTool::new(webdav);
         assert_eq!(tool.name(), "recall_knowledge");
-        assert!(tool.description().contains("Search the knowledge index"));
+        assert!(tool.description().contains("Retrieve the full content"));
     }
 
     #[test]
@@ -75,6 +75,6 @@ mod tests {
         let tool = RecallKnowledgeTool::new(webdav);
         let desc = tool.description();
         assert!(desc.contains("query"), "description should mention query search");
-        assert!(desc.contains("Search"), "description should contain 'Search'");
+        assert!(desc.contains("Retrieve"), "description should contain 'Retrieve'");
     }
 }

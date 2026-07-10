@@ -8,8 +8,11 @@ LLM-based compression (replaced by hard reset — see
 algorithm is **dormant**: no compression cycle identifies used entries, so
 entries remain at their initial priority (P1) unless explicitly managed.
 
-Priority still affects retrieval: P0 entries are always loaded, P1-P3 add
-progressively weaker score bonuses.
+Priority still affects retrieval: P0 entries are always included in
+`recall_knowledge` results, P1-P3 add progressively weaker score bonuses.
+All entries appear in the index summary injected into context; priority
+serves as a `[P0]`/`[P1]`/`[P2]`/`[P3]` tag to help the AI identify
+high-priority entries to recall.
 
 - Upstream: [Knowledge Management](knowledge.md) — defines `IndexEntry`
   and `KnowledgePriority` enum
@@ -48,13 +51,15 @@ stateDiagram-v2
 ```
 
 **Rules**:
-- **P0** = always recalled in context
-- **P1** = default for new entries — strong recall (+5)
-- **P2** = moderate recall (+2)
+- **P0** = always included in `recall_knowledge` results
+- **P1** = default for new entries — strong recall bonus (+5)
+- **P2** = moderate recall bonus (+2)
 - **P3** = baseline (+0)
 - **New entries default to P1**
 - **No automatic promote/decay** — the former LLM-driven cycle no longer
   exists since hard reset does not identify used entries
+- **All entries appear in the index summary** with a `[P0]`–`[P3]` tag;
+  the AI uses this to decide which entries to recall
 
 ### 2b. Trigger — None (Dormant)
 
@@ -86,11 +91,12 @@ enum KnowledgePriority {
 }
 ```
 
-**Recall behavior**:
-P0 entries are always selected regardless of keyword overlap. P1-P3 add
-progressively weaker score bonuses.
+**Recall behavior** (`recall_knowledge` tool):
+P0 entries are always included in `recall_knowledge` results regardless of
+keyword overlap. P1-P3 add progressively weaker score bonuses. Context
+injection (index summary) includes all entries regardless of priority.
 
-| Priority | Score bonus | Always selected? |
+| Priority | Score bonus | Always in recall_knowledge results? |
 |----------|------------|-------------------|
 | P0       | +8         | Yes               |
 | P1       | +5         | No                |
@@ -107,7 +113,8 @@ No dedicated config keys.
 
 - Reads `index.json` for current entry metadata and priority
 - New entries default to **P1**
-- Priority affects retrieval: P0 always loaded, P1-3 get score bonuses
+- Priority affects `recall_knowledge` results: P0 always included, P1-3 get score bonuses
+- All entries appear in the index summary with a `[P0]`–`[P3]` tag
 
 ### With Memory Management
 
