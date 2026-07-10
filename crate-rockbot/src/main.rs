@@ -444,9 +444,10 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                         Some(name) => name,
                         None => {
                             let error_msg = format!(
-                                "This room has no display name configured. \
+                                "This room (\"{}\") has no display name configured. \
                                  Please set a display name for this room on the RocketChat server \
                                  so I know how to refer to it.",
+                                room_name,
                             );
                             warn!(
                                 "Cannot resolve fname for room {} (roomName={:?}) — sending error reply",
@@ -520,26 +521,32 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                                 let rest_ok = if let Some(ref alias_name) = alias {
                                     if let Some(rc_sender) = sender.as_any().downcast_ref::<RcPlatformSender>() {
                                         debug!("Sending with alias={:?} via REST", alias_name);
-                                        let rc_config = rocketchat::RocketChatConfig {
-                                            server: rocketchat::config::ServerConfig {
-                                                url: rocketchat::ServerUrl::try_new(h.config().rocketchat.server.url.clone())
-                                                    .expect("rockbot config validation guarantees url is non-empty"),
-                                                username: rocketchat::Username::try_new(h.config().rocketchat.server.username.clone())
-                                                    .expect("rockbot config validation guarantees username is non-empty"),
-                                                password: rocketchat::Password::try_new("rest-only".into())
-                                                    .expect("hardcoded password is non-empty"),
-                                                use_tls: true,
-                                            },
-                                        };
-                                        let rest = rc_sender.sender().rest_client(&rc_config);
-                                        match rest.send_message(&msg.room_id, final_reply, Some(alias_name)).await {
-                                            Ok(msg_id) => {
-                                                debug!("REST send_message ok, msg_id={} alias={:?}", msg_id, alias_name);
-                                                true
-                                            }
-                                            Err(e) => {
-                                                warn!("REST send_message failed: {}, falling back to platform sender", e);
-                                                false
+                                        let auth_token = rc_sender.sender().auth_token_for_rest();
+                                        if auth_token.is_empty() {
+                                            warn!("Auth token empty for REST alias send, falling back to DDP");
+                                            false
+                                        } else {
+                                            let rc_config = rocketchat::RocketChatConfig {
+                                                server: rocketchat::config::ServerConfig {
+                                                    url: rocketchat::ServerUrl::try_new(h.config().rocketchat.server.url.clone())
+                                                        .expect("rockbot config validation guarantees url is non-empty"),
+                                                    username: rocketchat::Username::try_new(h.config().rocketchat.server.username.clone())
+                                                        .expect("rockbot config validation guarantees username is non-empty"),
+                                                    password: rocketchat::Password::try_new("rest-only".into())
+                                                        .expect("hardcoded password is non-empty"),
+                                                    use_tls: true,
+                                                },
+                                            };
+                                            let rest = rc_sender.sender().rest_client(&rc_config);
+                                            match rest.send_message(&msg.room_id, final_reply, Some(alias_name)).await {
+                                                Ok(msg_id) => {
+                                                    debug!("REST send_message ok, msg_id={} alias={:?}", msg_id, alias_name);
+                                                    true
+                                                }
+                                                Err(e) => {
+                                                    warn!("REST send_message failed: {}, falling back to platform sender", e);
+                                                    false
+                                                }
                                             }
                                         }
                                     } else {

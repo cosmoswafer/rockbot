@@ -573,12 +573,12 @@ definition and how it is populated.
 
 Room name precedence:
 - **Matching/registration**: use `room_name` (slug) — always ASCII, deterministic
-- **Display/log messages**: use `room_fname` — must be non-empty (bot panics if absent and REST resolve fails)
-- **WebDAV directory naming**: `compute_webdav_dir` uses `room_fname` exclusively — **panics** if empty (no fallback to `room_name`)
+- **Display/log messages**: use `room_fname` — when absent from DDP, resolved via REST API; if REST also fails, the bot sends an error reply and skips processing
+- **WebDAV directory naming**: `compute_webdav_dir` uses `room_fname` exclusively — **panics** if empty (safety net; resolved upstream before reaching harness)
 
 The agent harness computes `webdav_dir` using `room_fname`:
 - **Channel with fname** (e.g. `#森林生態`): DDP supplies `roomName: "sen1-lin2-sheng1-tai4"` + `fname: "🐵🌴🐷森林生態"` → `webdav_dir: "r-🐵🌴🐷森林生態"`
-- **Channel without fname in DDP** (e.g. `#general`, or any channel where `args[1]` omits `fname`): `room_fname` is resolved via REST API fallback (`resolve_room_fname` in `crate-rockbot/src/main.rs:417-451`) — calls `GET /api/v1/rooms.info?roomId=` to fetch the display name. If REST fails, the bot panics.
+- **Channel without fname in DDP** (e.g. `#general`, or any channel where `args[1]` omits `fname`): `room_fname` is resolved via REST API fallback (`resolve_room_fname` in `crate-rockbot/src/main.rs:417-451`) — calls `GET /api/v1/rooms.info?roomId=` to fetch the display name. If REST fails, the bot sends an error reply and skips processing for that message.
 
 The flat `r-`/`d-` prefixes prevent collisions. Room name resolution prefers
 `args[1].fname` from DDP, with a REST fallback when `fname` is absent (see

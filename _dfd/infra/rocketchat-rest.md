@@ -113,28 +113,29 @@ flowchart TD
     RC_API[RocketChat REST API]
     CACHE[(room_name_cache)]
     USE_FNAME["Use resolved fname"]
-    PANIC[Panic with clear error]
+    ERROR["Send error reply<br/>+ skip message"]
 
     DDP -->|"changed event"| PARSE
     PARSE -->|"IncomingMessage"| CHECK
     CHECK -->|"no"| USE_FNAME
     CHECK -->|"yes"| DOWNCAST
     DOWNCAST -->|"yes (RocketChat)"| AUTH
-    DOWNCAST -->|"no (Matrix)"| PANIC
+    DOWNCAST -->|"no (Matrix)"| ERROR
     AUTH -->|"non-empty"| REST
-    AUTH -->|"empty"| PANIC
+    AUTH -->|"empty"| ERROR
     REST -->|"check cache"| CACHE
     CACHE -->|"miss"| REST
     REST -->|"GET rooms.info?roomId="| RC_API
     RC_API -->|"RoomInfo {fname}"| REST
     REST -->|"fallback: GET rooms.get"| RC_API
     REST -->|"fname resolved"| USE_FNAME
-    REST -->|"not found"| PANIC
+    REST -->|"not found"| ERROR
 ```
 
 See [`_doc/rocketchat/room-name-fields.md`](../../_doc/rocketchat/room-name-fields.md)
-for the full rationale. The bot still panics if REST resolution fails — channels
-without display names should be fixed at the server level.
+for the full rationale. If REST resolution fails (room has no `fname` at all,
+like `#general`), the bot sends an error reply to the user and skips message
+processing. The bot never panics from missing room names.
 
 ### 2e. Alias Source — Soul Memory to REST Send
 
