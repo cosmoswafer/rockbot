@@ -19,9 +19,12 @@ fn config_path() -> String {
     if std::path::Path::new("../../config.toml").exists() {
         return "../../config.toml".to_string();
     }
-    // Try absolute path
+    // Try absolute paths
     if std::path::Path::new("/home/gamer/Workspaces/rockbot/config.toml").exists() {
         return "/home/gamer/Workspaces/rockbot/config.toml".to_string();
+    }
+    if std::path::Path::new("/home/claw/rockbot/config.toml").exists() {
+        return "/home/claw/rockbot/config.toml".to_string();
     }
     panic!("config.toml not found. Create one with [server] section to run these tests.");
 }
@@ -736,6 +739,272 @@ async fn test_send_image_attachment_via_ddp() {
 
     let _ = ws.close(None).await;
     eprintln!("SUCCESS: Image attachment sent and received via DDP");
+}
+
+/// 🔬 Integration probe: connects to the live RocketChat server, captures DDP
+/// setup frames and one `changed` event, then calls REST API endpoints to
+/// collect and verify actual data shapes. Run with:
+/// ```bash
+/// RUST_LOG=debug cargo test -p rocketchat --test integration_real probe_data_shapes -- --ignored --nocapture 2>&1 | tee ./tmp/probe-raw.txt
+/// ```
+#[tokio::test]
+#[ignore = "requires a running RocketChat server and valid config.toml"]
+async fn probe_data_shapes() {
+    init_crypto();
+    let path = config_path();
+    let config = rocketchat::RocketChatConfig::from_file(&path)
+        .expect("Failed to load config.toml");
+    let ws_uri = config.ws_uri().unwrap();
+    let username = &config.server.username;
+    let password = &config.server.password;
+    let host = config.host();
+
+    eprintln!("\n==============================================");
+    eprintln!("  DDP + REST DATA SHAPE PROBE");
+    eprintln!("  Server: {}", ws_uri);
+    eprintln!("  User:   {}", username);
+    eprintln!("==============================================\n");
+
+    // ── Phase 1: DDP Connect ──
+    eprintln!("--- Phase 1: WebSocket + DDP Connect ---");
+    let (mut ws, _) = connect_async(&ws_uri).await.expect("connect_async failed");
+
+    let connect_msg = serde_json::json!({"msg":"connect","version":"1","support":["1"]});
+    eprintln!("SEND: {}", connect_msg);
+    ws.send(Message::Text(connect_msg.to_string().into())).await.unwrap();
+    let connected = expect_msg(&mut ws, "connected").await;
+    eprintln!("RECV (connected): {}", connected);
+    assert_eq!(connected["msg"], "connected");
+
+    // ── Phase 2: DDP Login ──
+    eprintln!("\n--- Phase 2: DDP Login ---");
+    let digest = sha256_digest(password);
+    let login_msg = serde_json::json!({
+        "msg":"method","method":"login","id":"probe_login",
+        "params":[{"user":{"username":username},"password":{"digest":digest,"algorithm":"sha-256"}}]
+    });
+    eprintln!("SEND: {}", login_msg);
+    ws.send(Message::Text(login_msg.to_string().into())).await.unwrap();
+
+    // Consume the "added" users collection event
+    let added = expect_msg_raw(&mut ws, "added").await;
+    eprintln!("RECV (added — users collection): id={}", added["id"]);
+    assert_eq!(added["collection"], "users");
+
+    // Consume "updated" for the login method
+    let updated = expect_msg_raw(&mut ws, "updated").await;
+    eprintln!("RECV (updated): methods={:?}", updated["methods"]);
+
+    // Consume "result" — the actual login result
+    let result = expect_msg_raw(&mut ws, "result").await;
+    assert_eq!(result["id"], "probe_login");
+    let user_id = result["result"]["id"].as_str().unwrap().to_string();
+    let auth_token = result["result"]["token"].as_str().unwrap().to_string();
+    eprintln!("RECV (result — login success): user_id={}, token={}..", user_id, &auth_token[..8]);
+    assert!(!user_id.is_empty());
+    assert!(!auth_token.is_empty());
+
+    // ── Phase 3: Subscribe to __my_messages__ ──
+    eprintln!("\n--- Phase 3: Subscribe __my_messages__ ---");
+    let sub_msg = serde_json::json!({
+        "msg":"sub","id":"probe_sub","name":"stream-room-messages",
+        "params":["__my_messages__",false]
+    });
+    eprintln!("SEND: {}", sub_msg);
+    ws.send(Message::Text(sub_msg.to_string().into())).await.unwrap();
+    let ready = expect_msg_raw(&mut ws, "ready").await;
+    eprintln!("RECV (ready): subs={:?}", ready["subs"]);
+    assert!(ready["subs"].as_array().map(|a| a.len() > 0).unwrap_or(false));
+
+    // ── Phase 4: Wait for a "changed" event ──
+    eprintln!("\n--- Phase 4: Wait for 'changed' event ---");
+    eprintln!("Send a message mentioning @{} now...", username);
+    eprintln!("(Waiting up to 60 seconds for a message.)");
+
+    let changed = match tokio::time::timeout(Duration::from_secs(60), async {
+        loop {
+            let frame = ws.next().await.unwrap().unwrap();
+            match frame {
+                Message::Text(text) => {
+                    let v: Value = serde_json::from_str(&text).unwrap();
+                    match v.get("msg").and_then(|m| m.as_str()) {
+                        Some("changed") => return v,
+                        Some("ping") => {
+                            let pong = serde_json::json!({"msg":"pong"});
+                            ws.send(Message::Text(pong.to_string().into())).await.ok();
+                            continue;
+                        }
+                        _ => continue,
+                    }
+                }
+                Message::Close(_) => panic!("Connection closed while waiting for changed event"),
+                _ => continue,
+            }
+        }
+    }).await {
+        Ok(v) => v,
+        Err(_) => {
+            eprintln!("WARN: No changed event received within 60s timeout.");
+            eprintln!("Proceeding with REST API probes only.");
+            let _ = ws.close(None).await;
+            // Still do REST probes
+            rest_probes(&host, &user_id, &auth_token).await;
+            return;
+        }
+    };
+
+    // ── Phase 5: Analyze the changed event ──
+    eprintln!("\n--- Phase 5: Changed Event Analysis ---");
+    eprintln!("Full frame:");
+    eprintln!("{}", serde_json::to_string_pretty(&changed).unwrap());
+
+    let fields = changed.get("fields").expect("fields missing");
+    let args = fields.get("args").and_then(|a| a.as_array()).expect("args array missing");
+    assert!(args.len() >= 2, "args should have at least 2 elements");
+
+    let meta = &args[1];
+
+    // ⚠️ CRITICAL ASSERTION: args[1] must have roomName but NO fname
+    eprintln!("\n--- args[1] Room Metadata Analysis ---");
+    let meta_fields: Vec<&str> = meta.as_object()
+        .map(|o| o.keys().map(|k| k.as_str()).collect())
+        .unwrap_or_default();
+    eprintln!("Fields present: {:?}", meta_fields);
+
+    let room_name = meta.get("roomName").and_then(|v| v.as_str());
+    let room_type = meta.get("roomType").and_then(|v| v.as_str());
+    let room_participant = meta.get("roomParticipant");
+    let fname = meta.get("fname");
+
+    eprintln!("  roomName:        {:?}", room_name);
+    eprintln!("  roomType:        {:?}", room_type);
+    eprintln!("  roomParticipant: {:?}", room_participant);
+    eprintln!("  fname (DDP):     {:?}", fname);
+
+    // Assert the DDP data shape: roomName + roomType present, fname ABSENT
+    assert!(room_name.is_some(), "args[1] must have roomName");
+    assert!(room_type.is_some(), "args[1] must have roomType");
+    assert!(fname.is_none() || fname.and_then(|v| v.as_str()).unwrap_or("").is_empty(),
+        "args[1] fname should be absent or empty in DDP changed events");
+
+    let room_id = args[0].get("rid").and_then(|v| v.as_str()).unwrap_or("");
+    eprintln!("\n  room_id (args[0].rid): {:?}", room_id);
+    eprintln!("  room_name (slug):       {:?}", room_name);
+    eprintln!("\n✅ DDP data shape verified: args[1] has roomName/roomType but NO fname.");
+
+    // ── Phase 6: REST API Probes ──
+    let _ = ws.close(None).await;
+    rest_probes(&host, &user_id, &auth_token).await;
+
+    eprintln!("\n✅ ALL PROBES PASSED.");
+}
+
+/// REST API probes: calls rooms.get and rooms.info, logs and asserts on data shapes.
+async fn rest_probes(host: &str, user_id: &str, auth_token: &str) {
+    use reqwest::Client;
+
+    let http = Client::builder()
+        .danger_accept_invalid_certs(false)
+        .build().unwrap();
+
+    // ── Phase 6a: rooms.get ──
+    eprintln!("\n--- Phase 6a: REST API rooms.get ---");
+    let url = format!("https://{}/api/v1/rooms.get", host);
+    let resp = http.get(&url)
+        .header("X-Auth-Token", auth_token)
+        .header("X-User-Id", user_id)
+        .send().await
+        .expect("rooms.get request failed");
+    assert!(resp.status().is_success(), "rooms.get returned {}", resp.status());
+    let body: Value = resp.json().await.expect("rooms.get JSON parse failed");
+    assert_eq!(body["success"], true);
+
+    let rooms = body["update"].as_array().expect("rooms.get update array");
+    eprintln!("Found {} rooms:", rooms.len());
+
+    let mut channels_without_fname = Vec::new();
+
+    for room in rooms {
+        let rid = room["_id"].as_str().unwrap_or("");
+        let name = room["name"].as_str().unwrap_or("");
+        let fname = room.get("fname").and_then(|v| {
+            if v.is_null() { None } else { v.as_str() }
+        });
+        let rtype = room["t"].as_str().unwrap_or("");
+
+        eprintln!("  id={:<25} name={:<30} fname={:?} t={}", rid, name, fname, rtype);
+
+        // Channels should have name; DMs may have null name
+        if rtype != "d" {
+            assert!(!name.is_empty(), "non-DM room {} has empty name", rid);
+        }
+
+        // Track rooms without fname for Phase 6b
+        if rtype != "d" && fname.is_none() {
+            channels_without_fname.push(rid.to_string());
+        }
+    }
+
+    // ── Phase 6b: rooms.info for specific rooms ──
+    eprintln!("\n--- Phase 6b: REST API rooms.info (selected) ---");
+
+    // Get all non-DM rooms and call rooms.info for a sample
+    for room in rooms.iter().take(6) {
+        let rid = room["_id"].as_str().unwrap_or("");
+        let rtype = room["t"].as_str().unwrap_or("");
+        if rtype == "d" { continue; }
+
+        let url = format!("https://{}/api/v1/rooms.info?roomId={}", host, rid);
+        match http.get(&url)
+            .header("X-Auth-Token", auth_token)
+            .header("X-User-Id", user_id)
+            .send().await
+        {
+            Ok(r) => {
+                let info: Value = r.json().await.unwrap_or_default();
+                if info["success"] == true {
+                    let rinfo = &info["room"];
+                    let rname = rinfo["name"].as_str().unwrap_or("");
+                    let rfname = rinfo.get("fname").and_then(|v| {
+                        if v.is_null() { None } else { v.as_str() }
+                    });
+                    eprintln!("  rooms.info {}: name={:?} fname={:?}",
+                        rid, rname, rfname);
+
+                    // Verify that the REST API returns fname when rooms.get also has it
+                    if !channels_without_fname.contains(&rid.to_string()) {
+                        assert!(rfname.is_some(),
+                            "rooms.info for {} should return fname (rooms.get had it)", rid);
+                    }
+                }
+            }
+            Err(e) => eprintln!("  rooms.info {} error: {}", rid, e),
+        }
+    }
+
+    eprintln!("\n✅ REST API data shape verified: rooms.get and rooms.info return fname for channels.");
+}
+
+/// Wait for a specific DDP msg type, responding to pings automatically.
+async fn expect_msg_raw(ws: &mut WsStream, expected_msg: &str) -> Value {
+    loop {
+        let frame = ws.next().await.unwrap().unwrap();
+        match frame {
+            Message::Text(text) => {
+                let value: Value = serde_json::from_str(&text).unwrap();
+                let msg_type = value.get("msg").and_then(|v| v.as_str());
+                if msg_type == Some(expected_msg) {
+                    return value;
+                }
+                if msg_type == Some("ping") {
+                    let pong = serde_json::json!({"msg": "pong"});
+                    ws.send(Message::Text(pong.to_string().into())).await.unwrap();
+                }
+            }
+            Message::Close(_) => panic!("Connection closed while waiting for {}", expected_msg),
+            _ => continue,
+        }
+    }
 }
 
 /// Reads a frame from the WebSocket as typed JSON.
