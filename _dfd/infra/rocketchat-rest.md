@@ -113,6 +113,8 @@ flowchart TD
     RC_API[RocketChat REST API]
     CACHE[(room_name_cache)]
     USE_FNAME["Use resolved fname"]
+    DM_CHECK{is_dm?}
+    USE_ROOM_NAME["Use room_name (username)<br/>as display name"]
     ERROR["Send error reply<br/>+ skip message"]
 
     DDP -->|"changed event"| PARSE
@@ -120,22 +122,27 @@ flowchart TD
     CHECK -->|"no"| USE_FNAME
     CHECK -->|"yes"| DOWNCAST
     DOWNCAST -->|"yes (RocketChat)"| AUTH
-    DOWNCAST -->|"no (Matrix)"| ERROR
+    DOWNCAST -->|"no (Matrix)"| DM_CHECK
     AUTH -->|"non-empty"| REST
-    AUTH -->|"empty"| ERROR
+    AUTH -->|"empty"| DM_CHECK
     REST -->|"check cache"| CACHE
     CACHE -->|"miss"| REST
     REST -->|"GET rooms.info?roomId="| RC_API
     RC_API -->|"RoomInfo {fname}"| REST
     REST -->|"fallback: GET rooms.get"| RC_API
     REST -->|"fname resolved"| USE_FNAME
-    REST -->|"not found"| ERROR
+    REST -->|"not found"| DM_CHECK
+    DM_CHECK -->|"yes"| USE_ROOM_NAME
+    DM_CHECK -->|"no"| ERROR
 ```
 
 See [`_doc/rocketchat/room-name-fields.md`](../../_doc/rocketchat/room-name-fields.md)
-for the full rationale. If REST resolution fails (room has no `fname` at all,
-like `#general`), the bot sends an error reply to the user and skips message
-processing. The bot never panics from missing room names.
+for the full rationale. If REST resolution fails and the room is **not** a DM
+(`is_dm == false`), the bot sends an error reply and skips message processing.
+For **DM rooms** (`is_dm == true`), the bot falls back to `room_name` (the
+sender's username) as the display name instead of erroring. This is because
+DMs in RocketChat never have an `fname` — they only have a `username` on the
+other participant. The bot never panics from missing room names.
 
 ### 2e. Alias Source — Soul Memory to REST Send
 

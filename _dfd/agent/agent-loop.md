@@ -45,6 +45,7 @@ flowchart TD
     DISPATCH(ReceiveMessage)
     TYPING(ToggleTyping)
     STRIP(StripMentionPrefix)
+    RESOLVE(ResolveDisplayName)
     LOOP(AgentLoop)
     DIRTY(MarkSnapshotDirty)
     SNAPSHOT(FlushSnapshots)
@@ -61,7 +62,8 @@ flowchart TD
     DISPATCH -->|"incoming message + sender"| TYPING
     TYPING -->|"typing on"| PLATFORM
     TYPING -->|"incoming message + sender"| STRIP
-    STRIP -->|"non-DM: clean text<br/>DM: raw text"| LOOP
+    STRIP -->|"non-DM: clean text<br/>DM: raw text"| RESOLVE
+    RESOLVE -->|"room_name + display_name"| LOOP
     CFG -->|"ai config"| LOOP
     HISTORY -->|"conversation history"| LOOP
     TOOLS -->|"tool definitions"| LOOP
@@ -298,6 +300,31 @@ fn strip_mention_prefix(&self, text: &str) -> String;
 The agent loop calls `sender.strip_mention_prefix(&msg.text)` for non-DM
 messages only. DM messages are passed through unchanged (no @mention prefix
 to strip).
+
+#### Display Name Resolution (`ResolveDisplayName`)
+
+After stripping the mention prefix, the agent loop resolves the display name
+for the room. The `room_name` is determined first: if `msg.room_name` is empty
+(which happens in DMs), it falls back to `msg.sender_name` (the sender's
+username). The `display_name` is then resolved from `msg.room_fname` (the
+RocketChat display name / `fname` field). Non-DM rooms typically have an
+`fname` (e.g. `"森林生態"` for channel `sen1-lin2-sheng1-tai4`). DMs never
+have an `fname` — they only have a username.
+
+The resolution cascade is:
+1. If `msg.room_fname` is non-empty, use it directly.
+2. If empty and the platform is RocketChat with an auth token, try
+   `resolve_room_fname()` via the REST API (`rooms.info` / `rooms.get`).
+3. If REST also returns nothing and `msg.is_dm` is true, fall back to
+   `room_name` (the sender's username).
+4. If none of the above (non-DM room with no display name), send an error reply
+   and skip processing. See [RocketChat REST API §2d](../infra/rocketchat-rest.md)
+   for the detailed flow.
+
+The resolved `room_name` and `display_name` are passed to `AgentHarness::process_message()`
+and subsequently stored in `RoomState.room_name` and stored via `RoomState.room_fname`.
+
+#### `bot_id` Resolution
 
 `bot_name` is obtained from `MessagingClient::bot_id()` at boot (the
 platform is constructed before the harness; the resulting `bot_id` is passed

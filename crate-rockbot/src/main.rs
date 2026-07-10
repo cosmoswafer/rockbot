@@ -442,6 +442,13 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
 
                     let display_name = match display_name {
                         Some(name) => name,
+                        None if msg.is_dm => {
+                            debug!(
+                                "DM room {} has no fname — falling back to room_name ({})",
+                                msg.room_id, room_name,
+                            );
+                            room_name.clone()
+                        }
                         None => {
                             let error_msg = format!(
                                 "This room (\"{}\") has no display name configured. \
