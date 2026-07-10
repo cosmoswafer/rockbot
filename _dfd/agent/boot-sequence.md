@@ -3,9 +3,10 @@
 ## 1. Purpose
 
 Covers the startup sequence from `main()` entry to entering the agent loop.
-Includes config loading, AI provider selection, WebDAV initialization, tool
-registry construction (with about-info logging at `INFO` level), image provider
-setup, platform client creation, and maintenance timer start.
+Includes version logging, config loading, AI provider selection, WebDAV
+initialization, tool registry construction (with about-info logging at `INFO`
+level), image provider setup, platform client creation, and maintenance timer
+start.
 
 - Downstream: [Agent Loop](agent-loop.md) — enters the `AgentLoop` event loop
   after boot completes
@@ -20,6 +21,8 @@ setup, platform client creation, and maintenance timer start.
 
 ```mermaid
 flowchart TD
+    LOG_SETUP(SetupLogging)
+    VER_LOG(LogVersion)
     TOML[(Config File)]
     CFG(LoadConfig)
     VALIDATE(ValidateConfig)
@@ -29,6 +32,8 @@ flowchart TD
     DAV[NextCloud WebDAV]
     PROV(AiProvider)
 
+    LOG_SETUP -->|"tracing subscriber"| VER_LOG
+    VER_LOG -->|"info! rockbot v{version}"| CFG
     TOML -->|"raw toml"| CFG
     CFG -->|"deserialized config"| VALIDATE
     VALIDATE -->|"appconfig"| CFG_STORE
@@ -38,11 +43,14 @@ flowchart TD
     DAV_INIT -->|"webdav client"| DAV
 ```
 
-Config is loaded from `config.toml` (or `CONFIG_FILE` env var) with embedded
-Rust defaults (`#[serde(default)]`), deserialized, and validated into an `AppConfig` instance.
-The active model config selects which AI provider to instantiate
-(DeepSeek / OpenRouter / llama.cpp). WebDAV client creation is conditional on
-`[webdav]` config presence.
+After logging is initialized, the bot logs its version (`rockbot v{version}`)
+at `INFO` level. The version is embedded at compile time via
+`env!("CARGO_PKG_VERSION")`, reading from `Cargo.toml` so it stays in sync
+automatically. Config is loaded from `config.toml` (or `CONFIG_FILE` env var)
+with embedded Rust defaults (`#[serde(default)]`), deserialized, and validated
+into an `AppConfig` instance. The active model config selects which AI provider
+to instantiate (DeepSeek / OpenRouter / llama.cpp). WebDAV client creation is
+conditional on `[webdav]` config presence.
 
 ### 2b. Tool Registration
 
@@ -146,9 +154,9 @@ Boot is a wiring layer — it does not define new data types.
 ## 4. Non-Functional Requirements
 
 **About-info at default log level**: All about-info messages emitted during
-boot — tool registration variant, image model resolution, WebDAV/tool status,
-`WebFetchTool` support mode, calendar registration status — are logged at
-`INFO` level. These are visible without `RUST_LOG=debug`. Only
+boot — version log, tool registration variant, image model resolution,
+WebDAV/tool status, `WebFetchTool` support mode, calendar registration status —
+are logged at `INFO` level. These are visible without `RUST_LOG=debug`. Only
 WebSocket/DDP wire traffic, memory/secret debugging internals, and
 per-invocation tool execution traces require `DEBUG`.
 

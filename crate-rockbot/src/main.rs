@@ -35,6 +35,8 @@ fn setup_logging() {
 fn main() {
     setup_logging();
 
+    info!("rockbot v{}", env!("CARGO_PKG_VERSION"));
+
     let config_path = env::var("CONFIG_FILE")
         .ok()
         .unwrap_or_else(|| "config.toml".to_string());
