@@ -79,7 +79,7 @@ Three crates: `rocketchat` (DDP WebSocket client), `rockbot` (bot logic + Matrix
 
 ## Prerequisites
 
-- Rust 1.85+ (edition 2024)
+- Rust 1.93+ (edition 2024)
 - RocketChat server with WebSocket and/or Matrix homeserver
 - NextCloud WebDAV (optional — bot runs without it)
 - API key for DeepSeek, OpenRouter, or Fal

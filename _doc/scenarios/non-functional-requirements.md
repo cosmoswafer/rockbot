@@ -46,7 +46,7 @@
 - **MN6** All I/O async via tokio.
 - **MN7** DFDs are source of truth (not reverse-engineered).
 - **MN8** Mermaid syntax validated before commit.
-- **MN9** MSRV 1.85, Edition 2024.
+- **MN9** MSRV 1.93, Edition 2024.
 - **MN10** No CI, no rustfmt/clippy config, no rust-toolchain.
 
 ## 5. Compatibility

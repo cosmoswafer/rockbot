@@ -42,7 +42,7 @@ No CI, no `rustfmt.toml`, no `clippy.toml`, no `rust-toolchain` file.
 ## Code style
 
 - **Async Rust everywhere.** Only exception: `crate-rocketchat/src/main.rs` (debug binary) uses sync `fn main` with `block_on`.
-- **Edition 2024**, MSRV **1.85**. Use modern Rust (`impl Trait` in return position allowed).
+- **Edition 2024**, MSRV **1.93** (`matrix-sdk` dependency requires 1.93). Use modern Rust (`impl Trait` in return position allowed).
 - **"Parse, don't validate"** — parse at boundaries (config, JSON, CLI args) into domain types once; the rest of the system works with infallible, type-safe data.
 - **Errors via `thiserror` + `?`** — avoid `unwrap()` and `expect()` in production code.
 - **Ownership-first** — prefer `&T`/`&str` for transient data, `Arc<str>` or `String` where ownership required.

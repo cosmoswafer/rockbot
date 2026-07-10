@@ -3,7 +3,7 @@ name = "webdav"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-rust-version = "1.85"
+rust-version = "1.93"
 description = "WebDAV client library for NextCloud storage operations"
 repository = "https://github.com/anomalyco/rockbot"
 
