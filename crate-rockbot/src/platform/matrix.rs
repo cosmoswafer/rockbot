@@ -1,8 +1,10 @@
 use std::any::Any;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use async_trait::async_trait;
 use base64::Engine;
 use matrix_sdk::config::SyncSettings;
+use matrix_sdk::ruma::api::error::ErrorKind;
 use matrix_sdk::ruma::events::room::message::{
     MessageType, RoomMessageEventContent,
 };
@@ -18,6 +20,8 @@ pub struct MatrixPlatform {
     user_id: String,
     password: String,
     device_id: Option<String>,
+    state_dir: String,
+    force_relogin: AtomicBool,
 }
 
 impl MatrixPlatform {
@@ -27,6 +31,8 @@ impl MatrixPlatform {
             user_id: config.user_id.clone(),
             password: config.password.clone(),
             device_id: config.device_id.clone(),
+            state_dir: config.state_dir.clone(),
+            force_relogin: AtomicBool::new(false),
         }
     }
 }
@@ -115,36 +121,62 @@ pub(crate) fn strip_matrix_mention_prefix(text: &str, bot_user_id: &str) -> Stri
 impl MessagingClient for MatrixPlatform {
     async fn connect_and_run(&self, handler: MessageHandler) -> Result<()> {
         let handler = std::sync::Arc::new(handler);
+
+        std::fs::create_dir_all(&self.state_dir).ok();
+
         let client = Client::builder()
             .homeserver_url(&self.homeserver)
+            .sqlite_store(&self.state_dir, None)
             .build()
             .await
             .map_err(|e| RockBotError::Config(format!("Matrix client build failed: {e}")))?;
 
-        let login_builder = client.matrix_auth().login_username(&self.user_id, &self.password);
-        let login_builder = if let Some(ref device_id) = self.device_id {
-            login_builder.device_id(device_id)
-        } else {
+        let need_login = self.force_relogin.swap(false, Ordering::SeqCst)
+            || !client.matrix_auth().logged_in();
+
+        let user_id_owned = if need_login {
+            let login_builder =
+                client.matrix_auth().login_username(&self.user_id, &self.password);
+            let login_builder = if let Some(ref device_id) = self.device_id {
+                login_builder.device_id(device_id)
+            } else {
+                login_builder
+            };
             login_builder
+                .send()
+                .await
+                .map_err(|e| RockBotError::AuthFailed(format!("Matrix login failed: {e}")))?;
+
+            let user_id_owned = client
+                .user_id()
+                .map(|u| u.to_string())
+                .ok_or_else(|| {
+                    RockBotError::AuthFailed(
+                        "Matrix: client.user_id() returned None after successful login".into(),
+                    )
+                })?;
+
+            info!(
+                "Matrix: logged in as {} (user_id={})",
+                self.user_id, user_id_owned
+            );
+            user_id_owned
+        } else {
+            let user_id_owned = client
+                .user_id()
+                .map(|u| u.to_string())
+                .ok_or_else(|| {
+                    RockBotError::AuthFailed(
+                        "Matrix: client.user_id() returned None for restored session".into(),
+                    )
+                })?;
+
+            info!(
+                "Matrix: session restored from state store (user_id={})",
+                user_id_owned
+            );
+            user_id_owned
         };
-        login_builder
-            .send()
-            .await
-            .map_err(|e| RockBotError::AuthFailed(format!("Matrix login failed: {e}")))?;
-
-        let user_id_owned = client
-            .user_id()
-            .map(|u| u.to_string())
-            .ok_or_else(|| {
-                RockBotError::AuthFailed(
-                    "Matrix: client.user_id() returned None after successful login".into(),
-                )
-            })?;
-
-        info!(
-            "Matrix: logged in as {} (user_id={})",
-            self.user_id, user_id_owned
-        );
 
         const HISTORICAL_GRACE_SECS: u64 = 600;
 
@@ -360,7 +392,18 @@ impl MessagingClient for MatrixPlatform {
         client
             .sync(SyncSettings::default())
             .await
-            .map_err(|e| RockBotError::Provider(format!("Matrix sync error: {e}")))?;
+            .map_err(|e| {
+                let is_token_error = e
+                    .client_api_error_kind()
+                    .is_some_and(|kind| matches!(kind, ErrorKind::UnknownToken(_)));
+                if is_token_error {
+                    self.force_relogin.store(true, Ordering::SeqCst);
+                    warn!("Matrix: sync failed with M_UNKNOWN_TOKEN, forcing re-login on next connect");
+                    RockBotError::AuthFailed(format!("Matrix sync error: {e}"))
+                } else {
+                    RockBotError::Provider(format!("Matrix sync error: {e}"))
+                }
+            })?;
 
         Ok(())
     }

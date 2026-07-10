@@ -7,6 +7,7 @@ use tracing::{debug, error, info, warn};
 use tracing_subscriber::EnvFilter;
 
 use rockbot::config::AppConfig;
+use rockbot::error::RockBotError;
 use rockbot::harness::AgentHarness;
 use rockbot::image_cache::ImageCache;
 use rockbot::provider::{AiProvider, DeepSeekProvider, FalAiProvider, ImageProvider, LlamaCppProvider, OpenRouterImageProvider, OpenRouterProvider};
@@ -369,6 +370,7 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let mut retry_count: u64 = 0;
+    let mut auth_fail_count: u32 = 0;
 
     let shutdown = async {
         let mut sigterm =
@@ -621,6 +623,7 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
         // connect_and_run (TCP keepalive, WS ping/pong, 300s read
         // timeout, 1800s DDP activity timeout). No app-level activity
         // timeout — "no user messages" is normal idle, not a hang.
+        let connect_start = std::time::Instant::now();
         let result = tokio::select! {
             r = connect_fut => r,
             _ = &mut shutdown => {
@@ -642,6 +645,25 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                 break;
             }
             Err(e) => {
+                if connect_start.elapsed() >= Duration::from_secs(60) {
+                    retry_count = 0;
+                    auth_fail_count = 0;
+                }
+
+                let is_auth = matches!(e, RockBotError::AuthFailed(_));
+                if is_auth {
+                    auth_fail_count += 1;
+                    if auth_fail_count > 5 {
+                        error!(
+                            "Authentication failed {} consecutive times, giving up. Check credentials or homeserver status.",
+                            auth_fail_count
+                        );
+                        return Err(Box::new(e));
+                    }
+                } else {
+                    auth_fail_count = 0;
+                }
+
                 retry_count += 1;
                 let delay_secs = std::cmp::min(2u64.saturating_pow(retry_count as u32), 120);
                 let delay = Duration::from_secs(delay_secs);

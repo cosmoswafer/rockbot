@@ -9,8 +9,11 @@ Matrix platform uses the SDK's high-level `Client` API to authenticate with a
 homeserver, sync room events via long-polling `/sync`, filter incoming messages,
 and send replies.
 
-**E2EE status (2026-06-17):** `matrix-sdk` is compiled with `default-features = false`
-and only `["markdown"]`. The `e2e-encryption` feature is **not** enabled. The bot
+**Feature status (2026-07-10):** `matrix-sdk` is compiled with `default-features = false`
+and `features = ["markdown", "bundled-sqlite"]`. The `bundled-sqlite` feature enables
+persistent state storage (access token, device ID, sync token, room state) in a
+SQLite database at `state_dir` from config, with a vendored libsqlite3 (no system
+dependency required). The `e2e-encryption` feature is **not** enabled. The bot
 cannot decrypt `m.room.encrypted` events — they are silently dropped because no
 handler is registered. When a client (e.g. Element) creates an encrypted DM, the
 bot will not see any messages. Two paths to resolve:
@@ -28,7 +31,7 @@ message contract). The agent harness and tools are unaware of the underlying
 platform.
 
 - Upstream: [Configuration Management](config.md) provides `MatrixServerConfig`
-  (homeserver URL, user_id, password)
+  (homeserver URL, user_id, password, device_id, state_dir)
 - Upstream: [Agent Loop](../agent/agent-loop.md) calls `connect_and_run()` with a
   message handler callback
 - Downstream: [Agent Harness](../agent/agent-harness.md) receives filtered
@@ -70,23 +73,39 @@ flowchart TD
 flowchart TD
     LOGIN(LoginToHomeserver)
     SYNC(StartSyncLoop)
-    ERR_AUTH[Error: AuthenticationFailed]
-    ERR_SYNC[Error: SyncFailed]
+    ERR_TOKEN[Error: M_UNKNOWN_TOKEN<br/>force_relogin = true]
+    ERR_AUTH[Error: AuthFailed]
+    ERR_SYNC[Error: Provider<br/>transient sync error]
     RECONNECT(ReconnectWithBackoff)
-    AGENT[Agent Loop]
+    RESTORE[Session restored from store<br/>skip login]
+    AGENT[Agent Loop exits<br/>after 5 consecutive auth failures]
 
     LOGIN -->|"401 / 403"| ERR_AUTH
     LOGIN -->|"network error"| RECONNECT
-    SYNC -->|"sync error"| ERR_SYNC
+    SYNC -->|"M_UNKNOWN_TOKEN"| ERR_TOKEN
+    SYNC -->|"other sync error"| ERR_SYNC
     ERR_SYNC -->|"transient"| RECONNECT
-    RECONNECT -->|"backoff + retry"| LOGIN
-    ERR_AUTH -->|"auth error"| AGENT
+    RECONNECT -->|"backoff + retry"| RESTORE
+    RESTORE -->|"logged_in() = true"| SYNC
+    RESTORE -->|"force_relogin or<br/>logged_in() = false"| LOGIN
+    ERR_TOKEN -->|"AuthFailed"| RECONNECT
+    ERR_AUTH -->|"5 consecutive"| AGENT
 ```
 
-The matrix-rust-sdk handles reconnection internally for transient sync errors
-(network timeout, 5xx). The `connect_and_run()` method catches unrecoverable
-errors (auth failure, homeserver unreachable after retries) and returns them
-to the agent loop, which applies its own exponential backoff reconnect.
+The matrix-rust-sdk `sync()` returns on the **first** sync error — there is no
+internal retry within the SDK. The `connect_and_run()` method inspects the
+error: if it is `M_UNKNOWN_TOKEN` (detected via
+`client_api_error_kind() → ErrorKind::UnknownToken`), the `force_relogin` flag
+is set and the error is returned as `AuthFailed`; all other sync errors are
+returned as `Provider` errors. On reconnect, `connect_and_run()` checks
+`force_relogin` and `client.matrix_auth().logged_in()`: if the flag is false
+and a session exists in the SQLite store, login is skipped (session restored);
+otherwise, a fresh login is performed.
+
+The agent loop applies exponential backoff on all errors. After 5 consecutive
+`AuthFailed` errors, the bot exits rather than retrying indefinitely.
+`retry_count` resets to 0 after a connection lasting >= 60 seconds, so
+transient errors always start with a short backoff.
 
 ### 2c. Message Filter Deep Dive
 
@@ -155,32 +174,51 @@ flowchart TD
     FILTER -->|"IncomingMessage"| DISPATCH
 ```
 
-**Sync parameters**: The SDK manages sync state internally. Initial sync uses
-`SyncSettings::default()` (no timeout filter — receives all rooms). Subsequent
-syncs resume from the stored `since` token (persisted in the SDK state store).
+**Sync parameters**: `SyncSettings::default()` includes a 30-second long-poll
+timeout. Subsequent syncs resume from the stored `since` token, persisted in
+the SQLite state store at `state_dir`. On reconnect (without re-login), the SDK
+restores the `since` token and resumes incremental sync; on re-login (fresh
+session), the first sync is a full initial sync.
 
 ### 2e. Authentication Deep Dive
 
 Authentication uses the Matrix `m.login.password` flow via the SDK's
-`Client::login_username()` builder.
+`Client::login_username()` builder. Sessions are persisted in a SQLite state
+store at `state_dir`, enabling session restoration on reconnect.
 
 ```mermaid
 flowchart TD
-    CLIENT[matrix_sdk::Client]
+    CLIENT[matrix_sdk::Client<br/>sqlite_store state_dir]
+    CHECK{logged_in?<br/>and not force_relogin}
     LOGIN[login_username]
     MATRIX[Matrix Homeserver]
-    STORE[(CryptoStore + StateStore)]
+    STORE[(SQLite StateStore)]
+    SYNC[Start Sync Loop]
 
-    CLIENT -->|"login_username(user_id, password)"| LOGIN
+    CLIENT --> CHECK
+    CHECK -->|"yes"| SYNC
+    CHECK -->|"no"| LOGIN
     LOGIN -->|"POST /_matrix/client/v3/login<br/>{type: m.login.password}"| MATRIX
     MATRIX -->|"access_token + device_id"| LOGIN
-    LOGIN -->|"session stored"| STORE
+    LOGIN -->|"session persisted"| STORE
+    SYNC -->|"sync error"| ERRCHECK{M_UNKNOWN_TOKEN?}
+    ERRCHECK -->|"yes"| FORCE["force_relogin = true<br/>return AuthFailed"]
+    ERRCHECK -->|"no"| RETURN["return Provider error"]
 ```
 
-**Session persistence**: The SDK stores the access token and device ID in its
-state store (SQLite by default, located at `state_dir` from config). On restart,
-the SDK restores the session from the store without re-authenticating, unless
-the token has expired.
+**Session persistence**: The `Client::builder().sqlite_store(state_dir, None)`
+call configures a SQLite state store at `state_dir` (default `./tmp/matrix-sdk`).
+On reconnect, the SDK restores the access token, device ID, and sync token
+from the store. If `client.matrix_auth().logged_in()` returns `true` and
+`force_relogin` is `false`, login is skipped — the bot resumes sync with the
+restored session, avoiding unnecessary re-authentication that would invalidate
+the previous token.
+
+**`force_relogin` flag**: When sync fails with `M_UNKNOWN_TOKEN`
+(`ErrorKind::UnknownToken`), the `force_relogin` `AtomicBool` is set to `true`.
+On the next `connect_and_run()` call, this forces a fresh login even if the
+SQLite store has a cached session. The flag is cleared (swap to `false`) after
+the login decision is made.
 
 **User ID validation**: After login, `client.user_id()` is validated to ensure it
 returns `Some` — if `None` (corrupted session), the connection returns
@@ -328,12 +366,14 @@ flowchart TD
 
 #### `MatrixPlatform`
 
-| Field          | Type                    | Purpose                                     |
-| -------------- | ----------------------- | ------------------------------------------- |
-| `homeserver`   | `String`                | Homeserver URL (e.g. `"https://matrix.org"`)|
-| `user_id`      | `String`                | Bot's Matrix user ID for login              |
-| `password`     | `String`                | Account password                            |
-| `device_id`    | `Option<String>`        | Device ID for session management            |
+| Field            | Type                    | Purpose                                     |
+| ---------------- | ----------------------- | ------------------------------------------- |
+| `homeserver`     | `String`                | Homeserver URL (e.g. `"https://matrix.org"`)|
+| `user_id`        | `String`                | Bot's Matrix user ID for login              |
+| `password`       | `String`                | Account password                            |
+| `device_id`      | `Option<String>`        | Device ID for session management            |
+| `state_dir`      | `String`                | SQLite state store path (default `"./tmp/matrix-sdk"`) |
+| `force_relogin`  | `AtomicBool`            | Set to `true` on `M_UNKNOWN_TOKEN`; forces fresh login on next `connect_and_run()` regardless of stored session |
 
 The `matrix_sdk::Client` is created inside `connect_and_run()`, not stored in
 the struct. The authenticated user ID is extracted from `client.user_id()`
@@ -391,16 +431,17 @@ prefix stripping.
 
 - **SDK state on local disk**: Unlike the "no local files" rule for tools and
   memory, the matrix-rust-sdk requires a local state directory for its SQLite
-  stores (crypto keys, sync token, room state). This is configured via
+  stores (sync token, room state, access token). This is configured via
   `state_dir` (default `./tmp/matrix-sdk`) and is considered infrastructure
-  state, not bot data.
+  state, not bot data. The `sqlite` feature must be enabled in `Cargo.toml`.
 - **E2EE transparency** (spec target): When the `e2e-encryption` feature is enabled,
   end-to-end encryption is handled entirely by the SDK. The bot sees decrypted plain
   text in event handlers. No manual key management is required. Currently the feature
   is **not** enabled — see Section 1 note.
-- **Sync state recovery**: On restart, the SDK resumes sync from the last stored
-  `since` token, avoiding re-processing old messages. The first sync after a
-  long offline period may be slow (catching up on missed events).
+- **Sync state recovery**: On reconnect, the SDK resumes sync from the last stored
+  `since` token in the SQLite store, avoiding re-processing old messages. If
+  `force_relogin` is set (due to `M_UNKNOWN_TOKEN`), a fresh login creates a new
+  session and the first sync is a full initial sync.
 - **No alias support**: Matrix does not support per-message sender name
   override. The `alias` parameter is accepted by `send_reply()` but silently
   ignored.
@@ -409,9 +450,11 @@ prefix stripping.
 
 | Crate            | Version | Purpose                                         |
 | ---------------- | ------- | ----------------------------------------------- |
-| `matrix-sdk`     | `0.18`  | High-level Matrix client (sync, rooms, media); built with `default-features = false`, `features = ["markdown"]` only |
+| `matrix-sdk`     | `0.18`  | High-level Matrix client (sync, rooms, media); built with `default-features = false`, `features = ["markdown", "bundled-sqlite"]` |
 | `matrix-sdk-base`| (transitive) | Core types (`OwnedUserId`, `OwnedRoomId`) |
 | `ruma` (re-exported via SDK) | (transitive) | Matrix event types (`SyncRoomEvent`, `RoomMessageEventContent`) |
 
-**Note**: `e2e-encryption`, `sqlite`, and `native-tls` features are not enabled.
-This means no encrypted message support and no persistent SDK state store.
+**Note**: `e2e-encryption` and `native-tls` features are not enabled. The
+`bundled-sqlite` feature is enabled, providing persistent state storage (access token,
+device ID, sync token, room state) in a SQLite database at `state_dir` with a
+vendored libsqlite3.

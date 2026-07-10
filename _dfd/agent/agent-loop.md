@@ -165,19 +165,26 @@ When any of these detect a dead connection, `connect_and_run()` returns an
 `Err` variant (`ReadTimeout`, `AppActivityTimeout`, `SetupTimeout`, etc.),
 which the reconnect loop catches and handles with backoff.
 
-**Reconnect strategy** (`main.rs`): The reconnect loop has no retry limit —
-it reconnects indefinitely on any error. Backoff delay is capped at 120s
-(`2^retry_count` seconds, max 120). Only a shutdown signal (SIGTERM/SIGINT)
-or a successful normal close (`Ok(())`) exits the loop. This prevents the bot
-from permanently self-terminating during idle periods or transient network
-issues.
+**Reconnect strategy** (`main.rs`): The reconnect loop uses two counters:
+
+- `retry_count: u64` — controls exponential backoff (`2^retry_count` seconds,
+  capped at 120s). Reset to 0 after a connection lasting >= 60 seconds, so
+  transient errors always start with a short backoff.
+- `auth_fail_count: u32` — tracks consecutive `AuthFailed` errors. After 5
+  consecutive auth failures, the bot exits with an error rather than retrying
+  indefinitely. Reset to 0 on any non-auth error or on a connection lasting
+  >= 60 seconds.
+
+Only a shutdown signal (SIGTERM/SIGINT), a successful normal close (`Ok(())`),
+or 5 consecutive auth failures exits the loop.
 
 **Data flow summary**:
 
 | Path | Trigger | Action |
 |------|---------|--------|
 | `connect_and_run` returns `Ok(())` | Normal close (server Close frame, FIN) | Clean exit, flush snapshots |
-| `connect_and_run` returns `Err` | Transport error, read timeout, activity timeout, auth failure, etc. | Reconnect with capped backoff (no retry limit) |
+| `connect_and_run` returns `Err` (non-auth) | Transport error, read timeout, activity timeout, etc. | Reset `auth_fail_count`; if connected >= 60s, reset `retry_count`; reconnect with capped backoff |
+| `connect_and_run` returns `Err(AuthFailed)` | M_UNKNOWN_TOKEN, login failure | Increment `auth_fail_count`; after 5 consecutive, exit with error |
 | `shutdown` future fires | SIGTERM / SIGINT | Graceful shutdown |
 
 ### 2c. Typing Indicator Heartbeat
@@ -389,8 +396,9 @@ block from the harness constructor (issue #58).
 `webdav_dir` is not a stored field — it is computed on-the-fly from `room_name`/`room_fname`/`is_dm` via `compute_webdav_dir()`.
 
 The main loop uses `tokio::signal::unix::signal(SignalKind::terminate())` raced with
-`tokio::signal::ctrl_c()` for shutdown (both SIGTERM and SIGINT), and a local
-`retry_count: u32` variable for reconnect backoff. Graceful shutdown calls
+`tokio::signal::ctrl_c()` for shutdown (both SIGTERM and SIGINT), and local
+`retry_count: u64` and `auth_fail_count: u32` variables for reconnect backoff
+and auth-failure tracking. Graceful shutdown calls
 `AgentHarness::flush_all_snapshots()` (harness.rs:1126) to sync dirty per-room
 state to WebDAV before exiting.
 
