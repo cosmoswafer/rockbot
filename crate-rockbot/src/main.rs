@@ -426,27 +426,37 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                                             "Resolved room fname via REST for {}: {}",
                                             msg.room_id, fname
                                         );
-                                        fname
+                                        Some(fname)
                                     }
-                                    None => panic!(
-                                        "Room {} has no fname (roomName={:?}) and REST resolve failed",
-                                        msg.room_id, room_name,
-                                    ),
+                                    None => None,
                                 }
                             } else {
-                                panic!(
-                                    "Room {} has no fname (roomName={:?}) and no auth token for REST fallback",
-                                    msg.room_id, room_name,
-                                )
+                                None
                             }
                         } else {
-                            panic!(
-                                "Room {} has no fname (roomName={:?}) — not a RocketChat platform",
-                                msg.room_id, room_name,
-                            )
+                            None
                         }
                     } else {
-                        msg.room_fname.clone()
+                        Some(msg.room_fname.clone())
+                    };
+
+                    let display_name = match display_name {
+                        Some(name) => name,
+                        None => {
+                            let error_msg = format!(
+                                "This room has no display name configured. \
+                                 Please set a display name for this room on the RocketChat server \
+                                 so I know how to refer to it.",
+                            );
+                            warn!(
+                                "Cannot resolve fname for room {} (roomName={:?}) — sending error reply",
+                                msg.room_id, room_name,
+                            );
+                            if let Err(e) = sender.send_reply(&error_msg, None).await {
+                                warn!("Failed to send fname error reply: {}", e);
+                            }
+                            return;
+                        }
                     };
 
                     debug!(
