@@ -4,7 +4,9 @@ use std::time::Duration;
 
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::filter::{EnvFilter, Targets};
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::Layer;
 
 use rockbot::config::AppConfig;
 use rockbot::error::RockBotError;
@@ -21,16 +23,26 @@ use rockbot::tools::{
 use rockbot::utils::strip_markdown_image_id;
 
 fn setup_logging() {
-    let filter = EnvFilter::try_from_default_env()
+    let env_filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("info"));
-    let subscriber = tracing_subscriber::fmt()
-        .with_env_filter(filter)
+
+    let noise_filter = Targets::new()
+        .with_default(tracing::Level::TRACE)
+        .with_target("matrix_sdk", tracing::Level::WARN)
+        .with_target("matrix_sdk_base", tracing::Level::WARN);
+
+    let fmt_layer = tracing_subscriber::fmt::layer()
         .with_target(false)
         .with_thread_ids(false)
         .with_file(false)
-        .with_line_number(false)
-        .finish();
-    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
+        .with_line_number(false);
+
+    tracing::subscriber::set_global_default(
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(fmt_layer.with_filter(noise_filter)),
+    )
+    .expect("setting default subscriber failed");
 }
 
 fn main() {
