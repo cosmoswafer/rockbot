@@ -58,6 +58,8 @@ seedream = "fal-ai/bytedance/seedream/v4.5/text-to-image"
 gptimage = "openai/gpt-image-2"
 gptimage_edit = "openai/gpt-image-2/edit"
 grok_edit = "xai/grok-imagine-image/quality/edit"
+seedream5 = "bytedance/seedream/v5/pro/text-to-image"
+seedream5_edit = "bytedance/seedream/v5/pro/edit"
 
 [image_model]
 default_provider = "openrouter"
