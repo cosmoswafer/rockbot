@@ -36,6 +36,9 @@ pub struct ImageGenTool {
     default_output_format: String,
     default_num_images: u32,
     default_image_size_tier: String,
+    #[allow(dead_code)]
+    default_image_size: Option<String>,
+    default_enable_safety_checker: bool,
     webdav: WebDavClient,
     image_cache: Arc<ImageCache>,
 }
@@ -58,6 +61,8 @@ impl ImageGenTool {
             default_output_format,
             default_num_images,
             default_image_size_tier,
+            default_image_size: None,
+            default_enable_safety_checker: false,
             webdav,
             image_cache,
         }
@@ -71,6 +76,8 @@ impl ImageGenTool {
         default_output_format: String,
         default_num_images: u32,
         default_image_size_tier: String,
+        default_image_size: Option<String>,
+        default_enable_safety_checker: bool,
         webdav: WebDavClient,
         image_cache: Arc<ImageCache>,
     ) -> Self {
@@ -81,6 +88,8 @@ impl ImageGenTool {
             default_output_format,
             default_num_images,
             default_image_size_tier,
+            default_image_size,
+            default_enable_safety_checker,
             webdav,
             image_cache,
         }
@@ -138,7 +147,9 @@ impl Tool for ImageGenTool {
     }
 
     fn description(&self) -> &str {
-        "Generate or edit an image. Provide a prompt and optional aspect_ratio (e.g. '16:9'). \
+        "Generate or edit an image. Provide a prompt and required aspect_ratio. \
+         For seedream5 (Fal), use aspect_ratio 'auto_2K' (auto-selects dimensions) \
+         or 'auto_1K'. Standard ratios: '16:9', '2:3', '1:1', etc. \
          User attachments are auto-provided as image_urls for editing. \
          Returns {\"ok\": true, \"image_key\": \"...\"} — share result as `![desc]({image_key})`."
     }
@@ -153,7 +164,7 @@ impl Tool for ImageGenTool {
                 },
                 "aspect_ratio": {
                     "type": "string",
-                    "description": "Aspect ratio for the generated image as W:H (e.g. '16:9', '2:3', '1:1')"
+                    "description": "Aspect ratio: '16:9', '2:3', '1:1', '4:3', '3:4', '3:2'. For seedream5 (Fal): 'auto_2K' or 'auto_1K' auto-select dimensions."
                 },
                 "room_id": {
                     "type": "string",
@@ -190,6 +201,7 @@ impl Tool for ImageGenTool {
 
         params.image_size = Some(ImageSizeValue::Preset(args.aspect_ratio.as_str().to_string()));
         params.size_tier = Some(self.default_image_size_tier.clone());
+        params.enable_safety_checker = Some(self.default_enable_safety_checker);
 
         let mut collected_urls: Vec<String> = Vec::new();
 

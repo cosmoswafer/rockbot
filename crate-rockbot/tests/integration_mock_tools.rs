@@ -1292,6 +1292,7 @@ fn make_test_config(webdav_url: &str) -> rockbot::config::AppConfig {
         default_num_images: 1,
         default_image_size: "1024x1024".into(),
         default_image_size_tier: "1K".into(),
+        default_enable_safety_checker: false,
     };
 
     let webdav_cfg = make_webdav_config(webdav_url);

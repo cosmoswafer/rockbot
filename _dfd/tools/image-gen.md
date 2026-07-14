@@ -131,10 +131,13 @@ flowchart TD
 | `"3:4"` | `{"width": 2480, "height": 3312}` | `"3:4"` |
 | `"3:2"` | `{"width": 3504, "height": 2336}` | `"3:2"` |
 | `"auto"` | `"auto"` (passthrough) | `"auto"` (passthrough) |
+| `"auto_2K"` | `"auto_2K"` (passthrough) | `"auto_2K"` (passthrough) |
+| `"auto_1K"` | `"auto_1K"` (passthrough) | `"auto_1K"` (passthrough) |
 
 Fal requires pixel dimensions in the `image_size` body field; OpenRouter accepts
 the ratio string directly in the `image_config.aspect_ratio` field. Unknown
-strings (e.g. `"auto"`) pass through unchanged to both providers.
+strings (e.g. `"auto"`, `"auto_2K"`, `"auto_1K"`) pass through unchanged to both providers.
+Seedream5 (Fal) supports `auto_2K` and `auto_1K` as auto-dimensional mode strings.
 
 ### 2e. Image URL Injection for Editing
 
@@ -196,6 +199,7 @@ LLM provides `prompt` and `aspect_ratio` (both required); all other fields come 
 | `quality`       | Config            | `string`                                       | From `default_quality`                           |
 | `output_format` | Config            | `string`                                       | From `default_output_format`                     |
 | `num_images`    | Config            | `integer`                                      | From `default_num_images`                        |
+| `enable_safety_checker` | Config     | `boolean`                                      | From `default_enable_safety_checker` (default `false`). Sent by `FalAiProvider` only when model contains `"seedream/v5"`. |
 
 #### `ImageGenResult`
 

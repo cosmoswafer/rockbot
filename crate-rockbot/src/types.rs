@@ -355,6 +355,7 @@ pub struct ImageGenParams {
     pub num_images: Option<u32>,
     pub model_id: Option<String>,
     pub image_urls: Option<Vec<String>>,
+    pub enable_safety_checker: Option<bool>,
 }
 
 impl ImageGenParams {
@@ -368,6 +369,7 @@ impl ImageGenParams {
             num_images: None,
             model_id: None,
             image_urls: None,
+            enable_safety_checker: None,
         }
     }
 
@@ -445,7 +447,8 @@ mod tests {
             prompt: "t".into(), quality: None,
             image_size: Some(ImageSizeValue::Preset("16:9".into())),
             size_tier: None, output_format: None, num_images: None,
-            model_id: None, image_urls: None,
+            model_id: None,             image_urls: None,
+            enable_safety_checker: None,
         };
         assert!(p.validate_dimensions().is_ok(), "Preset should bypass pixel validation");
     }
@@ -456,7 +459,8 @@ mod tests {
             prompt: "t".into(), quality: None,
             image_size: Some(ImageSizeValue::Custom { width: 1920, height: 1088 }),
             size_tier: None, output_format: None, num_images: None,
-            model_id: None, image_urls: None,
+            model_id: None,             image_urls: None,
+            enable_safety_checker: None,
         };
         assert!(p.validate_dimensions().is_ok());
     }
@@ -473,7 +477,8 @@ mod tests {
             prompt: "t".into(), quality: None,
             image_size: Some(ImageSizeValue::Custom { width: 4000, height: 2000 }),
             size_tier: None, output_format: None, num_images: None,
-            model_id: None, image_urls: None,
+            model_id: None,             image_urls: None,
+            enable_safety_checker: None,
         };
         let err = p.validate_dimensions().unwrap_err();
         assert!(err.to_string().contains("max edge"));
@@ -486,7 +491,8 @@ mod tests {
             prompt: "t".into(), quality: None,
             image_size: Some(ImageSizeValue::Custom { width: 3500, height: 1000 }),
             size_tier: None, output_format: None, num_images: None,
-            model_id: None, image_urls: None,
+            model_id: None,             image_urls: None,
+            enable_safety_checker: None,
         };
         let err = p.validate_dimensions().unwrap_err();
         assert!(err.to_string().contains("aspect ratio"));
@@ -498,7 +504,8 @@ mod tests {
             prompt: "t".into(), quality: None,
             image_size: Some(ImageSizeValue::Custom { width: 800, height: 800 }),
             size_tier: None, output_format: None, num_images: None,
-            model_id: None, image_urls: None,
+            model_id: None,             image_urls: None,
+            enable_safety_checker: None,
         };
         let err = p.validate_dimensions().unwrap_err();
         assert!(err.to_string().contains("pixel count"));
@@ -510,7 +517,8 @@ mod tests {
             prompt: "t".into(), quality: None,
             image_size: Some(ImageSizeValue::Custom { width: 3840, height: 3840 }),
             size_tier: None, output_format: None, num_images: None,
-            model_id: None, image_urls: None,
+            model_id: None,             image_urls: None,
+            enable_safety_checker: None,
         };
         let err = p.validate_dimensions().unwrap_err();
         assert!(err.to_string().contains("pixel count"));
@@ -522,7 +530,8 @@ mod tests {
             prompt: "t".into(), quality: None,
             image_size: Some(ImageSizeValue::Custom { width: 1920, height: 1081 }),
             size_tier: None, output_format: None, num_images: None,
-            model_id: None, image_urls: None,
+            model_id: None,             image_urls: None,
+            enable_safety_checker: None,
         };
         let err = p.validate_dimensions().unwrap_err();
         assert!(err.to_string().contains("multiples of 16"));
@@ -534,7 +543,8 @@ mod tests {
             prompt: "t".into(), quality: None,
             image_size: Some(ImageSizeValue::Custom { width: 0, height: 1080 }),
             size_tier: None, output_format: None, num_images: None,
-            model_id: None, image_urls: None,
+            model_id: None,             image_urls: None,
+            enable_safety_checker: None,
         };
         // Zero width gives pixel count 0 which is below minimum
         let err = p.validate_dimensions().unwrap_err();

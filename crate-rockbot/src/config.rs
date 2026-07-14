@@ -171,6 +171,8 @@ pub struct ImageModelConfig {
     pub default_image_size: String,
     #[serde(default = "default_image_size_tier")]
     pub default_image_size_tier: String,
+    #[serde(default = "default_enable_safety_checker")]
+    pub default_enable_safety_checker: bool,
 }
 
 fn default_image_provider() -> ProviderName {
@@ -202,6 +204,10 @@ fn default_image_size_tier() -> String {
     "4K".into()
 }
 
+fn default_enable_safety_checker() -> bool {
+    false
+}
+
 impl Default for ImageModelConfig {
     fn default() -> Self {
         Self {
@@ -213,6 +219,7 @@ impl Default for ImageModelConfig {
             default_num_images: default_image_num_images(),
             default_image_size: default_image_size(),
             default_image_size_tier: default_image_size_tier(),
+            default_enable_safety_checker: default_enable_safety_checker(),
         }
     }
 }
@@ -393,16 +400,29 @@ fn provider_defaults() -> HashMap<String, ProviderConfig> {
             basecf_url: None,
             chat_path: None,
             draw_path: None,
-             models: {
-                 let mut m = HashMap::new();
-                 m.insert("seedream".to_string(), "fal-ai/bytedance/seedream/v4.5/text-to-image".to_string());
-                 m.insert("gptimage".to_string(), "openai/gpt-image-2".to_string());
-                 m.insert("gptimage_edit".to_string(), "openai/gpt-image-2/edit".to_string());
-                 m.insert("grok_edit".to_string(), "xai/grok-imagine-image/quality/edit".to_string());
-                 m.insert("seedream5".to_string(), "bytedance/seedream/v5/pro/text-to-image".to_string());
-                 m.insert("seedream5_edit".to_string(), "bytedance/seedream/v5/pro/edit".to_string());
-                 m
-             },
+<<<<<<< HEAD
+                    models: {
+                        let mut m = HashMap::new();
+                        m.insert("seedream".to_string(), "fal-ai/bytedance/seedream/v4.5/text-to-image".to_string());
+                        m.insert("seedream5".to_string(), "fal-ai/bytedance/seedream/v5/pro/text-to-image".to_string());
+                        m.insert("seedream5_edit".to_string(), "fal-ai/bytedance/seedream/v5/pro/edit".to_string());
+                        m.insert("gptimage".to_string(), "openai/gpt-image-2".to_string());
+                        m.insert("gptimage_edit".to_string(), "openai/gpt-image-2/edit".to_string());
+                        m.insert("grok_edit".to_string(), "xai/grok-imagine-image/quality/edit".to_string());
+                        m
+                    },
+=======
+            models: {
+                let mut m = HashMap::new();
+                m.insert("seedream".to_string(), "fal-ai/bytedance/seedream/v4.5/text-to-image".to_string());
+                m.insert("seedream5".to_string(), "fal-ai/bytedance/seedream/v5/pro/text-to-image".to_string());
+                m.insert("seedream5_edit".to_string(), "fal-ai/bytedance/seedream/v5/pro/edit".to_string());
+                m.insert("gptimage".to_string(), "openai/gpt-image-2".to_string());
+                m.insert("gptimage_edit".to_string(), "openai/gpt-image-2/edit".to_string());
+                m.insert("grok_edit".to_string(), "xai/grok-imagine-image/quality/edit".to_string());
+                m
+            },
+>>>>>>> d34e80f (Implement Gitea issue #75: Configure Fal provider defaults for Seedream 5.0 Pro model, handling enable_safety_checker and auto_2K parameters. closes #75)
         },
     );
 

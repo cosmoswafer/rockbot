@@ -202,6 +202,13 @@ preventing 400 errors from `unknown variant 'image_url', expected 'text'`.
 the OpenAI-compatible image format natively. OpenRouter passes vision payloads
 through as-is — any model-specific vision support is handled by OpenRouter's API.
 
+**Fal seedream5 safety checker**: When the resolved model ID contains `"seedream/v5"`,
+`FalAiProvider::submit_request()` conditionally sends `enable_safety_checker` if
+present in `ImageGenParams`. The default value comes from
+  `ImageModelConfig::default_enable_safety_checker` (default `false`). This is gated
+on the model ID to avoid sending the parameter to non-seedream5 Fal models that
+may reject it.
+
 ## 3. Data Structures
 
 #### `ChatRequest`

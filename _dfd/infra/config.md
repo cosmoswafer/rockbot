@@ -186,6 +186,7 @@ flowchart TD
 | `default_num_images`    | `u32`    | Number of images per generation (default 1)                |
 | `default_image_size`    | `String` | Target image dimensions (default `"portrait_2_3"`)         |
 | `default_image_size_tier` | `String` | Resolution tier `"2K"` or `"4K"` (default `"4K"`)       |
+| `default_enable_safety_checker` | `bool` | Fal seedream5 safety checker toggle (default `false`). Sent only for seedream/v5 models. |
 
 #### `WebDavConfig`
 

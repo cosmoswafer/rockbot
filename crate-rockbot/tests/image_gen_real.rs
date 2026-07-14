@@ -414,6 +414,7 @@ async fn test_openrouter_image_gen_mai() {
         output_format: Some("png".into()),
         num_images: Some(1),
         image_urls: None,
+        enable_safety_checker: None,
     };
     eprintln!("Executing generate_image with params: prompt={:?} size={:?}", params.prompt, params.image_size);
 

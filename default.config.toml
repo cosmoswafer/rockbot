@@ -70,6 +70,7 @@ default_output_format = "png"
 default_num_images = 1
 default_image_size = "portrait_2_3"
 default_image_size_tier = "4K"
+default_enable_safety_checker = false
 
 [model]
 default_provider = "openrouter"

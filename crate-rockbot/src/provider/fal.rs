@@ -11,6 +11,39 @@ struct SubmittedRequest {
     response_url: NonEmptyString,
 }
 
+fn build_request_body(params: &ImageGenParams, model_id: &str) -> serde_json::Value {
+    let mut body = serde_json::Map::new();
+    body.insert("prompt".into(), serde_json::json!(params.prompt));
+
+    if let Some(quality) = &params.quality {
+        body.insert("quality".into(), serde_json::json!(quality));
+    }
+    if let Some(output_format) = &params.output_format {
+        body.insert("output_format".into(), serde_json::json!(output_format));
+    }
+    if let Some(num_images) = params.num_images {
+        body.insert("num_images".into(), serde_json::json!(num_images));
+    }
+    if let Some(image_size_val) = params.resolve_image_size() {
+        body.insert("image_size".into(), image_size_val);
+    }
+    if let Some(ref image_urls) = params.image_urls {
+        if !image_urls.is_empty() {
+            body.insert("image_urls".into(), serde_json::json!(image_urls));
+        }
+    }
+
+    let is_seedream5 = model_id.contains("seedream/v5");
+
+    if let Some(enable_safety) = params.enable_safety_checker {
+        if is_seedream5 {
+            body.insert("enable_safety_checker".into(), serde_json::json!(enable_safety));
+        }
+    }
+
+    serde_json::Value::Object(body)
+}
+
 pub struct FalAiProvider {
     api_key: String,
     base_url: String,
@@ -80,28 +113,8 @@ impl FalAiProvider {
     }
 
     async fn submit_request(&self, params: &ImageGenParams) -> Result<SubmittedRequest> {
-        let mut body = serde_json::Map::new();
-        body.insert("prompt".into(), serde_json::json!(params.prompt));
-
-        if let Some(quality) = &params.quality {
-            body.insert("quality".into(), serde_json::json!(quality));
-        }
-        if let Some(output_format) = &params.output_format {
-            body.insert("output_format".into(), serde_json::json!(output_format));
-        }
-        if let Some(num_images) = params.num_images {
-            body.insert("num_images".into(), serde_json::json!(num_images));
-        }
-        if let Some(image_size_val) = params.resolve_image_size() {
-            body.insert("image_size".into(), image_size_val);
-        }
-        if let Some(ref image_urls) = params.image_urls {
-            if !image_urls.is_empty() {
-                body.insert("image_urls".into(), serde_json::json!(image_urls));
-            }
-        }
-
         let model_id = params.model_id.as_deref().unwrap_or(&self.model_id);
+        let body = build_request_body(params, model_id);
         let url = format!("{}/{}", self.base_url, model_id);
 
         debug!(
@@ -460,6 +473,7 @@ mod tests {
         assert!(params.output_format.is_none());
         assert!(params.num_images.is_none());
         assert!(params.model_id.is_none());
+        assert!(params.enable_safety_checker.is_none());
     }
 
     #[test]
@@ -473,6 +487,7 @@ mod tests {
             num_images: Some(2),
             model_id: Some("openai/gpt-image-2".into()),
             image_urls: Some(vec!["https://example.com/img.png".into()]),
+            enable_safety_checker: None,
         };
         assert_eq!(params.quality.as_deref(), Some("medium"));
         assert_eq!(params.num_images, Some(2));
@@ -489,6 +504,7 @@ mod tests {
             num_images: None,
             model_id: None,
             image_urls: None,
+            enable_safety_checker: None,
         };
         let resolved = params.resolve_image_size().unwrap();
         assert_eq!(resolved["width"], 3840);
@@ -506,6 +522,7 @@ mod tests {
             num_images: None,
             model_id: None,
             image_urls: None,
+            enable_safety_checker: None,
         };
         let resolved = params.resolve_image_size().unwrap();
         assert_eq!(resolved["width"], 1920);
@@ -524,7 +541,7 @@ mod tests {
             prompt: "t".into(), quality: None,
             image_size: Some(ImageSizeValue::Preset("square_hd".into())),
             size_tier: None,
-            output_format: None, num_images: None, model_id: None, image_urls: None,
+            output_format: None, num_images: None, model_id: None, image_urls: None, enable_safety_checker: None,
         };
         let r = p.resolve_image_size().unwrap();
         assert_eq!(r["width"], 2880);
@@ -537,7 +554,7 @@ mod tests {
             prompt: "t".into(), quality: None,
             image_size: Some(ImageSizeValue::Preset("landscape_4_3".into())),
             size_tier: None,
-            output_format: None, num_images: None, model_id: None, image_urls: None,
+            output_format: None, num_images: None, model_id: None, image_urls: None, enable_safety_checker: None,
         };
         let r = p.resolve_image_size().unwrap();
         assert_eq!(r["width"], 3312);
@@ -550,7 +567,7 @@ mod tests {
             prompt: "t".into(), quality: None,
             image_size: Some(ImageSizeValue::Preset("auto".into())),
             size_tier: None,
-            output_format: None, num_images: None, model_id: None, image_urls: None,
+            output_format: None, num_images: None, model_id: None, image_urls: None, enable_safety_checker: None,
         };
         let r = p.resolve_image_size().unwrap();
         assert_eq!(r, serde_json::json!("auto"));
@@ -562,7 +579,7 @@ mod tests {
             prompt: "t".into(), quality: None,
             image_size: Some(ImageSizeValue::Preset("16:9".into())),
             size_tier: None,
-            output_format: None, num_images: None, model_id: None, image_urls: None,
+            output_format: None, num_images: None, model_id: None, image_urls: None, enable_safety_checker: None,
         };
         let r = p.resolve_image_size().unwrap();
         assert_eq!(r["width"], 3840);
@@ -575,7 +592,7 @@ mod tests {
             prompt: "t".into(), quality: None,
             image_size: Some(ImageSizeValue::Preset("2:3".into())),
             size_tier: None,
-            output_format: None, num_images: None, model_id: None, image_urls: None,
+            output_format: None, num_images: None, model_id: None, image_urls: None, enable_safety_checker: None,
         };
         let r = p.resolve_image_size().unwrap();
         assert_eq!(r["width"], 2336);
@@ -588,7 +605,7 @@ mod tests {
             prompt: "t".into(), quality: None,
             image_size: Some(ImageSizeValue::Preset("1:1".into())),
             size_tier: None,
-            output_format: None, num_images: None, model_id: None, image_urls: None,
+            output_format: None, num_images: None, model_id: None, image_urls: None, enable_safety_checker: None,
         };
         let r = p.resolve_image_size().unwrap();
         assert_eq!(r["width"], 2880);
@@ -601,7 +618,7 @@ mod tests {
             prompt: "t".into(), quality: None,
             image_size: Some(ImageSizeValue::Preset("portrait_16_9".into())),
             size_tier: None,
-            output_format: None, num_images: None, model_id: None, image_urls: None,
+            output_format: None, num_images: None, model_id: None, image_urls: None, enable_safety_checker: None,
         };
         let r = p.resolve_image_size().unwrap();
         assert_eq!(r["width"], 2160);
@@ -614,7 +631,7 @@ mod tests {
             prompt: "t".into(), quality: None,
             image_size: Some(ImageSizeValue::Preset("9:16".into())),
             size_tier: None,
-            output_format: None, num_images: None, model_id: None, image_urls: None,
+            output_format: None, num_images: None, model_id: None, image_urls: None, enable_safety_checker: None,
         };
         let r = p.resolve_image_size().unwrap();
         assert_eq!(r["width"], 2160);
@@ -627,7 +644,7 @@ mod tests {
             prompt: "t".into(), quality: None,
             image_size: Some(ImageSizeValue::Preset("portrait_4_3".into())),
             size_tier: None,
-            output_format: None, num_images: None, model_id: None, image_urls: None,
+            output_format: None, num_images: None, model_id: None, image_urls: None, enable_safety_checker: None,
         };
         let r = p.resolve_image_size().unwrap();
         assert_eq!(r["width"], 2480);
@@ -640,7 +657,7 @@ mod tests {
             prompt: "t".into(), quality: None,
             image_size: Some(ImageSizeValue::Preset("3:4".into())),
             size_tier: None,
-            output_format: None, num_images: None, model_id: None, image_urls: None,
+            output_format: None, num_images: None, model_id: None, image_urls: None, enable_safety_checker: None,
         };
         let r = p.resolve_image_size().unwrap();
         assert_eq!(r["width"], 2480);
@@ -653,7 +670,7 @@ mod tests {
             prompt: "t".into(), quality: None,
             image_size: Some(ImageSizeValue::Preset("landscape_3_2".into())),
             size_tier: None,
-            output_format: None, num_images: None, model_id: None, image_urls: None,
+            output_format: None, num_images: None, model_id: None, image_urls: None, enable_safety_checker: None,
         };
         let r = p.resolve_image_size().unwrap();
         assert_eq!(r["width"], 3504);
@@ -666,7 +683,7 @@ mod tests {
             prompt: "t".into(), quality: None,
             image_size: Some(ImageSizeValue::Preset("3:2".into())),
             size_tier: None,
-            output_format: None, num_images: None, model_id: None, image_urls: None,
+            output_format: None, num_images: None, model_id: None, image_urls: None, enable_safety_checker: None,
         };
         let r = p.resolve_image_size().unwrap();
         assert_eq!(r["width"], 3504);
@@ -679,10 +696,64 @@ mod tests {
             prompt: "t".into(), quality: None,
             image_size: Some(ImageSizeValue::Preset("square".into())),
             size_tier: None,
-            output_format: None, num_images: None, model_id: None, image_urls: None,
+            output_format: None, num_images: None, model_id: None, image_urls: None, enable_safety_checker: None,
         };
         let r = p.resolve_image_size().unwrap();
         assert_eq!(r["width"], 512);
         assert_eq!(r["height"], 512);
+    }
+
+    #[test]
+    fn test_build_request_body_seedream5_sends_safety_checker() {
+        let mut params = ImageGenParams::new("a cat");
+        params.enable_safety_checker = Some(false);
+        params.output_format = Some("png".into());
+
+        let body = build_request_body(&params, "fal-ai/bytedance/seedream/v5/pro/text-to-image");
+        assert_eq!(body["prompt"], "a cat");
+        assert_eq!(body["output_format"], "png");
+        assert_eq!(body["enable_safety_checker"], false);
+    }
+
+    #[test]
+    fn test_build_request_body_seedream5_sends_safety_checker_true() {
+        let mut params = ImageGenParams::new("a cat");
+        params.enable_safety_checker = Some(true);
+        params.output_format = Some("png".into());
+
+        let body = build_request_body(&params, "fal-ai/bytedance/seedream/v5/pro/text-to-image");
+        assert_eq!(body["enable_safety_checker"], true);
+    }
+
+    #[test]
+    fn test_build_request_body_non_seedream5_omits_safety_checker() {
+        let mut params = ImageGenParams::new("a cat");
+        params.enable_safety_checker = Some(false);
+        params.output_format = Some("png".into());
+
+        let body = build_request_body(&params, "fal-ai/flux/schnell");
+        assert_eq!(body["prompt"], "a cat");
+        assert_eq!(body["output_format"], "png");
+        assert!(body.get("enable_safety_checker").is_none(),
+            "enable_safety_checker should NOT be sent for non-seedream5 models");
+    }
+
+    #[test]
+    fn test_build_request_body_seedream5_edit_includes_safety_checker() {
+        let mut params = ImageGenParams::new("edit this");
+        params.enable_safety_checker = Some(false);
+
+        let body = build_request_body(&params, "fal-ai/bytedance/seedream/v5/pro/edit");
+        assert_eq!(body["enable_safety_checker"], false,
+            "enable_safety_checker is also sent for seedream5_edit (same guard, API accepts it)");
+    }
+
+    #[test]
+    fn test_build_request_body_safety_checker_none_no_field() {
+        let params = ImageGenParams::new("a cat");
+
+        let body = build_request_body(&params, "fal-ai/bytedance/seedream/v5/pro/text-to-image");
+        assert!(body.get("enable_safety_checker").is_none(),
+            "enable_safety_checker should not be present when ImageGenParams has None");
     }
 }
