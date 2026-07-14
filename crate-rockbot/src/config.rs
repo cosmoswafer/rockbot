@@ -400,18 +400,6 @@ fn provider_defaults() -> HashMap<String, ProviderConfig> {
             basecf_url: None,
             chat_path: None,
             draw_path: None,
-<<<<<<< HEAD
-                    models: {
-                        let mut m = HashMap::new();
-                        m.insert("seedream".to_string(), "fal-ai/bytedance/seedream/v4.5/text-to-image".to_string());
-                        m.insert("seedream5".to_string(), "fal-ai/bytedance/seedream/v5/pro/text-to-image".to_string());
-                        m.insert("seedream5_edit".to_string(), "fal-ai/bytedance/seedream/v5/pro/edit".to_string());
-                        m.insert("gptimage".to_string(), "openai/gpt-image-2".to_string());
-                        m.insert("gptimage_edit".to_string(), "openai/gpt-image-2/edit".to_string());
-                        m.insert("grok_edit".to_string(), "xai/grok-imagine-image/quality/edit".to_string());
-                        m
-                    },
-=======
             models: {
                 let mut m = HashMap::new();
                 m.insert("seedream".to_string(), "fal-ai/bytedance/seedream/v4.5/text-to-image".to_string());
@@ -422,7 +410,6 @@ fn provider_defaults() -> HashMap<String, ProviderConfig> {
                 m.insert("grok_edit".to_string(), "xai/grok-imagine-image/quality/edit".to_string());
                 m
             },
->>>>>>> d34e80f (Implement Gitea issue #75: Configure Fal provider defaults for Seedream 5.0 Pro model, handling enable_safety_checker and auto_2K parameters. closes #75)
         },
     );
 
