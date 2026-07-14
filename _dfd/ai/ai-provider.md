@@ -23,8 +23,11 @@ response parsing is not implemented — all responses are consumed as full JSON.
 `/v1/chat/completions` endpoint, so the request/response format is shared
 with `OpenRouterProvider`. Key differences:
 
-- **No API key**: `api_key` is empty; the `Authorization` header is omitted
-  when the key is empty.
+- **Optional API key**: `api_key` is sent as an `Authorization: Bearer <key>`
+  header **only when the key is non-empty**. The header is omitted when the key
+  is empty, supporting local llama.cpp servers started without `--api-key`.
+  When the server is started with `--api-key`, the configured key must be
+  present or the server returns `401 Invalid API Key`.
 - **Reasoning content extracted**: the `reasoning_content` field from the
   response message is extracted into `CompletionResult.reasoning_content`.
   Thinking models (e.g. lfm25) may put their entire output in
@@ -72,7 +75,7 @@ flowchart TD
     FORMAT -->|"llama.cpp request<br/>(native tools field)"| LLAMA
     OPENROUTER -->|"http request"| HTTP
     DEEPSEEK -->|"http request"| HTTP
-    LLAMA -->|"http request<br/>(no auth header)"| HTTP
+    LLAMA -->|"http request<br/>(Bearer auth header when key set)"| HTTP
     HTTP -->|"http post"| PROVIDER_API
     PROVIDER_API -->|"json response body"| HTTP
     HTTP -->|"raw bytes"| PARSE

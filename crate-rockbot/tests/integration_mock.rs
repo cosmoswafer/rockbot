@@ -1,13 +1,22 @@
 use rockbot::config::ProviderConfig;
 use rockbot::error::RockBotError;
 use rockbot::validated::{ConfigUrl, NonEmptyString, ProviderName};
-    use rockbot::provider::{AiProvider, DeepSeekProvider, FalAiProvider, ImageProvider, OpenRouterImageProvider, OpenRouterProvider};
+    use rockbot::provider::{AiProvider, DeepSeekProvider, FalAiProvider, ImageProvider, LlamaCppProvider, OpenRouterImageProvider, OpenRouterProvider};
     use rockbot::tool::Tool;
     use rockbot::types::{ChatMessage, ChatRequest, FinishReason, ImageGenParams, ThinkingConfig, ToolDef};
     use std::collections::HashMap;
     use std::sync::Arc;
-    use wiremock::matchers::{body_string_contains, header, method, path};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
+use wiremock::matchers::{body_string_contains, header, method, path};
+use wiremock::{Match, Mock, MockServer, Request, ResponseTemplate};
+
+/// Custom matcher asserting the request carries NO `authorization` header.
+struct NoAuthHeader;
+
+impl Match for NoAuthHeader {
+    fn matches(&self, request: &Request) -> bool {
+        request.headers.get("authorization").is_none()
+    }
+}
 
 // ─── Mock HTTP Tests: DeepSeekProvider.complete() ────────────────────────────
 
@@ -2700,3 +2709,137 @@ dav_path = "remote.php/dav"
         assert!(knowledge.unwrap().is_empty(), "knowledge should be cleared after refresh with empty index");
     }
 }
+
+// ─── Mock HTTP Tests: LlamaCppProvider auth header (issue #73) ────────────────
+
+#[tokio::test]
+async fn test_llamacpp_sends_bearer_header_when_key_set() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(header("Authorization", "Bearer sk-local-key"))
+        .and(header("Content-Type", "application/json"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "choices": [{
+                "index": 0,
+                "message": { "role": "assistant", "content": "ok" },
+                "finish_reason": "stop"
+            }],
+            "usage": { "prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2 }
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let config = ProviderConfig {
+        name: ProviderName::try_new("llamacpp".to_string()).unwrap(),
+        api_key: "sk-local-key".into(),
+        base_url: ConfigUrl::try_new(mock_server.uri()).unwrap(),
+        basecf_url: None,
+        chat_path: Some("/chat/completions".into()),
+        draw_path: None,
+        models: HashMap::new(),
+    };
+    let provider = LlamaCppProvider::new(&config, "local-model").unwrap();
+
+    let request = ChatRequest {
+        model: "local-model".into(),
+        messages: vec![ChatMessage::user("Hi")],
+        tools: None,
+        stream: false,
+        temperature: None,
+        max_tokens: None,
+        thinking: None,
+        reasoning_effort: None,
+        tool_choice: None,
+    };
+
+    let result = provider.complete(request).await.unwrap();
+    assert_eq!(result.text, Some("ok".into()));
+}
+
+#[tokio::test]
+async fn test_llamacpp_omits_auth_header_when_key_empty() {
+    let mock_server = MockServer::start().await;
+
+    // Any Authorization header would make this matcher fail (header present
+    // with any value is not allowed), so assert the request has NO auth header.
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(NoAuthHeader)
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "choices": [{
+                "index": 0,
+                "message": { "role": "assistant", "content": "no-auth" },
+                "finish_reason": "stop"
+            }]
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let config = ProviderConfig {
+        name: ProviderName::try_new("llamacpp".to_string()).unwrap(),
+        api_key: "".into(),
+        base_url: ConfigUrl::try_new(mock_server.uri()).unwrap(),
+        basecf_url: None,
+        chat_path: Some("/chat/completions".into()),
+        draw_path: None,
+        models: HashMap::new(),
+    };
+    let provider = LlamaCppProvider::new(&config, "local-model").unwrap();
+
+    let request = ChatRequest {
+        model: "local-model".into(),
+        messages: vec![ChatMessage::user("Hi")],
+        tools: None,
+        stream: false,
+        temperature: None,
+        max_tokens: None,
+        thinking: None,
+        reasoning_effort: None,
+        tool_choice: None,
+    };
+
+    let result = provider.complete(request).await.unwrap();
+    assert_eq!(result.text, Some("no-auth".into()));
+}
+
+#[tokio::test]
+async fn test_llamacpp_401_maps_to_auth_failed() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
+            "error": { "message": "Invalid API Key", "type": "authenticationerror", "code": 401 }
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let config = ProviderConfig {
+        name: ProviderName::try_new("llamacpp".to_string()).unwrap(),
+        api_key: "wrong-key".into(),
+        base_url: ConfigUrl::try_new(mock_server.uri()).unwrap(),
+        basecf_url: None,
+        chat_path: Some("/chat/completions".into()),
+        draw_path: None,
+        models: HashMap::new(),
+    };
+    let provider = LlamaCppProvider::new(&config, "local-model").unwrap();
+
+    let request = ChatRequest {
+        model: "local-model".into(),
+        messages: vec![ChatMessage::user("Hi")],
+        tools: None,
+        stream: false,
+        temperature: None,
+        max_tokens: None,
+        thinking: None,
+        reasoning_effort: None,
+        tool_choice: None,
+    };
+
+    let err = provider.complete(request).await.unwrap_err();
+    assert!(matches!(err, RockBotError::AuthFailed(_)), "expected AuthFailed, got {err:?}");
+}
+

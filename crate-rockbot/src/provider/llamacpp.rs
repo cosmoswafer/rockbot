@@ -15,6 +15,7 @@ const TOOL_DELIMITER_END: &str = "✿END✿";
 pub struct LlamaCppProvider {
     base_url: String,
     model: String,
+    api_key: String,
     http_client: reqwest::Client,
 }
 
@@ -34,6 +35,7 @@ impl LlamaCppProvider {
         Ok(Self {
             base_url: full_url,
             model: model.into(),
+            api_key: config.api_key.clone(),
             http_client: super::default_http_client(),
         })
     }
@@ -48,6 +50,7 @@ impl LlamaCppProvider {
         Ok(Self {
             base_url: full_url,
             model: model.into(),
+            api_key: config.api_key.clone(),
             http_client: client,
         })
     }
@@ -274,12 +277,15 @@ impl AiProvider for LlamaCppProvider {
             request.model, msg_count, tool_count, request.stream
         );
 
-        let response = self
+        let mut request_builder = self
             .http_client
             .post(&self.base_url)
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
+            .header("Content-Type", "application/json");
+        if !self.api_key.is_empty() {
+            request_builder = request_builder
+                .header("Authorization", format!("Bearer {}", self.api_key));
+        }
+        let response = request_builder.json(&body).send()
             .await
             .map_err(|e| RockBotError::ServerError {
                 status: 0,
@@ -350,6 +356,7 @@ mod tests {
         LlamaCppProvider {
             base_url: "http://localhost:8080/v1/chat/completions".into(),
             model: "local-model".into(),
+            api_key: String::new(),
             http_client: reqwest::Client::new(),
         }
     }
