@@ -15,7 +15,7 @@ standard harness mechanisms are present:
 | Mechanism   | Coverage | Details |
 |-------------|----------|---------|
 | **Tools**   | Full     | Abstract tool calling via `ToolRegistry` — individual tools each have their own DFD |
-| **Context** | Full     | Per-room conversation history buffer, hard reset (see [Memory Reset](../memory/memory-reset.md)), archive loading — see [Memory Management](../memory/memory.md); plus iteration limits, room state routing, system prompt assembly (with live UTC time injection via `now_utc_human()`). Soul (`soul.md`) is **re-read from WebDAV on every message** to ensure multi-instance consistency. |
+| **Context** | Full     | Per-room conversation history buffer, LLM summarization and hard reset (see [Memory Reset](../memory/memory-reset.md)), archive loading — see [Memory Management](../memory/memory.md); plus iteration limits, room state routing, system prompt assembly (with live UTC time injection via `now_utc_human()`). Soul (`soul.md`) is **re-read from WebDAV on every message** to ensure multi-instance consistency. |
 | **Knowledge** | Full     | `save_knowledge`, `forget_knowledge`, `recall_knowledge`; index summary injected as context, AI uses `recall_knowledge` for on-demand full-entry retrieval — see [Knowledge Management](base/knowledge.md) |
 
 Intentionally absent — not needed for rockbot's scope:
@@ -357,7 +357,7 @@ messages, stripping images from older entries. This is a fast in-memory
 operation that prevents provider rejection.
 
 When inline truncation fires, it also sets a `byte_pressure_flag` so the room
-receives a hard reset **after the reply is delivered**. See
+receives LLM summarization **after the reply is delivered**. See
 [Memory Reset](base/memory-reset.md) for the full pipeline.
 
 ```mermaid
@@ -379,7 +379,7 @@ flowchart TD
 manipulation. At least the last 2 messages plus the system prompt are always
 preserved. If the total message count is ≤ system prefix + 4, trimming is
 skipped entirely regardless of byte limit. Sets `byte_pressure_flag` so the
-room gets a hard reset after reply delivery.
+room gets LLM summarization after reply delivery.
 
 ### 2i2. Context-Length-Exceeded Retry — Provider-Triggered Reset
 
@@ -408,8 +408,8 @@ flowchart TD
     FALLBACK --> REPLY
 ```
 
-**Reset** (`reset_room_if_needed`): clears all Layer 1 messages instantly —
-no LLM call, no WebDAV write. See
+**Reset** (direct clear, not via `reset_room_if_needed()`): clears all
+Layer 1 messages instantly — no LLM call, no WebDAV write. See
 [Memory Reset §2e](base/memory-reset.md#2e-context-length-exceeded-retry--provider-triggered-reset).
 
 After reset, rebuilds context with `max_history: Some(4)` and applies

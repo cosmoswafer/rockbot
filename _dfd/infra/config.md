@@ -129,7 +129,10 @@ flowchart TD
 | `persist_interval_secs`| `u64`          | Snapshot persist timer interval (default 60)                  |
 | `max_context_bytes`    | `BoundedUsize` | Max byte size for context (default 4MB ≈ 1M tokens). Triggers inline trim and image-stripping when exceeded. Validated 1..=100_000_000 |
 | `max_attachment_bytes` | `u64`          | Max size of a single attachment in bytes (default 25_000_000) |
-| `model_context_length` | `u32`          | Model's max context window in tokens (default 1_000_000). 90% threshold triggers hard memory reset after LLM calls when usage nears limit. |
+| `model_context_length` | `u32`          | Model's max context window in tokens (default 1_000_000). 85% threshold triggers LLM summarization after LLM calls when usage nears limit. |
+| `summarization_enabled` | `bool`        | If true, token/byte pressure triggers LLM summarization (default true). If false, falls back to strip-half. |
+| `summarization_ratio`  | `f64`          | Portion of oldest messages to summarize (default 0.6 = 60%). Remaining 40% are retained. |
+| `summarization_target_tokens` | `usize`  | Target max tokens for the summarization prompt instruction (default 1024). |
 
 #### `ProviderConfig`
 

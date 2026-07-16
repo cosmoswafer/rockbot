@@ -336,12 +336,12 @@ impl AgentHarness {
                         result.text.is_some(),
                     );
 
-                    // Check token pressure: if usage nears model context limit, flag for background reset
+                    // Check token pressure: if usage nears model context limit, flag for background summarization
                     if let Some(ref usage) = result.usage {
-                        let threshold = (self.config.active_model().model_context_length as f64 * 0.9) as u64;
+                        let threshold = (self.config.active_model().model_context_length as f64 * 0.85) as u64;
                         if usage.total_tokens > threshold {
                             debug!(
-                                "Token pressure detected: {} total_tokens > 90% of {} (threshold={})",
+                                "Token pressure detected: {} total_tokens > 85% of {} (threshold={})",
                                 usage.total_tokens, self.config.active_model().model_context_length, threshold
                             );
                             self.memory.set_token_pressure(room_id);
@@ -936,29 +936,153 @@ impl AgentHarness {
                 messages_cleared: 0,
             });
         }
+
         let was_explicit = self.memory.has_explicit_reset(room_id);
-        if let Some((rid, msgs)) = self.memory.check_and_archive(room_id, true) {
-            let count = msgs.len();
-            self.memory.prune_archived(&rid, count);
-            self.memory.clear_pressure_flags(&rid);
-            self.memory.mark_snapshot_dirty(&rid);
-            debug!(
-                "Reset memory for room {}: cleared {} messages (explicit={})",
-                rid, count, was_explicit
-            );
-            Ok(ResetResult {
-                did_reset: true,
-                was_explicit,
-                messages_cleared: count,
-            })
+
+        if was_explicit {
+            // User explicitly requested reset — full wipe
+            if let Some((rid, msgs)) = self.memory.check_and_archive(room_id, true) {
+                let count = msgs.len();
+                self.memory.prune_archived(&rid, count);
+                self.memory.clear_pressure_flags(&rid);
+                self.memory.mark_snapshot_dirty(&rid);
+                debug!(
+                    "Reset memory for room {}: cleared {} messages (explicit)",
+                    rid, count
+                );
+                Ok(ResetResult {
+                    did_reset: true,
+                    was_explicit,
+                    messages_cleared: count,
+                })
+            } else {
+                self.memory.clear_pressure_flags(room_id);
+                Ok(ResetResult {
+                    did_reset: false,
+                    was_explicit,
+                    messages_cleared: 0,
+                })
+            }
         } else {
-            self.memory.clear_pressure_flags(room_id);
-            Ok(ResetResult {
-                did_reset: false,
-                was_explicit,
-                messages_cleared: 0,
-            })
+            // Token/byte pressure — summarize instead of full wipe
+            self.summarize_and_compress(room_id).await
         }
+    }
+
+    /// LLM-based summarization of oldest messages when token/byte pressure
+    /// is detected. Replaces the oldest ~60% of messages with a synthetic
+    /// system summary message, keeping the recent ~40%. Falls back to
+    /// strip-half on LLM failure or when summarization is disabled.
+    async fn summarize_and_compress(&mut self, room_id: &str) -> Result<ResetResult> {
+        let model = self.config.active_model();
+
+        if !model.summarization_enabled {
+            let cleared = self.memory.strip_half(room_id);
+            self.memory.clear_pressure_flags(room_id);
+            return Ok(ResetResult {
+                did_reset: cleared > 0,
+                was_explicit: false,
+                messages_cleared: cleared,
+            });
+        }
+
+        let msg_count = self.memory.message_count(room_id);
+        if msg_count < 6 {
+            self.memory.clear_pressure_flags(room_id);
+            return Ok(ResetResult {
+                did_reset: false,
+                was_explicit: false,
+                messages_cleared: 0,
+            });
+        }
+
+        let summarize_count = ((msg_count as f64) * model.summarization_ratio) as usize;
+        let summarize_count = summarize_count.max(1).min(msg_count - 1);
+        let old_msgs = self.memory.oldest_messages(room_id, summarize_count);
+
+        match self.call_summarization_llm(&old_msgs).await {
+            Ok(text) => {
+                let summary_msg = ChatMessage::system(format!(
+                    "[Conversation Summary — earlier messages compressed]\n{}",
+                    text
+                ));
+                self.memory
+                    .summarize_room(room_id, summarize_count, summary_msg);
+                self.memory.clear_pressure_flags(room_id);
+                debug!(
+                    "Summarized {} messages for room {} ({} → {} messages)",
+                    summarize_count,
+                    room_id,
+                    msg_count,
+                    self.memory.message_count(room_id)
+                );
+                Ok(ResetResult {
+                    did_reset: true,
+                    was_explicit: false,
+                    messages_cleared: summarize_count,
+                })
+            }
+            Err(e) => {
+                warn!(
+                    "Summarization LLM failed ({}), falling back to strip-half for room {}",
+                    e, room_id
+                );
+                let cleared = self.memory.strip_half(room_id);
+                self.memory.clear_pressure_flags(room_id);
+                Ok(ResetResult {
+                    did_reset: cleared > 0,
+                    was_explicit: false,
+                    messages_cleared: cleared,
+                })
+            }
+        }
+    }
+
+    /// Calls the LLM with a summarization prompt and returns the summary text.
+    async fn call_summarization_llm(&self, messages: &[ChatMessage]) -> Result<String> {
+        let conversation_text: String = messages
+            .iter()
+            .filter_map(|m| m.text_content())
+            .map(|t| t.chars().take(500).collect::<String>())
+            .filter(|s| !s.is_empty())
+            .take(30)
+            .enumerate()
+            .map(|(i, t)| format!("{}. {}", i + 1, t))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        if conversation_text.is_empty() {
+            return Err(RockBotError::Provider(
+                "no compressible text in messages".into(),
+            ));
+        }
+
+        let target = self.config.active_model().summarization_target_tokens;
+        let prompt = format!(
+            "Summarize the following conversation history concisely. \
+             Preserve: key decisions, user preferences, tool results, code snippets, and important context. \
+             Exclude: greetings, chitchat, redundant back-and-forth, error recovery loops. \
+             Keep the summary under {} tokens.\n\nConversation:\n{}",
+            target, conversation_text
+        );
+
+        let request = ChatRequest {
+            model: self.resolve_model(),
+            messages: vec![ChatMessage::user(&prompt)],
+            tools: None,
+            stream: false,
+            temperature: Some(0.3),
+            max_tokens: Some(1024),
+            thinking: None,
+            reasoning_effort: None,
+            tool_choice: None,
+        };
+
+        let result = self.provider.complete(request).await?;
+        result
+            .text
+            .filter(|t| !t.trim().is_empty())
+            .ok_or_else(|| RockBotError::Provider("summarization returned empty text".into()))
     }
 
     pub async fn restore_history(
@@ -1772,7 +1896,14 @@ chat = "mock-model"
     #[tokio::test]
     async fn test_reset_room_if_needed_no_webdav() {
         let config = make_test_config();
-        let provider = Box::new(MockProvider::new(vec![]));
+        // Provide a mock response for the summarization LLM call
+        let provider = Box::new(MockProvider::new(vec![CompletionResult {
+            text: Some("Summary of earlier conversation".into()),
+            tool_calls: vec![],
+            finish: FinishReason::Stop,
+            reasoning_content: None,
+            usage: None,
+        }]));
         let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()), "@testbot");
 
         let room = harness
@@ -1781,18 +1912,23 @@ chat = "mock-model"
         for i in 0..10 {
             room.history.append(ChatMessage::user(format!("msg {}", i)));
         }
-        // Set byte_pressure_flag to trigger reset (not explicit)
+        // Set byte_pressure_flag to trigger summarization (not explicit)
         harness.memory_mut().set_byte_pressure("room1");
 
         let result = harness.reset_room_if_needed("room1").await;
         assert!(result.is_ok());
         let rr = result.unwrap();
-        assert!(rr.did_reset, "should have reset messages");
+        assert!(rr.did_reset, "should have summarized messages");
         assert!(!rr.was_explicit, "byte pressure is not explicit");
-        assert_eq!(rr.messages_cleared, 10);
-        // History should be pruned (all 10 messages removed)
+        // 10 * 0.6 = 6 messages summarized
+        assert_eq!(rr.messages_cleared, 6);
+        // 10 - 6 + 1 summary = 5 messages remaining
         let remaining = harness.memory().get("room1").map(|r| r.history.messages.len());
-        assert_eq!(remaining, Some(0));
+        assert_eq!(remaining, Some(5));
+        // First message should be the summary system message
+        let room = harness.memory().get("room1").unwrap();
+        assert_eq!(room.history.messages[0].role, Role::System);
+        assert!(room.history.messages[0].text_content().unwrap().contains("Summary of earlier conversation"));
     }
 
     #[tokio::test]

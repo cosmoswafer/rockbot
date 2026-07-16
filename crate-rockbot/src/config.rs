@@ -147,10 +147,28 @@ pub struct ModelConfig {
     pub max_attachment_bytes: u64,
     #[serde(default = "default_model_context_length")]
     pub model_context_length: u32,
+    #[serde(default = "default_summarization_enabled")]
+    pub summarization_enabled: bool,
+    #[serde(default = "default_summarization_ratio")]
+    pub summarization_ratio: f64,
+    #[serde(default = "default_summarization_target_tokens")]
+    pub summarization_target_tokens: usize,
 }
 
 fn default_model_context_length() -> u32 {
     128_000
+}
+
+fn default_summarization_enabled() -> bool {
+    true
+}
+
+fn default_summarization_ratio() -> f64 {
+    0.6
+}
+
+fn default_summarization_target_tokens() -> usize {
+    1024
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -260,6 +278,9 @@ impl Default for ModelConfig {
             max_context_bytes: default_max_context_bytes(),
             max_attachment_bytes: default_max_attachment_bytes(),
             model_context_length: default_model_context_length(),
+            summarization_enabled: default_summarization_enabled(),
+            summarization_ratio: default_summarization_ratio(),
+            summarization_target_tokens: default_summarization_target_tokens(),
         }
     }
 }

@@ -1319,6 +1319,9 @@ fn make_test_config(webdav_url: &str) -> rockbot::config::AppConfig {
             max_context_bytes: BoundedUsize::try_new(4194304).unwrap(),
             max_attachment_bytes: 20971520,
             model_context_length: 1_000_000,
+            summarization_enabled: true,
+            summarization_ratio: 0.6,
+            summarization_target_tokens: 1024,
         },
         chat_providers: vec![chat_config],
         image_providers: vec![rockbot::config::ProviderConfig {

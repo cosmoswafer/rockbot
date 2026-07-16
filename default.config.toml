@@ -82,6 +82,9 @@ persist_interval_secs = 120
 max_context_bytes = 4_000_000
 max_attachment_bytes = 25_000_000
 model_context_length = 128_000
+summarization_enabled = true
+summarization_ratio = 0.6
+summarization_target_tokens = 1024
 
 [rocketchat.server]
 url = "localhost"
@@ -98,6 +101,9 @@ persist_interval_secs = 120
 max_context_bytes = 4_000_000
 max_attachment_bytes = 25_000_000
 model_context_length = 128_000
+summarization_enabled = true
+summarization_ratio = 0.6
+summarization_target_tokens = 1024
 
 [matrix.server]
 homeserver = ""
@@ -116,6 +122,9 @@ persist_interval_secs = 120
 max_context_bytes = 4_000_000
 max_attachment_bytes = 25_000_000
 model_context_length = 128_000
+summarization_enabled = true
+summarization_ratio = 0.6
+summarization_target_tokens = 1024
 
 [webdav]
 url = ""

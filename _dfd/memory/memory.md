@@ -19,8 +19,10 @@ WebDAV room folder.
 | 1 | **Chat History** | In-memory only | Hardcoded cap on messages | Raw `Vec<ChatMessage>` — the current working window |
 | 2 | **Soul** | WebDAV `soul.md` file | `max_soul_chars` chars | Persistent core memory editable by user via chat |
 
-When Layer 1 overflows (token or byte pressure), it is hard-reset — all
-messages are cleared instantly with no LLM call. The full reset pipeline —
+When Layer 1 overflows (token or byte pressure), it is compressed via LLM
+summarization — the oldest ~60% of messages are summarized into a synthetic
+system message, and the recent ~40% are retained. Explicit user requests
+(`!reset`) still trigger a hard reset (clear all). The full pipeline —
 including triggers, the `reset_memory` tool, and the `ContextLengthExceeded`
 recovery path — is documented in [Memory Reset](memory-reset.md).
 
@@ -32,8 +34,8 @@ recovery path — is documented in [Memory Reset](memory-reset.md).
   `reset_room_if_needed` after each message, `persist_room_snapshots` on a
   periodic timer, `restore_history` on room init, and handles `edit_soul`
   tool calls
-- Downstream: [Memory Reset](memory-reset.md) — hard reset pipeline
-  (triggers, flag clearing, Layer 1 clear)
+- Downstream: [Memory Reset](memory-reset.md) — reset and summarization
+  pipeline (triggers, flag clearing, Layer 1 compress/clear)
 - Downstream: WebDAV crate (`WebDavClient`, `WebDavPath`) persists
   snapshots and `soul.md`
 - Downstream: [Knowledge Management](knowledge.md) — separate system for
@@ -340,8 +342,8 @@ Fields from `ModelConfig` in [Configuration Management](config.md):
 | `max_soul_chars`       | `usize` | 2000    | Layer 2 max chars for soul.md content              |
 | `memory_ttl_secs`      | `u64`   | 300     | Room idle timeout — evict from memory (after snapshot persisted) |
 | `persist_interval_secs`| `u64`   | 60      | How often the timer writes dirty snapshots to WebDAV |
-| `max_context_bytes`    | `usize` | 4_000_000 | Max byte size for context (triggers inline trim + post-reply reset flag) |
-| `model_context_length` | `u32`   | 1_000_000 | Model's max context tokens; 90% threshold triggers post-LLM reset |
+| `max_context_bytes`    | `usize` | 4_000_000 | Max byte size for context (triggers inline trim + post-reply summarization flag) |
+| `model_context_length` | `u32`   | 1_000_000 | Model's max context tokens; 85% threshold triggers post-LLM summarization |
 
 Field from `WebDavConfig` in [Configuration Management](config.md):
 

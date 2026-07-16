@@ -240,6 +240,53 @@ impl MemoryManager {
         }
     }
 
+    pub fn message_count(&self, room_id: &str) -> usize {
+        self.rooms
+            .get(room_id)
+            .map(|r| r.history.messages.len())
+            .unwrap_or(0)
+    }
+
+    pub fn oldest_messages(&self, room_id: &str, count: usize) -> Vec<ChatMessage> {
+        self.rooms
+            .get(room_id)
+            .map(|r| r.history.oldest_messages(count).to_vec())
+            .unwrap_or_default()
+    }
+
+    pub fn summarize_room(
+        &mut self,
+        room_id: &str,
+        summarize_count: usize,
+        summary_msg: ChatMessage,
+    ) {
+        if let Some(room) = self.rooms.get_mut(room_id) {
+            room.history.prune_first(summarize_count);
+            room.history.messages.insert(0, summary_msg);
+            room.history.char_count = room
+                .history
+                .messages
+                .iter()
+                .filter_map(|m| m.text_content())
+                .map(|t| t.chars().count())
+                .sum();
+            self.mark_snapshot_dirty(room_id);
+        }
+    }
+
+    pub fn strip_half(&mut self, room_id: &str) -> usize {
+        if let Some(room) = self.rooms.get_mut(room_id) {
+            let half = room.history.messages.len() / 2;
+            if half > 0 {
+                room.history.prune_first(half);
+                self.mark_snapshot_dirty(room_id);
+            }
+            half
+        } else {
+            0
+        }
+    }
+
     pub fn build_context(
         &self,
         room_id: &str,

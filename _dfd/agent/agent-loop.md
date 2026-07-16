@@ -27,7 +27,8 @@ platform-agnostic.
   resolution and alias message sending (RocketChat-only production path for bot replies)
 - Downstream: [AI Provider](../ai/ai-provider.md) handles chat completion requests
 - Downstream: [Memory Management](../memory/memory.md) manages per-room conversation history,
-  hard reset (threshold-based, clears Layer 1 — see [Memory Reset](../memory/memory-reset.md)),
+  LLM summarization for pressure thresholds and hard reset for explicit requests
+  (see [Memory Reset](../memory/memory-reset.md)),
   snapshot persist, and TTL-based room eviction
 - Downstream: [WebDAV Tool](../tools/webdav.md) persists image assets
 

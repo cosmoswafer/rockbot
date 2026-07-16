@@ -2294,7 +2294,7 @@ async fn test_llamacpp_complete_passes_image_through_to_server() {
 use rockbot::harness::AgentHarness;
 
 #[cfg(test)]
-mod compression_tests {
+mod summarization_tests {
     use super::*;
     use rockbot::image_cache::ImageCache;
     use rockbot::types::CompletionResult;
@@ -2342,7 +2342,29 @@ mod compression_tests {
         }
     }
 
-    fn make_compression_test_config() -> rockbot::config::AppConfig {
+    /// Mock AI provider that always returns an error.
+    struct FailingMockProvider;
+
+    #[async_trait::async_trait]
+    impl AiProvider for FailingMockProvider {
+        async fn complete(&self, _request: ChatRequest) -> Result<CompletionResult, RockBotError> {
+            Err(RockBotError::Provider("mock provider failure".into()))
+        }
+
+        fn provider_name(&self) -> &str {
+            "failing-mock"
+        }
+
+        fn model_name(&self) -> &str {
+            "failing-model"
+        }
+    }
+
+    fn make_summarization_test_config() -> rockbot::config::AppConfig {
+        make_summarization_test_config_with(true)
+    }
+
+    fn make_summarization_test_config_with(summarization_enabled: bool) -> rockbot::config::AppConfig {
         use rockbot::config::{ImageModelConfig, ModelConfig, RocketChatSection, ServerConfig};
         rockbot::config::AppConfig {
             platform: Default::default(),
@@ -2366,6 +2388,9 @@ mod compression_tests {
                 max_context_bytes: BoundedUsize::try_new(4194304).unwrap(),
                 max_attachment_bytes: 20971520,
                 model_context_length: 1_000_000,
+                summarization_enabled,
+                summarization_ratio: 0.6,
+                summarization_target_tokens: 1024,
             },
             chat_providers: vec![rockbot::config::ProviderConfig {
                 name: ProviderName::try_new("counting-mock".to_string()).unwrap(),
@@ -2395,16 +2420,15 @@ mod compression_tests {
         }
     }
 
-    /// Token pressure flag is set, then background compression prunes history.
+    /// Token pressure flag triggers LLM summarization instead of full wipe.
+    /// 20 messages → oldest 12 (60%) summarized into 1 system msg, 8 retained.
     #[tokio::test]
-    async fn test_token_pressure_triggers_compression() {
+    async fn test_token_pressure_triggers_summarization() {
         let image_cache = Arc::new(ImageCache::new());
-        let config = make_compression_test_config();
-        // Provider returns text with low token count (10 << 900K threshold)
-        let provider = Box::new(CountingMockProvider::new("Hello!"));
+        let config = make_summarization_test_config();
+        let provider = Box::new(CountingMockProvider::new("Summary of conversation"));
         let mut harness = AgentHarness::new(config, provider, None, image_cache, "@testbot");
 
-        // Create room with enough messages to trigger compression
         let room = harness
             .memory_mut()
             .get_or_create("room1", "general", "", false);
@@ -2414,30 +2438,35 @@ mod compression_tests {
                 i
             )));
         }
-        let before = room.history.messages.len();
-        assert_eq!(before, 20);
+        assert_eq!(room.history.messages.len(), 20);
 
-        // Set token pressure flag manually (simulating post-LLM check)
         harness.memory_mut().set_token_pressure("room1");
 
-        // Run background compression
         harness.reset_room_if_needed("room1").await.unwrap();
 
-        // History should be pruned (all 20 messages removed)
-        let after = harness
-            .memory()
-            .get("room1")
-            .map(|r| r.history.messages.len())
-            .unwrap_or(0);
-        assert_eq!(after, 0, "All 20 messages should be pruned");
+        let room = harness.memory().get("room1").unwrap();
+        let after = room.history.messages.len();
+        // 20 - 12 (summarized) + 1 (summary msg) = 9
+        assert_eq!(after, 9, "Should have 1 summary + 8 recent messages");
+
+        // First message should be the summary system message
+        assert_eq!(room.history.messages[0].role, rockbot::types::Role::System);
+        let summary_text = room.history.messages[0].text_content().unwrap();
+        assert!(summary_text.contains("Summary of conversation"));
+        assert!(summary_text.contains("[Conversation Summary"));
+
+        // Remaining messages should be the original recent ones
+        assert_eq!(room.history.messages[1].role, rockbot::types::Role::User);
+        assert!(room.history.messages[1].text_content().unwrap().contains("Message number 12"));
     }
 
-    /// Byte pressure flag triggers compression after context trim.
+    /// Byte pressure flag triggers LLM summarization.
+    /// 15 messages → oldest 9 (60%) summarized into 1 system msg, 6 retained.
     #[tokio::test]
-    async fn test_byte_pressure_triggers_compression() {
+    async fn test_byte_pressure_triggers_summarization() {
         let image_cache = Arc::new(ImageCache::new());
-        let config = make_compression_test_config();
-        let provider = Box::new(CountingMockProvider::new("ok"));
+        let config = make_summarization_test_config();
+        let provider = Box::new(CountingMockProvider::new("Byte pressure summary"));
         let mut harness = AgentHarness::new(config, provider, None, image_cache, "@testbot");
 
         let room = harness
@@ -2451,25 +2480,113 @@ mod compression_tests {
         }
         assert_eq!(room.history.messages.len(), 15);
 
-        // Set byte pressure flag (simulating context assembly overflow)
         harness.memory_mut().set_byte_pressure("room1");
 
         harness.reset_room_if_needed("room1").await.unwrap();
 
-        // All messages pruned
+        let room = harness.memory().get("room1").unwrap();
+        let after = room.history.messages.len();
+        // 15 - 9 (summarized) + 1 (summary msg) = 7
+        assert_eq!(after, 7, "Should have 1 summary + 6 recent messages");
+
+        assert_eq!(room.history.messages[0].role, rockbot::types::Role::System);
+        assert!(room.history.messages[0].text_content().unwrap().contains("Byte pressure summary"));
+    }
+
+    /// When LLM summarization fails, falls back to strip-half (drop oldest 50%).
+    #[tokio::test]
+    async fn test_summarization_llm_failure_falls_back_to_strip_half() {
+        let image_cache = Arc::new(ImageCache::new());
+        let config = make_summarization_test_config();
+        let provider = Box::new(FailingMockProvider);
+        let mut harness = AgentHarness::new(config, provider, None, image_cache, "@testbot");
+
+        let room = harness
+            .memory_mut()
+            .get_or_create("room1", "general", "", false);
+        for i in 0..20 {
+            room.history.append(ChatMessage::user(format!("Message {}", i)));
+        }
+        assert_eq!(room.history.messages.len(), 20);
+
+        harness.memory_mut().set_token_pressure("room1");
+
+        harness.reset_room_if_needed("room1").await.unwrap();
+
+        let room = harness.memory().get("room1").unwrap();
+        let after = room.history.messages.len();
+        // Strip half: 20 / 2 = 10 removed, 10 remain
+        assert_eq!(after, 10, "Should strip half (10 of 20 messages)");
+
+        // No summary system message should be present
+        assert_ne!(room.history.messages[0].role, rockbot::types::Role::System);
+    }
+
+    /// Explicit reset still does full wipe (all messages cleared).
+    #[tokio::test]
+    async fn test_explicit_reset_still_does_full_wipe() {
+        let image_cache = Arc::new(ImageCache::new());
+        let config = make_summarization_test_config();
+        let provider = Box::new(CountingMockProvider::new("should not be called"));
+        let mut harness = AgentHarness::new(config, provider, None, image_cache, "@testbot");
+
+        let room = harness
+            .memory_mut()
+            .get_or_create("room1", "general", "", false);
+        for i in 0..10 {
+            room.history.append(ChatMessage::user(format!("Message {}", i)));
+        }
+        assert_eq!(room.history.messages.len(), 10);
+
+        harness.memory_mut().set_explicit_reset("room1");
+
+        let result = harness.reset_room_if_needed("room1").await.unwrap();
+        assert!(result.did_reset);
+        assert!(result.was_explicit);
+        assert_eq!(result.messages_cleared, 10);
+
         let after = harness
             .memory()
             .get("room1")
             .map(|r| r.history.messages.len())
             .unwrap_or(0);
-        assert_eq!(after, 0, "All 15 messages should be pruned");
+        assert_eq!(after, 0, "All messages should be cleared on explicit reset");
     }
 
-    /// Background compression does nothing when no pressure flags are set.
+    /// When summarization is disabled, pressure triggers strip-half, not full wipe.
     #[tokio::test]
-    async fn test_no_pressure_no_compression() {
+    async fn test_summarization_disabled_strips_half() {
         let image_cache = Arc::new(ImageCache::new());
-        let config = make_compression_test_config();
+        let config = make_summarization_test_config_with(false);
+        let provider = Box::new(CountingMockProvider::new("should not be called"));
+        let mut harness = AgentHarness::new(config, provider, None, image_cache, "@testbot");
+
+        let room = harness
+            .memory_mut()
+            .get_or_create("room1", "general", "", false);
+        for i in 0..20 {
+            room.history.append(ChatMessage::user(format!("Message {}", i)));
+        }
+        assert_eq!(room.history.messages.len(), 20);
+
+        harness.memory_mut().set_token_pressure("room1");
+
+        harness.reset_room_if_needed("room1").await.unwrap();
+
+        let room = harness.memory().get("room1").unwrap();
+        let after = room.history.messages.len();
+        // Strip half: 20 / 2 = 10 removed, 10 remain
+        assert_eq!(after, 10, "Should strip half when summarization disabled");
+
+        // No summary system message
+        assert_ne!(room.history.messages[0].role, rockbot::types::Role::System);
+    }
+
+    /// No pressure flags → no change to history.
+    #[tokio::test]
+    async fn test_no_pressure_no_change() {
+        let image_cache = Arc::new(ImageCache::new());
+        let config = make_summarization_test_config();
         let provider = Box::new(CountingMockProvider::new("ok"));
         let mut harness = AgentHarness::new(config, provider, None, image_cache, "@testbot");
 
@@ -2481,7 +2598,6 @@ mod compression_tests {
         }
         let before = room.history.messages.len();
 
-        // No pressure flags set
         harness.reset_room_if_needed("room1").await.unwrap();
 
         let after = harness
@@ -2489,15 +2605,15 @@ mod compression_tests {
             .get("room1")
             .map(|r| r.history.messages.len())
             .unwrap_or(0);
-        assert_eq!(after, before, "No flags → no compression, all messages remain");
+        assert_eq!(after, before, "No flags → no change, all messages remain");
     }
 
-    /// Pressure flags cleared after compression completes.
+    /// Pressure flags are cleared after summarization completes.
     #[tokio::test]
-    async fn test_pressure_flags_cleared_after_compression() {
+    async fn test_pressure_flags_cleared_after_summarization() {
         let image_cache = Arc::new(ImageCache::new());
-        let config = make_compression_test_config();
-        let provider = Box::new(CountingMockProvider::new("ok"));
+        let config = make_summarization_test_config();
+        let provider = Box::new(CountingMockProvider::new("summary"));
         let mut harness = AgentHarness::new(config, provider, None, image_cache, "@testbot");
 
         let room = harness
@@ -2513,6 +2629,8 @@ mod compression_tests {
         harness.reset_room_if_needed("room1").await.unwrap();
 
         assert!(!harness.memory().has_token_pressure("room1"), "Token pressure should be cleared");
+        assert!(!harness.memory().has_byte_pressure("room1"), "Byte pressure should be cleared");
+        assert!(!harness.memory().has_explicit_reset("room1"), "Explicit reset should be cleared");
     }
 }
 
@@ -2562,6 +2680,9 @@ dav_path = "remote.php/dav"
                 max_context_bytes: BoundedUsize::try_new(4194304).unwrap(),
                 max_attachment_bytes: 20971520,
                 model_context_length: 1_000_000,
+                summarization_enabled: true,
+                summarization_ratio: 0.6,
+                summarization_target_tokens: 1024,
             },
             chat_providers: vec![rockbot::config::ProviderConfig {
                 name: ProviderName::try_new("mock".to_string()).unwrap(),

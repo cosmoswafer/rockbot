@@ -2,27 +2,34 @@
 
 ## 1. Purpose
 
-Replaces the former LLM-based compression pipeline with a **hard reset** that
-instantly clears Layer 1 (chat history) — no LLM call, no `summary.md`, no
-knowledge priority review. Two automatic triggers and one user-triggered reset
-all converge on the same fast in-memory operation.
+Manages context window pressure through **LLM-based summarization** for
+automatic triggers (token/byte pressure) and **hard reset** for explicit user
+requests. When pressure is detected, the oldest ~60% of messages are
+summarized into a compact synthetic system message by an LLM call, preserving
+key context while freeing space. Explicit resets (`!reset`) still clear all
+messages instantly. The former full-wipe-on-pressure and the former
+`summary.md` WebDAV pipeline have both been replaced.
 
 - Upstream: [Memory Management](memory.md) — provides `ConversationHistory`
   (Layer 1) and the pressure flags
 - Upstream: [AI Provider](ai-provider.md) — returns token usage counts for the
-  post-call token trigger; may return `ContextLengthExceeded` errors
+  post-call token trigger; may return `ContextLengthExceeded` errors; used for
+  summarization LLM call
 - Upstream: [Configuration Management](config.md) — provides trigger
-  thresholds (`max_context_bytes`, `model_context_length`)
-- Downstream: none — reset is purely in-memory (no WebDAV writes)
+  thresholds (`max_context_bytes`, `model_context_length`,
+  `summarization_enabled`, `summarization_ratio`,
+  `summarization_target_tokens`)
+- Downstream: none — summarization and reset are purely in-memory (no WebDAV
+  writes)
 
 ## 2. Diagram
 
-### 2a. Two-Trigger Reset Decision
+### 2a. Post-Reply Decision: Summarize vs. Hard Reset
 
-Both reset triggers are evaluated **after the bot reply has been delivered to
-the user** — zero delay between user request and bot response. The token and
-byte pressure flags are set during the LLM call and context assembly
-respectively, then checked after reply delivery.
+All triggers are evaluated **after the bot reply has been delivered to the
+user** — zero delay between user request and bot response. The token and
+byte pressure flags route to **LLM summarization** (compress oldest messages,
+keep recent). The `explicit_reset` flag routes to **hard reset** (clear all).
 
 ```mermaid
 flowchart TD
@@ -32,36 +39,34 @@ flowchart TD
     C2{"byte_pressure_flag<br/>set?"}
     C3{"explicit_reset<br/>flag set?"}
 
+    SUMMARIZE["Summarize & Compress<br/>(LLM summarization of oldest ~60%)"]
     RESET["Hard Reset Layer 1<br/>(clear all messages)"]
     SKIP[Skip]
 
-    POST_REPLY --> C1
-    POST_REPLY --> C2
     POST_REPLY --> C3
-
-    C1 -->|"yes"| RESET
-    C1 -->|"no"| SKIP
-    C2 -->|"yes"| RESET
-    C2 -->|"no"| SKIP
     C3 -->|"yes"| RESET
-    C3 -->|"no"| SKIP
+    C3 -->|"no"| C1
+    C1 -->|"yes"| SUMMARIZE
+    C1 -->|"no"| C2
+    C2 -->|"yes"| SUMMARIZE
+    C2 -->|"no"| SKIP
 ```
 
-| Flag | Set During | Condition | Reset |
-|------|-----------|-----------|-------|
-| `token_pressure_flag` | Each LLM provider response | `usage.total_tokens > model_context_length * 0.9` | Cleared after reset completes |
-| `byte_pressure_flag` | Context assembly (`trim_context`) | Serialized context bytes > `max_context_bytes` | Cleared after reset completes |
-| `explicit_reset` | Pre-LLM shortcut or `reset_memory` tool call (in `process_message`) | `!reset` / `!clearmemory` exact match, or natural-language request | Cleared after reset completes |
+| Flag | Set During | Condition | Action |
+|------|-----------|-----------|--------|
+| `token_pressure_flag` | Each LLM provider response | `usage.total_tokens > model_context_length * 0.85` | Summarize & compress |
+| `byte_pressure_flag` | Context assembly (`trim_context`) | Serialized context bytes > `max_context_bytes` | Summarize & compress |
+| `explicit_reset` | Pre-LLM shortcut or `reset_memory` tool call (in `process_message`) | `!reset` / `!clearmemory` exact match, or natural-language request | Hard reset (clear all) |
 
-All three flags trigger the same `reset_room_if_needed()` function after the
-reply is sent. All modes clear **all** Layer 1 messages. None of the flags
-block the user-facing response path.
+`explicit_reset` is checked first — if set, hard reset runs regardless of
+other flags. Token/byte pressure flags route to `summarize_and_compress()`.
+None of the flags block the user-facing response path.
 
-### 2b. Hard Reset Deep Dive
+### 2b. Hard Reset Deep Dive (Explicit Reset Only)
 
-When triggered, Layer 1 is cleared instantly. No LLM call, no WebDAV write,
-no knowledge priority review. The snapshot is marked dirty so the next
-maintenance tick persists the empty history.
+When triggered by `explicit_reset`, Layer 1 is cleared instantly. No LLM
+call, no WebDAV write, no knowledge priority review. The snapshot is marked
+dirty so the next maintenance tick persists the empty history.
 
 ```mermaid
 flowchart TD
@@ -71,14 +76,14 @@ flowchart TD
     DIRTY[Mark Snapshot Dirty]
 
     L1 --> TRIGGER
-    TRIGGER -->|"token/byte pressure<br/>or explicit_reset"| CLEAR
+    TRIGGER -->|"explicit_reset only"| CLEAR
     CLEAR -->|"prune all"| L1
     CLEAR --> DIRTY
 ```
 
-Reset is an **in-memory-only** operation. No `summary.md` is created, read,
-or managed. The `summary.md` concept has been removed entirely — Layer 2 no
-longer exists.
+Hard reset is an **in-memory-only** operation, triggered exclusively by
+`explicit_reset`. Token and byte pressure flags route to LLM summarization
+(§2f) instead. No `summary.md` is created, read, or managed.
 
 ### 2b2. Explicit Reset — reset_memory Tool
 
@@ -147,17 +152,17 @@ natural-language reset requests that the LLM handles via intent detection.
 ### 2c. Token-Based Trigger (Post-LLM Call → Checked After Reply)
 
 The token trigger uses the provider's actual token count. During each LLM
-call, the harness inspects `response.usage.total_tokens`. If it exceeds 90%
+call, the harness inspects `response.usage.total_tokens`. If it exceeds 85%
 of the configured `model_context_length`, a `token_pressure_flag` is set for
 that room. The flag is checked **after the reply is delivered**, triggering
-hard reset — the user never waits.
+LLM summarization — the user never waits.
 
 ```mermaid
 flowchart TD
     LLM_CALL[LLM Provider Call]
     RESP["Response<br/>(CompletionResult)"]
     USAGE["usage.total_tokens"]
-    CHECK{"total_tokens<br/>> 90% of<br/>model_context_length?"}
+    CHECK{"total_tokens<br/>> 85% of<br/>model_context_length?"}
     SET_FLAG["Set token_pressure_flag<br/>for this room"]
     CONTINUE["Continue Normal Flow<br/>(reply to user first)"]
 
@@ -168,7 +173,7 @@ flowchart TD
     CHECK -->|"no"| CONTINUE
     SET_FLAG --> CONTINUE
 
-    CONTINUE -->|"reply delivered"| POST[After Reply:<br/>check flags → reset]
+    CONTINUE -->|"reply delivered"| POST[After Reply:<br/>check flags → summarize]
 ```
 
 **Provider support**: all major providers return `usage` in responses. If
@@ -183,7 +188,7 @@ the serialized context exceeds `max_context_bytes`, older messages are
 trimmed inline — no WebDAV write, no LLM call.
 
 When inline truncation fires, it sets the `byte_pressure_flag` so the room
-will receive a hard reset after the reply is delivered.
+will receive LLM summarization after the reply is delivered.
 
 ```mermaid
 flowchart TD
@@ -239,6 +244,72 @@ chars.
 still returns `ContextLengthExceeded` after reset, the harness falls back to
 the standard error reply.
 
+### 2f. LLM Summarization Deep Dive (Token/Byte Pressure)
+
+When `token_pressure` or `byte_pressure` is set (and `explicit_reset` is
+not), `reset_room_if_needed()` calls `summarize_and_compress()` instead of
+hard reset. This runs **after the reply is delivered** — the user never
+waits. The oldest ~60% of Layer 1 messages are sent to the LLM for
+summarization, then replaced by a single synthetic system message. The
+recent ~40% are retained intact.
+
+```mermaid
+flowchart TD
+    L1[(Layer 1<br/>Chat History)]
+    PRESSURE{"token_pressure<br/>or byte_pressure?"}
+    ENABLED{"summarization_enabled?"}
+    COUNT{"msg_count >= 6?"}
+    EXTRACT["Extract oldest 60%<br/>of messages"]
+    LLM["Call LLM summarization<br/>(low temp, no tools)"]
+    REPLACE["Replace oldest 60% with<br/>synthetic system summary message"]
+    KEEP["Keep recent 40%<br/>of messages"]
+    STRIP["Strip Half<br/>(drop oldest 50%, no LLM)"]
+    FLAGS["Clear pressure flags"]
+    DIRTY[Mark Snapshot Dirty]
+
+    L1 --> PRESSURE
+    PRESSURE -->|"yes"| ENABLED
+    ENABLED -->|"no"| STRIP
+    ENABLED -->|"yes"| COUNT
+    COUNT -->|"no (too few)"| FLAGS
+    COUNT -->|"yes"| EXTRACT
+    EXTRACT --> LLM
+    LLM -->|"success"| REPLACE
+    LLM -->|"failure"| STRIP
+    REPLACE --> KEEP
+    KEEP --> FLAGS
+    STRIP --> FLAGS
+    FLAGS --> DIRTY
+    DIRTY -->|"updated history"| L1
+```
+
+**Summarization prompt**: the LLM receives a numbered list of text snippets
+from the oldest messages (each capped at 500 chars, max 30 snippets). It is
+instructed to preserve key decisions, user preferences, tool results, code
+snippets, and important context — and to exclude greetings, chitchat,
+redundant exchanges, and error recovery loops. Temperature is 0.3 for
+factual output. No tools are provided.
+
+**Summary message**: the LLM's text is wrapped as a `Role::System` message
+with prefix `[Conversation Summary — earlier messages compressed]` and
+inserted at position 0 of the remaining history. It persists in
+`ConversationHistory` and is saved to `snapshot.json` via the existing dirty
+snapshot mechanism.
+
+**Fallback**: if the LLM call fails (provider error, empty response, no
+compressible text), `strip_half()` drops the oldest 50% of messages without
+summarization. This is strictly better than the old full-wipe — recent
+context is still retained.
+
+**Summarization disabled**: if `summarization_enabled = false` in config,
+pressure flags trigger `strip_half()` directly — no LLM call, but still
+better than full wipe.
+
+**Multi-level summarization**: on subsequent pressure cycles, any existing
+summary message is included in the oldest messages extracted for
+re-summarization. This naturally produces summaries-of-summaries without
+special handling.
+
 ## 3. Data Structures
 
 ### `ResetResult`
@@ -258,18 +329,21 @@ Fields from `ModelConfig` in [Configuration Management](config.md):
 
 | Field                  | Type    | Default | Notes |
 | ---------------------- | ------- | ------- | ----- |
-| `max_context_bytes`    | `usize` | 4_000_000 | byte-size overflow trigger (pre-LLM inline trim, flag for post-reply reset) |
-| `model_context_length` | `u32`   | 1_000_000 | Model's max context tokens. 90% threshold (`* 0.9`) triggers post-LLM reset. Default 1M. |
+| `max_context_bytes`    | `usize` | 4_000_000 | byte-size overflow trigger (pre-LLM inline trim, flag for post-reply summarization) |
+| `model_context_length` | `u32`   | 1_000_000 | Model's max context tokens. 85% threshold (`* 0.85`) triggers post-LLM summarization. Default 1M. |
+| `summarization_enabled` | `bool` | `true` | If `true`, token/byte pressure triggers LLM summarization. If `false`, falls back to strip-half. |
+| `summarization_ratio`  | `f64`   | 0.6 | Portion of oldest messages to summarize (0.6 = 60%). Remaining 40% are retained. |
+| `summarization_target_tokens` | `usize` | 1024 | Target max tokens for the summarization LLM prompt instruction. |
 
 ## 5. Trigger Summary
 
-All reset triggers are evaluated **after reply delivery**. The safety net
-(inline truncation) runs pre-LLM but is not a reset trigger.
+All triggers are evaluated **after reply delivery**. The safety net (inline
+truncation) runs pre-LLM but is not a reset trigger.
 
 | Trigger | Evaluation Point | Condition | Action |
 |---------|-----------------|-----------|--------|
-| **Token near-limit** | Flag set during LLM call, checked after reply | `usage.total_tokens > model_context_length * 0.9` | Hard reset (clear all L1 messages) |
-| **Byte pressure** | Flag set during context assembly, checked after reply | `context_bytes > max_context_bytes` | Hard reset (clear all L1 messages) |
+| **Token near-limit** | Flag set during LLM call, checked after reply | `usage.total_tokens > model_context_length * 0.85` | Summarize & compress (oldest ~60% → LLM summary) |
+| **Byte pressure** | Flag set during context assembly, checked after reply | `context_bytes > max_context_bytes` | Summarize & compress (oldest ~60% → LLM summary) |
 | **User command shortcut** | Before LLM call (early return) | `clean_text == "!reset"` or `"!clearmemory"` | Hard reset (clear all L1 messages), no LLM call |
 | **User request (NL)** | Flag set by `reset_memory` tool, checked after reply | Tool called by LLM (intent detection) | Hard reset (clear all L1 messages) |
 | **Safety net** | Before each LLM call | `context_bytes > max_context_bytes` | Inline trim only (strip images, truncate); sets byte_pressure_flag |
@@ -281,7 +355,9 @@ All reset triggers are evaluated **after reply delivery**. The safety net
 
 | Method | Return Type | When | Action |
 |--------|-------------|------|--------|
-| `reset_room_if_needed()` | `Result<ResetResult>` | After reply delivery (background) | Checks flags; returns reset result |
+| `reset_room_if_needed()` | `Result<ResetResult>` | After reply delivery (background) | Checks flags; routes explicit → hard reset, pressure → summarize |
+| `summarize_and_compress()` | `Result<ResetResult>` | Called by `reset_room_if_needed()` for pressure flags | LLM summarization of oldest ~60%; fallback to strip-half |
+| `call_summarization_llm()` | `Result<String>` | Called by `summarize_and_compress()` | Sends summarization prompt to provider; returns summary text |
 | `check_token_pressure()` | `void` | During LLM response processing | Sets `token_pressure_flag` — does NOT block reply |
 | `trim_context()` | `Vec<ChatMessage>` | Before each LLM call (safety net) | Fast in-memory trim; sets `byte_pressure_flag` |
 
@@ -290,5 +366,9 @@ All reset triggers are evaluated **after reply delivery**. The safety net
 | Method | Purpose |
 |--------|---------|
 | `needs_reset(room_id)` | Returns true if any pressure or explicit flag is set |
-| `clear_all_messages(room_id)` | Removes all Layer 1 messages |
+| `message_count(room_id)` | Returns number of Layer 1 messages (used for summarization threshold) |
+| `oldest_messages(room_id, count)` | Returns the oldest N messages for summarization |
+| `summarize_room(room_id, count, summary_msg)` | Prunes oldest N messages, inserts summary system message at position 0 |
+| `strip_half(room_id)` | Drops oldest 50% of messages (fallback when summarization fails or is disabled) |
+| `clear_all_messages(room_id)` | Removes all Layer 1 messages (hard reset only) |
 | `clear_pressure_flags(room_id)` | Clears all three flags |
