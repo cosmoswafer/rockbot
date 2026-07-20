@@ -295,8 +295,12 @@ impl MemoryManager {
         extra_context: Option<Vec<ChatMessage>>,
     ) -> Vec<ChatMessage> {
         let limit = max_history.unwrap_or(MAX_CONTEXT_MESSAGES);
-        let mut messages = Vec::new();
-        messages.push(ChatMessage::system(system_prompt));
+        // Single leading system message invariant: all system-role content
+        // (system prompt, soul, knowledge index, leading conversation summary)
+        // is merged into ONE system message at index 0, joined by "\n\n".
+        // Strict chat templates (Qwen3.5/3.6-derived, e.g. Bonsai-27B) reject
+        // any system message at index >= 1 with HTTP 400 — Gitea issue #77.
+        let mut system_parts: Vec<String> = vec![system_prompt.to_string()];
         let mut has_soul = false;
         let mut has_knowledge = false;
 
@@ -312,28 +316,48 @@ impl MemoryManager {
                 } else {
                     soul.content.clone()
                 };
-                messages.push(ChatMessage::system(format!(
+                system_parts.push(format!(
                     "[Core memory — permanent preferences, identity, and facts]\n{}",
                     truncated
-                )));
+                ));
             }
         }
 
         if let Some(knowledge_text) = self.knowledge.get(room_id) {
             if !knowledge_text.is_empty() {
                 has_knowledge = true;
-                messages.push(ChatMessage::system(knowledge_text));
+                system_parts.push(knowledge_text.clone());
             }
         }
 
-        if let Some(room) = self.rooms.get(room_id) {
+        // Absorb leading system messages from history (e.g. the
+        // conversation summary inserted by summarize_room) into the
+        // merged system prefix instead of emitting them separately.
+        let history_start = self.rooms.get(room_id).map(|room| {
             let history = &room.history.messages;
             let start = if history.len() > limit {
                 history.len() - limit
             } else {
                 0
             };
-            let slice = &history[start..];
+            let mut lead_end = start;
+            while lead_end < history.len()
+                && history[lead_end].role == crate::types::Role::System
+            {
+                if let Some(text) = history[lead_end].text_content() {
+                    if !text.is_empty() {
+                        system_parts.push(text.to_string());
+                    }
+                }
+                lead_end += 1;
+            }
+            lead_end
+        });
+
+        let mut messages = vec![ChatMessage::system(system_parts.join("\n\n"))];
+
+        if let (Some(room), Some(start)) = (self.rooms.get(room_id), history_start) {
+            let slice = &room.history.messages[start..];
             // Find the index of the last user message — preserve its images.
             let last_user_idx = slice
                 .iter()
@@ -829,6 +853,81 @@ mod tests {
         let mgr = MemoryManager::new(2000, 60, 30_000_000);
         let ctx = mgr.build_context("nonexistent", "prompt", None, None);
         assert_eq!(ctx.len(), 1);
+    }
+
+    #[test]
+    fn test_build_context_merges_system_content_into_single_message() {
+        // Gitea #77: strict chat templates reject any system message at
+        // index >= 1. Soul + knowledge + prompt must merge into ONE
+        // leading system message.
+        let mut mgr = MemoryManager::new(2000, 60, 30_000_000);
+        let room = mgr.get_or_create("room1", "general", "", false);
+        room.history.append(make_msg(Role::User, "hello"));
+
+        let soul = SoulMemory {
+            room_id: NonEmptyString::try_new("room1".to_string()).unwrap(),
+            content: "- My name is TestBot".into(),
+            updated_at: String::new(),
+        };
+        mgr.set_soul("room1", soul);
+        mgr.set_knowledge("room1", "[Knowledge Index]\n[P1] note — stuff".to_string());
+
+        let ctx = mgr.build_context("room1", "You are helpful", None, None);
+        let system_count = ctx.iter().filter(|m| m.role == Role::System).count();
+        assert_eq!(system_count, 1, "exactly one leading system message expected");
+        assert_eq!(ctx[0].role, Role::System);
+        let text = ctx[0].text_content().unwrap();
+        let p_prompt = text.find("You are helpful").expect("prompt in merged system message");
+        let p_soul = text
+            .find("[Core memory — permanent preferences, identity, and facts]\n- My name is TestBot")
+            .expect("soul block in merged system message");
+        let p_know = text
+            .find("[Knowledge Index]\n[P1] note — stuff")
+            .expect("knowledge block in merged system message");
+        assert!(p_prompt < p_soul && p_soul < p_know, "order: prompt, soul, knowledge");
+        assert_eq!(ctx[1].role, Role::User);
+        assert_eq!(ctx[1].text_content(), Some("hello"));
+    }
+
+    #[test]
+    fn test_build_context_absorbs_leading_summary_message() {
+        // Gitea #77: the conversation summary stored at history[0] by
+        // summarize_room must be absorbed into the single leading system
+        // message, not emitted as a separate system message.
+        let mut mgr = MemoryManager::new(2000, 60, 30_000_000);
+        let room = mgr.get_or_create("room1", "general", "", false);
+        for i in 0..6 {
+            room.history.append(make_msg(Role::User, &format!("msg {}", i)));
+        }
+        mgr.summarize_room(
+            "room1",
+            4,
+            ChatMessage::system("[Conversation Summary — earlier messages compressed]\nstuff happened"),
+        );
+
+        let ctx = mgr.build_context("room1", "You are helpful", None, None);
+        let system_count = ctx.iter().filter(|m| m.role == Role::System).count();
+        assert_eq!(system_count, 1, "summary must merge into the single leading system message");
+        let text = ctx[0].text_content().unwrap();
+        assert!(text.starts_with("You are helpful"));
+        assert!(text.contains("[Conversation Summary — earlier messages compressed]\nstuff happened"));
+        // History continues with the first retained (non-system) message.
+        assert_eq!(ctx[1].role, Role::User);
+        assert_eq!(ctx[1].text_content(), Some("msg 4"));
+        assert_eq!(ctx.len(), 3, "1 merged system + 2 retained history messages");
+    }
+
+    #[test]
+    fn test_build_context_empty_soul_and_knowledge_stay_single_system() {
+        let mut mgr = MemoryManager::new(2000, 60, 30_000_000);
+        let room = mgr.get_or_create("room1", "general", "", false);
+        room.history.append(make_msg(Role::User, "hi"));
+        mgr.set_knowledge("room1", String::new());
+
+        let ctx = mgr.build_context("room1", "prompt", None, None);
+        assert_eq!(ctx.len(), 2);
+        assert_eq!(ctx[0].role, Role::System);
+        assert_eq!(ctx[0].text_content(), Some("prompt"));
     }
 
     #[test]

@@ -38,8 +38,11 @@ No frequency-based or periodic background extraction is planned.
 ### Retrieval
 
 On room initialization (and on each `refresh_knowledge_context` call) the
-harness loads `index.json` from WebDAV and injects a compact **index summary**
-as a single system message. The summary lists every entry's priority,
+harness loads `index.json` from WebDAV and formats a compact **index summary**.
+The summary is merged into the single leading system message emitted by
+`BuildContext` (between the soul block and any conversation summary) — never
+sent as a separate system message, because strict chat templates reject any
+system message not at index 0. The summary lists every entry's priority,
 `display_title`, and `when_useful` — enough metadata for the AI to decide
 whether to recall a full entry. The AI uses the `recall_knowledge` tool to
 fetch individual `.md` bodies on demand when it determines an entry is
@@ -52,7 +55,8 @@ relevant to the current conversation.
 - Downstream: WebDAV crate persists `.md` files and `index.json`
 - Downstream: [AI Provider](ai-provider.md) synthesizes knowledge entries from
   user instructions via `save_knowledge` tool calls
-- Downstream: `BuildContext` receives injected knowledge as system messages
+- Downstream: `BuildContext` merges the knowledge index summary into the
+  single leading system message
 - Downstream: [Knowledge Priority Algorithm](knowledge-priority.md) — static
   priority system (dormant since compression removed; entries stay at P1)
 
@@ -88,9 +92,10 @@ flowchart TD
 
 On each call to `refresh_knowledge_context`, the harness loads the room's
 `index.json` from WebDAV, formats a compact summary (one line per entry:
-priority, title, `when_useful`), and injects it as a single system message.
-No `.md` body files are downloaded during context injection — the AI fetches
-full entries on demand via the `recall_knowledge` tool.
+priority, title, `when_useful`), and hands it to `BuildContext`, which merges
+it into the single leading system message. No `.md` body files are downloaded
+during context injection — the AI fetches full entries on demand via the
+`recall_knowledge` tool.
 
 ```mermaid
 flowchart TD
@@ -105,7 +110,7 @@ flowchart TD
     GET_IDX -->|"GET knowledge/index.json"| DAV
     DAV -->|"index entries"| SUMMARIZE
     SUMMARIZE -->|"[P0] title — when_useful<br/>(one line per entry)"| INJECT
-    INJECT -->|"single system message"| CTX
+    INJECT -->|"merged into single<br/>leading system message"| CTX
 ```
 
 ### 2c. Error Handling
@@ -168,7 +173,8 @@ flowchart TD
 Knowledge retrieval has two distinct paths:
 
 1. **Context injection** (automatic, every turn): loads `index.json`,
-   formats a compact summary, and injects it as a system message. No `.md`
+   formats a compact summary, and merges it into the single leading system
+   message built by `BuildContext`. No `.md`
    bodies are downloaded. The AI sees all entry titles, priorities, and
    `when_useful` descriptions.
 
@@ -184,7 +190,7 @@ flowchart TD
         GET_IDX1["GET index.json"]
         DAV1[(NextCloud WebDAV)]
         FMT[Format Index Summary]
-        SYS[Inject as System Message]
+        SYS[Merge into Single<br/>Leading System Message]
 
         INIT1 --> GET_IDX1
         GET_IDX1 -->|"GET knowledge/index.json"| DAV1
@@ -342,5 +348,6 @@ During `BuildContext` assembly (`MemoryManager::build_context`):
    [P1] db_api — When working with database APIs
    [P1] openai_key — When authenticating with OpenAI
    ```
-3. Inject the summary as a single system message
+3. Merge the summary into the single leading system message (system prompt +
+   soul + knowledge + leading conversation summary, joined by `\n\n`)
 4. The AI calls `recall_knowledge` to fetch full `.md` bodies on demand

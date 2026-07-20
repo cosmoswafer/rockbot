@@ -5,7 +5,7 @@ use crate::config::ProviderConfig;
 use crate::error::{Result, RockBotError};
 use crate::provider::AiProvider;
 use crate::types::{
-    ChatRequest, CompletionResult, FinishReason, ToolCall, UsageInfo,
+    ChatMessage, ChatRequest, CompletionResult, FinishReason, Role, ToolCall, UsageInfo,
 };
 
 const TOOL_DELIMITER_START: &str = "✿FUNCTION✿";
@@ -246,6 +246,31 @@ impl LlamaCppProvider {
     }
 }
 
+/// Merge leading `Role::System` messages into a single system message.
+///
+/// Defense-in-depth for strict Jinja chat templates (Qwen3.5/3.6-derived,
+/// e.g. Bonsai-27B served with `--jinja`) that hard-fail with HTTP 400
+/// "System message must be at the beginning" when any system message appears
+/// at an index >= 1 — Gitea issue #77. `build_context` already emits a single
+/// merged system message; this coalesce protects every code path regardless
+/// of how the request was assembled.
+pub(crate) fn coalesce_leading_system_messages(messages: &mut Vec<ChatMessage>) {
+    let leading = messages
+        .iter()
+        .take_while(|m| m.role == Role::System)
+        .count();
+    if leading <= 1 {
+        return;
+    }
+    let merged = messages[..leading]
+        .iter()
+        .filter_map(|m| m.text_content())
+        .filter(|t| !t.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    messages.splice(..leading, std::iter::once(ChatMessage::system(merged)));
+}
+
 fn extract_error_message(body: &str) -> String {
     serde_json::from_str::<serde_json::Value>(body)
         .ok()
@@ -266,6 +291,7 @@ fn is_context_length_error(msg: &str) -> bool {
 #[async_trait]
 impl AiProvider for LlamaCppProvider {
     async fn complete(&self, mut request: ChatRequest) -> Result<CompletionResult> {
+        coalesce_leading_system_messages(&mut request.messages);
         for msg in &mut request.messages {
             msg.reasoning_content = None;
         }
@@ -661,6 +687,65 @@ mod tests {
         let provider = test_provider();
         assert_eq!(provider.provider_name(), "llamacpp");
         assert_eq!(provider.model_name(), "local-model");
+    }
+
+    #[test]
+    fn test_coalesce_leading_system_messages_merges() {
+        // Gitea #77: multiple leading system messages must be merged into one.
+        let mut msgs = vec![
+            ChatMessage::system("prompt"),
+            ChatMessage::system("soul"),
+            ChatMessage::system("knowledge"),
+            ChatMessage::user("hi"),
+        ];
+        coalesce_leading_system_messages(&mut msgs);
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].role, crate::types::Role::System);
+        assert_eq!(msgs[0].text_content(), Some("prompt\n\nsoul\n\nknowledge"));
+        assert_eq!(msgs[1].role, crate::types::Role::User);
+        assert_eq!(msgs[1].text_content(), Some("hi"));
+    }
+
+    #[test]
+    fn test_coalesce_leading_system_messages_noop_single() {
+        let mut msgs = vec![ChatMessage::system("prompt"), ChatMessage::user("hi")];
+        coalesce_leading_system_messages(&mut msgs);
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].text_content(), Some("prompt"));
+    }
+
+    #[test]
+    fn test_coalesce_leading_system_messages_noop_no_system() {
+        let mut msgs = vec![ChatMessage::user("hi")];
+        coalesce_leading_system_messages(&mut msgs);
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].role, crate::types::Role::User);
+    }
+
+    #[test]
+    fn test_coalesce_leading_system_messages_only_leading_run() {
+        // Only the leading run of system messages is merged.
+        let mut msgs = vec![
+            ChatMessage::system("a"),
+            ChatMessage::system("b"),
+            ChatMessage::user("hi"),
+        ];
+        coalesce_leading_system_messages(&mut msgs);
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].text_content(), Some("a\n\nb"));
+        assert_eq!(msgs[1].text_content(), Some("hi"));
+    }
+
+    #[test]
+    fn test_coalesce_leading_system_messages_skips_empty() {
+        let mut msgs = vec![
+            ChatMessage::system(""),
+            ChatMessage::system("prompt"),
+            ChatMessage::user("hi"),
+        ];
+        coalesce_leading_system_messages(&mut msgs);
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].text_content(), Some("prompt"));
     }
 
     #[test]

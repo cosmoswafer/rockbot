@@ -51,6 +51,14 @@ with `OpenRouterProvider`. Key differences:
   request body (the loaded GGUF determines the model).
 - **No retry on 429**: local servers do not rate-limit. Network errors
   (connection refused, timeout) are returned immediately as `ServerError`.
+- **Leading system messages coalesced**: before serializing the request body,
+  all leading `Role::System` messages are merged into a single system message
+  (joined by `\n\n`). Defense-in-depth for strict Jinja chat templates (e.g.
+  Qwen3.5/3.6-derived templates used by Bonsai-27B, run with `--jinja`) that
+  hard-fail with HTTP 400 *"System message must be at the beginning"* when any
+  system message appears at an index ≥ 1 — see Gitea issue #77. `BuildContext`
+  already emits a single merged system message; this coalesce protects every
+  current and future code path regardless of how the context was assembled.
 
 ## 2. Diagram
 

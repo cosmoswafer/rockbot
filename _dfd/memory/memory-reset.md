@@ -294,7 +294,11 @@ factual output. No tools are provided.
 with prefix `[Conversation Summary — earlier messages compressed]` and
 inserted at position 0 of the remaining history. It persists in
 `ConversationHistory` and is saved to `snapshot.json` via the existing dirty
-snapshot mechanism.
+snapshot mechanism. At context-build time, `BuildContext` absorbs this leading
+system message into the single merged leading system message (system prompt +
+soul + knowledge + summary) — it is never sent to the provider as a separate
+system message, because strict chat templates reject any system message not at
+index 0.
 
 **Fallback**: if the LLM call fails (provider error, empty response, no
 compressible text), `strip_half()` drops the oldest 50% of messages without

@@ -2289,6 +2289,100 @@ async fn test_llamacpp_complete_passes_image_through_to_server() {
     assert!(result.tool_calls.is_empty());
 }
 
+// ─── Mock HTTP Tests: LlamaCppProvider system-message coalesce (issue #77) ────
+
+/// Custom matcher asserting the request body carries exactly ONE system
+/// message and that it sits at index 0 (strict chat templates, e.g.
+/// Qwen3.5/3.6-derived Bonsai-27B, reject any system message at index >= 1).
+struct SingleLeadingSystemMessage;
+
+impl Match for SingleLeadingSystemMessage {
+    fn matches(&self, request: &Request) -> bool {
+        let body: serde_json::Value = match serde_json::from_slice(&request.body) {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+        let messages = match body.get("messages").and_then(|m| m.as_array()) {
+            Some(arr) => arr,
+            None => return false,
+        };
+        let system_count = messages
+            .iter()
+            .filter(|m| m.get("role").and_then(|r| r.as_str()) == Some("system"))
+            .count();
+        system_count == 1
+            && messages
+                .first()
+                .and_then(|m| m.get("role"))
+                .and_then(|r| r.as_str())
+                == Some("system")
+    }
+}
+
+/// Gitea #77 happy path: a rockbot-style request (system prompt + soul +
+/// user) must arrive at the llama.cpp server with the leading system
+/// messages coalesced into a single system message at index 0.
+#[tokio::test]
+async fn test_llamacpp_complete_coalesces_leading_system_messages() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .and(SingleLeadingSystemMessage)
+        .and(body_string_contains("You are helpful"))
+        .and(body_string_contains("My name is TestBot"))
+        .and(body_string_contains("hello"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "chatcmpl-local",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "Hi there!"
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": 50,
+                "completion_tokens": 5,
+                "total_tokens": 55
+            }
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let config = ProviderConfig {
+        name: ProviderName::try_new("llamacpp".to_string()).unwrap(),
+        api_key: "".into(),
+        base_url: ConfigUrl::try_new(mock_server.uri()).unwrap(),
+        basecf_url: None,
+        chat_path: Some("/v1/chat/completions".into()),
+        draw_path: None,
+        models: HashMap::new(),
+    };
+    let provider = LlamaCppProvider::new(&config, "local-model").unwrap();
+
+    let request = ChatRequest {
+        model: "local-model".into(),
+        messages: vec![
+            ChatMessage::system("You are helpful"),
+            ChatMessage::system("[Core memory]\n- My name is TestBot"),
+            ChatMessage::user("hello"),
+        ],
+        tools: None,
+        stream: false,
+        temperature: None,
+        max_tokens: None,
+        thinking: None,
+        reasoning_effort: None,
+        tool_choice: None,
+    };
+
+    let result = provider.complete(request).await.unwrap();
+    assert_eq!(result.text, Some("Hi there!".into()));
+    assert_eq!(result.finish, FinishReason::Stop);
+}
+
 // ─── Mock HTTP Tests: Memory Compression Pipeline ─────────────────────────────
 
 use rockbot::harness::AgentHarness;

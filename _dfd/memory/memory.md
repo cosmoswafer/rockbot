@@ -63,13 +63,21 @@ flowchart TD
         L1 -->|"last max_history_size"| HIST_OUT[History Messages]
     end
 
-    SOUL_OUT -->|"1. inject"| BUILD
-    KNOWLEDGE -->|"1.5 inject"| BUILD
+    SOUL_OUT -->|"1. merge"| BUILD
+    KNOWLEDGE -->|"1.5 merge"| BUILD
     HIST_OUT -->|"2. inject"| BUILD
-    BUILD -->|"soul + history"| CONTEXT[Agent Context]
+    BUILD -->|"single leading system msg<br/>+ history"| CONTEXT[Agent Context]
 
     MSG[Incoming Message] -->|"append"| L1
 ```
+
+**Single leading system message invariant**: `BuildContext` emits **exactly
+one** system message at index 0. The system prompt, soul block, knowledge
+index summary, and any leading `Role::System` summary message from history
+(the `[Conversation Summary …]` output of LLM summarization) are merged into
+that single message, joined by `\n\n`. This is required by strict chat
+templates (e.g. Qwen3.5/3.6-derived, used by Bonsai-27B) that reject any
+system message not at index 0 with a 400 error — see Gitea issue #77.
 
 Layer 1 is populated by incoming messages. Layer 2 is populated by the
 [Soul Editing](#2d-happy-flow--soul-editing) tool. The [Persist & Evict
@@ -379,11 +387,13 @@ the agent context in this order (room init additionally restores history
 from snapshot):
 
 ```
-1. soul.md content      (Layer 2 — truncated to max_soul_chars)
-2. chat history         (Layer 1 — last max_history_size messages)
+1. single system message  (merged: system prompt + soul.md content + knowledge index + leading conversation summary, joined by "\n\n")
+2. chat history           (Layer 1 — last max_history_size messages, minus any leading system summary absorbed into 1.)
 ```
 
-Knowledge entries are injected between soul and history (see
+The merge into one leading system message is a hard invariant (strict chat
+templates reject non-leading system messages). Knowledge entries are merged
+into the same system message between soul and summary (see
 [Knowledge Management](knowledge.md)).
 
 ### Reset Lifecycle
