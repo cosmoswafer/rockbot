@@ -31,6 +31,8 @@ pub struct AppConfig {
     pub webdav: Option<WebDavConfig>,
     #[serde(default)]
     pub agent: AgentConfig,
+    #[serde(default)]
+    pub acp: Option<AcpConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -40,6 +42,70 @@ pub struct AgentConfig {
 impl Default for AgentConfig {
     fn default() -> Self {
         Self {}
+    }
+}
+
+/// `[acp]` section — ACP (Agent Client Protocol) integration.
+/// See `_dfd/tools/acp-delegate.md` (`AcpConfig` data structure).
+#[derive(Debug, Clone, Deserialize, Validate)]
+pub struct AcpConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    /// Executable on PATH or absolute path. Must be non-empty when `enabled = true`
+    /// (cross-field rule enforced by `validate_app_config`).
+    #[serde(default)]
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Extra environment variables for the child process. These are the ONLY
+    /// variables passed besides `PATH`/`HOME` passthrough — the child never
+    /// blanket-inherits rockbot's environment (secrets stay out of the agent).
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+    /// Child process working directory.
+    #[serde(default = "default_acp_cwd")]
+    pub cwd: String,
+    /// `cwd` sent in `session/new` — the agent's workspace.
+    #[serde(default = "default_acp_cwd")]
+    pub session_cwd: String,
+    /// Per-prompt timeout; triggers `session/cancel` on expiry.
+    #[serde(default = "default_acp_timeout_secs")]
+    #[validate(minimum = 10)]
+    #[validate(maximum = 3600)]
+    pub timeout_secs: u64,
+    /// How to answer `session/request_permission` (default: deny).
+    #[serde(default)]
+    pub auto_approve_permissions: bool,
+    /// Cap on aggregated agent output (protects the LLM context window).
+    #[serde(default = "default_acp_max_response_chars")]
+    pub max_response_chars: BoundedUsize,
+}
+
+fn default_acp_cwd() -> String {
+    ".".into()
+}
+
+fn default_acp_timeout_secs() -> u64 {
+    300
+}
+
+fn default_acp_max_response_chars() -> BoundedUsize {
+    BoundedUsize::try_new(20000).expect("hardcoded default")
+}
+
+impl Default for AcpConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            command: String::new(),
+            args: Vec::new(),
+            env: HashMap::new(),
+            cwd: default_acp_cwd(),
+            session_cwd: default_acp_cwd(),
+            timeout_secs: default_acp_timeout_secs(),
+            auto_approve_permissions: false,
+            max_response_chars: default_acp_max_response_chars(),
+        }
     }
 }
 
@@ -451,6 +517,7 @@ impl Default for AppConfig {
             search: SearchConfig::default(),
             webdav: None,
             agent: AgentConfig::default(),
+            acp: None,
         }
     }
 }
@@ -488,6 +555,11 @@ impl AppConfig {
                     crate::error::RockBotError::Config(format!("matrix server config validation: {e}"))
                 })?;
             }
+        }
+        if let Some(ref acp) = config.acp {
+            acp.validate().map_err(|e| {
+                crate::error::RockBotError::Config(format!("acp config validation: {e}"))
+            })?;
         }
         <Self as ValidatorValidate>::validate(&config).map_err(|e| {
             crate::error::RockBotError::Config(format!("config validation: {e}"))
@@ -607,6 +679,14 @@ fn validate_app_config(config: &AppConfig) -> Result<(), validator::ValidationEr
         }
     }
 
+    if let Some(ref acp) = config.acp {
+        if acp.enabled && acp.command.trim().is_empty() {
+            let mut err = validator::ValidationError::new("acp_command_missing");
+            err.message = Some("[acp] command must be non-empty when enabled = true".into());
+            return Err(err);
+        }
+    }
+
     Ok(())
 }
 
@@ -707,5 +787,131 @@ default_model = "gpt"
         let active = config.active_model();
         assert_eq!(active.default_provider.as_str(), "openrouter");
         assert_eq!(active.default_model, "gpt");
+    }
+
+    // ─── ACP config tests ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_acp_absent_by_default() {
+        let toml_str = make_base_config() + r#"
+[model]
+default_provider = "openrouter"
+default_model = "gpt"
+"#;
+        let config = AppConfig::from_toml(&toml_str).unwrap();
+        assert!(config.acp.is_none());
+    }
+
+    #[test]
+    fn test_acp_disabled_parses_without_command() {
+        let toml_str = make_base_config() + r#"
+[acp]
+enabled = false
+"#;
+        let config = AppConfig::from_toml(&toml_str).unwrap();
+        let acp = config.acp.as_ref().unwrap();
+        assert!(!acp.enabled);
+        assert!(acp.command.is_empty());
+        // Cross-field rule must not fire when disabled.
+        <AppConfig as ValidatorValidate>::validate(&config).unwrap();
+    }
+
+    #[test]
+    fn test_acp_enabled_with_empty_command_fails_validation() {
+        let toml_str = make_base_config() + r#"
+[acp]
+enabled = true
+"#;
+        let config = AppConfig::from_toml(&toml_str).unwrap();
+        let err = <AppConfig as ValidatorValidate>::validate(&config).unwrap_err();
+        assert!(
+            err.to_string().contains("command must be non-empty when enabled = true"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_acp_enabled_with_blank_command_fails_validation() {
+        let toml_str = make_base_config() + r#"
+[acp]
+enabled = true
+command = "   "
+"#;
+        let config = AppConfig::from_toml(&toml_str).unwrap();
+        let err = <AppConfig as ValidatorValidate>::validate(&config).unwrap_err();
+        assert!(
+            err.to_string().contains("command must be non-empty when enabled = true"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_acp_enabled_with_command_passes_validation() {
+        let toml_str = make_base_config() + r#"
+[acp]
+enabled = true
+command = "deno"
+args = ["x", "opencode-ai", "acp"]
+session_cwd = "/tmp/work"
+timeout_secs = 120
+auto_approve_permissions = true
+max_response_chars = 5000
+
+[acp.env]
+FOO = "bar"
+"#;
+        let config = AppConfig::from_toml(&toml_str).unwrap();
+        let acp = config.acp.as_ref().unwrap();
+        assert!(acp.enabled);
+        assert_eq!(acp.command, "deno");
+        assert_eq!(acp.args, vec!["x", "opencode-ai", "acp"]);
+        assert_eq!(acp.env.get("FOO").unwrap(), "bar");
+        assert_eq!(acp.cwd, ".");
+        assert_eq!(acp.session_cwd, "/tmp/work");
+        assert_eq!(acp.timeout_secs, 120);
+        assert!(acp.auto_approve_permissions);
+        assert_eq!(acp.max_response_chars.as_usize(), 5000);
+        <AppConfig as ValidatorValidate>::validate(&config).unwrap();
+        acp.validate().unwrap();
+    }
+
+    #[test]
+    fn test_acp_defaults_applied() {
+        let toml_str = make_base_config() + r#"
+[acp]
+enabled = true
+command = "codex-acp"
+"#;
+        let config = AppConfig::from_toml(&toml_str).unwrap();
+        let acp = config.acp.as_ref().unwrap();
+        assert_eq!(acp.args, Vec::<String>::new());
+        assert!(acp.env.is_empty());
+        assert_eq!(acp.cwd, ".");
+        assert_eq!(acp.session_cwd, ".");
+        assert_eq!(acp.timeout_secs, 300);
+        assert!(!acp.auto_approve_permissions);
+        assert_eq!(acp.max_response_chars.as_usize(), 20000);
+        acp.validate().unwrap();
+    }
+
+    #[test]
+    fn test_acp_timeout_out_of_bounds_fails_field_validation() {
+        let toml_str = make_base_config() + r#"
+[acp]
+enabled = true
+command = "codex-acp"
+timeout_secs = 5
+"#;
+        let config = AppConfig::from_toml(&toml_str).unwrap();
+        assert!(config.acp.as_ref().unwrap().validate().is_err());
+
+        let toml_str = make_base_config() + r#"
+[acp]
+enabled = true
+command = "codex-acp"
+timeout_secs = 3601
+"#;
+        let config = AppConfig::from_toml(&toml_str).unwrap();
+        assert!(config.acp.as_ref().unwrap().validate().is_err());
     }
 }

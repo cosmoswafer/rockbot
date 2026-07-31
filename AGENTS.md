@@ -58,7 +58,7 @@ No CI, no `rustfmt.toml`, no `clippy.toml`, no `rust-toolchain` file.
 - `rocketchat` crate has both `lib.rs` (public API) and `main.rs` (debug binary — connects to RocketChat and logs events, no bot logic).
 - `rockbot` crate uses `async-trait` for the `AiProvider` trait (implementations: OpenRouter, DeepSeek, llama.cpp, Fal) and the `MessagingClient` trait (implementations: `RocketChatPlatform`, `MatrixPlatform`). Wiremock is available for mock HTTP testing.
 - Exa API key: reads from `[tools.exa]` config section first, then falls back to `EXA_API_KEY` env var.
-- Tools registered conditionally: `WebDavTool` and `ImageGenTool` only if WebDAV is configured; `ImageGenTool` also requires an `image_provider` entry (uses `FalAiProvider` internally regardless of provider name).
+- Tools registered conditionally: `WebDavTool` and `ImageGenTool` only if WebDAV is configured; `ImageGenTool` also requires an `image_provider` entry (uses `FalAiProvider` internally regardless of provider name). `AcpTool` (`acp_delegate`) only when `[acp] enabled = true` — the ACP agent subprocess (`deno x opencode-ai acp`, `codex-acp`, …) spawns lazily on first tool call via `agent-client-protocol` v2 SDK over stdio; all SDK usage is encapsulated in `acp.rs`.
 - Main loop: exponential backoff reconnect (2^attempt seconds, max 5 retries, then exits).
 - `webdav` crate uses `quick-xml` and `base64` for WebDAV XML parsing and auth.
 
@@ -137,6 +137,7 @@ to make data flow violations compile-time errors rather than runtime surprises:
 | `_dfd/tools/image-gen.md` | `tools/image_gen.rs` | `provider/fal.rs`, webdav crate |
 | `_dfd/tools/vision.md` | `tools/vision.rs` | — |
 | `_dfd/tools/edit-soul.md` | `tools/edit_soul.rs` | `memory.rs`, webdav crate |
+| `_dfd/tools/acp-delegate.md` | `tools/acp.rs` | `acp.rs`, `config.rs` |
 | `_dfd/tools/knowledge.md` | `tools/save_knowledge.rs`, `tools/forget_knowledge.rs`, `tools/recall_knowledge.rs` | `knowledge.rs`, webdav crate |
 
 ## Gitea issue investigation

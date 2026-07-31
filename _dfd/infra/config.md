@@ -69,6 +69,7 @@ flowchart TD
 | `webdav`     | `Option<WebDavConfig>`       | NextCloud WebDAV endpoint and credentials      |
 | `tools`      | `HashMap<String, ToolServiceConfig>`| Tool-specific API keys (generic map)     |
 | `search`     | `SearchConfig`               | Web search provider selection + API keys       |
+| `acp`        | `Option<AcpConfig>`          | ACP agent integration — see [ACP Delegate](../tools/acp-delegate.md) §3 for the canonical `AcpConfig` table |
 
 #### `PlatformConfig`
 
@@ -215,8 +216,9 @@ flowchart TD
 >   `KnowledgeIndex`, `IndexEntry`, and `MatrixServerConfig`.
 > - [`validator`](https://crates.io/crates/validator) — business-logic cross-field validation.
 >   Used on `AppConfig` via a `#[validate(schema)]` function that verifies `default_provider`
->   references exist in `[[chat_providers]]` and `[[image_providers]]`, and that the active
->   platform's server section has non-empty credentials.
+>   references exist in `[[chat_providers]]` and `[[image_providers]]`, that the active
+>   platform's server section has non-empty credentials, and that `[acp] command` is
+>   non-empty when `[acp] enabled = true`.
 >
 > Defined in `crate-rockbot/src/validated.rs` (rockbot types) and
 > `crate-webdav/src/validated.rs` + `crate-webdav/src/types.rs` (WebDAV types).

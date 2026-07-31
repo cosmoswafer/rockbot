@@ -143,4 +143,22 @@ api_key = ""
 [search.brave]
 api_key = ""
 
+# ACP (Agent Client Protocol) integration — delegate tasks to an external ACP
+# agent spawned as a subprocess over stdio. Disabled by default.
+# See _dfd/tools/acp-delegate.md.
+[acp]
+enabled = false
+
+# rockbot starts the ACP agent itself as a subprocess over stdio
+# (the protocol's standard transport). `command` is required when enabled.
+command = ""                 # executable on PATH or absolute path
+args = []                    # argv passed to the agent
+env = { }                    # the ONLY env vars passed to the child (besides PATH/HOME)
+cwd = "."                    # child process working directory
+
+session_cwd = "."            # cwd passed to session/new (agent's workspace)
+timeout_secs = 300           # per-prompt timeout; triggers session/cancel on expiry (10..=3600)
+auto_approve_permissions = false  # how to answer session/request_permission
+max_response_chars = 20000   # cap aggregated agent output (protect context window)
+
 

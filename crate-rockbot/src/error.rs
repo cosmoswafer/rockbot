@@ -61,6 +61,12 @@ pub enum RockBotError {
 
     #[error("Connection timed out after {0}s")]
     ConnectionTimedOut(u64),
+
+    #[error("ACP error: {0}")]
+    Acp(String),
+
+    #[error("ACP transport closed (agent subprocess ended): {0}")]
+    AcpTransportClosed(String),
 }
 
 pub type Result<T> = std::result::Result<T, RockBotError>;

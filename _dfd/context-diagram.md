@@ -23,6 +23,7 @@ flowchart LR
     SearchWeb[Search Web API]
     WebPage[Web Page]
     ImageGen[Image Generation<br/>OpenRouter / fal.ai]
+    AcpAgent[ACP Agent<br/>spawned subprocess]
     Bot(("RockBot"))
 
     RocketChat -.->|"incoming message event<br/>(if platform = rocketchat)"| Bot
@@ -47,8 +48,12 @@ flowchart LR
     ImageGen -->|"image bytes"| Bot
     Bot -->|"upload + create share"| NextCloud
     NextCloud -->|"share URL"| Bot
+
+    Bot -.->|"task prompt<br/>(stdio JSON-RPC, if acp.enabled)"| AcpAgent
+    AcpAgent -.->|"session updates + result"| Bot
 ```
 
 Only one of RocketChat / Matrix is connected per process. The inactive
 platform's edges are dashed to indicate they are configuration-selected,
-not simultaneously active.
+not simultaneously active. The ACP agent edges are dashed because the
+integration is optional (`[acp] enabled = false` by default).

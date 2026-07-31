@@ -1338,6 +1338,7 @@ fn make_test_config(webdav_url: &str) -> rockbot::config::AppConfig {
         search: Default::default(),
         webdav: Some(webdav_cfg),
         agent: Default::default(),
+        acp: None,
     }
 }
 

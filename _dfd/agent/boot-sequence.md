@@ -90,6 +90,8 @@ Tools registered unconditionally:
 
 Tools registered conditionally on config:
 - `WebSearchTool` (requires configured search provider in `[search]` section)
+- `AcpTool` (`acp_delegate`) (requires `[acp] enabled = true` — the agent
+  subprocess spawns lazily on first tool call, never at boot)
 
 Tools registered when WebDAV is configured:
 - `WebDavTool`, `EditSoulTool`, `SaveKnowledgeTool`,

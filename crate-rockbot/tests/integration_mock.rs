@@ -2511,6 +2511,7 @@ mod summarization_tests {
             search: Default::default(),
             webdav: None,
             agent: Default::default(),
+            acp: None,
         }
     }
 
@@ -2803,6 +2804,7 @@ dav_path = "remote.php/dav"
             search: Default::default(),
             webdav: webdav_cfg,
             agent: Default::default(),
+            acp: None,
         }
     }
 

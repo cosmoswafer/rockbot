@@ -10,13 +10,14 @@ use tracing_subscriber::Layer;
 
 use rockbot::config::AppConfig;
 use rockbot::error::RockBotError;
+use rockbot::acp::AcpClient;
 use rockbot::harness::AgentHarness;
 use rockbot::image_cache::ImageCache;
 use rockbot::provider::{AiProvider, DeepSeekProvider, FalAiProvider, ImageProvider, LlamaCppProvider, OpenRouterImageProvider, OpenRouterProvider};
 use rockbot::platform::{MatrixPlatform, MessagingClient, PlatformSender, RcPlatformSender, RocketChatPlatform};
 use rockbot::tool::ToolRegistry;
 use rockbot::tools::{
-    BraveSearchProvider, CalendarTool, ResetMemoryTool, EditSoulTool, ExaSearchProvider,
+    AcpTool, BraveSearchProvider, CalendarTool, ResetMemoryTool, EditSoulTool, ExaSearchProvider,
     ForgetKnowledgeTool, ImageGenTool, RecallKnowledgeTool, SaveKnowledgeTool, SearchProvider,
     VisionTool, WebDavTool, WebFetchTool, WebSearchTool,
 };
@@ -127,6 +128,7 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let webdav_config_for_calendar = config.webdav.clone();
+    let acp_config = config.acp.clone();
 
     let exa_key = config.search_api_key();
     let brave_key = config.brave_api_key();
@@ -215,6 +217,26 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     tool_registry.register(Box::new(VisionTool::with_max_bytes(
         harness.config().active_model().max_attachment_bytes,
     )));
+
+    // ACP integration — agent subprocess spawns lazily on first tool call, so
+    // a missing agent binary never blocks bot startup.
+    let acp_client: Option<Arc<AcpClient>> = match &acp_config {
+        Some(acp_cfg) if acp_cfg.enabled => {
+            let client = Arc::new(AcpClient::new(acp_cfg.clone()));
+            tool_registry.register(Box::new(AcpTool::new(client.clone())));
+            info!(
+                "ACP integration enabled — acp_delegate registered (agent '{}' spawns on first use)",
+                acp_cfg.command
+            );
+            Some(client)
+        }
+        Some(_) => {
+            info!("ACP integration disabled ([acp] enabled = false)");
+            None
+        }
+        None => None,
+    };
+
     if let Some(ref webdav_client) = webdav {
         tool_registry.register(Box::new(WebDavTool::new(webdav_client.clone())));
         tool_registry.register(Box::new(EditSoulTool::new(webdav_client.clone())));
@@ -644,6 +666,9 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
             _ = &mut shutdown => {
                 info!("Received shutdown signal, flushing snapshots...");
                 timer_handle.abort();
+                if let Some(ref client) = acp_client {
+                    client.shutdown().await;
+                }
                 let mut h = harness.lock().await;
                 h.flush_all_snapshots().await;
                 info!("Graceful shutdown complete");
@@ -655,6 +680,9 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
             Ok(()) => {
                 info!("Connection closed normally");
                 timer_handle.abort();
+                if let Some(ref client) = acp_client {
+                    client.shutdown().await;
+                }
                 let mut h = harness.lock().await;
                 h.flush_all_snapshots().await;
                 break;

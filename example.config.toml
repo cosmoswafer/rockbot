@@ -31,4 +31,15 @@ provider = "exa"
 [search.exa]
 api_key = "EDITME"
 
+# Optional: delegate tasks to an external ACP agent (e.g. opencode) spawned as
+# a subprocess. Disabled by default; `command` required when enabled.
+# [acp]
+# enabled = true
+# command = "deno"
+# args = ["x", "opencode-ai", "acp"]
+# session_cwd = "/path/to/agent-workspace"
+# timeout_secs = 300
+# auto_approve_permissions = false
+# max_response_chars = 20000
+
 

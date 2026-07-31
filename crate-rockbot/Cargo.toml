@@ -26,6 +26,8 @@ url = "2"
 serde_valid = "0.18"
 validator = { version = "0.20", features = ["derive"] }
 matrix-sdk = { version = "0.18", default-features = false, features = ["markdown", "bundled-sqlite"] }
+agent-client-protocol = "2"
+tokio-util = { version = "0.7", features = ["compat"] }
 
 [dev-dependencies]
 tokio-test = "0.4"

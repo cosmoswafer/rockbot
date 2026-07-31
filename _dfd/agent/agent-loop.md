@@ -413,6 +413,10 @@ state to WebDAV before exiting.
 - **No tool touches local files**: Every tool (web_fetch, webdav, calendar,
   vision, web_search, image_gen, edit_soul, knowledge tools) MUST NOT access the
   local filesystem. All I/O goes through WebDAV or HTTP.
+  Exception: `acp_delegate` spawns an external ACP agent subprocess that
+  operates in its own configured workspace (`[acp] session_cwd`) — the tool
+  itself performs no rockbot-side filesystem I/O; the subprocess is an
+  external program, not rockbot code.
 - **Config-only startup**: The application only loads `config.toml` (with
   embedded Rust defaults) on startup. No other local files are read or created.
 - **Avatar from URL only**: Avatar changes use the `users.setAvatar` REST API

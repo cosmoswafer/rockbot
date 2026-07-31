@@ -1,5 +1,6 @@
 pub mod config;
 pub mod error;
+pub mod acp;
 pub mod harness;
 pub mod image_cache;
 pub mod knowledge;
@@ -14,6 +15,7 @@ pub mod validated;
 
 pub use config::{AppConfig, MatrixServerConfig, MatrixSection, PlatformConfig, ProviderConfig};
 pub use error::{Result, RockBotError};
+pub use acp::{AcpClient, AcpPromptResult};
 pub use harness::AgentHarness;
 pub use image_cache::{GeneratedImage, ImageCache, image_markdown};
 pub use memory::{ConversationHistory, MemoryManager, RoomState};
