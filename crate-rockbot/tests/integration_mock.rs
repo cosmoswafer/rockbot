@@ -3,7 +3,7 @@ use rockbot::error::RockBotError;
 use rockbot::validated::{ConfigUrl, NonEmptyString, ProviderName};
     use rockbot::provider::{AiProvider, DeepSeekProvider, FalAiProvider, ImageProvider, LlamaCppProvider, OpenRouterImageProvider, OpenRouterProvider};
     use rockbot::tool::Tool;
-    use rockbot::types::{ChatMessage, ChatRequest, FinishReason, ImageGenParams, ThinkingConfig, ToolDef};
+    use rockbot::types::{ChatMessage, ChatRequest, FinishReason, ImageGenParams, ThinkingConfig, ToolCall, ToolDef};
     use std::collections::HashMap;
     use std::sync::Arc;
 use wiremock::matchers::{body_string_contains, header, method, path};
@@ -140,6 +140,158 @@ async fn test_complete_with_tool_calls() {
     assert_eq!(result.finish, FinishReason::ToolUse);
     assert_eq!(result.tool_calls.len(), 1);
     assert_eq!(result.tool_calls[0].function.name, "get_weather");
+}
+
+/// Gitea #80 — request-side: malformed tool call arguments in history are
+/// repaired (string-aware) before the request reaches the provider.
+#[tokio::test]
+async fn test_deepseek_repairs_truncated_history_tool_args_before_send() {
+    let mock_server = MockServer::start().await;
+
+    // Matcher: the request body must contain a REPAIRED arguments document —
+    // parseable, with the truncated string closed and the object balanced.
+    struct RepairedToolArgsMatcher;
+    #[async_trait::async_trait]
+    impl Match for RepairedToolArgsMatcher {
+        fn matches(&self, request: &Request) -> bool {
+            let body: serde_json::Value = match serde_json::from_slice(&request.body) {
+                Ok(v) => v,
+                Err(_) => return false,
+            };
+            let Some(args) = body
+                .get("messages")
+                .and_then(|m| m.as_array())
+                .and_then(|arr| {
+                    arr.iter().find(|m| {
+                        m.get("tool_calls").and_then(|t| t.as_array()).is_some()
+                    })
+                })
+                .and_then(|m| {
+                    m.get("tool_calls")
+                        .and_then(|t| t.as_array())
+                        .and_then(|arr| arr.first())
+                })
+                .and_then(|tc| tc.get("function"))
+                .and_then(|f| f.get("arguments"))
+                .and_then(|a| a.as_str())
+            else {
+                return false;
+            };
+            serde_json::from_str::<serde_json::Value>(args).is_ok()
+                && args.contains("FHIR report")
+                && args.ends_with('}')
+        }
+    }
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(RepairedToolArgsMatcher)
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "choices": [{
+                "index": 0,
+                "message": { "role": "assistant", "content": "done" },
+                "finish_reason": "stop"
+            }]
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let config = ProviderConfig {
+        name: ProviderName::try_new("deepseek".to_string()).unwrap(),
+        api_key: "sk-key".into(),
+        base_url: ConfigUrl::try_new(mock_server.uri()).unwrap(),
+        basecf_url: None,
+        chat_path: Some("/chat/completions".into()),
+        draw_path: None,
+        models: HashMap::new(),
+    };
+    let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();
+
+    // History contains a truncated 11K-char-style report argument (missing
+    // closing quote, embedded JSON braces).
+    let truncated = r#"{"content":"FHIR report
+```json
+{\"resourceType\": \"Patient\", \"id\": \"1\"}
+```
+more text"#;
+    let request = ChatRequest {
+        model: "deepseek-v4-pro".into(),
+        messages: vec![ChatMessage::assistant_with_tool_calls(
+            "",
+            vec![ToolCall::new("call_001", "save_knowledge", truncated.to_string())],
+            None,
+        )],
+        tools: None,
+        stream: false,
+        temperature: None,
+        max_tokens: None,
+        thinking: None,
+        reasoning_effort: None,
+        tool_choice: None,
+    };
+
+    let result = provider.complete(request).await.unwrap();
+    assert_eq!(result.text, Some("done".into()));
+}
+
+/// Gitea #80 — response-side: truncated tool call arguments in the provider
+/// response are repaired before entering conversation history.
+#[tokio::test]
+async fn test_deepseek_response_truncated_tool_args_repaired() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_truncated",
+                        "type": "function",
+                        "function": {
+                            "name": "save_knowledge",
+                            "arguments": "{\"content\":\"FHIR report truncated mid-..."
+                        }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let config = ProviderConfig {
+        name: ProviderName::try_new("deepseek".to_string()).unwrap(),
+        api_key: "sk-key".into(),
+        base_url: ConfigUrl::try_new(mock_server.uri()).unwrap(),
+        basecf_url: None,
+        chat_path: Some("/chat/completions".into()),
+        draw_path: None,
+        models: HashMap::new(),
+    };
+    let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();
+
+    let request = ChatRequest {
+        model: "deepseek-v4-pro".into(),
+        messages: vec![ChatMessage::user("Write a report")],
+        tools: None,
+        stream: false,
+        temperature: None,
+        max_tokens: None,
+        thinking: None,
+        reasoning_effort: None,
+        tool_choice: None,
+    };
+
+    let result = provider.complete(request).await.unwrap();
+    assert_eq!(result.tool_calls.len(), 1);
+    let args = &result.tool_calls[0].function.arguments;
+    serde_json::from_str::<serde_json::Value>(args)
+        .expect("repaired response args must parse");
+    assert!(args.contains("FHIR report truncated mid-"));
 }
 
 #[tokio::test]
@@ -3060,5 +3212,294 @@ async fn test_llamacpp_401_maps_to_auth_failed() {
 
     let err = provider.complete(request).await.unwrap_err();
     assert!(matches!(err, RockBotError::AuthFailed(_)), "expected AuthFailed, got {err:?}");
+}
+
+// ─── Gitea #80 — Tool-Call JSON Parse Error Recovery ────────────────────────
+//
+// _dfd/agent/agent-harness.md §2k — the provider rejects a request because a
+// tool call `arguments` JSON document failed to parse (e.g. an 11K-char
+// truncated report argument — `[json.exception.parse_error.101] ... invalid
+// string: missing closing quote`). The harness must repair tool call args in
+// history and retry once before falling back to the error reply.
+
+#[cfg(test)]
+mod tool_call_parse_recovery_tests {
+    use super::*;
+    use rockbot::config::{ImageModelConfig, ModelConfig, RocketChatSection, ServerConfig};
+    use rockbot::harness::AgentHarness;
+    use rockbot::image_cache::ImageCache;
+    use rockbot::types::{CompletionResult, ToolCall};
+    use rockbot::validated::BoundedUsize;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    const NLOHMANN_PARSE_ERROR: &str = "Failed to parse tool call arguments as JSON:\n\
+        [json.exception.parse_error.101] parse error at line 1, column 11057:\n\
+        syntax error while parsing value - invalid string: missing closing quote";
+
+    fn make_recovery_test_config() -> rockbot::config::AppConfig {
+        rockbot::config::AppConfig {
+            platform: Default::default(),
+            rocketchat: RocketChatSection {
+                server: ServerConfig {
+                    url: "test.example.com".into(),
+                    username: "bot".into(),
+                    password: "secret".into(),
+                    debug: false,
+                },
+                model: None,
+            },
+            matrix: None,
+            model: ModelConfig {
+                default_provider: ProviderName::try_new("mock".to_string()).unwrap(),
+                default_model: "mock-model".into(),
+                max_iterations: 5,
+                max_soul_chars: BoundedUsize::try_new(5000).unwrap(),
+                persist_interval_secs: 60,
+                memory_ttl_secs: 86400,
+                max_context_bytes: BoundedUsize::try_new(4194304).unwrap(),
+                max_attachment_bytes: 20971520,
+                model_context_length: 1_000_000,
+                summarization_enabled: false,
+                summarization_ratio: 0.6,
+                summarization_target_tokens: 1024,
+            },
+            chat_providers: vec![ProviderConfig {
+                name: ProviderName::try_new("mock".to_string()).unwrap(),
+                api_key: "sk-test".into(),
+                base_url: ConfigUrl::try_new("https://mock.ai/v1".to_string()).unwrap(),
+                basecf_url: None,
+                chat_path: Some("/chat/completions".into()),
+                draw_path: None,
+                models: HashMap::new(),
+            }],
+            image_providers: vec![],
+            image_model: ImageModelConfig {
+                default_provider: ProviderName::try_new("mock".to_string()).unwrap(),
+                default_text_model: "mock-img".into(),
+                default_edit_model: "mock-img-edit".into(),
+                default_quality: "standard".into(),
+                default_output_format: "png".into(),
+                default_num_images: 1,
+                default_image_size: "1024x1024".into(),
+                default_image_size_tier: "1K".into(),
+                default_enable_safety_checker: false,
+            },
+            tools: HashMap::new(),
+            search: Default::default(),
+            webdav: None,
+            agent: Default::default(),
+            acp: None,
+        }
+    }
+
+    /// Fails with the nlohmann tool-call parse error on the first call, then
+    /// succeeds. Records every received request for assertions.
+    struct ParseErrorThenSuccessMock {
+        requests: Arc<Mutex<Vec<ChatRequest>>>,
+        calls: AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl AiProvider for ParseErrorThenSuccessMock {
+        async fn complete(
+            &self,
+            request: ChatRequest,
+        ) -> Result<CompletionResult, RockBotError> {
+            self.requests.lock().unwrap().push(request.clone());
+            let n = self.calls.fetch_add(1, Ordering::SeqCst);
+            if n == 0 {
+                Err(RockBotError::ServerError {
+                    status: 500,
+                    body: NLOHMANN_PARSE_ERROR.to_string(),
+                })
+            } else {
+                Ok(CompletionResult {
+                    text: Some("Recovered reply".into()),
+                    tool_calls: vec![],
+                    finish: FinishReason::Stop,
+                    reasoning_content: None,
+                    usage: None,
+                })
+            }
+        }
+
+        fn provider_name(&self) -> &str {
+            "recovery-mock"
+        }
+
+        fn model_name(&self) -> &str {
+            "recovery-model"
+        }
+    }
+
+    /// Fails with the nlohmann tool-call parse error on every call.
+    struct AlwaysParseErrorMock {
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl AiProvider for AlwaysParseErrorMock {
+        async fn complete(&self, _request: ChatRequest) -> Result<CompletionResult, RockBotError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Err(RockBotError::ServerError {
+                status: 500,
+                body: NLOHMANN_PARSE_ERROR.to_string(),
+            })
+        }
+
+        fn provider_name(&self) -> &str {
+            "always-parse-error"
+        }
+
+        fn model_name(&self) -> &str {
+            "always-parse-error-model"
+        }
+    }
+
+    /// Happy path (§2k): the provider's tool-call parse error 500 triggers a
+    /// history repair + one retry; the retry succeeds and the user receives
+    /// the normal reply. Seeded malformed history args are repaired.
+    #[tokio::test]
+    async fn test_tool_call_parse_error_recovers_and_retries() {
+        let image_cache = Arc::new(ImageCache::new());
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let provider = Box::new(ParseErrorThenSuccessMock {
+            requests: requests.clone(),
+            calls: AtomicUsize::new(0),
+        });
+        let mut harness = AgentHarness::new(
+            make_recovery_test_config(),
+            provider,
+            None,
+            image_cache,
+            "@testbot",
+        );
+
+        // Seed history with a truncated tool call argument (the 11K-char
+        // report scenario) — the recovery path must repair it in place.
+        {
+            let room = harness
+                .memory_mut()
+                .get_or_create("room1", "general", "", false);
+            room.history.append(ChatMessage::assistant_with_tool_calls(
+                "",
+                vec![ToolCall::new(
+                    "call_001",
+                    "save_knowledge",
+                    r#"{"content":"FHIR implementation report truncated mid-..."#.to_string(),
+                )],
+                None,
+            ));
+        }
+
+        let reply = harness
+            .process_message("room1", "general", "General", false, "user", "hi", &[], &[])
+            .await
+            .unwrap();
+
+        assert_eq!(reply.as_deref(), Some("Recovered reply"));
+
+        let reqs = requests.lock().unwrap();
+        assert_eq!(
+            reqs.len(),
+            2,
+            "provider should be called exactly twice (original + recovery retry)"
+        );
+
+        // The malformed args in history were repaired by the recovery path.
+        let room = harness.memory().get("room1").unwrap();
+        let repaired = room
+            .history
+            .messages
+            .iter()
+            .filter_map(|m| m.tool_calls.as_ref())
+            .flatten()
+            .find(|tc| tc.id == "call_001")
+            .expect("seeded tool call still present");
+        serde_json::from_str::<serde_json::Value>(&repaired.function.arguments)
+            .expect("history tool call args must be parseable after repair");
+        assert!(repaired.function.arguments.contains("FHIR implementation report"));
+    }
+
+    /// Non-parse provider errors are NOT recovered — single call, immediate
+    /// fallback reply.
+    #[tokio::test]
+    async fn test_non_parse_error_not_recovered() {
+        let image_cache = Arc::new(ImageCache::new());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let provider = Box::new(NonParseErrorMock {
+            calls: calls.clone(),
+        });
+        let mut harness = AgentHarness::new(
+            make_recovery_test_config(),
+            provider,
+            None,
+            image_cache,
+            "@testbot",
+        );
+
+        let reply = harness
+            .process_message("room1", "general", "General", false, "user", "hi", &[], &[])
+            .await
+            .unwrap();
+        let text = reply.unwrap();
+        assert!(text.contains("I encountered an error"), "got: {text}");
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "no retry for generic errors");
+    }
+
+    struct NonParseErrorMock {
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl AiProvider for NonParseErrorMock {
+        async fn complete(&self, _request: ChatRequest) -> Result<CompletionResult, RockBotError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Err(RockBotError::ServerError {
+                status: 500,
+                body: "Internal server error".to_string(),
+            })
+        }
+
+        fn provider_name(&self) -> &str {
+            "non-parse-error"
+        }
+
+        fn model_name(&self) -> &str {
+            "non-parse-error-model"
+        }
+    }
+
+    /// Retry limit (§2k): if the provider keeps failing with the same parse
+    /// error, the harness retries exactly once, then sends the fallback error
+    /// reply (no infinite loop).
+    #[tokio::test]
+    async fn test_tool_call_parse_error_retries_once_then_fallback() {
+        let image_cache = Arc::new(ImageCache::new());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let provider = Box::new(AlwaysParseErrorMock {
+            calls: calls.clone(),
+        });
+        let mut harness = AgentHarness::new(
+            make_recovery_test_config(),
+            provider,
+            None,
+            image_cache,
+            "@testbot",
+        );
+
+        let reply = harness
+            .process_message("room1", "general", "General", false, "user", "hi", &[], &[])
+            .await
+            .unwrap();
+        let text = reply.unwrap();
+        assert!(
+            text.contains("I encountered an error"),
+            "fallback reply expected, got: {text}"
+        );
+        // 1 original call + 1 recovery retry — no more (no infinite loop).
+        assert_eq!(calls.load(Ordering::SeqCst), 2, "exactly one recovery retry");
+    }
 }
 

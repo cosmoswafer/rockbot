@@ -290,6 +290,7 @@ impl AgentHarness {
         let mut iterations: u32 = 0;
         let mut image_ids_this_turn: Vec<String> = Vec::new();
         let mut context_reset = false;
+        let mut tool_call_recovery = false;
 
         loop {
             iterations += 1;
@@ -720,6 +721,41 @@ impl AgentHarness {
                             "Context length exceeded again after reset for room {}, giving up",
                             room_id
                         );
+                    }
+                    // Gitea #80: the provider rejected the request because a
+                    // tool call arguments JSON document failed to parse (e.g.
+                    // a truncated 11K-char report argument missing its closing
+                    // quote — `[json.exception.parse_error.101] ... invalid
+                    // string: missing closing quote`). Repair all tool call
+                    // arguments in the room history with the string-aware
+                    // scanner and retry the request once before giving up.
+                    if crate::provider::tool_args::is_tool_call_parse_error(&e)
+                        && !tool_call_recovery
+                    {
+                        warn!(
+                            "Tool-call JSON parse error for room {}: repairing history tool call args and retrying: {}",
+                            room_id, e
+                        );
+                        tool_call_recovery = true;
+                        if let Some(room) = self.memory.get_mut(room_id) {
+                            let repaired = crate::provider::tool_args::
+                                sanitize_messages_tool_calls(&mut room.history.messages);
+                            debug!(
+                                "Repaired {} tool call argument(s) in history for room {}",
+                                repaired, room_id
+                            );
+                        }
+                        messages = self
+                            .memory
+                            .build_context(room_id, &system_prompt, None, None);
+                        let max_ctx = *self.config.active_model().max_context_bytes as u64;
+                        messages = self.trim_context(room_id, messages, max_ctx).await;
+                        strip_orphaned_tool_calls(&mut messages);
+                        debug!(
+                            "Tool-call repair retry for room {}: rebuilt {} messages",
+                            room_id, messages.len()
+                        );
+                        continue;
                     }
                     error!("AI provider error: {}", e);
                     let fallback = format!("I encountered an error: {}. Please try again.", e);

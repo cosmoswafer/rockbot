@@ -102,10 +102,10 @@ impl LlamaCppProvider {
                 args.to_string()
             } else {
                 warn!(
-                    "llamacpp: malformed tool args for '{}', resetting to {{}}",
+                    "llamacpp: malformed tool args for '{}', attempting repair",
                     name
                 );
-                "{}".to_string()
+                crate::provider::tool_args::repair_tool_args(name, args)
             };
 
             calls.push(ToolCall {
@@ -180,6 +180,21 @@ impl LlamaCppProvider {
                                 warn!("llamacpp: skipping malformed tool_call in response: {e}");
                             })
                             .ok()
+                    })
+                    .map(|mut tc| {
+                        // Validate arguments JSON like deepseek/openrouter do:
+                        // truncated arguments (e.g. from length-limited
+                        // responses) must not enter conversation history
+                        // (Gitea issue #80).
+                        if serde_json::from_str::<serde_json::Value>(&tc.function.arguments)
+                            .is_err()
+                        {
+                            tc.function.arguments = crate::provider::tool_args::repair_tool_args(
+                                &tc.function.name,
+                                &tc.function.arguments,
+                            );
+                        }
+                        tc
                     })
                     .collect()
             })
@@ -295,6 +310,7 @@ impl AiProvider for LlamaCppProvider {
         for msg in &mut request.messages {
             msg.reasoning_content = None;
         }
+        crate::provider::tool_args::sanitize_messages_tool_calls(&mut request.messages);
         let body = self.build_request_body(&request);
         let msg_count = request.messages.len();
         let tool_count = request.tools.as_ref().map(|t| t.len()).unwrap_or(0);

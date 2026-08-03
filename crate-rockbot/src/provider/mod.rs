@@ -2,6 +2,7 @@ pub mod deepseek;
 pub mod fal;
 pub mod llamacpp;
 pub mod openrouter;
+pub mod tool_args;
 
 use async_trait::async_trait;
 

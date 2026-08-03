@@ -93,13 +93,18 @@ flowchart TD
     RESET(ResetHistory<br/>clear Layer 1)
     REBUILD(HardTruncate<br/>keep system prefix + last 2 msgs)
     RETRY(Retry LLM Call)
+    PARSE_ERR{Tool call args<br/>JSON parse error?}
+    REPAIR(Repair tool call args<br/>in history)
     REPLY[BotReply]
 
     AI -.->|"api error response"| CHECK
     CHECK -.->|"yes (first time)"| RESET
-    CHECK -.->|"no (other error)"| FALLBACK
+    CHECK -.->|"no"| PARSE_ERR
+    PARSE_ERR -.->|"yes (first time)"| REPAIR
+    PARSE_ERR -.->|"no"| FALLBACK
     RESET -.->|"empty history"| REBUILD
     REBUILD -.->|"retry"| RETRY
+    REPAIR -.->|"rebuilt messages"| RETRY
     RETRY -.-> AI
     TOOL_EXEC -.->|"tool execution error"| APPEND
     LOOP_LIMIT -.->|"max iterations exceeded"| FALLBACK
@@ -427,6 +432,49 @@ flag is per-`process_message` call, not per-room.
 This recovery path handles token-limit breaches that the byte-based
 `max_context_bytes` check cannot catch (e.g., base64-encoded images that
 are small in bytes but consume many tokens).
+
+### 2k. Tool-Call JSON Parse Error Recovery — Provider-Triggered Repair
+
+When the AI provider returns an error whose body indicates a **tool-call
+arguments JSON parse failure** (e.g. HTTP 500 with nlohmann/json
+`[json.exception.parse_error.101] ... invalid string: missing closing quote` —
+Gitea issue #80), the harness treats it as recoverable: it repairs all tool
+call `arguments` in the room history (string-aware `RepairToolArgs`, shared
+with the providers — see [AI Provider §3](../ai/ai-provider.md#3-data-structures))
+and retries the request once. This covers both truncated arguments that
+slipped into history (restored snapshots, legacy saves) and long free-text
+arguments the provider itself could not re-parse.
+
+```mermaid
+flowchart TD
+    AI[AiProvider]
+    DETECT{is_tool_call_parse_error?}
+    REPAIR["RepairToolArgs on all<br/>tool calls in history<br/>(sanitize_messages_tool_calls)"]
+    REBUILD["Rebuild context +<br/>strip orphaned tool calls"]
+    RETRY["Retry LLM Call<br/>(once per message)"]
+    FALLBACK["SendErrorFallback<br/>(already repaired once)"]
+    REPLY[BotReply]
+
+    AI -->|"error response"| DETECT
+    DETECT -->|"yes (first time)"| REPAIR
+    DETECT -->|"yes (already repaired)"| FALLBACK
+    DETECT -->|"no"| FALLBACK
+    REPAIR -->|"repaired history"| REBUILD
+    REBUILD -->|"rebuilt messages"| RETRY
+    RETRY --> AI
+    FALLBACK --> REPLY
+```
+
+**Repair**: every `function.arguments` field in the room's history messages is
+re-validated; malformed documents are repaired by the shared string-aware
+scanner (close unterminated strings, escape control chars, balance
+braces/brackets outside strings) or reset to `{}` when irrecoverable. Then
+context is rebuilt and orphaned tool calls are stripped.
+
+**Retry limit**: repair is attempted at most once per `process_message` call
+(the `tool_call_recovery` flag, parallel to `context_reset`). If the provider
+still returns a parse error, the harness falls back to the standard error
+reply. Non-parse errors (auth, rate limit, generic 5xx) are unaffected.
 
 ### 2j. Generated Image Sharing via NextCloud Share Links
 

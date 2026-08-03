@@ -104,10 +104,13 @@ flowchart TD
     ERR_API[Error: API Unreachable]
     ERR_PARSE[Error: Malformed Response]
     ERR_AUTH[Error: Invalid API Key]
-    AGENT[Agent Loop]
-    SANITIZE["Sanitize messages<br/>(strip reasoning_content<br/>+ fix malformed tool args)"]
+    TOOL_PARSE{Tool call args<br/>JSON parseable?}
+    REPAIR(RepairToolArgs<br/>string-aware scanner)
+    SANITIZE["Sanitize messages<br/>(strip reasoning_content<br/>+ repair tool args)"]
     WARN[Warn: Malformed Tool Args]
+    AGENT[Agent Loop]
 
+    SANITIZE -->|"http request"| HTTP
     HTTP -.->|"429 rate limited"| RATE
     RATE -.->|"backoff signal"| RETRY
     HTTP -.->|"5xx server error"| RETRY
@@ -117,14 +120,54 @@ flowchart TD
     CTX_ERR -->|"yes"| CTX_RET
     CTX_ERR -->|"no (other 400)"| AGENT
     HTTP -->|"401 unauthorized"| ERR_AUTH
+    HTTP -->|"json response body"| PARSE
     PARSE -->|"invalid json error"| ERR_PARSE
+    PARSE -->|"tool call args"| TOOL_PARSE
+    TOOL_PARSE -->|"valid"| AGENT
+    TOOL_PARSE -->|"malformed"| REPAIR
+    REPAIR -->|"repaired args (or {})"| WARN
     ERR_TIMEOUT -->|"timeout error"| AGENT
     ERR_API -->|"api error"| AGENT
     ERR_AUTH -->|"auth error"| AGENT
     ERR_PARSE -->|"parse error"| AGENT
     CTX_RET -->|"context length exceeded"| AGENT
-    SANITIZE -.->|"malformed tool args fixed"| WARN
+    SANITIZE -.->|"history tool call args malformed"| REPAIR
 ```
+
+**Tool-call JSON repair**: tool call `arguments` arrive as JSON strings that
+may be truncated (e.g. a length-limited response cut mid-string) or contain
+unescaped quotes inside long free-text values (e.g. a report embedding JSON
+code blocks). Before sending a request and after parsing a response, every
+`function.arguments` field is validated; malformed documents are repaired by
+`RepairToolArgs` (see §3 `ToolArgsRepair`), a string-aware scanner shared by
+all providers:
+
+- **String-state tracking**: the scanner walks the document tracking
+  in-string/escape state (`\"` handling), so braces, brackets, and quotes
+  *inside string values* are never misread as JSON structure — the old
+  brace/quote parity heuristic could silently produce wrong JSON for content
+  with embedded code blocks. A backslash is buffered until its escaped char
+  is known: valid escapes pass through, invalid ones (e.g. a lone `\` before
+  a raw newline, Windows-style paths) are emitted as literal backslashes.
+- **Unterminated string closure**: if the document ends inside a string value
+  (the truncation point), a closing `"` is appended — a trailing lone `\`
+  that would escape it is emitted literally first.
+- **Raw control characters** (newlines, tabs) inside string values are
+  converted to their `\n`/`\t`/`\uFFFD` escapes.
+- **Structural balance**: braces/brackets outside strings are closed in
+  correct nesting order (stack-based).
+- **Validation gate**: the repaired document must parse; otherwise it is
+  reset to `{}` (irrecoverable — e.g. unescaped embedded quotes that make the
+  truncation point ambiguous) with a warning naming the tool and size.
+
+**Tool-call parse error detection**: provider errors (HTTP 500/400) whose body
+indicates a tool-call arguments JSON parse failure — nlohmann/json style
+`[json.exception.parse_error.101] ... invalid string: missing closing quote`
+or serde-style messages containing "tool call" + parse keywords — are
+recognized by `is_tool_call_parse_error`. The harness treats these as
+recoverable: it repairs all tool call arguments in the room history and
+retries the request once before falling back to the error reply (see
+[Agent Harness §2k](../agent/agent-harness.md#2k-tool-call-json-parse-error-recovery--provider-triggered-repair)).
 
 **Context-length detection**: HTTP 400 responses whose error message contains
 "context length" or "maximum context" (case-insensitive) are mapped to
@@ -166,10 +209,16 @@ Before sending each request, messages are sanitized:
 - `reasoning_content` is stripped from all messages (response-only field that
   some providers reject in request input)
 - All `function.arguments` fields in tool calls are validated as parseable
-  JSON; malformed arguments (e.g. truncated from length-limited responses) are
-  auto-repaired (balance braces/quotes) or reset to `{}`
+  JSON; malformed arguments (e.g. truncated from length-limited responses or
+  containing unescaped quotes in long free-text values) are auto-repaired by
+  the string-aware `RepairToolArgs` scanner or reset to `{}`
 - After parsing a response, tool call arguments are also validated at the
   parse stage to prevent malformed data from entering conversation history
+
+The same repair engine is shared by DeepSeek, OpenRouter, and llama.cpp —
+llama.cpp validates both native `tool_calls` response arguments and history
+arguments on request, closing the gap that previously let malformed args
+reach local servers that hard-fail with HTTP 500 (Gitea issue #80).
 
 ### 2c. Vision Payload Deep Dive
 
@@ -304,3 +353,11 @@ may reject it.
 | `description` | `Option<String>`  | Human-readable description      |
 | `parameters`  | `Option<Value>`   | JSON Schema for arguments       |
 | `strict`      | `Option<bool>`    | Strict schema enforcement       |
+
+#### `ToolArgsRepair` (shared — `provider/tool_args.rs`)
+
+| Function | Signature | Notes |
+| -------- | --------- | ----- |
+| `repair_tool_args` | `(name: &str, args: &str) -> String` | String-aware scan: close unterminated strings, escape raw control chars, balance braces/brackets outside strings, validate; fallback `{}` |
+| `sanitize_messages_tool_calls` | `(&mut [ChatMessage]) -> usize` | Repair every invalid `function.arguments` in a message list in place; returns repair count |
+| `is_tool_call_parse_error` | `(&RockBotError) -> bool` | True when the provider error body indicates a tool-call arguments JSON parse failure (nlohmann `parse_error.10x` / "missing closing quote" / "invalid string" + tool-call keywords) |

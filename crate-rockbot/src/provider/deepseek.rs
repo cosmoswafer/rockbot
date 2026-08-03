@@ -166,7 +166,7 @@ impl DeepSeekProvider {
                         if serde_json::from_str::<serde_json::Value>(&tc.function.arguments)
                             .is_err()
                         {
-                            tc.function.arguments = Self::sanitize_tool_args(
+                            tc.function.arguments = crate::provider::tool_args::repair_tool_args(
                                 &tc.function.name,
                                 &tc.function.arguments,
                             );
@@ -220,37 +220,6 @@ impl DeepSeekProvider {
             }
         }
     }
-
-    fn sanitize_tool_args(name: &str, args: &str) -> String {
-        let mut fixed = args.to_string();
-        let open_braces = fixed.matches('{').count();
-        let close_braces = fixed.matches('}').count();
-        let open_brackets = fixed.matches('[').count();
-        let close_brackets = fixed.matches(']').count();
-        for _ in 0..(open_braces.saturating_sub(close_braces)) {
-            fixed.push('}');
-        }
-        for _ in 0..(open_brackets.saturating_sub(close_brackets)) {
-            fixed.push(']');
-        }
-        let quote_count = fixed.matches('"').count();
-        if quote_count % 2 != 0 {
-            fixed.push('"');
-        }
-        if serde_json::from_str::<serde_json::Value>(&fixed).is_ok() {
-            warn!(
-                "Sanitized malformed tool_call arguments for fn={}: balanced braces/quotes",
-                name
-            );
-            fixed
-        } else {
-            warn!(
-                "Tool_call arguments for fn={} are irrecoverably malformed ({} chars), resetting to {{}}",
-                name, args.len()
-            );
-            "{}".to_string()
-        }
-    }
 }
 
 fn extract_error_message(body: &str) -> String {
@@ -270,19 +239,8 @@ impl AiProvider for DeepSeekProvider {
     async fn complete(&self, mut request: ChatRequest) -> Result<CompletionResult> {
         for msg in &mut request.messages {
             msg.reasoning_content = None;
-            if let Some(ref mut tool_calls) = msg.tool_calls {
-                for tc in tool_calls {
-                    if serde_json::from_str::<serde_json::Value>(&tc.function.arguments)
-                        .is_err()
-                    {
-                        tc.function.arguments = DeepSeekProvider::sanitize_tool_args(
-                            &tc.function.name,
-                            &tc.function.arguments,
-                        );
-                    }
-                }
-            }
         }
+        crate::provider::tool_args::sanitize_messages_tool_calls(&mut request.messages);
         let body = self.build_request_body(&request);
         let msg_count = request.messages.len();
         let tool_count = request.tools.as_ref().map(|t| t.len()).unwrap_or(0);
