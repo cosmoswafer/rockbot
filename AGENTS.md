@@ -16,6 +16,7 @@ example.config.toml   # minimal user overrides with EDITME placeholders
 ## Runtime
 
 - Use `./tmp/` for runtime temporary files (logs, state, etc.). Never use `/tmp/` or other system-wide temp directories.
+- All tool-generated artifact files (screenshots, console logs, network request/response dumps, heap snapshots, performance traces, probe output, etc.) **must** be written to `./tmp/`.
 - Use `pkill rockbot` (process name) — **not** `pkill -f` (full cmdline). The `-f` flag reads `/proc/*/cmdline` which can hang on systems with stuck D-state kernel threads.
 - **Bot must run in background** — all start/restart commands end with `&`. When using the Bash tool, run `nohup ... &` alone (never chain after `;` or `&&`), then verify with a separate call.
 - Start the bot: `./target/release/rockbot &> ./tmp/rockbot.log &`
@@ -66,13 +67,15 @@ No CI, no `rustfmt.toml`, no `clippy.toml`, no `rust-toolchain` file.
 
 Data Flow Diagrams in `_dfd/` are the design spec. The development flow is defined in the [`dfd-md` skill](.agents/skills/dfd-md/SKILL.md). Key rules:
 
+- Before starting work, check the repo's open issues using the `gitea-issues` skill; if the change resolves an open issue, note it for the commit message.
+
 - **Phase 1**: Integration probe (data collection; optional) — live-data probe against real server/API to collect actual data shapes. Skip if sufficient real-world data already exists.
 - **Phase 2**: Revise DFD — design or update the DFD to accurately model desired data movement. Base data structures (section 3) on shapes observed in the probe when available. Keep levels clean; use notation rules from the skill.
 - **Phase 3**: Implement data flow validation constraints — enforce data structure correctness through code-level constraints. Parse and validate at subsystem entry points ("parse, don't validate"). Cross-DFD shared structures defined once in a canonical location, imported by both producer and consumer modules, making mismatches compile-time errors.
 - **Phase 4**: Concrete implementation — code types, core logic, and wiring described by the DFD. Favour incremental, type-first implementation.
 - **Phase 5**: Review all DFDs — re-read every DFD and confirm it matches the code. If a DFD's `mtime` is newer than its corresponding Rust source, the code is stale and must be updated to match the DFD. If the code was updated first, update the DFD.
 - **Phase 6**: Integration test — write mock-backed (Wiremock) integration tests to verify the implementation works end-to-end. Each DFD's happy-path flow should have corresponding mock integration coverage.
-- **Phase 7**: `cargo build --release` → commit → push → restart bot (only restart if explicitly requested). When the work resolves one or more open Gitea issues, the commit message must include `closes #<N>` for each issue so Gitea auto-closes them on push.
+- **Phase 7**: `cargo build --release` → bump the version in `Cargo.toml` (bug fix → patch, new feature → minor; make the bump part of the commit that introduces the change) → commit → push → restart bot (only restart if explicitly requested). When the work resolves one or more open Gitea issues, the commit message must include `closes #<N>` for each issue so Gitea auto-closes them on push.
 
 ### Rust type-driven design rules
 
@@ -176,5 +179,7 @@ When the user asks to **investigate a Gitea issue** (e.g. "investigate issue #42
 
 ## OpenCode skills
 
+- `dfd-dev` — Complete DFD-driven development workflow: check Gitea issues, probe, revise DFD (via `dfd-md`), implement type-first, test, build, bump version (bug fix → patch, e.g. 0.0.1; new feature → minor, e.g. 0.1.0), commit with `closes #N`, push, restart bot.
 - `dfd-md` — Creates Data Flow Diagrams as `.md` files using Mermaid flowchart syntax.
+- `gitea-issues` — Lists, creates, comments on, and closes Gitea issues on the repo's Gitea server.
 - `mermaid-cli` — Validates/fixes Mermaid syntax using `mermaid.parse()` with jsdom (no browser). Use only when asked to validate or fix Mermaid syntax.
