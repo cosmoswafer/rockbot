@@ -185,7 +185,7 @@ impl WebDavClient {
 
         tracing::warn!(
             "NextCloud share link creation failed (no <url> in response): {}",
-            &resp_body[..resp_body.len().min(200)]
+            truncate_debug(&resp_body, 200)
         );
         None
     }
@@ -247,7 +247,7 @@ impl WebDavClient {
         info!(
             "WebDAV PROPFIND body ({} chars): {}",
             body.len(),
-            &body[..body.len().min(500)]
+            truncate_debug(&body, 500)
         );
 
         self.parse_propfind_response(&body)
@@ -772,6 +772,10 @@ impl WebDavClient {
     }
 }
 
+fn truncate_debug(s: &str, max_chars: usize) -> String {
+    s.chars().take(max_chars).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -787,6 +791,27 @@ mod tests {
 <multistatus />"#;
         let entries = client.parse_propfind_response(xml).unwrap();
         assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn test_truncate_debug_ascii() {
+        let s = "a".repeat(500);
+        assert_eq!(truncate_debug(&s, 500), s);
+        let out = truncate_debug(&s, 100);
+        assert_eq!(out, "a".repeat(100));
+    }
+
+    #[test]
+    fn test_truncate_debug_utf8_boundary() {
+        let s = "字".repeat(300);
+        let out = truncate_debug(&s, 100);
+        assert_eq!(out.chars().count(), 100);
+        assert!(out.is_char_boundary(out.len()));
+    }
+
+    #[test]
+    fn test_truncate_debug_shorter_than_limit() {
+        assert_eq!(truncate_debug("short", 500), "short");
     }
 
     #[test]

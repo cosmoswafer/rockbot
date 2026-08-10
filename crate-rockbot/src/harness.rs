@@ -519,11 +519,7 @@ impl AgentHarness {
                                         if let Some(prompt) =
                                             v.get("prompt").and_then(|p| p.as_str())
                                         {
-                                            let name = if prompt.len() > 80 {
-                                                format!("{}...", &prompt[..77])
-                                            } else {
-                                                prompt.to_string()
-                                            };
+                                            let name = truncate_pool_name(prompt);
                                             self.image_pool
                                                 .entry(room_id.to_string())
                                                 .or_default()
@@ -1344,6 +1340,14 @@ struct AttachmentRef {
 struct CachedImage {
     data_uri: String,
     name: String,
+}
+
+fn truncate_pool_name(prompt: &str) -> String {
+    if prompt.chars().count() > 80 {
+        format!("{}...", prompt.chars().take(77).collect::<String>())
+    } else {
+        prompt.to_string()
+    }
 }
 
 /// Parse `![name](data:mime;base64,...)` markdown image tags from a string.
@@ -2809,6 +2813,39 @@ You can now see the image."#;
         assert_eq!(images.len(), 1);
         assert_eq!(images[0].name, "photo.png");
         assert!(images[0].data_uri.starts_with("data:image/png;base64,"));
+    }
+
+    // ── truncate_pool_name ────────────────────────────────────────────
+
+    #[test]
+    fn test_truncate_pool_name_short_prompt_unchanged() {
+        let prompt = "a cat sitting on a chair";
+        assert_eq!(truncate_pool_name(prompt), prompt);
+    }
+
+    #[test]
+    fn test_truncate_pool_name_long_ascii() {
+        let prompt = "a".repeat(100);
+        let name = truncate_pool_name(&prompt);
+        assert_eq!(name, format!("{}...", "a".repeat(77)));
+        assert!(name.ends_with("..."));
+    }
+
+    #[test]
+    fn test_truncate_pool_name_cjk_no_panic_and_char_boundary() {
+        let prompt = format!("{}…", "一張專為長者設計的屋頂防水施工宣傳海報".repeat(3));
+        assert!(prompt.len() > 80);
+        let name = truncate_pool_name(&prompt);
+        assert!(name.len() > 0);
+        assert!(name.is_char_boundary(name.len()));
+        assert_eq!(name.chars().last(), Some('…'));
+    }
+
+    #[test]
+    fn test_truncate_pool_name_truncated_prefix_still_matches_prompt() {
+        let prompt = format!("{}…", "一張專為長者設計的屋頂防水施工宣傳海報".repeat(3));
+        let name = truncate_pool_name(&prompt);
+        assert!(prompt.to_lowercase().contains(&name.to_lowercase()));
     }
 
     struct CountingMockProvider {

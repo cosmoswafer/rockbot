@@ -238,16 +238,16 @@ provider receives `https://` URL (no re-upload needed).
 ### `CachedImage` (image_pool entry)
 | Field     | Type   | Notes                                          |
 | --------- | ------ | ---------------------------------------------- |
-| `name`    | String | Prompt-derived name (truncated to 80 chars)     |
+| `name`    | String | Prompt-derived name (char-safe: first 77 chars + `"..."` when >80 chars; never byte-sliced — CJK/emoji prompts) |
 | `data_uri`| String | `"data:image/png;base64,..."`                   |
 
 ### `ImagePool`
 `HashMap<String, Vec<CachedImage>>` keyed by `room_id`. Populated by the
-harness from three sources: `image_gen` success (prompt-derived name, truncated
-to 80 chars), `vision` tool results (filename from markdown tag), and `webdav`
-tool results (filename from markdown tag). Enables name-based matching in
-subsequent edit calls. Never drained as a whole — entries persist for the
-lifetime of the room.
+harness from three sources: `image_gen` success (prompt-derived name via
+`truncate_pool_name`, `harness.rs`), `vision` tool results (filename from
+markdown tag), and `webdav` tool results (filename from markdown tag). Enables
+name-based matching in subsequent edit calls. Never drained as a whole —
+entries persist for the lifetime of the room.
 
 ### `ImageCache`
 `Arc<Mutex<HashMap<String, GeneratedImage>>>` keyed by tool `call_id`. Stores
@@ -271,6 +271,7 @@ is used only when the room's context is evicted (memory compaction).
 | `download_attachment_refs` | `harness.rs` | Downloads RocketChat attachments → `AttachmentRef` list |
 | `download_and_encode_single` | `harness.rs` | Single attachment → `data:` URI |
 | `inject_image_urls_from_refs` | `harness.rs` | Injects image URLs from attachments + image_pool + agent URLs |
+| `truncate_pool_name` | `harness.rs` | Char-safe image_pool name truncation (77 chars + `"..."`, never byte-sliced) |
 | `current_image_urls injection` | `harness.rs` (inline in `process_message`) | Auto-injects message image URLs into image_gen args (no prompt matching) |
 | `create_nextcloud_share_link` | `crate-webdav/src/client.rs` | Creates 7-day public share for generated images |
 | `upload_data_uri` | `tools/image_gen.rs` | Uploads `data:` URI to Fal CDN → returns `https://` URL |
