@@ -124,7 +124,7 @@ flowchart TD
 | ---------------------- | -------------- | ------------------------------------------------------------- |
 | `default_provider`     | `ProviderName` | Must match a `[[chat_providers]].name`; non-empty validated newtype |
 | `default_model`        | `String`       | Model alias key in provider's models map                      |
-| `max_iterations`       | `u32`          | Max agent loop iterations (default 28)                         |
+| `max_iterations`       | `u32`          | Max agent loop iterations (default 256)                         |
 | `max_soul_chars`       | `BoundedUsize` | Layer 3 max chars for soul.md content (default 2000); validated 1..=100_000_000 |
 | `memory_ttl_secs`      | `u64`          | Room idle timeout — snapshot to WebDAV then evict (default 300)|
 | `persist_interval_secs`| `u64`          | Snapshot persist timer interval (default 60)                  |

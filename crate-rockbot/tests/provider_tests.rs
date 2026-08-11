@@ -49,7 +49,7 @@ reasoner = "deepseek-reasoner"
 
     assert_eq!(config.model.default_provider.as_str(), "openrouter");
     assert_eq!(config.model.default_model, "deepseek");
-    assert_eq!(config.model.max_iterations, 47); // default
+    assert_eq!(config.model.max_iterations, 256); // default
 
     assert_eq!(config.chat_providers.len(), 2);
 
@@ -93,7 +93,7 @@ base_url = "https://mock.ai/v1"
 chat = "mock-model"
 "#;
     let config = AppConfig::from_toml(toml).unwrap();
-    assert_eq!(config.model.max_iterations, 47);
+    assert_eq!(config.model.max_iterations, 256);
 }
 
 #[test]
@@ -370,7 +370,7 @@ api_key = "sk-test"
 base_url = "https://test.ai/v1"
 "#;
     let config = AppConfig::from_toml(toml).unwrap();
-    assert_eq!(config.model.max_iterations, 47);
+    assert_eq!(config.model.max_iterations, 256);
     assert_eq!(config.model.max_soul_chars.as_usize(), 5000);
     assert_eq!(config.model.persist_interval_secs, 120);
     assert_eq!(config.model.memory_ttl_secs, 600);

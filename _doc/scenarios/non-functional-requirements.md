@@ -1,7 +1,7 @@
 # Non-Functional Requirements — RockBot
 
 ## 1. Performance Efficiency
-- **PE1** Agent loop terminates within `max_iterations` (code default 28, configurable in `config.toml`).
+- **PE1** Agent loop terminates within `max_iterations` (code default 256, configurable in `config.toml`).
 - **PE2** Web fetch times out at 30s.
 - **PE3** Chat context: hardcoded `MAX_CONTEXT_MESSAGES` = 30 messages in context window (not configurable), `max_context_bytes` default 4 MB. Context-length errors trigger compression + hard-truncation to last 2 messages + 200K char per-message truncation.
 - **PE4** Soul memory capped at `max_soul_chars` (default 2000 chars, configurable).

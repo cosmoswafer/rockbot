@@ -77,7 +77,7 @@ default_enable_safety_checker = false
 [model]
 default_provider = "openrouter"
 default_model = "gpt"
-max_iterations = 47
+max_iterations = 256
 max_soul_chars = 5000
 memory_ttl_secs = 600
 persist_interval_secs = 120
@@ -96,7 +96,7 @@ password = ""
 [rocketchat.model]
 default_provider = "openrouter"
 default_model = "gpt"
-max_iterations = 47
+max_iterations = 256
 max_soul_chars = 5000
 memory_ttl_secs = 600
 persist_interval_secs = 120
@@ -117,7 +117,7 @@ state_dir = "./tmp/matrix-sdk"
 [matrix.model]
 default_provider = "openrouter"
 default_model = "gpt"
-max_iterations = 47
+max_iterations = 256
 max_soul_chars = 5000
 memory_ttl_secs = 600
 persist_interval_secs = 120

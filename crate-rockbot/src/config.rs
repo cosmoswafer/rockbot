@@ -309,7 +309,7 @@ impl Default for ImageModelConfig {
 }
 
 fn default_max_iterations() -> u32 {
-    47
+    256
 }
 
 fn default_max_soul_chars() -> BoundedUsize {
