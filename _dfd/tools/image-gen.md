@@ -3,7 +3,7 @@
 ## 1. Purpose
 
 Generates images via an `ImageProvider` (fal.ai queue API or OpenRouter
-synchronous endpoint), stores them on WebDAV for persistence, and caches the
+Image API / chat-completions fallback), stores them on WebDAV for persistence, and caches the
 raw image bytes in the shared `ImageCache`. The agent loop calls `image_gen`
 with a prompt and optional parameters; the tool delegates to the provider,
 writes to WebDAV, stores to the cache, and returns a minimal result
@@ -93,9 +93,14 @@ flowchart TD
 | Aspect | fal.ai | OpenRouter |
 |--------|--------|------------|
 | `upload_file()` | Initiate + PUT to CDN → file_url | Base64-encode → data URI |
-| `generate_image()` | Submit → Poll → Fetch CDN → Download | Single POST → parse base64 response |
+| `generate_image()` | Submit → Poll → Fetch CDN → Download | Catalog-aware routing → single POST → parse base64 response |
 | Image delivery | CDN URL → separate HTTP GET | Base64 inline in response JSON |
 | Protocol | 3-phase async (submit/poll/fetch) | Single synchronous POST |
+
+OpenRouter routing detail: pure image models (present only in the image
+catalog) go to the dedicated Image API `POST /images`; models absent from the
+catalog fall back to `chat/completions`. See
+[AI Provider §2d](../ai/ai-provider.md#2d-openrouter-image-api-routing).
 
 The `ImageProvider` trait abstracts both — the tool and harness never branch on provider type.
 

@@ -311,16 +311,115 @@ fn is_context_length_error(msg: &str) -> bool {
 pub struct OpenRouterImageProvider {
     api_key: String,
     base_url: String,
+    images_url: String,
     model: String,
     http_client: reqwest::Client,
+    catalog_cache: tokio::sync::Mutex<Option<ImageCatalogCaps>>,
 }
 
 impl std::fmt::Debug for OpenRouterImageProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OpenRouterImageProvider")
             .field("base_url", &self.base_url)
+            .field("images_url", &self.images_url)
             .field("model", &self.model)
             .finish()
+    }
+}
+
+/// Capability descriptor from the OpenRouter image catalog
+/// (`supported_parameters` values; see `_dfd/ai/ai-provider.md` §3).
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum ParamDescriptor {
+    Enum { values: Vec<String> },
+    Range { min: i64, max: i64 },
+    Boolean,
+}
+
+impl ParamDescriptor {
+    fn enum_values(&self) -> Option<&[String]> {
+        match self {
+            ParamDescriptor::Enum { values } => Some(values),
+            _ => None,
+        }
+    }
+
+    fn range_max(&self) -> Option<i64> {
+        match self {
+            ParamDescriptor::Range { max, .. } => Some(*max),
+            _ => None,
+        }
+    }
+}
+
+/// One entry of `GET {base}/images/models` → `data[]`.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ImageCatalogModel {
+    pub id: String,
+    #[serde(default)]
+    pub supported_parameters: Option<std::collections::HashMap<String, ParamDescriptor>>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ImageCatalog {
+    data: Vec<ImageCatalogModel>,
+}
+
+/// Domain caps derived from an `ImageCatalogModel` at the parse boundary.
+#[derive(Debug, Clone, Default)]
+pub struct ImageApiCaps {
+    pub resolutions: Option<Vec<String>>,
+    pub aspect_ratios: Option<Vec<String>>,
+    pub n_max: Option<u32>,
+    pub supports_quality: bool,
+    pub supports_output_format: bool,
+}
+
+impl From<&ImageCatalogModel> for ImageApiCaps {
+    fn from(model: &ImageCatalogModel) -> Self {
+        let sp = model.supported_parameters.as_ref();
+        let mut resolutions = sp
+            .and_then(|m| m.get("resolution"))
+            .and_then(|d| d.enum_values())
+            .map(|values| {
+                let mut sorted = values.to_vec();
+                sorted.sort_by_key(|t| tier_rank(t));
+                sorted
+            });
+        if matches!(resolutions.as_deref(), Some([])) {
+            resolutions = None;
+        }
+        let mut aspect_ratios = sp
+            .and_then(|m| m.get("aspect_ratio"))
+            .and_then(|d| d.enum_values())
+            .map(|values| values.to_vec());
+        if matches!(aspect_ratios.as_deref(), Some([])) {
+            aspect_ratios = None;
+        }
+        Self {
+            resolutions,
+            aspect_ratios,
+            n_max: sp
+                .and_then(|m| m.get("n"))
+                .and_then(|d| d.range_max())
+                .and_then(|max| u32::try_from(max).ok()),
+            supports_quality: sp.is_some_and(|m| m.contains_key("quality")),
+            supports_output_format: sp.is_some_and(|m| m.contains_key("output_format")),
+        }
+    }
+}
+
+/// Parsed image catalog: model id → caps.
+type ImageCatalogCaps = std::collections::HashMap<String, ImageApiCaps>;
+
+fn tier_rank(tier: &str) -> u8 {
+    match tier {
+        "512" => 0,
+        "1K" => 1,
+        "2K" => 2,
+        "4K" => 3,
+        _ => 2,
     }
 }
 
@@ -331,8 +430,10 @@ impl OpenRouterImageProvider {
         Ok(Self {
             api_key: config.api_key.clone(),
             base_url: full_url,
+            images_url: config.images_url(),
             model: model.into(),
             http_client: super::default_http_client(),
+            catalog_cache: tokio::sync::Mutex::new(None),
         })
     }
 
@@ -361,6 +462,242 @@ impl OpenRouterImageProvider {
 #[async_trait]
 impl crate::provider::ImageProvider for OpenRouterImageProvider {
     async fn generate_image(&self, params: &crate::types::ImageGenParams) -> Result<Vec<u8>> {
+        let model = params
+            .model_id
+            .clone()
+            .unwrap_or_else(|| self.model.clone());
+        let caps = self.catalog_caps().await;
+        match caps.get(&model) {
+            Some(caps) => self.generate_via_image_api(params, caps).await,
+            None => self.generate_via_chat(params).await,
+        }
+    }
+
+    async fn upload_file(&self, data: &[u8], content_type: &str) -> Result<String> {
+        let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, data);
+        Ok(format!("data:{};base64,{}", content_type, b64))
+    }
+
+    fn provider_name(&self) -> &str {
+        "openrouter"
+    }
+
+    fn model_id(&self) -> &str {
+        &self.model
+    }
+}
+
+impl OpenRouterImageProvider {
+    /// Fetch and cache the OpenRouter image catalog (`GET {images_url}/models`).
+    /// Returns an empty map on fetch/parse failure so callers fall back to the
+    /// legacy chat completions path.
+    async fn catalog_caps(&self) -> ImageCatalogCaps {
+        let mut cache = self.catalog_cache.lock().await;
+        if let Some(map) = cache.as_ref() {
+            return map.clone();
+        }
+        let url = format!("{}/models", self.images_url);
+        let result = async {
+            let response = self
+                .http_client
+                .get(&url)
+                .header("Authorization", format!("Bearer {}", self.api_key))
+                .send()
+                .await?;
+            let status = response.status();
+            if !status.is_success() {
+                let error_body = response.text().await.unwrap_or_default();
+                return Err(RockBotError::Provider(format!(
+                    "OpenRouter image catalog fetch failed (HTTP {}): {}",
+                    status.as_u16(),
+                    Self::extract_error_message(&error_body)
+                )));
+            }
+            let catalog: ImageCatalog = response.json().await.map_err(|e| {
+                RockBotError::Provider(format!("OpenRouter image catalog parse failed: {e}"))
+            })?;
+            Ok::<ImageCatalogCaps, RockBotError>(
+                catalog
+                    .data
+                    .iter()
+                    .map(|m| (m.id.clone(), ImageApiCaps::from(m)))
+                    .collect(),
+            )
+        }
+        .await;
+
+        match result {
+            Ok(map) => {
+                debug!("OpenRouter image catalog loaded: {} models", map.len());
+                *cache = Some(map.clone());
+                map
+            }
+            Err(e) => {
+                warn!("{e} — falling back to chat completions image path");
+                std::collections::HashMap::new()
+            }
+        }
+    }
+
+    fn extract_error_message(error_body: &str) -> String {
+        serde_json::from_str::<serde_json::Value>(error_body)
+            .ok()
+            .and_then(|v| {
+                v.get("error")
+                    .and_then(|e| e.get("message"))
+                    .and_then(|m| m.as_str())
+                    .map(String::from)
+            })
+            .unwrap_or_else(|| error_body.to_string())
+    }
+
+    fn resolve_resolution(requested: Option<&str>, caps: &ImageApiCaps) -> Option<String> {
+        let allowed = caps.resolutions.as_deref()?;
+        match requested {
+            Some(r) if allowed.iter().any(|t| t == r) => Some(r.to_string()),
+            Some(r) => {
+                let rank = tier_rank(r);
+                allowed
+                    .iter()
+                    .filter(|t| tier_rank(t) <= rank)
+                    .max_by_key(|t| tier_rank(t))
+                    .or_else(|| allowed.first())
+                    .cloned()
+            }
+            None => allowed.last().cloned(),
+        }
+    }
+
+    fn build_image_api_body(
+        &self,
+        params: &crate::types::ImageGenParams,
+        caps: &ImageApiCaps,
+    ) -> serde_json::Value {
+        use crate::types::ImageSizeValue;
+
+        let mut body = serde_json::Map::new();
+        body.insert(
+            "model".into(),
+            serde_json::json!(params.model_id.as_deref().unwrap_or(&self.model)),
+        );
+        body.insert("prompt".into(), serde_json::json!(params.prompt));
+
+        if let Some(resolution) = Self::resolve_resolution(params.size_tier.as_deref(), caps) {
+            body.insert("resolution".into(), serde_json::json!(resolution));
+        }
+
+        if let Some(ref size) = params.image_size {
+            let ratio = match size {
+                ImageSizeValue::Preset(name) => Self::preset_to_aspect_ratio(name).to_string(),
+                ImageSizeValue::Custom { width, height } => format!("{width}:{height}"),
+            };
+            let allowed = caps
+                .aspect_ratios
+                .as_ref()
+                .is_none_or(|ratios| ratios.iter().any(|r| r == &ratio));
+            if allowed {
+                body.insert("aspect_ratio".into(), serde_json::json!(ratio));
+            }
+        }
+
+        if let Some(n) = params.num_images {
+            let clamped = caps.n_max.map(|max| n.min(max)).unwrap_or(n).max(1);
+            body.insert("n".into(), serde_json::json!(clamped));
+        }
+
+        if let Some(ref quality) = params.quality
+            && caps.supports_quality
+        {
+            body.insert("quality".into(), serde_json::json!(quality));
+        }
+
+        if let Some(ref format) = params.output_format
+            && caps.supports_output_format
+        {
+            body.insert("output_format".into(), serde_json::json!(format));
+        }
+
+        if let Some(ref urls) = params.image_urls
+            && !urls.is_empty()
+        {
+            let refs: Vec<serde_json::Value> = urls
+                .iter()
+                .map(|url| {
+                    serde_json::json!({
+                        "type": "image_url",
+                        "image_url": { "url": url },
+                    })
+                })
+                .collect();
+            body.insert("input_references".into(), serde_json::Value::Array(refs));
+        }
+
+        serde_json::Value::Object(body)
+    }
+
+    /// Dedicated OpenRouter Image API path (`POST {images_url}`) for models
+    /// present in the image catalog. See `_dfd/ai/ai-provider.md` §2d.
+    async fn generate_via_image_api(
+        &self,
+        params: &crate::types::ImageGenParams,
+        caps: &ImageApiCaps,
+    ) -> Result<Vec<u8>> {
+        let body_value = self.build_image_api_body(params, caps);
+
+        debug!(
+            "OpenRouter image api request: model={} prompt_len={} refs={} images_url={}",
+            params.model_id.as_deref().unwrap_or(&self.model),
+            params.prompt.len(),
+            params.image_urls.as_ref().map(|u| u.len()).unwrap_or(0),
+            self.images_url,
+        );
+
+        let response = self
+            .http_client
+            .post(&self.images_url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json")
+            .header("HTTP-Referer", "https://github.com/anomalyco/rockbot")
+            .header("X-Title", "RockBot")
+            .json(&body_value)
+            .send()
+            .await?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let error_body = response.text().await.unwrap_or_default();
+            return Err(RockBotError::Provider(format!(
+                "OpenRouter image gen failed (HTTP {}): {}",
+                status.as_u16(),
+                Self::extract_error_message(&error_body)
+            )));
+        }
+
+        let resp_body: serde_json::Value = response.json().await?;
+        let data = resp_body
+            .get("data")
+            .and_then(|d| d.as_array())
+            .filter(|d| !d.is_empty())
+            .ok_or_else(|| {
+                RockBotError::Provider("OpenRouter image gen: empty data array".into())
+            })?;
+        let b64 = data
+            .first()
+            .and_then(|d| d.get("b64_json"))
+            .and_then(|b| b.as_str())
+            .ok_or_else(|| {
+                RockBotError::Provider("OpenRouter image gen: missing data[0].b64_json".into())
+            })?;
+        base64::Engine::decode(&base64::engine::general_purpose::STANDARD, b64)
+            .map_err(|e| RockBotError::Provider(format!("OpenRouter image gen: base64 decode failed: {e}")))
+    }
+
+    /// Legacy chat completions path (`modalities: ["image"]`) — fallback for
+    /// models absent from the image catalog.
+    async fn generate_via_chat(
+        &self,
+        params: &crate::types::ImageGenParams,
+    ) -> Result<Vec<u8>> {
         use crate::types::ImageSizeValue;
 
         let mut body = serde_json::Map::new();
@@ -453,19 +790,10 @@ impl crate::provider::ImageProvider for OpenRouterImageProvider {
         let status = response.status();
         if !status.is_success() {
             let error_body = response.text().await.unwrap_or_default();
-            let msg = serde_json::from_str::<serde_json::Value>(&error_body)
-                .ok()
-                .and_then(|v| {
-                    v.get("error")
-                        .and_then(|e| e.get("message"))
-                        .and_then(|m| m.as_str())
-                        .map(String::from)
-                })
-                .unwrap_or(error_body);
             return Err(RockBotError::Provider(format!(
                 "OpenRouter image gen failed (HTTP {}): {}",
                 status.as_u16(),
-                msg
+                Self::extract_error_message(&error_body)
             )));
         }
 
@@ -496,19 +824,6 @@ impl crate::provider::ImageProvider for OpenRouterImageProvider {
             .1;
         base64::Engine::decode(&base64::engine::general_purpose::STANDARD, b64)
             .map_err(|e| RockBotError::Provider(format!("OpenRouter image gen: base64 decode failed: {e}")))
-    }
-
-    async fn upload_file(&self, data: &[u8], content_type: &str) -> Result<String> {
-        let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, data);
-        Ok(format!("data:{};base64,{}", content_type, b64))
-    }
-
-    fn provider_name(&self) -> &str {
-        "openrouter"
-    }
-
-    fn model_id(&self) -> &str {
-        &self.model
     }
 }
 
@@ -1019,6 +1334,185 @@ mod tests {
             let mut params = ImageGenParams::new("test prompt");
             params.model_id = Some("black-forest-labs/flux.2-pro".into());
             assert_eq!(params.model_id.as_deref(), Some("black-forest-labs/flux.2-pro"));
+        }
+
+        fn qwen_catalog_entry() -> serde_json::Value {
+            serde_json::json!({
+                "id": "qwen/qwen-image-3-pro",
+                "supported_parameters": {
+                    "resolution": { "type": "enum", "values": ["2K", "1K"] },
+                    "aspect_ratio": { "type": "enum", "values": ["1:1", "2:3", "16:9"] },
+                    "n": { "type": "range", "min": 1, "max": 6 },
+                    "input_references": { "type": "range", "min": 0, "max": 4 },
+                    "seed": { "type": "boolean" }
+                }
+            })
+        }
+
+        #[test]
+        fn test_param_descriptor_variants() {
+            let e: ParamDescriptor =
+                serde_json::from_value(serde_json::json!({"type": "enum", "values": ["1K", "2K"]})).unwrap();
+            assert_eq!(e.enum_values(), Some(vec!["1K".to_string(), "2K".to_string()].as_slice()));
+            let r: ParamDescriptor =
+                serde_json::from_value(serde_json::json!({"type": "range", "min": 1, "max": 6})).unwrap();
+            assert_eq!(r.range_max(), Some(6));
+            let b: ParamDescriptor = serde_json::from_value(serde_json::json!({"type": "boolean"})).unwrap();
+            assert!(matches!(b, ParamDescriptor::Boolean));
+        }
+
+        #[test]
+        fn test_image_api_caps_from_qwen_catalog_entry() {
+            let model: ImageCatalogModel = serde_json::from_value(qwen_catalog_entry()).unwrap();
+            let caps = ImageApiCaps::from(&model);
+            assert_eq!(caps.resolutions.as_deref(), Some(vec!["1K".to_string(), "2K".to_string()].as_slice()));
+            assert_eq!(
+                caps.aspect_ratios.as_deref(),
+                Some(vec!["1:1".to_string(), "2:3".to_string(), "16:9".to_string()].as_slice())
+            );
+            assert_eq!(caps.n_max, Some(6));
+            assert!(!caps.supports_quality);
+            assert!(!caps.supports_output_format);
+        }
+
+        #[test]
+        fn test_image_api_caps_quality_model() {
+            let model: ImageCatalogModel = serde_json::from_value(serde_json::json!({
+                "id": "openai/gpt-image-2",
+                "supported_parameters": {
+                    "resolution": { "type": "enum", "values": ["1K", "2K", "4K"] },
+                    "quality": { "type": "enum", "values": ["low", "medium", "high"] },
+                    "output_format": { "type": "enum", "values": ["png", "jpeg", "webp"] }
+                }
+            }))
+            .unwrap();
+            let caps = ImageApiCaps::from(&model);
+            assert!(caps.supports_quality);
+            assert!(caps.supports_output_format);
+            assert_eq!(caps.n_max, None);
+        }
+
+        #[test]
+        fn test_resolve_resolution_clamps_4k_down_to_2k() {
+            let caps = ImageApiCaps {
+                resolutions: Some(vec!["1K".into(), "2K".into()]),
+                ..Default::default()
+            };
+            assert_eq!(
+                OpenRouterImageProvider::resolve_resolution(Some("4K"), &caps),
+                Some("2K".into())
+            );
+        }
+
+        #[test]
+        fn test_resolve_resolution_exact_match() {
+            let caps = ImageApiCaps {
+                resolutions: Some(vec!["1K".into(), "2K".into()]),
+                ..Default::default()
+            };
+            assert_eq!(
+                OpenRouterImageProvider::resolve_resolution(Some("1K"), &caps),
+                Some("1K".into())
+            );
+        }
+
+        #[test]
+        fn test_resolve_resolution_below_min_picks_smallest() {
+            let caps = ImageApiCaps {
+                resolutions: Some(vec!["2K".into(), "4K".into()]),
+                ..Default::default()
+            };
+            assert_eq!(
+                OpenRouterImageProvider::resolve_resolution(Some("512"), &caps),
+                Some("2K".into())
+            );
+        }
+
+        #[test]
+        fn test_resolve_resolution_none_picks_highest() {
+            let caps = ImageApiCaps {
+                resolutions: Some(vec!["1K".into(), "2K".into()]),
+                ..Default::default()
+            };
+            assert_eq!(
+                OpenRouterImageProvider::resolve_resolution(None, &caps),
+                Some("2K".into())
+            );
+        }
+
+        #[test]
+        fn test_resolve_resolution_unsupported_omitted() {
+            let caps = ImageApiCaps::default();
+            assert_eq!(OpenRouterImageProvider::resolve_resolution(Some("4K"), &caps), None);
+        }
+
+        #[test]
+        fn test_build_image_api_body_clamps_and_omits_unsupported() {
+            let provider = make_image_provider("qwen/qwen-image-3-pro");
+            let model: ImageCatalogModel = serde_json::from_value(qwen_catalog_entry()).unwrap();
+            let caps = ImageApiCaps::from(&model);
+
+            let mut params = ImageGenParams::new("a red panda");
+            params.size_tier = Some("4K".into());
+            params.image_size = Some(crate::types::ImageSizeValue::Preset("portrait_2_3".into()));
+            params.num_images = Some(8);
+            params.quality = Some("medium".into());
+            params.output_format = Some("png".into());
+
+            let body = provider.build_image_api_body(&params, &caps);
+            assert_eq!(body["model"], "qwen/qwen-image-3-pro");
+            assert_eq!(body["prompt"], "a red panda");
+            assert_eq!(body["resolution"], "2K", "4K must clamp to highest supported tier");
+            assert_eq!(body["aspect_ratio"], "2:3");
+            assert_eq!(body["n"], 6, "num_images must clamp to n_max");
+            assert!(body.get("quality").is_none(), "quality unsupported by qwen caps");
+            assert!(body.get("output_format").is_none(), "output_format unsupported by qwen caps");
+        }
+
+        #[test]
+        fn test_build_image_api_body_unsupported_ratio_omitted() {
+            let provider = make_image_provider("qwen/qwen-image-3-pro");
+            let model: ImageCatalogModel = serde_json::from_value(qwen_catalog_entry()).unwrap();
+            let caps = ImageApiCaps::from(&model);
+
+            let mut params = ImageGenParams::new("a red panda");
+            params.image_size = Some(crate::types::ImageSizeValue::Preset("5:4".into()));
+
+            let body = provider.build_image_api_body(&params, &caps);
+            assert!(body.get("aspect_ratio").is_none(), "5:4 not in qwen aspect_ratio enum");
+        }
+
+        #[test]
+        fn test_build_image_api_body_input_references() {
+            let provider = make_image_provider("qwen/qwen-image-3-pro");
+            let caps = ImageApiCaps::default();
+
+            let mut params = ImageGenParams::new("make it watercolor");
+            params.image_urls = Some(vec!["https://nc.example/s/abc".into()]);
+
+            let body = provider.build_image_api_body(&params, &caps);
+            assert_eq!(body["input_references"][0]["type"], "image_url");
+            assert_eq!(body["input_references"][0]["image_url"]["url"], "https://nc.example/s/abc");
+        }
+
+        #[test]
+        fn test_build_image_api_body_quality_model_includes_quality() {
+            let provider = make_image_provider("openai/gpt-image-2");
+            let caps = ImageApiCaps {
+                supports_quality: true,
+                supports_output_format: true,
+                ..Default::default()
+            };
+
+            let mut params = ImageGenParams::new("a cat");
+            params.quality = Some("high".into());
+            params.output_format = Some("webp".into());
+            params.num_images = Some(2);
+
+            let body = provider.build_image_api_body(&params, &caps);
+            assert_eq!(body["quality"], "high");
+            assert_eq!(body["output_format"], "webp");
+            assert_eq!(body["n"], 2);
         }
     }
 }

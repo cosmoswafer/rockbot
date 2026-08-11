@@ -425,7 +425,7 @@ fn provider_defaults() -> HashMap<String, ProviderConfig> {
                 .expect("hardcoded"),
             basecf_url: None,
             chat_path: Some("/chat/completions".to_string()),
-            draw_path: Some("/images/generations".to_string()),
+            draw_path: Some("/images".to_string()),
             models: {
                 let mut m = HashMap::new();
                 m.insert("gpt".to_string(), "openai/gpt-oss-120b:online".to_string());
@@ -696,6 +696,12 @@ impl ProviderConfig {
     pub fn chat_url(&self) -> String {
         let base = self.base_url.as_str().trim_end_matches('/');
         let path = self.chat_path.as_deref().unwrap_or("/chat/completions");
+        format!("{}{}", base, path)
+    }
+
+    pub fn images_url(&self) -> String {
+        let base = self.base_url.as_str().trim_end_matches('/');
+        let path = self.draw_path.as_deref().unwrap_or("/images");
         format!("{}{}", base, path)
     }
 

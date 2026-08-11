@@ -1355,3 +1355,247 @@ dav_path = "remote.php/dav"
     );
     toml::from_str(&toml).expect("valid WebDavConfig TOML")
 }
+
+// ============================================================================
+// _dfd/ai/ai-provider.md §2d — OpenRouter Image API Routing (wiremock)
+// ============================================================================
+
+mod openrouter_image_api {
+    use super::tiny_png_bytes;
+    use rockbot::config::ProviderConfig;
+    use rockbot::provider::{ImageProvider, OpenRouterImageProvider};
+    use rockbot::types::{ImageGenParams, ImageSizeValue};
+    use rockbot::validated::{ConfigUrl, ProviderName};
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn make_provider(base_url: &str, model: &str) -> OpenRouterImageProvider {
+        let config = ProviderConfig {
+            name: ProviderName::try_new("openrouter".to_string()).unwrap(),
+            api_key: "sk-or-v1-test".into(),
+            base_url: ConfigUrl::try_new(base_url.to_string()).unwrap(),
+            basecf_url: None,
+            chat_path: Some("/chat/completions".into()),
+            draw_path: Some("/images".into()),
+            models: std::collections::HashMap::new(),
+        };
+        OpenRouterImageProvider::new(&config, model).unwrap()
+    }
+
+    fn qwen_catalog_body() -> serde_json::Value {
+        serde_json::json!({
+            "data": [{
+                "id": "qwen/qwen-image-3-pro",
+                "name": "Qwen Image 3 Pro",
+                "architecture": {
+                    "input_modalities": ["text", "image"],
+                    "output_modalities": ["image"]
+                },
+                "supported_parameters": {
+                    "resolution": { "type": "enum", "values": ["1K", "2K"] },
+                    "aspect_ratio": { "type": "enum", "values": ["1:1", "2:3", "16:9"] },
+                    "n": { "type": "range", "min": 1, "max": 6 },
+                    "input_references": { "type": "range", "min": 0, "max": 4 },
+                    "seed": { "type": "boolean" }
+                }
+            }]
+        })
+    }
+
+    fn image_api_response() -> serde_json::Value {
+        let b64 = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            tiny_png_bytes(),
+        );
+        serde_json::json!({
+            "created": 1748372400_u64,
+            "data": [{ "b64_json": b64, "media_type": "image/png" }],
+            "usage": { "prompt_tokens": 0, "completion_tokens": 100, "total_tokens": 100, "cost": 0.04 }
+        })
+    }
+
+    #[tokio::test]
+    async fn test_model_in_catalog_routes_to_image_api_with_clamped_params() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/images/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(qwen_catalog_body()))
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path("/images"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(image_api_response()))
+            .mount(&mock_server)
+            .await;
+
+        let provider = make_provider(&mock_server.uri(), "qwen/qwen-image-3-pro");
+        let mut params = ImageGenParams::new("a red panda astronaut");
+        params.size_tier = Some("4K".into());
+        params.image_size = Some(ImageSizeValue::Preset("2:3".into()));
+        params.num_images = Some(9);
+        params.quality = Some("medium".into());
+        params.output_format = Some("png".into());
+
+        let bytes = provider.generate_image(&params).await.unwrap();
+        assert_eq!(bytes, tiny_png_bytes());
+
+        let requests = mock_server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 2, "catalog GET + image POST");
+        let body: serde_json::Value =
+            serde_json::from_slice(&requests[1].body).expect("request body is json");
+        assert_eq!(body["model"], "qwen/qwen-image-3-pro");
+        assert_eq!(body["prompt"], "a red panda astronaut");
+        assert_eq!(body["resolution"], "2K", "4K must clamp to highest supported");
+        assert_eq!(body["aspect_ratio"], "2:3");
+        assert_eq!(body["n"], 6, "num_images must clamp to catalog n_max");
+        assert!(body.get("quality").is_none(), "qwen caps lack quality");
+        assert!(body.get("output_format").is_none(), "qwen caps lack output_format");
+        assert!(body.get("messages").is_none(), "image API takes prompt, not messages");
+    }
+
+    #[tokio::test]
+    async fn test_model_not_in_catalog_falls_back_to_chat_completions() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/images/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(qwen_catalog_body()))
+            .mount(&mock_server)
+            .await;
+
+        let b64 = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            tiny_png_bytes(),
+        );
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": "Here is your image.",
+                        "images": [{
+                            "type": "image_url",
+                            "image_url": { "url": format!("data:image/png;base64,{b64}") }
+                        }]
+                    },
+                    "finish_reason": "stop"
+                }]
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = make_provider(&mock_server.uri(), "some/unknown-model");
+        let params = ImageGenParams::new("a red panda astronaut");
+
+        let bytes = provider.generate_image(&params).await.unwrap();
+        assert_eq!(bytes, tiny_png_bytes());
+
+        let requests = mock_server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 2, "catalog GET + chat POST");
+        assert!(requests[1].url.path().ends_with("/chat/completions"));
+    }
+
+    #[tokio::test]
+    async fn test_catalog_fetch_failure_falls_back_to_chat_completions() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/images/models"))
+            .respond_with(ResponseTemplate::new(500).set_body_json(serde_json::json!({
+                "error": { "message": "internal error" }
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let b64 = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            tiny_png_bytes(),
+        );
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "images": [{
+                            "type": "image_url",
+                            "image_url": { "url": format!("data:image/png;base64,{b64}") }
+                        }]
+                    },
+                    "finish_reason": "stop"
+                }]
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = make_provider(&mock_server.uri(), "google/gemini-3.1-flash-image-preview");
+        let params = ImageGenParams::new("a red panda astronaut");
+
+        let bytes = provider.generate_image(&params).await.unwrap();
+        assert_eq!(bytes, tiny_png_bytes());
+    }
+
+    #[tokio::test]
+    async fn test_img2img_urls_map_to_input_references() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/images/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(qwen_catalog_body()))
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path("/images"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(image_api_response()))
+            .mount(&mock_server)
+            .await;
+
+        let provider = make_provider(&mock_server.uri(), "qwen/qwen-image-3-pro");
+        let mut params = ImageGenParams::new("make it watercolor");
+        params.image_urls = Some(vec!["https://nc.example/s/abc123".into()]);
+
+        let bytes = provider.generate_image(&params).await.unwrap();
+        assert_eq!(bytes, tiny_png_bytes());
+
+        let requests = mock_server.received_requests().await.unwrap();
+        let body: serde_json::Value =
+            serde_json::from_slice(&requests[1].body).expect("request body is json");
+        assert_eq!(body["input_references"][0]["type"], "image_url");
+        assert_eq!(
+            body["input_references"][0]["image_url"]["url"],
+            "https://nc.example/s/abc123"
+        );
+        assert!(body.get("messages").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_image_api_http_error_surfaces_provider_error() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/images/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(qwen_catalog_body()))
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path("/images"))
+            .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                "error": { "message": "invalid aspect_ratio" }
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = make_provider(&mock_server.uri(), "qwen/qwen-image-3-pro");
+        let params = ImageGenParams::new("a red panda astronaut");
+
+        let err = provider.generate_image(&params).await.unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("HTTP 400"), "got: {msg}");
+        assert!(msg.contains("invalid aspect_ratio"), "got: {msg}");
+    }
+}

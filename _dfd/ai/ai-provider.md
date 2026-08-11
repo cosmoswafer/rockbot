@@ -10,6 +10,12 @@ and payload formatting. Supports both base64 data URIs and remote URLs via
 `ContentPart::ImageUrl`. The `stream` field is sent in request bodies but SSE
 response parsing is not implemented — all responses are consumed as full JSON.
 
+`OpenRouterImageProvider` targets two OpenRouter API surfaces (see §2d): the
+dedicated **Image API** (`POST {base}/images`) for pure image models listed in
+the image catalog (`GET {base}/images/models`), and the legacy chat
+completions endpoint with `modalities: ["image"]` as fallback for models
+absent from the catalog (Gitea issue #84).
+
 - Upstream: [Configuration Management](config.md) provides `AiConfig`
 - Downstream: [Agent Harness](../agent/agent-harness.md) calls `complete()` with `ChatRequest`
   (message history + tool definitions) and returns `CompletionResult`
@@ -266,6 +272,63 @@ present in `ImageGenParams`. The default value comes from
 on the model ID to avoid sending the parameter to non-seedream5 Fal models that
 may reject it.
 
+### 2d. OpenRouter Image API Routing
+
+OpenRouter keeps two separate model catalogs: the chat catalog
+(`GET /api/v1/models`) and the image catalog (`GET /api/v1/images/models`).
+Pure image models (e.g. `qwen/qwen-image-3-pro`, `bytedance-seed/seedream-4.5`,
+`microsoft/mai-image-2.5`) exist **only** in the image catalog and are
+rejected with HTTP 404 on `chat/completions`. Dual-modality models
+(e.g. Gemini image models) appear in both catalogs and are routed to the
+Image API as well. The catalog is fetched lazily on first generation and
+cached for the provider's lifetime.
+
+```mermaid
+flowchart TD
+    GEN(GenerateImage)
+    CACHE[(ImageCatalogCache)]
+    FETCH(FetchImageCatalog)
+    ROUTE{Model in<br/>image catalog?}
+    CAPS(BuildImageApiRequest)
+    IMGAPI(PostImageApi)
+    LEGACY(PostChatCompletions)
+    OR_API[OpenRouter API]
+
+    GEN -->|"model id + ImageGenParams"| CACHE
+    CACHE -.->|"cache miss (first call)"| FETCH
+    FETCH -->|"http get /images/models"| OR_API
+    OR_API -->|"catalog json"| FETCH
+    FETCH -->|"ImageCatalogModel set"| CACHE
+    CACHE -->|"ImageApiCaps or absent"| ROUTE
+    ROUTE -->|"present"| CAPS
+    ROUTE -.->|"absent / catalog fetch failed"| LEGACY
+    CAPS -->|"image api request<br/>(params clamped to caps)"| IMGAPI
+    IMGAPI -->|"http post /images"| OR_API
+    LEGACY -->|"http post /chat/completions<br/>(modalities: image)"| OR_API
+    OR_API -->|"data[].b64_json"| IMGAPI
+    OR_API -->|"choices[].message.images data uri"| LEGACY
+```
+
+**Capability clamping** (`ImageApiCaps`, §3): the image catalog's
+`supported_parameters` descriptors are parsed once per model at boundary and
+used to shape the request — unsupported parameters are omitted rather than
+sent:
+
+- `resolution` — requested tier (from `ImageGenParams.size_tier`) not in the
+  allowed enum → clamp down to the highest allowed tier
+  (order: `512` < `1K` < `2K` < `4K`); e.g. default `4K` becomes `2K` for
+  `qwen/qwen-image-3-pro`.
+- `aspect_ratio` — requested ratio not in the allowed enum → omitted
+  (provider default applies).
+- `n` — `num_images` clamped to the range descriptor `max`.
+- `quality` / `output_format` — sent only when present in
+  `supported_parameters`.
+- `input_references` — img2img `image_urls` map to
+  `[{"type": "image_url", "image_url": {"url": ...}}]`.
+
+The Image API response is `{data: [{b64_json, media_type}], usage}`; the
+first entry's `b64_json` is base64-decoded to the returned bytes.
+
 ## 3. Data Structures
 
 #### `ChatRequest`
@@ -361,3 +424,30 @@ may reject it.
 | `repair_tool_args` | `(name: &str, args: &str) -> String` | String-aware scan: close unterminated strings, escape raw control chars, balance braces/brackets outside strings, validate; fallback `{}` |
 | `sanitize_messages_tool_calls` | `(&mut [ChatMessage]) -> usize` | Repair every invalid `function.arguments` in a message list in place; returns repair count |
 | `is_tool_call_parse_error` | `(&RockBotError) -> bool` | True when the provider error body indicates a tool-call arguments JSON parse failure (nlohmann `parse_error.10x` / "missing closing quote" / "invalid string" + tool-call keywords) |
+
+#### `ImageCatalogModel` (OpenRouter image catalog entry, parsed at boundary)
+
+Response shape of `GET {base}/images/models` → `data[]` (see §2d).
+
+| Field                  | Type                                        | Notes                                          |
+| ---------------------- | ------------------------------------------- | ---------------------------------------------- |
+| `id`                   | `String`                                    | Model slug used in generation requests         |
+| `supported_parameters` | `Option<HashMap<String, ParamDescriptor>>`  | Capability descriptors keyed by parameter name |
+
+#### `ParamDescriptor` (capability descriptor)
+
+| Variant   | Fields              | Notes                                   |
+| --------- | ------------------- | --------------------------------------- |
+| `Enum`    | `values: Vec<String>` | Discrete allowlist (e.g. resolutions) |
+| `Range`   | `min: i64, max: i64` | Any integer in range (e.g. `n`)        |
+| `Boolean` | —                   | Present = supported                     |
+
+#### `ImageApiCaps` (domain caps derived from `ImageCatalogModel`)
+
+| Field                     | Type                 | Notes                                                        |
+| ------------------------- | -------------------- | ------------------------------------------------------------ |
+| `resolutions`             | `Option<Vec<String>>`| Allowed tiers sorted ascending (`512` < `1K` < `2K` < `4K`)  |
+| `aspect_ratios`           | `Option<Vec<String>>`| Allowed `W:H` strings                                        |
+| `n_max`                   | `Option<u32>`        | Max images per call (from `n` range descriptor)              |
+| `supports_quality`        | `bool`               | `quality` present in `supported_parameters`                  |
+| `supports_output_format`  | `bool`               | `output_format` present in `supported_parameters`            |

@@ -8,15 +8,23 @@ name = "openrouter"
 api_key = "sk-or-v1-EDITME"
 base_url = "https://openrouter.ai/api/v1"
 basecf_url = ""
-draw_path = "/images/generations"
+draw_path = "/images"
 
 [image_providers.models]
 seedream = "bytedance-seed/seedream-4.5"
 banana   = "google/gemini-3.1-flash-image-preview"
 mai      = "microsoft/mai-image-2.5"
+qwenimage = "qwen/qwen-image-3-pro"
 ```
 
-> **Note:** `draw_path` is defined in config but **not used** by our implementation. OpenRouter image generation goes through the standard chat completions endpoint (`/chat/completions`) with the `modalities` parameter — this is OpenRouter's documented approach. The dedicated `/images/generations` endpoint (OpenAI-compatible) is an alternative API surface that our implementation does not consume.
+> **Note:** Since Gitea issue #84, `draw_path` **is** used: models present in
+> OpenRouter's image catalog (`GET {base_url}/images/models`) are generated via
+> the dedicated Image API `POST {base_url}{draw_path}` (`/api/v1/images`). The
+> chat completions endpoint (`/chat/completions` + `modalities`) documented
+> below remains only as fallback for models absent from the image catalog.
+> Pure image models (qwen-image-3, seedream, mai, flux, recraft, …) exist only
+> in the image catalog and are rejected with HTTP 404 on chat/completions.
+> See `_dfd/ai/ai-provider.md` §2d for the routing design.
 
 ## API: Single-Request (Synchronous)
 
