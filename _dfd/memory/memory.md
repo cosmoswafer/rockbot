@@ -218,12 +218,12 @@ same room never clobber each other's snapshot.
 
 ```mermaid
 flowchart TD
-    BOT_A["Bot A (bot_id=threefalcon)"]
-    BOT_B["Bot B (bot_id=oneshark)"]
-    ROOM["Shared room d-DTI"]
-    DAV_ROOM[(WebDAV d-DTI/memory/)]
-    DAV_SNAP_A[(WebDAV .snapshots/threefalcon/d-DTI/)]
-    DAV_SNAP_B[(WebDAV .snapshots/oneshark/d-DTI/)]
+    BOT_A["Bot A (bot_id=bot-a)"]
+    BOT_B["Bot B (bot_id=bot-b)"]
+    ROOM["Shared room d-XXXX"]
+    DAV_ROOM[(WebDAV d-XXXX/memory/)]
+    DAV_SNAP_A[(WebDAV .snapshots/bot-a/d-XXXX/)]
+    DAV_SNAP_B[(WebDAV .snapshots/bot-b/d-XXXX/)]
     L1_A[(Layer 1<br/>In-Memory Bot A)]
     L1_B[(Layer 1<br/>In-Memory Bot B)]
     SNAP_A[(snapshot.json<br/>Bot A)]
@@ -334,11 +334,11 @@ is stored under a separate configurable prefix, namespaced by `bot_id`.
 └── snapshot.json               # Layer 1: bot-internal crash-recovery checkpoint
 ```
 
-Example with `snapshot_prefix = ".snapshots"`, two bots sharing room `d-DTI`:
+Example with `snapshot_prefix = ".snapshots"`, two bots sharing room `d-XXXX`:
 ```
-CLAW/d-DTI/memory/soul.md                          # shared soul
-CLAW/.snapshots/threefalcon/d-DTI/snapshot.json    # falcon's history only
-CLAW/.snapshots/oneshark/d-DTI/snapshot.json       # shark's history only
+ROOT/d-XXXX/memory/soul.md                      # shared soul
+ROOT/.snapshots/bot-a/d-XXXX/snapshot.json      # Bot A's history only
+ROOT/.snapshots/bot-b/d-XXXX/snapshot.json      # Bot B's history only
 ```
 
 ## 4. Configuration
