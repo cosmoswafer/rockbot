@@ -25,6 +25,18 @@ example.config.toml   # minimal user overrides with EDITME placeholders
   2. `nohup ./target/release/rockbot < /dev/null > ./tmp/rockbot.log 2>&1 &`
 - Restart with debug: same pattern, prepend `RUST_LOG=debug` to the `nohup` line.
 
+### Multi-instance deployment (design)
+
+Multiple bot instances may run concurrently, each driven by its own `CONFIG_FILE`. Two instances may intentionally share the same WebDAV root so they present **one shared identity** (different LLMs, one persona) to the same DM user. Constraints of this design:
+
+- **One soul, two brains** — both instances read/write the same `soul.md`; per-bot identity must not live there.
+- **Soul sync is pull-based** — `soul.md` is re-read from WebDAV on every incoming message; no background polling or cross-instance push.
+- **No write coordination** — `edit_soul` does an unconditional PUT (last-write-wins); concurrent edits from both bots can lose a write.
+- **`state_dir` must differ per instance** even when the WebDAV root is shared (Matrix SDK session stores must not collide).
+- **Snapshots are isolated per bot** under `{root}/{snapshot_prefix}/{bot_id}/{webdav_dir}/snapshot.json` — see `_dfd/memory/memory.md` §2g.
+
+Per-instance operational details (hostnames, account names, config files, restart commands) are deployment info and live only in a gitignored local note (`_doc/config-files.local.md`), never in the repo.
+
 ## Build & test
 
 ```bash

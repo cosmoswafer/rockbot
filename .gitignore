@@ -4,6 +4,7 @@ venv/
 config.json
 config.toml
 config-local*.toml
+*.local.md
 .aider*
 .env
 .agents/deno.lock
