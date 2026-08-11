@@ -15,6 +15,7 @@ chat_path = "/chat/completions"
 [chat_providers.models]
 gpt = "openai/gpt-oss-120b:online"
 qwen = "qwen/qwen3.7-plus"
+qwenflash = "qwen/qwen3.7-flash"
 minimax = "minimax/minimax-m3"
 mimo = "xiaomi/mimo-v2.5"
 
@@ -47,6 +48,7 @@ draw_path = "/images/generations"
 seedream = "bytedance-seed/seedream-4.5"
 banana = "google/gemini-3.1-flash-image-preview"
 mai = "microsoft/mai-image-2.5"
+qwenimage = "qwen/qwen-image-3-pro"
 
 [[image_providers]]
 name = "fal"

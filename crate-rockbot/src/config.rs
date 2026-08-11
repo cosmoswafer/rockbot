@@ -430,11 +430,13 @@ fn provider_defaults() -> HashMap<String, ProviderConfig> {
                 let mut m = HashMap::new();
                 m.insert("gpt".to_string(), "openai/gpt-oss-120b:online".to_string());
                 m.insert("qwen".to_string(), "qwen/qwen3.7-plus".to_string());
+                m.insert("qwenflash".to_string(), "qwen/qwen3.7-flash".to_string());
                 m.insert("minimax".to_string(), "minimax/minimax-m3".to_string());
                 m.insert("mimo".to_string(), "xiaomi/mimo-v2.5".to_string());
                 m.insert("seedream".to_string(), "bytedance-seed/seedream-4.5".to_string());
                 m.insert("banana".to_string(), "google/gemini-3.1-flash-image-preview".to_string());
                 m.insert("mai".to_string(), "microsoft/mai-image-2.5".to_string());
+                m.insert("qwenimage".to_string(), "qwen/qwen-image-3-pro".to_string());
                 m
             },
         },
