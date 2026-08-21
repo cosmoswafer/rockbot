@@ -12,24 +12,38 @@ license: CC0-1.0
 server, API base, and owner/repo from the `origin` git remote. Never hardcode
 these values — they can change between repositories and environments.
 
+The `origin` remote may be any of these forms, so the derivation must not assume
+one shape:
+
+- `ssh://git@host:port/owner/repo.git` (URL-style SSH, often a custom port)
+- `git@host:owner/repo.git` (scp-style SSH)
+- `https://host/owner/repo.git` / `http://host/owner/repo.git`
+
+**Important:** the Gitea web/API is served over HTTPS on the standard port, not
+on the SSH port. Strip the user and the SSH port before building `$GITEA_API`.
+A remote like `ssh://git@HOST:33022/OWNER/REPO.git` maps to
+`https://HOST/api/v1` — **not** the `:33022` SSH port.
+
 ```bash
 source .env
 
 REMOTE=$(git remote get-url origin)
 REMOTE="${REMOTE%.git}"  # strip trailing .git if present
 
-if [[ "$REMOTE" == *@* ]]; then
-  # SSH format: git@host:owner/repo
-  HOST="${REMOTE%%:*}"
-  HOST="${HOST##*@}"
-  REPO="${REMOTE#*:}"
+if [[ "$REMOTE" == *://* ]]; then
+  # URL-style (ssh://, https://, http://): [user@]host[:port]/owner/repo
+  BARE="${REMOTE#*://}"
+  BARE="${BARE#*@}"        # strip user@ (e.g. git@)
+  REPO="${BARE#*/}"        # owner/repo after first slash
+  HOSTPART="${BARE%%/*}"   # host[:port]
 else
-  # HTTPS format: https://host/owner/repo
-  HOST="${REMOTE#*://}"
-  HOST="${HOST%%/*}"
-  REPO="${REMOTE#*://*/}"
+  # scp-style (git@host:owner/repo): [user@]host:owner/repo
+  BARE="${REMOTE#*@}"      # strip user@
+  HOSTPART="${BARE%%:*}"   # host (before first colon)
+  REPO="${BARE#*:}"        # owner/repo after colon
 fi
 
+HOST="${HOSTPART%%:*}"     # drop any :port suffix — API is on default HTTPS port
 GITEA_API="https://${HOST}/api/v1"
 ```
 
@@ -38,6 +52,15 @@ After this block, the following variables are available:
 - `$GITEA_API` — e.g. `https://gitea.com/api/v1`
 - `$REPO` — owner/repo, e.g. `ehr/WeightManagement-frontend`
 - `$GITEA_TOKEN` — sourced from `.env`
+
+Sanity-check the derivation before use (an empty/`000` curl exit means the host
+or port is wrong):
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" \
+  -H "Authorization: token $GITEA_TOKEN" \
+  "$GITEA_API/version"
+```
 
 ## Common Operations
 
@@ -48,11 +71,13 @@ source .env
 
 REMOTE=$(git remote get-url origin)
 REMOTE="${REMOTE%.git}"
-if [[ "$REMOTE" == *@* ]]; then
-  HOST="${REMOTE%%:*}"; HOST="${HOST##*@}"; REPO="${REMOTE#*:}"
+if [[ "$REMOTE" == *://* ]]; then
+  BARE="${REMOTE#*://}"; BARE="${BARE#*@}"
+  REPO="${BARE#*/}"; HOSTPART="${BARE%%/*}"
 else
-  HOST="${REMOTE#*://}"; HOST="${HOST%%/*}"; REPO="${REMOTE#*://*/}"
+  BARE="${REMOTE#*@}"; HOSTPART="${BARE%%:*}"; REPO="${BARE#*:}"
 fi
+HOST="${HOSTPART%%:*}"
 GITEA_API="https://${HOST}/api/v1"
 
 curl -s \
@@ -68,11 +93,13 @@ source .env
 
 REMOTE=$(git remote get-url origin)
 REMOTE="${REMOTE%.git}"
-if [[ "$REMOTE" == *@* ]]; then
-  HOST="${REMOTE%%:*}"; HOST="${HOST##*@}"; REPO="${REMOTE#*:}"
+if [[ "$REMOTE" == *://* ]]; then
+  BARE="${REMOTE#*://}"; BARE="${BARE#*@}"
+  REPO="${BARE#*/}"; HOSTPART="${BARE%%/*}"
 else
-  HOST="${REMOTE#*://}"; HOST="${HOST%%/*}"; REPO="${REMOTE#*://*/}"
+  BARE="${REMOTE#*@}"; HOSTPART="${BARE%%:*}"; REPO="${BARE#*:}"
 fi
+HOST="${HOSTPART%%:*}"
 GITEA_API="https://${HOST}/api/v1"
 
 curl -s \
@@ -88,11 +115,13 @@ source .env
 
 REMOTE=$(git remote get-url origin)
 REMOTE="${REMOTE%.git}"
-if [[ "$REMOTE" == *@* ]]; then
-  HOST="${REMOTE%%:*}"; HOST="${HOST##*@}"; REPO="${REMOTE#*:}"
+if [[ "$REMOTE" == *://* ]]; then
+  BARE="${REMOTE#*://}"; BARE="${BARE#*@}"
+  REPO="${BARE#*/}"; HOSTPART="${BARE%%/*}"
 else
-  HOST="${REMOTE#*://}"; HOST="${HOST%%/*}"; REPO="${REMOTE#*://*/}"
+  BARE="${REMOTE#*@}"; HOSTPART="${BARE%%:*}"; REPO="${BARE#*:}"
 fi
+HOST="${HOSTPART%%:*}"
 GITEA_API="https://${HOST}/api/v1"
 
 # All issues (including closed)
@@ -115,11 +144,13 @@ source .env
 
 REMOTE=$(git remote get-url origin)
 REMOTE="${REMOTE%.git}"
-if [[ "$REMOTE" == *@* ]]; then
-  HOST="${REMOTE%%:*}"; HOST="${HOST##*@}"; REPO="${REMOTE#*:}"
+if [[ "$REMOTE" == *://* ]]; then
+  BARE="${REMOTE#*://}"; BARE="${BARE#*@}"
+  REPO="${BARE#*/}"; HOSTPART="${BARE%%/*}"
 else
-  HOST="${REMOTE#*://}"; HOST="${HOST%%/*}"; REPO="${REMOTE#*://*/}"
+  BARE="${REMOTE#*@}"; HOSTPART="${BARE%%:*}"; REPO="${BARE#*:}"
 fi
+HOST="${HOSTPART%%:*}"
 GITEA_API="https://${HOST}/api/v1"
 
 curl -s \
@@ -141,11 +172,13 @@ source .env
 
 REMOTE=$(git remote get-url origin)
 REMOTE="${REMOTE%.git}"
-if [[ "$REMOTE" == *@* ]]; then
-  HOST="${REMOTE%%:*}"; HOST="${HOST##*@}"; REPO="${REMOTE#*:}"
+if [[ "$REMOTE" == *://* ]]; then
+  BARE="${REMOTE#*://}"; BARE="${BARE#*@}"
+  REPO="${BARE#*/}"; HOSTPART="${BARE%%/*}"
 else
-  HOST="${REMOTE#*://}"; HOST="${HOST%%/*}"; REPO="${REMOTE#*://*/}"
+  BARE="${REMOTE#*@}"; HOSTPART="${BARE%%:*}"; REPO="${BARE#*:}"
 fi
+HOST="${HOSTPART%%:*}"
 GITEA_API="https://${HOST}/api/v1"
 
 curl -s -X POST \
@@ -164,11 +197,13 @@ source .env
 
 REMOTE=$(git remote get-url origin)
 REMOTE="${REMOTE%.git}"
-if [[ "$REMOTE" == *@* ]]; then
-  HOST="${REMOTE%%:*}"; HOST="${HOST##*@}"; REPO="${REMOTE#*:}"
+if [[ "$REMOTE" == *://* ]]; then
+  BARE="${REMOTE#*://}"; BARE="${BARE#*@}"
+  REPO="${BARE#*/}"; HOSTPART="${BARE%%/*}"
 else
-  HOST="${REMOTE#*://}"; HOST="${HOST%%/*}"; REPO="${REMOTE#*://*/}"
+  BARE="${REMOTE#*@}"; HOSTPART="${BARE%%:*}"; REPO="${BARE#*:}"
 fi
+HOST="${HOSTPART%%:*}"
 GITEA_API="https://${HOST}/api/v1"
 
 # 1. Write JSON to a temp file (use $GITEA_USER for assignees)
@@ -197,11 +232,13 @@ source .env
 
 REMOTE=$(git remote get-url origin)
 REMOTE="${REMOTE%.git}"
-if [[ "$REMOTE" == *@* ]]; then
-  HOST="${REMOTE%%:*}"; HOST="${HOST##*@}"; REPO="${REMOTE#*:}"
+if [[ "$REMOTE" == *://* ]]; then
+  BARE="${REMOTE#*://}"; BARE="${BARE#*@}"
+  REPO="${BARE#*/}"; HOSTPART="${BARE%%/*}"
 else
-  HOST="${REMOTE#*://}"; HOST="${HOST%%/*}"; REPO="${REMOTE#*://*/}"
+  BARE="${REMOTE#*@}"; HOSTPART="${BARE%%:*}"; REPO="${BARE#*:}"
 fi
+HOST="${HOSTPART%%:*}"
 GITEA_API="https://${HOST}/api/v1"
 
 curl -s -X POST \
@@ -219,11 +256,13 @@ source .env
 
 REMOTE=$(git remote get-url origin)
 REMOTE="${REMOTE%.git}"
-if [[ "$REMOTE" == *@* ]]; then
-  HOST="${REMOTE%%:*}"; HOST="${HOST##*@}"; REPO="${REMOTE#*:}"
+if [[ "$REMOTE" == *://* ]]; then
+  BARE="${REMOTE#*://}"; BARE="${BARE#*@}"
+  REPO="${BARE#*/}"; HOSTPART="${BARE%%/*}"
 else
-  HOST="${REMOTE#*://}"; HOST="${HOST%%/*}"; REPO="${REMOTE#*://*/}"
+  BARE="${REMOTE#*@}"; HOSTPART="${BARE%%:*}"; REPO="${BARE#*:}"
 fi
+HOST="${HOSTPART%%:*}"
 GITEA_API="https://${HOST}/api/v1"
 
 curl -s -X PATCH \
@@ -241,11 +280,13 @@ source .env
 
 REMOTE=$(git remote get-url origin)
 REMOTE="${REMOTE%.git}"
-if [[ "$REMOTE" == *@* ]]; then
-  HOST="${REMOTE%%:*}"; HOST="${HOST##*@}"; REPO="${REMOTE#*:}"
+if [[ "$REMOTE" == *://* ]]; then
+  BARE="${REMOTE#*://}"; BARE="${BARE#*@}"
+  REPO="${BARE#*/}"; HOSTPART="${BARE%%/*}"
 else
-  HOST="${REMOTE#*://}"; HOST="${HOST%%/*}"; REPO="${REMOTE#*://*/}"
+  BARE="${REMOTE#*@}"; HOSTPART="${BARE%%:*}"; REPO="${BARE#*:}"
 fi
+HOST="${HOSTPART%%:*}"
 GITEA_API="https://${HOST}/api/v1"
 
 curl -s -X PATCH \
@@ -263,11 +304,13 @@ source .env
 
 REMOTE=$(git remote get-url origin)
 REMOTE="${REMOTE%.git}"
-if [[ "$REMOTE" == *@* ]]; then
-  HOST="${REMOTE%%:*}"; HOST="${HOST##*@}"; REPO="${REMOTE#*:}"
+if [[ "$REMOTE" == *://* ]]; then
+  BARE="${REMOTE#*://}"; BARE="${BARE#*@}"
+  REPO="${BARE#*/}"; HOSTPART="${BARE%%/*}"
 else
-  HOST="${REMOTE#*://}"; HOST="${HOST%%/*}"; REPO="${REMOTE#*://*/}"
+  BARE="${REMOTE#*@}"; HOSTPART="${BARE%%:*}"; REPO="${BARE#*:}"
 fi
+HOST="${HOSTPART%%:*}"
 GITEA_API="https://${HOST}/api/v1"
 
 curl -s \
@@ -283,11 +326,13 @@ source .env
 
 REMOTE=$(git remote get-url origin)
 REMOTE="${REMOTE%.git}"
-if [[ "$REMOTE" == *@* ]]; then
-  HOST="${REMOTE%%:*}"; HOST="${HOST##*@}"; REPO="${REMOTE#*:}"
+if [[ "$REMOTE" == *://* ]]; then
+  BARE="${REMOTE#*://}"; BARE="${BARE#*@}"
+  REPO="${BARE#*/}"; HOSTPART="${BARE%%/*}"
 else
-  HOST="${REMOTE#*://}"; HOST="${HOST%%/*}"; REPO="${REMOTE#*://*/}"
+  BARE="${REMOTE#*@}"; HOSTPART="${BARE%%:*}"; REPO="${BARE#*:}"
 fi
+HOST="${HOSTPART%%:*}"
 GITEA_API="https://${HOST}/api/v1"
 
 curl -s \
@@ -307,11 +352,13 @@ source .env
 
 REMOTE=$(git remote get-url origin)
 REMOTE="${REMOTE%.git}"
-if [[ "$REMOTE" == *@* ]]; then
-  HOST="${REMOTE%%:*}"; HOST="${HOST##*@}"; REPO="${REMOTE#*:}"
+if [[ "$REMOTE" == *://* ]]; then
+  BARE="${REMOTE#*://}"; BARE="${BARE#*@}"
+  REPO="${BARE#*/}"; HOSTPART="${BARE%%/*}"
 else
-  HOST="${REMOTE#*://}"; HOST="${HOST%%/*}"; REPO="${REMOTE#*://*/}"
+  BARE="${REMOTE#*@}"; HOSTPART="${BARE%%:*}"; REPO="${BARE#*:}"
 fi
+HOST="${HOSTPART%%:*}"
 GITEA_API="https://${HOST}/api/v1"
 
 # Primary: /user endpoint (requires read:user token scope)
@@ -340,6 +387,13 @@ username is still unknown, create the issue without `assignees`, extract
 - Always `source .env` before any curl call so `$GITEA_TOKEN` is available.
 - Always derive `$GITEA_API` and `$REPO` from `git remote get-url origin` —
   never hardcode the server hostname or owner/repo path.
+- The derivation handles URL-style SSH (`ssh://git@host:port/owner/repo.git`),
+  scp-style SSH (`git@host:owner/repo.git`), and HTTPS/HTTP remotes. The Gitea
+  API is always reached over HTTPS on the standard port, so any `:port` in the
+  git remote (especially the SSH port) is stripped — e.g.
+  `ssh://git@HOST:33022/Atom/rockbot.git` →
+  `https://HOST/api/v1`. If curl returns `000` or the API 404s,
+  re-check that the host/port were derived correctly.
 - If `jq` is not installed, omit the `| jq ...` pipe; the raw JSON is still
   readable.
 - The issues endpoint returns pull requests too. To distinguish: PRs have a
