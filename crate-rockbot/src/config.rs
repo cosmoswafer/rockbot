@@ -454,7 +454,7 @@ fn provider_defaults() -> HashMap<String, ProviderConfig> {
             draw_path: None,
             models: {
                 let mut m = HashMap::new();
-                m.insert("flash".to_string(), "deepseek-v4-flash".to_string());
+                m.insert("flash".to_string(), "deepseek-v4-flash-vision-exp".to_string());
                 m.insert("pro".to_string(), "deepseek-v4-pro".to_string());
                 m
             },

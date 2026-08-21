@@ -25,7 +25,7 @@ api_key = ""
 base_url = "https://api.deepseek.com/v1"
 
 [chat_providers.models]
-flash = "deepseek-v4-flash"
+flash = "deepseek-v4-flash-vision-exp"
 pro = "deepseek-v4-pro"
 
 [[chat_providers]]
