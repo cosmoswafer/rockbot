@@ -1,6 +1,10 @@
 ---
 name: dfd-md
-description: Use when creating or maintaining Data Flow Diagrams (DFDs) as .md files with Mermaid flowchart syntax. Covers Context (Level 0), Level 1 decompositions, and Level 2 inline process deep-dives. Use for modeling data movement, pipeline documentation, or illustrating data flow through a system.
+description: |
+  Create, document, and maintain Data Flow Diagrams (DFDs) as .md files using
+  Mermaid flowchart syntax. Covers Context (Level 0), Level 1 decompositions,
+  and Level 2 inline process deep-dives. Use for modeling data movement,
+  pipeline documentation, or illustrating data flow through a system.
 license: CC0-1.0
 ---
 
@@ -103,7 +107,7 @@ language:
 | **External Entity** (person, org, external system)       | `[Square brackets]` | `USER[User]`               |
 | **Process** (transforms input → output data)             | `(Rounded)`         | `VALIDATE(Validate Input)` |
 | **Data Store** (persistent repository)                   | `[(Cylinder)]`      | `DB[(Database)]`           |
-| **Data Flow** (directional data movement)                | `-->                | label                      |
+| **Data Flow** (directional data movement)                | `-->|label|`        | `USER -->|"login request"| VALIDATE` |
 | **Flow Split/Join** (same data to/from multiple targets) | Multiple arrows     | See examples               |
 
 ### Naming Conventions
@@ -182,15 +186,17 @@ Level 2 diagrams live **inline** within the parent Level 1 `.md` file as
 `2c`, `2d`, … — not as separate files. One diagram per Level 1 process or
 concern needing deeper detail.
 
-Level 2 inline diagrams cover four categories of detail that are
-never mixed into the happy flow:
+Level 2 inline diagrams cover categories of detail that are never mixed into
+the happy flow:
 
 | Category | When to use |
 | -------- | ----------- |
 | **Exceptional Handling** | Error paths, fallbacks, retries, edge-case recovery diverging from the happy path |
 | **Non-Functional Requirements** | Rate limits, throttling, debouncing, security checkpoints, input sanitization, data retention/cleanup |
 | **Abstract Components** | Caching layers, shared utilities, retry mechanics, cross-cutting infrastructure |
+| **UI/UX Flow** | User-facing states matter — loading spinners, empty states, progressive disclosure, interaction sequences, optimistic updates |
 | **Process Deep Dive** | Internal transformation logic inside a Level 1 process that is too complex for Level 1 |
+| **Other Implementation Detail** | Any cross-cutting concern or subsystem internals that don't fit the categories above but are worth documenting |
 
 **Example — Abstract Component (Cache Layer):**
 
@@ -214,8 +220,10 @@ flowchart TD
 
 - Inline within the parent Level 1 file as `2c`, `2d`, etc.
 - One diagram per concern or process
+- Title each diagram as `2c. {Concern}`, e.g. `2c. Loading States`,
+  `2d. Rate Limiting`, `2e. Validate Prompt Deep Dive`
 - Dashed `-.->` arrows for fallback paths (cache-miss reads, retries, error
-  recovery)
+  recovery, silent fallbacks with no user-visible error)
 - Use `shared/{concern}.md` when the same detail diagram is reused across
   multiple Level 1 DFDs
 
@@ -268,9 +276,11 @@ For Level 1, split into sub-sections as needed:
   non-functional concerns. Keep each happy flow under 5–7 nodes. A typical
   Level 1 DFD has 2–4 happy flows.
 - **2c+. Level 2 Inline Diagrams** — one per exceptional handling path,
-  non-functional requirement, abstract component, or process deep dive:
-  numbered `2c`, `2d`, `2e`, … as needed. Each diagram is scoped to a single
-  concern or process.
+  non-functional requirement, abstract component, UI/UX flow, process deep
+  dive, or other implementation detail: numbered `2c`, `2d`, `2e`, … as
+  needed, titled `2c. {Concern}` (e.g. `2c. Loading States`,
+  `2d. Rate Limiting`). Each diagram is scoped to a single concern or
+  process.
 
 ### 3. Data Structures (Level 1 only)
 
