@@ -437,6 +437,72 @@ impl ImageGenParams {
     }
 }
 
+/// Config-derived catalog of available image model aliases → model ids.
+///
+/// Canonical shared type (see `_dfd/tools/image-gen.md` §3): produced by
+/// `main.rs` from the active `[[image_providers]]` entry's `models` map plus
+/// the `[image_model]` default aliases, consumed by `ImageGenTool` for
+/// per-call model selection. Construction is infallible — config leniency is
+/// preserved (an unresolvable default alias is kept as-is and never blocks
+/// tool registration); the tool rejects unknown LLM-provided aliases at the
+/// parse boundary instead.
+#[derive(Debug, Clone, Default)]
+pub struct ImageModelCatalog {
+    entries: Vec<(String, String)>,
+    default_text_alias: String,
+    default_edit_alias: String,
+}
+
+impl ImageModelCatalog {
+    pub fn new(
+        models: std::collections::HashMap<String, String>,
+        default_text_alias: impl Into<String>,
+        default_edit_alias: impl Into<String>,
+    ) -> Self {
+        let mut entries: Vec<(String, String)> = models.into_iter().collect();
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        Self {
+            entries,
+            default_text_alias: default_text_alias.into(),
+            default_edit_alias: default_edit_alias.into(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Resolve a config alias to its model id.
+    pub fn resolve(&self, alias: &str) -> Option<&str> {
+        self.entries
+            .iter()
+            .find(|(a, _)| a == alias)
+            .map(|(_, id)| id.as_str())
+    }
+
+    /// Aliases in sorted order — feeds the tool schema `enum`.
+    pub fn allowed_aliases(&self) -> Vec<&str> {
+        self.entries.iter().map(|(a, _)| a.as_str()).collect()
+    }
+
+    /// `"a, b, c"` or `"(none configured)"` — for parse-error messages.
+    pub fn valid_alias_list(&self) -> String {
+        if self.entries.is_empty() {
+            "(none configured)".to_string()
+        } else {
+            self.allowed_aliases().join(", ")
+        }
+    }
+
+    pub fn default_text_alias(&self) -> &str {
+        &self.default_text_alias
+    }
+
+    pub fn default_edit_alias(&self) -> &str {
+        &self.default_edit_alias
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -549,5 +615,52 @@ mod tests {
         // Zero width gives pixel count 0 which is below minimum
         let err = p.validate_dimensions().unwrap_err();
         assert!(err.to_string().contains("pixel count"));
+    }
+
+    #[test]
+    fn test_image_model_catalog_resolution() {
+        let models = std::collections::HashMap::from([
+            ("seedream5".to_string(), "bytedance/seedream/v5/pro/text-to-image".to_string()),
+            ("mai".to_string(), "microsoft/mai-image-2.5".to_string()),
+        ]);
+        let catalog = ImageModelCatalog::new(models, "mai", "mai");
+        assert_eq!(catalog.resolve("mai"), Some("microsoft/mai-image-2.5"));
+        assert_eq!(
+            catalog.resolve("seedream5"),
+            Some("bytedance/seedream/v5/pro/text-to-image")
+        );
+        assert_eq!(catalog.resolve("nope"), None);
+        assert!(!catalog.is_empty());
+    }
+
+    #[test]
+    fn test_image_model_catalog_sorted_aliases() {
+        let models = std::collections::HashMap::from([
+            ("seedream5".to_string(), "a".to_string()),
+            ("banana".to_string(), "b".to_string()),
+            ("mai".to_string(), "c".to_string()),
+        ]);
+        let catalog = ImageModelCatalog::new(models, "mai", "mai");
+        assert_eq!(catalog.allowed_aliases(), vec!["banana", "mai", "seedream5"]);
+        assert_eq!(catalog.valid_alias_list(), "banana, mai, seedream5");
+    }
+
+    #[test]
+    fn test_image_model_catalog_default_aliases() {
+        let catalog = ImageModelCatalog::new(
+            std::collections::HashMap::from([("mai".to_string(), "microsoft/mai-image-2.5".to_string())]),
+            "mai",
+            "qwenimage",
+        );
+        assert_eq!(catalog.default_text_alias(), "mai");
+        assert_eq!(catalog.default_edit_alias(), "qwenimage");
+    }
+
+    #[test]
+    fn test_image_model_catalog_empty() {
+        let catalog = ImageModelCatalog::new(std::collections::HashMap::new(), "mai", "mai");
+        assert!(catalog.is_empty());
+        assert_eq!(catalog.resolve("mai"), None);
+        assert_eq!(catalog.valid_alias_list(), "(none configured)");
     }
 }

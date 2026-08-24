@@ -21,6 +21,7 @@ use rockbot::tools::{
     ForgetKnowledgeTool, ImageGenTool, RecallKnowledgeTool, SaveKnowledgeTool, SearchProvider,
     VisionTool, WebDavTool, WebFetchTool, WebSearchTool,
 };
+use rockbot::types::ImageModelCatalog;
 use rockbot::utils::strip_markdown_image_id;
 
 fn setup_logging() {
@@ -285,6 +286,13 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
 
             info!("Resolved image models: t2i='{}' edit='{}'", resolved_t2i, resolved_edit);
 
+            let model_catalog = ImageModelCatalog::new(
+                img_cfg.models.clone(),
+                t2i_model_name.to_string(),
+                edit_model_name.to_string(),
+            );
+            let available_aliases = model_catalog.valid_alias_list();
+
             let t2i_provider: Option<Box<dyn ImageProvider>> = match image_provider_name {
                 "fal" => FalAiProvider::new(img_cfg, &resolved_t2i).ok().map(|p| Box::new(p) as Box<dyn ImageProvider>),
                 "openrouter" => OpenRouterImageProvider::new(img_cfg, &resolved_t2i).ok().map(|p| Box::new(p) as Box<dyn ImageProvider>),
@@ -324,14 +332,16 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
 
                 if let Some(edit) = edit_provider {
                     info!(
-                        "Registered image_gen with t2i={} / edit={}{}",
+                        "Registered image_gen with t2i={} / edit={} (model aliases: {}){}",
                         resolved_t2i,
                         resolved_edit,
+                        available_aliases,
                         if same_provider { " (same provider)" } else { "" }
                     );
                     tool_registry.register(Box::new(ImageGenTool::with_img2img(
                         t2i,
                         edit,
+                        model_catalog,
                         default_quality.to_string(),
                         default_output_format.to_string(),
                         default_num_images,

@@ -9,6 +9,12 @@ with a prompt and optional parameters; the tool delegates to the provider,
 writes to WebDAV, stores to the cache, and returns a minimal result
 (`{ok, webdav_path, image_key}`) so the LLM context stays lightweight.
 
+The LLM can select any model from the active image provider's `models`
+catalog per call via an optional `model` alias arg; omitting it falls back to
+the `[image_model]` defaults (`default_text_model` / `default_edit_model`).
+The catalog (alias → model id) is a shared type
+(`ImageModelCatalog`) produced from config at startup and consumed by the tool.
+
 - Upstream: [Agent Harness](../agent/agent-harness.md) injects `room_id`, `webdav_dir`,
   and `image_cache_key` (call_id) into tool args before invoking `execute_by_name()`
 - Upstream: [Image Injection Pipeline](../agent/agent-harness.md#2i-generated-image-upload--injection-pipeline)
@@ -34,9 +40,9 @@ flowchart TD
     CACHE[(ImageCache)]
     FORMAT(FormatResult)
 
-    AGENT -->|"prompt + aspect_ratio + image_urls + reference_image_key (LLM), room_id + webdav_dir + image_cache_key (harness injects)"| PARSE
-    PARSE -->|"merged with config defaults (quality, output_format, num_images, size_tier) + uploaded image_urls + resolved image_size"| RESOLVE
-    RESOLVE -->|"t2i or edit provider + ImageGenParams"| PROVIDER
+    AGENT -->|"prompt + aspect_ratio + model alias (LLM, optional) + image_urls + reference_image_key (LLM), room_id + webdav_dir + image_cache_key (harness injects)"| PARSE
+    PARSE -->|"merged with config defaults (quality, output_format, num_images, size_tier) + model alias resolved via ImageModelCatalog → ImageGenParams.model_id + uploaded image_urls + resolved image_size"| RESOLVE
+    RESOLVE -->|"t2i or edit provider + ImageGenParams (model_id set ⇒ per-call override; None ⇒ provider's configured default)"| PROVIDER
     PROVIDER --> GEN
     GEN -->|"raw image bytes (Vec<u8>)"| DAV_UPLOAD
     DAV_UPLOAD -->|"PUT {output_format}"| DAV
@@ -64,7 +70,13 @@ flowchart TD
     FALLBACK -->|"error message"| AGENT[Agent Loop]
 ```
 
-### 2c. Provider Selection & Data URI Handling
+### 2c. Model & Provider Selection
+
+The tool selects the model per call: an optional LLM `model` alias is resolved
+against the active image provider's `ImageModelCatalog` (alias → model id)
+and set as `ImageGenParams.model_id`. Omitted ⇒ the provider instance's own
+configured default is used (`params.model_id = None`). Unknown aliases are
+rejected at parse with a `ToolCallParse` error naming the valid aliases.
 
 The tool selects the provider based on `image_urls` presence and configuration.
 Fal requires CDN-hosted URLs (data URIs uploaded first), OpenRouter accepts
@@ -74,13 +86,15 @@ inline base64. The harness is unaware of this difference — both implement
 ```mermaid
 flowchart TD
     PARSE(ParseArgs)
+    RESOLVE(ResolveModelAlias<br/>ImageModelCatalog lookup)
     CHECK{Has image_urls?}
     UPLOAD_URI[Upload DataURIs<br/>via provider.upload_file]
     T2I[t2i provider]
     IMG2IMG[img2img/edit provider]
     GEN(GenerateImage)
 
-    PARSE --> CHECK
+    PARSE --> RESOLVE
+    RESOLVE -->|"model_id: Some(id) or None"| CHECK
     CHECK -->|"yes (user attachments or LLM-provided URLs)"| UPLOAD_URI
     CHECK -->|"no"| T2I
     UPLOAD_URI --> IMG2IMG
@@ -200,11 +214,29 @@ LLM provides `prompt` and `aspect_ratio` (both required); all other fields come 
 | `image_cache_key`| Harness          | `string`                                       | Tool call_id — used as ImageCache lookup key. **Note:** injected at execute time, not in LLM-facing schema. |
 | `image_urls`    | Harness (auto)    | `[]string`                                     | Injected from 5 converging sources (see §2e): user attachments, vision/WebDAV pool, agent-provided URLs, message image URLs (auto-injected unconditionally), and `reference_image_key` (ImageCache lookup) |
 | `reference_image_key` | LLM | `string` | Alternative to `image_urls` — the `image_key` from a prior `image_gen` result. Looked up in ImageCache; data URI uploaded to provider CDN. Tool-level arg — not a field on the Rust struct; resolved before `ImageGenParams` construction. |
-| `model_id`      | Provider (runtime)| `string`                                       | Selected at provider call time via `provider.model_id()`. The struct field exists but is not populated from config by the tool. |
+| `model`       | LLM              | `string` (alias)                              | **Optional.** Config alias for the active image provider's `models` catalog. Exposed in the tool schema as an `enum` of valid aliases (omitted when catalog empty). Resolved via `ImageModelCatalog`; unknown alias → `ToolCallParse` error at the parse boundary. |
+| `model_id`    | Tool (resolved)  | `string`                                       | Populated by the tool from the LLM's `model` alias when given (see `ImageModelCatalog`); `None` when omitted — the provider instance then uses its configured default model id (`provider.model_id()`). |
 | `quality`       | Config            | `string`                                       | From `default_quality`                           |
 | `output_format` | Config            | `string`                                       | From `default_output_format`                     |
 | `num_images`    | Config            | `integer`                                      | From `default_num_images`                        |
 | `enable_safety_checker` | Config     | `boolean`                                      | From `default_enable_safety_checker` (default `false`). Sent by `FalAiProvider` only when model contains `"seedream/v5"`. |
+
+#### `ImageModelCatalog`
+
+Shared type produced at startup from the active `[[image_providers]]` entry's
+`models` map (alias → model id) plus the `[image_model]` default aliases.
+Defined in `types.rs` — produced by `main.rs` and consumed by the tool, so
+mismatches are compile-time errors.
+
+| Field                | Type                    | Description                                      |
+| -------------------- | ----------------------- | ------------------------------------------------ |
+| `entries`            | `[(string, string)]`    | `(alias, model_id)` pairs, sorted by alias — stable schema `enum`. |
+| `default_text_alias` | `string`                | `[image_model] default_text_model` (t2i fallback) |
+| `default_edit_alias` | `string`                | `[image_model] default_edit_model` (edit fallback) |
+
+`resolve(alias)` returns the model id or `None` — the tool rejects unknown
+aliases with a `ToolCallParse` error listing the valid aliases. `allowed_aliases()`
+feeds the tool schema `enum`.
 
 #### `ImageGenResult`
 

@@ -3,7 +3,8 @@ use rockbot::error::RockBotError;
 use rockbot::validated::{ConfigUrl, NonEmptyString, ProviderName};
     use rockbot::provider::{AiProvider, DeepSeekProvider, FalAiProvider, ImageProvider, LlamaCppProvider, OpenRouterImageProvider, OpenRouterProvider};
     use rockbot::tool::Tool;
-    use rockbot::types::{ChatMessage, ChatRequest, FinishReason, ImageGenParams, ThinkingConfig, ToolCall, ToolDef};
+    use rockbot::tools::ImageGenTool;
+    use rockbot::types::{ChatMessage, ChatRequest, FinishReason, ImageGenParams, ImageModelCatalog, ThinkingConfig, ToolCall, ToolDef};
     use std::collections::HashMap;
     use std::sync::Arc;
 use wiremock::matchers::{body_string_contains, header, method, path};
@@ -2542,7 +2543,6 @@ use rockbot::harness::AgentHarness;
 #[cfg(test)]
 mod summarization_tests {
     use super::*;
-    use rockbot::image_cache::ImageCache;
     use rockbot::types::CompletionResult;
     use rockbot::validated::BoundedUsize;
 
@@ -2671,7 +2671,7 @@ mod summarization_tests {
     /// 20 messages → oldest 12 (60%) summarized into 1 system msg, 8 retained.
     #[tokio::test]
     async fn test_token_pressure_triggers_summarization() {
-        let image_cache = Arc::new(ImageCache::new());
+        let image_cache = Arc::new(rockbot::image_cache::ImageCache::new());
         let config = make_summarization_test_config();
         let provider = Box::new(CountingMockProvider::new("Summary of conversation"));
         let mut harness = AgentHarness::new(config, provider, None, image_cache, "@testbot");
@@ -2711,7 +2711,7 @@ mod summarization_tests {
     /// 15 messages → oldest 9 (60%) summarized into 1 system msg, 6 retained.
     #[tokio::test]
     async fn test_byte_pressure_triggers_summarization() {
-        let image_cache = Arc::new(ImageCache::new());
+        let image_cache = Arc::new(rockbot::image_cache::ImageCache::new());
         let config = make_summarization_test_config();
         let provider = Box::new(CountingMockProvider::new("Byte pressure summary"));
         let mut harness = AgentHarness::new(config, provider, None, image_cache, "@testbot");
@@ -2743,7 +2743,7 @@ mod summarization_tests {
     /// When LLM summarization fails, falls back to strip-half (drop oldest 50%).
     #[tokio::test]
     async fn test_summarization_llm_failure_falls_back_to_strip_half() {
-        let image_cache = Arc::new(ImageCache::new());
+        let image_cache = Arc::new(rockbot::image_cache::ImageCache::new());
         let config = make_summarization_test_config();
         let provider = Box::new(FailingMockProvider);
         let mut harness = AgentHarness::new(config, provider, None, image_cache, "@testbot");
@@ -2772,7 +2772,7 @@ mod summarization_tests {
     /// Explicit reset still does full wipe (all messages cleared).
     #[tokio::test]
     async fn test_explicit_reset_still_does_full_wipe() {
-        let image_cache = Arc::new(ImageCache::new());
+        let image_cache = Arc::new(rockbot::image_cache::ImageCache::new());
         let config = make_summarization_test_config();
         let provider = Box::new(CountingMockProvider::new("should not be called"));
         let mut harness = AgentHarness::new(config, provider, None, image_cache, "@testbot");
@@ -2803,7 +2803,7 @@ mod summarization_tests {
     /// When summarization is disabled, pressure triggers strip-half, not full wipe.
     #[tokio::test]
     async fn test_summarization_disabled_strips_half() {
-        let image_cache = Arc::new(ImageCache::new());
+        let image_cache = Arc::new(rockbot::image_cache::ImageCache::new());
         let config = make_summarization_test_config_with(false);
         let provider = Box::new(CountingMockProvider::new("should not be called"));
         let mut harness = AgentHarness::new(config, provider, None, image_cache, "@testbot");
@@ -2832,7 +2832,7 @@ mod summarization_tests {
     /// No pressure flags → no change to history.
     #[tokio::test]
     async fn test_no_pressure_no_change() {
-        let image_cache = Arc::new(ImageCache::new());
+        let image_cache = Arc::new(rockbot::image_cache::ImageCache::new());
         let config = make_summarization_test_config();
         let provider = Box::new(CountingMockProvider::new("ok"));
         let mut harness = AgentHarness::new(config, provider, None, image_cache, "@testbot");
@@ -2858,7 +2858,7 @@ mod summarization_tests {
     /// Pressure flags are cleared after summarization completes.
     #[tokio::test]
     async fn test_pressure_flags_cleared_after_summarization() {
-        let image_cache = Arc::new(ImageCache::new());
+        let image_cache = Arc::new(rockbot::image_cache::ImageCache::new());
         let config = make_summarization_test_config();
         let provider = Box::new(CountingMockProvider::new("summary"));
         let mut harness = AgentHarness::new(config, provider, None, image_cache, "@testbot");
@@ -2886,7 +2886,7 @@ mod summarization_tests {
 #[cfg(test)]
 mod knowledge_cache_tests {
     use super::*;
-    use rockbot::{AgentHarness, ImageCache};
+    use rockbot::AgentHarness;
     use rockbot::config::{AppConfig, ImageModelConfig, ModelConfig, RocketChatSection, ServerConfig};
     use rockbot::validated::{BoundedUsize, ConfigUrl, ProviderName};
     use wiremock::matchers::{method, path};
@@ -3020,7 +3020,7 @@ dav_path = "remote.php/dav"
         let config = make_knowledge_test_config(&base_url);
         let provider = Box::new(MockMinProvider);
         let webdav = webdav::WebDavClient::new(&base_url, "testuser", "testpass").unwrap();
-        let image_cache = Arc::new(ImageCache::new());
+        let image_cache = Arc::new(rockbot::image_cache::ImageCache::new());
         let mut harness = AgentHarness::new(config, provider, Some(webdav), image_cache, "@testbot");
 
         harness.memory_mut().get_or_create("room1", "summary", "", false)
@@ -3062,7 +3062,7 @@ dav_path = "remote.php/dav"
         let config = make_knowledge_test_config(&base_url);
         let provider = Box::new(MockMinProvider);
         let webdav = webdav::WebDavClient::new(&base_url, "testuser", "testpass").unwrap();
-        let image_cache = Arc::new(ImageCache::new());
+        let image_cache = Arc::new(rockbot::image_cache::ImageCache::new());
         let mut harness = AgentHarness::new(config, provider, Some(webdav), image_cache, "@testbot");
 
         harness.memory_mut().get_or_create("room1", "stale", "", false);
@@ -3227,7 +3227,6 @@ mod tool_call_parse_recovery_tests {
     use super::*;
     use rockbot::config::{ImageModelConfig, ModelConfig, RocketChatSection, ServerConfig};
     use rockbot::harness::AgentHarness;
-    use rockbot::image_cache::ImageCache;
     use rockbot::types::{CompletionResult, ToolCall};
     use rockbot::validated::BoundedUsize;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -3362,7 +3361,7 @@ mod tool_call_parse_recovery_tests {
     /// the normal reply. Seeded malformed history args are repaired.
     #[tokio::test]
     async fn test_tool_call_parse_error_recovers_and_retries() {
-        let image_cache = Arc::new(ImageCache::new());
+        let image_cache = Arc::new(rockbot::image_cache::ImageCache::new());
         let requests = Arc::new(Mutex::new(Vec::new()));
         let provider = Box::new(ParseErrorThenSuccessMock {
             requests: requests.clone(),
@@ -3426,7 +3425,7 @@ mod tool_call_parse_recovery_tests {
     /// fallback reply.
     #[tokio::test]
     async fn test_non_parse_error_not_recovered() {
-        let image_cache = Arc::new(ImageCache::new());
+        let image_cache = Arc::new(rockbot::image_cache::ImageCache::new());
         let calls = Arc::new(AtomicUsize::new(0));
         let provider = Box::new(NonParseErrorMock {
             calls: calls.clone(),
@@ -3476,7 +3475,7 @@ mod tool_call_parse_recovery_tests {
     /// reply (no infinite loop).
     #[tokio::test]
     async fn test_tool_call_parse_error_retries_once_then_fallback() {
-        let image_cache = Arc::new(ImageCache::new());
+        let image_cache = Arc::new(rockbot::image_cache::ImageCache::new());
         let calls = Arc::new(AtomicUsize::new(0));
         let provider = Box::new(AlwaysParseErrorMock {
             calls: calls.clone(),
@@ -3501,5 +3500,193 @@ mod tool_call_parse_recovery_tests {
         // 1 original call + 1 recovery retry — no more (no infinite loop).
         assert_eq!(calls.load(Ordering::SeqCst), 2, "exactly one recovery retry");
     }
+}
+
+// ─── Mock HTTP Tests: ImageGenTool per-call model selection (issue #92) ──────
+
+async fn mount_fal_queue_pipeline(mock_server: &MockServer, base: &str, model_id: &str) {
+    Mock::given(method("POST"))
+        .and(path(format!("/{model_id}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "request_id": "req-model-1",
+            "status_url": format!("{base}/{model_id}/requests/req-model-1/status"),
+            "response_url": format!("{base}/{model_id}/requests/req-model-1"),
+        })))
+        .expect(1)
+        .mount(mock_server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path(format!("/{model_id}/requests/req-model-1/status")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "status": "COMPLETED"
+        })))
+        .expect(1)
+        .mount(mock_server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path(format!("/{model_id}/requests/req-model-1")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "images": [{"url": format!("{base}/result.png"), "width": 1024, "height": 1024}]
+        })))
+        .expect(1)
+        .mount(mock_server)
+        .await;
+}
+
+async fn mount_result_image_and_webdav(mock_server: &MockServer, base: &str) {
+    Mock::given(method("GET"))
+        .and(path("/result.png"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("Content-Type", "image/png")
+                .set_body_bytes(vec![0x89, 0x50, 0x4E, 0x47]),
+        )
+        .mount(mock_server)
+        .await;
+
+    Mock::given(method("PUT"))
+        .respond_with(ResponseTemplate::new(201))
+        .mount(mock_server)
+        .await;
+}
+
+#[tokio::test]
+async fn test_image_gen_tool_model_override_uses_catalog_model() {
+    let mock_server = MockServer::start().await;
+    let base = mock_server.uri();
+    let overridden_model = "bytedance/seedream/v5/pro/text-to-image";
+    let default_model = "fal-ai/flux/schnell";
+
+    // Only the OVERRIDDEN model path is mounted — if the tool resolved the
+    // alias to anything else, the submit POST would 404 and the test fails.
+    mount_fal_queue_pipeline(&mock_server, &base, overridden_model).await;
+    mount_result_image_and_webdav(&mock_server, &base).await;
+
+    let mut img_cfg = make_fal_config(&base);
+    img_cfg.models = HashMap::from([
+        ("seedream5".to_string(), overridden_model.to_string()),
+        ("flux".to_string(), default_model.to_string()),
+    ]);
+    let provider = FalAiProvider::new(&img_cfg, default_model).unwrap();
+    let catalog = ImageModelCatalog::new(img_cfg.models.clone(), "flux", "flux");
+    let tool = ImageGenTool::new(
+        Box::new(provider),
+        catalog,
+        "medium".into(),
+        "png".into(),
+        1,
+        "4K".into(),
+        webdav::WebDavClient::new(&base, "user", "pass").unwrap(),
+        Arc::new(rockbot::image_cache::ImageCache::new()),
+    );
+
+    let result = tool
+        .execute(
+            r#"{"prompt":"a cyberpunk city","aspect_ratio":"16:9","model":"seedream5","room_id":"d-abc"}"#,
+        )
+        .await
+        .unwrap();
+
+    let v: serde_json::Value = serde_json::from_str(&result).unwrap();
+    assert_eq!(v["ok"], true);
+    assert!(
+        v["image_key"].as_str().is_some(),
+        "result must carry an image_key: {result}"
+    );
+}
+
+#[tokio::test]
+async fn test_image_gen_tool_model_omitted_uses_provider_default() {
+    let mock_server = MockServer::start().await;
+    let base = mock_server.uri();
+    let default_model = "fal-ai/flux/schnell";
+
+    // Only the DEFAULT path is mounted — omitting `model` must hit the
+    // provider's configured model with no model_id override.
+    mount_fal_queue_pipeline(&mock_server, &base, default_model).await;
+    mount_result_image_and_webdav(&mock_server, &base).await;
+
+    let mut img_cfg = make_fal_config(&base);
+    img_cfg.models = HashMap::from([
+        ("seedream5".to_string(), "bytedance/seedream/v5/pro/text-to-image".to_string()),
+        ("flux".to_string(), default_model.to_string()),
+    ]);
+    let provider = FalAiProvider::new(&img_cfg, default_model).unwrap();
+    let catalog = ImageModelCatalog::new(img_cfg.models.clone(), "flux", "flux");
+    let tool = ImageGenTool::new(
+        Box::new(provider),
+        catalog,
+        "medium".into(),
+        "png".into(),
+        1,
+        "4K".into(),
+        webdav::WebDavClient::new(&base, "user", "pass").unwrap(),
+        Arc::new(rockbot::image_cache::ImageCache::new()),
+    );
+
+    let result = tool
+        .execute(r#"{"prompt":"a cat","aspect_ratio":"1:1","room_id":"d-abc"}"#)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_str(&result).unwrap();
+    assert_eq!(v["ok"], true);
+}
+
+#[tokio::test]
+async fn test_image_gen_tool_unknown_model_alias_fails_before_http() {
+    let mock_server = MockServer::start().await;
+    let base = mock_server.uri();
+
+    let mut img_cfg = make_fal_config(&base);
+    img_cfg.models = HashMap::from([("flux".to_string(), "fal-ai/flux/schnell".to_string())]);
+    let provider = FalAiProvider::new(&img_cfg, "fal-ai/flux/schnell").unwrap();
+    let catalog = ImageModelCatalog::new(img_cfg.models.clone(), "flux", "flux");
+    let tool = ImageGenTool::new(
+        Box::new(provider),
+        catalog,
+        "medium".into(),
+        "png".into(),
+        1,
+        "4K".into(),
+        webdav::WebDavClient::new(&base, "user", "pass").unwrap(),
+        Arc::new(rockbot::image_cache::ImageCache::new()),
+    );
+
+    let err = tool
+        .execute(r#"{"prompt":"a cat","aspect_ratio":"1:1","model":"nope"}"#)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("not in image model catalog"));
+}
+
+#[tokio::test]
+async fn test_openrouter_image_gen_model_id_override_in_body() {
+    let mock_server = MockServer::start().await;
+    let base = mock_server.uri();
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(body_string_contains("\"model\":\"qwen/qwen-image-3-pro\""))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "choices": [{
+                "message": {
+                    "images": [{
+                        "image_url": { "url": "data:image/png;base64,AAAA" }
+                    }]
+                }
+            }]
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let config = make_openrouter_image_config(&base);
+    let provider = OpenRouterImageProvider::new(&config, "microsoft/mai-image-2.5").unwrap();
+    let mut params = ImageGenParams::new("a sunset");
+    params.model_id = Some("qwen/qwen-image-3-pro".into());
+    let bytes = provider.generate_image(&params).await.unwrap();
+    assert!(!bytes.is_empty());
 }
 

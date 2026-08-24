@@ -151,8 +151,14 @@ async fn test_image_gen_real_text_to_image() {
     let image_cache = std::sync::Arc::new(ImageCache::new());
 
     // 4. Create ImageGenTool
+    let model_catalog = rockbot::types::ImageModelCatalog::new(
+        provider_cfg.models.clone(),
+        "mai",
+        "mai",
+    );
     let tool = ImageGenTool::new(
         provider,
+        model_catalog,
         "standard".into(), // default_quality
         "png".into(),      // default_output_format
         1,                 // default_num_images
@@ -306,8 +312,14 @@ async fn test_image_gen_real_data_uri_handling() {
 
     let image_cache = std::sync::Arc::new(ImageCache::new());
 
+    let model_catalog = rockbot::types::ImageModelCatalog::new(
+        provider_cfg.models.clone(),
+        "mai",
+        "mai",
+    );
     let tool = ImageGenTool::new(
         provider,
+        model_catalog,
         "standard".into(),
         "png".into(),
         1,

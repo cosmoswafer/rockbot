@@ -8,13 +8,15 @@ use crate::error::{Result, RockBotError};
 use crate::image_cache::{GeneratedImage, ImageCache};
 use crate::provider::ImageProvider;
 use crate::tool::Tool;
-use crate::types::{ImageGenParams, ImageSizeValue};
-use crate::validated::NonEmptyString;
+use crate::types::{ImageGenParams, ImageModelCatalog, ImageSizeValue};
+use crate::validated::{ModelAlias, NonEmptyString};
 
 #[derive(Debug, Deserialize)]
 struct ImageGenArgs {
     prompt: NonEmptyString,
     aspect_ratio: NonEmptyString,
+    #[serde(default)]
+    model: Option<ModelAlias>,
     #[serde(default)]
     image_urls: Option<Vec<String>>,
     #[serde(default)]
@@ -32,6 +34,7 @@ use std::sync::Arc;
 pub struct ImageGenTool {
     provider: Box<dyn ImageProvider>,
     edit_provider: Option<Box<dyn ImageProvider>>,
+    model_catalog: ImageModelCatalog,
     default_quality: String,
     default_output_format: String,
     default_num_images: u32,
@@ -47,6 +50,7 @@ impl ImageGenTool {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         provider: Box<dyn ImageProvider>,
+        model_catalog: ImageModelCatalog,
         default_quality: String,
         default_output_format: String,
         default_num_images: u32,
@@ -57,6 +61,7 @@ impl ImageGenTool {
         Self {
             provider,
             edit_provider: None,
+            model_catalog,
             default_quality,
             default_output_format,
             default_num_images,
@@ -72,6 +77,7 @@ impl ImageGenTool {
     pub fn with_img2img(
         text2img: Box<dyn ImageProvider>,
         img2img: Box<dyn ImageProvider>,
+        model_catalog: ImageModelCatalog,
         default_quality: String,
         default_output_format: String,
         default_num_images: u32,
@@ -84,6 +90,7 @@ impl ImageGenTool {
         Self {
             provider: text2img,
             edit_provider: Some(img2img),
+            model_catalog,
             default_quality,
             default_output_format,
             default_num_images,
@@ -155,7 +162,12 @@ impl Tool for ImageGenTool {
     }
 
     fn parameters(&self) -> serde_json::Value {
-        serde_json::json!({
+        let available = if self.model_catalog.is_empty() {
+            "no models configured".to_string()
+        } else {
+            self.model_catalog.valid_alias_list()
+        };
+        let mut schema = serde_json::json!({
             "type": "object",
             "properties": {
                 "prompt": {
@@ -165,6 +177,15 @@ impl Tool for ImageGenTool {
                 "aspect_ratio": {
                     "type": "string",
                     "description": "Aspect ratio: '16:9', '2:3', '1:1', '4:3', '3:4', '3:2'. For seedream5 (Fal): 'auto_2K' or 'auto_1K' auto-select dimensions."
+                },
+                "model": {
+                    "type": "string",
+                    "description": format!(
+                        "Image model alias (from [image_providers] models). Default: '{}' (text-to-image) / '{}' (edit). Available: {}",
+                        self.model_catalog.default_text_alias(),
+                        self.model_catalog.default_edit_alias(),
+                        available
+                    )
                 },
                 "room_id": {
                     "type": "string",
@@ -181,7 +202,17 @@ impl Tool for ImageGenTool {
                 }
             },
             "required": ["prompt", "aspect_ratio"]
-        })
+        });
+        let aliases: Vec<serde_json::Value> = self
+            .model_catalog
+            .allowed_aliases()
+            .into_iter()
+            .map(|a| serde_json::Value::String(a.to_string()))
+            .collect();
+        if !aliases.is_empty() {
+            schema["properties"]["model"]["enum"] = serde_json::Value::Array(aliases);
+        }
+        schema
     }
 
     async fn execute(&self, arguments: &str) -> Result<String> {
@@ -198,6 +229,17 @@ impl Tool for ImageGenTool {
         params.quality = Some(self.default_quality.clone());
         params.output_format = Some(self.default_output_format.clone());
         params.num_images = Some(self.default_num_images);
+
+        if let Some(alias) = &args.model {
+            let model_id = self.model_catalog.resolve(alias.as_str()).ok_or_else(|| {
+                RockBotError::ToolCallParse(format!(
+                    "image_gen: model alias '{}' not in image model catalog — valid aliases: {}",
+                    alias.as_str(),
+                    self.model_catalog.valid_alias_list()
+                ))
+            })?;
+            params.model_id = Some(model_id.to_string());
+        }
 
         params.image_size = Some(ImageSizeValue::Preset(args.aspect_ratio.as_str().to_string()));
         params.size_tier = Some(self.default_image_size_tier.clone());
@@ -352,6 +394,14 @@ mod tests {
         Box::new(FalAiProvider::new(&config, "fal-ai/flux/schnell").unwrap())
     }
 
+    fn make_model_catalog() -> ImageModelCatalog {
+        ImageModelCatalog::new(
+            HashMap::from([("flux".to_string(), "fal-ai/flux/schnell".to_string())]),
+            "flux",
+            "flux",
+        )
+    }
+
     fn make_webdav() -> WebDavClient {
         webdav::WebDavClient::new("https://example.com", "user", "pass").unwrap()
     }
@@ -362,7 +412,7 @@ mod tests {
 
     #[test]
     fn test_image_gen_tool_definition() {
-        let tool = ImageGenTool::new(make_fal_provider(), "medium".into(), "png".into(), 1, "4K".into(), make_webdav(), make_image_cache());
+        let tool = ImageGenTool::new(make_fal_provider(), make_model_catalog(), "medium".into(), "png".into(), 1, "4K".into(), make_webdav(), make_image_cache());
 
         assert_eq!(tool.name(), "image_gen");
         assert!(tool.description().contains("Generate or edit an image"));
@@ -381,19 +431,20 @@ mod tests {
                 .contains(&serde_json::json!("aspect_ratio"))
         );
         assert!(params["properties"].get("aspect_ratio").is_some(), "aspect_ratio visible to LLM — set via tool arg");
+        assert!(params["properties"].get("model").is_some(), "model alias visible to LLM for per-call selection");
         assert!(params["properties"].get("image_urls").is_some());
     }
 
     #[tokio::test]
     async fn test_execute_missing_prompt() {
-        let tool = ImageGenTool::new(make_fal_provider(), "medium".into(), "png".into(), 1, "4K".into(), make_webdav(), make_image_cache());
+        let tool = ImageGenTool::new(make_fal_provider(), make_model_catalog(), "medium".into(), "png".into(), 1, "4K".into(), make_webdav(), make_image_cache());
         let result = tool.execute(r#"{}"#).await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn test_execute_invalid_json() {
-        let tool = ImageGenTool::new(make_fal_provider(), "medium".into(), "png".into(), 1, "4K".into(), make_webdav(), make_image_cache());
+        let tool = ImageGenTool::new(make_fal_provider(), make_model_catalog(), "medium".into(), "png".into(), 1, "4K".into(), make_webdav(), make_image_cache());
         let result = tool.execute("not json").await;
         assert!(result.is_err());
     }
@@ -561,6 +612,7 @@ mod tests {
     struct MockImageProvider {
         generate_result: std::sync::Mutex<Option<std::result::Result<Vec<u8>, RockBotError>>>,
         upload_result: std::sync::Mutex<Option<std::result::Result<String, RockBotError>>>,
+        params_sink: std::sync::Arc<std::sync::Mutex<Option<ImageGenParams>>>,
     }
 
     impl MockImageProvider {
@@ -568,6 +620,7 @@ mod tests {
             Self {
                 generate_result: std::sync::Mutex::new(Some(Ok(vec![1, 2, 3]))),
                 upload_result: std::sync::Mutex::new(Some(Ok("https://cdn.example.com/uploaded.png".into()))),
+                params_sink: std::sync::Arc::new(std::sync::Mutex::new(None)),
             }
         }
 
@@ -575,13 +628,15 @@ mod tests {
             Self {
                 generate_result: std::sync::Mutex::new(Some(Err(e))),
                 upload_result: std::sync::Mutex::new(Some(Ok("https://cdn.example.com/uploaded.png".into()))),
+                params_sink: std::sync::Arc::new(std::sync::Mutex::new(None)),
             }
         }
     }
 
     #[async_trait]
     impl ImageProvider for MockImageProvider {
-        async fn generate_image(&self, _params: &ImageGenParams) -> crate::Result<Vec<u8>> {
+        async fn generate_image(&self, params: &ImageGenParams) -> crate::Result<Vec<u8>> {
+            *self.params_sink.lock().unwrap() = Some(params.clone());
             self.generate_result.lock().unwrap().take().unwrap()
         }
 
@@ -598,10 +653,25 @@ mod tests {
         }
     }
 
+    /// Provider that records every `ImageGenParams` it receives, then errors —
+    /// used to assert what `execute()` sends downstream.
+    fn make_recording_provider() -> (Box<dyn ImageProvider>, std::sync::Arc<std::sync::Mutex<Option<ImageGenParams>>>) {
+        let sink = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let provider = MockImageProvider {
+            generate_result: std::sync::Mutex::new(Some(Err(RockBotError::Provider(
+                "capture-only".into(),
+            )))),
+            upload_result: std::sync::Mutex::new(Some(Ok("https://cdn.example.com/uploaded.png".into()))),
+            params_sink: sink.clone(),
+        };
+        (Box::new(provider), sink)
+    }
+
     #[test]
     fn test_size_tier_is_set_from_config_default() {
         let tool = ImageGenTool::new(
             Box::new(MockImageProvider::new()),
+            make_model_catalog(),
             "medium".into(),
             "png".into(),
             1,
@@ -618,6 +688,7 @@ mod tests {
     fn test_size_tier_in_params_construction() {
         let tool = ImageGenTool::new(
             Box::new(MockImageProvider::new()),
+            make_model_catalog(),
             "medium".into(),
             "png".into(),
             1,
@@ -642,6 +713,7 @@ mod tests {
         let provider = Box::new(MockImageProvider::new());
         let tool = ImageGenTool::new(
             provider,
+            make_model_catalog(),
             "medium".into(),
             "png".into(),
             1,
@@ -661,6 +733,7 @@ mod tests {
     async fn test_upload_data_uri_invalid_prefix() {
         let tool = ImageGenTool::new(
             Box::new(MockImageProvider::new()),
+            make_model_catalog(),
             "medium".into(),
             "png".into(),
             1,
@@ -677,6 +750,7 @@ mod tests {
     async fn test_upload_data_uri_missing_base64_delimiter() {
         let tool = ImageGenTool::new(
             Box::new(MockImageProvider::new()),
+            make_model_catalog(),
             "medium".into(),
             "png".into(),
             1,
@@ -693,6 +767,7 @@ mod tests {
     async fn test_upload_data_uri_invalid_base64() {
         let tool = ImageGenTool::new(
             Box::new(MockImageProvider::new()),
+            make_model_catalog(),
             "medium".into(),
             "png".into(),
             1,
@@ -711,6 +786,7 @@ mod tests {
             Box::new(MockImageProvider::with_generate_error(RockBotError::Provider(
                 "Image generation failed".into(),
             ))),
+            make_model_catalog(),
             "medium".into(),
             "png".into(),
             1,
@@ -755,6 +831,7 @@ mod tests {
     fn test_reference_image_key_in_schema() {
         let tool = ImageGenTool::new(
             Box::new(MockImageProvider::new()),
+            make_model_catalog(),
             "medium".into(),
             "png".into(),
             1,
@@ -766,5 +843,149 @@ mod tests {
         let props = schema["properties"].as_object().unwrap();
         assert!(props.contains_key("reference_image_key"), "schema must include reference_image_key");
         assert_eq!(props["reference_image_key"]["type"], "string");
+    }
+
+    // ----- Per-call model selection (issue #92) -----
+
+    fn make_multi_model_catalog() -> ImageModelCatalog {
+        ImageModelCatalog::new(
+            HashMap::from([
+                ("seedream5".to_string(), "bytedance/seedream/v5/pro/text-to-image".to_string()),
+                ("mai".to_string(), "microsoft/mai-image-2.5".to_string()),
+            ]),
+            "mai",
+            "mai",
+        )
+    }
+
+    #[tokio::test]
+    async fn test_execute_model_alias_override_reaches_params() {
+        let (provider, sink) = make_recording_provider();
+        let tool = ImageGenTool::new(
+            provider,
+            make_multi_model_catalog(),
+            "medium".into(),
+            "png".into(),
+            1,
+            "4K".into(),
+            make_webdav(),
+            make_image_cache(),
+        );
+        let args = serde_json::json!({
+            "prompt": "a cat",
+            "aspect_ratio": "1:1",
+            "model": "seedream5",
+        });
+        let _ = tool.execute(&args.to_string()).await;
+        let guard = sink.lock().unwrap();
+        let captured = guard.as_ref().expect("provider received params");
+        assert_eq!(
+            captured.model_id.as_deref(),
+            Some("bytedance/seedream/v5/pro/text-to-image"),
+            "model alias must resolve to the catalog's model id"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_execute_model_alias_omitted_leaves_params_model_id_none() {
+        let (provider, sink) = make_recording_provider();
+        let tool = ImageGenTool::new(
+            provider,
+            make_multi_model_catalog(),
+            "medium".into(),
+            "png".into(),
+            1,
+            "4K".into(),
+            make_webdav(),
+            make_image_cache(),
+        );
+        let args = serde_json::json!({
+            "prompt": "a cat",
+            "aspect_ratio": "1:1",
+        });
+        let _ = tool.execute(&args.to_string()).await;
+        let guard = sink.lock().unwrap();
+        let captured = guard.as_ref().expect("provider received params");
+        assert!(captured.model_id.is_none(), "omitted model alias must keep provider's configured default");
+    }
+
+    #[tokio::test]
+    async fn test_execute_unknown_model_alias_rejected_at_parse() {
+        let tool = ImageGenTool::new(
+            Box::new(MockImageProvider::with_generate_error(RockBotError::Provider("x".into()))),
+            make_multi_model_catalog(),
+            "medium".into(),
+            "png".into(),
+            1,
+            "4K".into(),
+            make_webdav(),
+            make_image_cache(),
+        );
+        let args = serde_json::json!({
+            "prompt": "a cat",
+            "aspect_ratio": "1:1",
+            "model": "nope",
+        });
+        let err = tool.execute(&args.to_string()).await.unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("not in image model catalog"), "err: {msg}");
+        assert!(msg.contains("mai") && msg.contains("seedream5"), "err should list valid aliases: {msg}");
+    }
+
+    #[test]
+    fn test_schema_model_enum_lists_catalog_aliases() {
+        let tool = ImageGenTool::new(
+            Box::new(MockImageProvider::new()),
+            make_multi_model_catalog(),
+            "medium".into(),
+            "png".into(),
+            1,
+            "4K".into(),
+            make_webdav(),
+            make_image_cache(),
+        );
+        let schema = tool.parameters();
+        let model = &schema["properties"]["model"];
+        assert_eq!(model["type"], "string");
+        assert_eq!(model["enum"], serde_json::json!(["mai", "seedream5"]));
+    }
+
+    #[test]
+    fn test_schema_model_has_no_enum_when_catalog_empty() {
+        let tool = ImageGenTool::new(
+            Box::new(MockImageProvider::new()),
+            ImageModelCatalog::new(HashMap::new(), "mai", "mai"),
+            "medium".into(),
+            "png".into(),
+            1,
+            "4K".into(),
+            make_webdav(),
+            make_image_cache(),
+        );
+        let schema = tool.parameters();
+        let model = &schema["properties"]["model"];
+        assert!(model.get("enum").is_none(), "empty catalog must not emit an enum");
+        assert!(model["description"].as_str().unwrap().contains("no models configured"));
+    }
+
+    #[test]
+    fn test_model_alias_deserialization() {
+        let args = serde_json::json!({
+            "prompt": "a cat",
+            "aspect_ratio": "1:1",
+            "model": "mai",
+        });
+        let parsed: ImageGenArgs = serde_json::from_value(args).unwrap();
+        assert_eq!(parsed.model.as_ref().map(|m| m.as_str()), Some("mai"));
+    }
+
+    #[test]
+    fn test_model_alias_absent_by_default() {
+        let args = serde_json::json!({
+            "prompt": "a cat",
+            "aspect_ratio": "1:1",
+        });
+        let parsed: ImageGenArgs = serde_json::from_value(args).unwrap();
+        assert!(parsed.model.is_none());
     }
 }
