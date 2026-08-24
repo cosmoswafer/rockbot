@@ -24,6 +24,13 @@ pub trait AiProvider: Send + Sync {
     fn provider_name(&self) -> &str;
 
     fn model_name(&self) -> &str;
+
+    /// Whether the configured provider/model can consume image (multimodal)
+    /// content parts. Providers returning `false` must strip
+    /// `ContentPart::ImageUrl` from outgoing messages.
+    fn supports_vision(&self) -> bool {
+        false
+    }
 }
 
 #[async_trait]

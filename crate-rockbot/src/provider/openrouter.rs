@@ -295,6 +295,10 @@ impl AiProvider for OpenRouterProvider {
     fn model_name(&self) -> &str {
         &self.model
     }
+
+    fn supports_vision(&self) -> bool {
+        true
+    }
 }
 
 /// Detect provider context-length exceeded errors from HTTP 400 error messages.

@@ -5,9 +5,13 @@ use crate::config::ProviderConfig;
 use crate::error::{Result, RockBotError};
 use crate::provider::AiProvider;
 use crate::types::{
-    ChatMessage, ChatRequest, CompletionResult, ContentPart, FinishReason, MessageContent, ToolCall,
-    UsageInfo,
+    ChatMessage, ChatRequest, CompletionResult, ContentPart, FinishReason, MessageContent, Role,
+    ToolCall, UsageInfo,
 };
+
+/// The only DeepSeek chat model that accepts image input — see
+/// https://api-docs.deepseek.com/guides/vision.
+pub(crate) const VISION_MODEL: &str = "deepseek-v4-flash-vision-exp";
 
 pub struct DeepSeekProvider {
     api_key: String,
@@ -77,10 +81,20 @@ impl DeepSeekProvider {
     }
 
     pub(crate) fn build_request_body(&self, request: &ChatRequest) -> serde_json::Value {
+        let vision = self.supports_vision();
         let messages: Vec<ChatMessage> = request
             .messages
             .iter()
-            .map(|m| Self::strip_message_images(m.clone()))
+            .map(|m| {
+                if vision && m.role == Role::User {
+                    // DeepSeek accepts images in user messages only; system,
+                    // assistant and tool messages keep the [image] conversion
+                    // because the API rejects image parts in those roles (400).
+                    m.clone()
+                } else {
+                    Self::strip_message_images(m.clone())
+                }
+            })
             .collect();
 
         let mut body = serde_json::json!({
@@ -331,6 +345,10 @@ impl AiProvider for DeepSeekProvider {
 
     fn model_name(&self) -> &str {
         &self.model
+    }
+
+    fn supports_vision(&self) -> bool {
+        self.model == VISION_MODEL
     }
 }
 
@@ -717,5 +735,134 @@ mod tests {
             result.content,
             MessageContent::Text("I can help with that.".into())
         );
+    }
+
+    #[test]
+    fn test_supports_vision_vision_model() {
+        let provider = DeepSeekProvider {
+            api_key: "test-key".into(),
+            base_url: "https://api.deepseek.com/v1/chat/completions".into(),
+            model: VISION_MODEL.into(),
+            http_client: reqwest::Client::new(),
+        };
+        assert!(provider.supports_vision());
+    }
+
+    #[test]
+    fn test_supports_vision_text_model() {
+        let provider = DeepSeekProvider {
+            api_key: "test-key".into(),
+            base_url: "https://api.deepseek.com/v1/chat/completions".into(),
+            model: "deepseek-v4-pro".into(),
+            http_client: reqwest::Client::new(),
+        };
+        assert!(!provider.supports_vision());
+    }
+
+    #[test]
+    fn test_build_request_body_preserves_images_for_vision_model() {
+        let provider = DeepSeekProvider {
+            api_key: "test-key".into(),
+            base_url: "https://api.deepseek.com/v1/chat/completions".into(),
+            model: VISION_MODEL.into(),
+            http_client: reqwest::Client::new(),
+        };
+
+        let request = ChatRequest {
+            model: VISION_MODEL.into(),
+            messages: vec![
+                ChatMessage::system("You are helpful"),
+                ChatMessage::user_with_images(
+                    "Look",
+                    vec!["data:image/png;base64,abc".into()],
+                ),
+            ],
+            tools: None,
+            stream: false,
+            temperature: None,
+            max_tokens: None,
+            thinking: None,
+            reasoning_effort: None,
+            tool_choice: None,
+        };
+
+        let body = provider.build_request_body(&request);
+        let parts = body["messages"][1]["content"].as_array().unwrap();
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0]["text"], "Look");
+        assert_eq!(parts[1]["type"], "image_url");
+        assert_eq!(parts[1]["image_url"]["url"], "data:image/png;base64,abc");
+        assert_eq!(parts[1]["image_url"]["detail"], "high");
+    }
+
+    #[test]
+    fn test_build_request_body_strips_non_user_images_for_vision_model() {
+        let provider = DeepSeekProvider {
+            api_key: "test-key".into(),
+            base_url: "https://api.deepseek.com/v1/chat/completions".into(),
+            model: VISION_MODEL.into(),
+            http_client: reqwest::Client::new(),
+        };
+
+        let assistant_msg = ChatMessage {
+            role: Role::Assistant,
+            content: MessageContent::Multipart(vec![
+                ContentPart::Text { text: "look".into() },
+                ContentPart::ImageUrl {
+                    image_url: crate::types::ImageUrlPayload {
+                        url: "data:image/png;base64,x".into(),
+                        detail: Some("high".into()),
+                    },
+                },
+            ]),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+            reasoning_content: None,
+        };
+        let request = ChatRequest {
+            model: VISION_MODEL.into(),
+            messages: vec![ChatMessage::system("sys"), assistant_msg, ChatMessage::user("hi")],
+            tools: None,
+            stream: false,
+            temperature: None,
+            max_tokens: None,
+            thinking: None,
+            reasoning_effort: None,
+            tool_choice: None,
+        };
+
+        let body = provider.build_request_body(&request);
+        assert_eq!(body["messages"][0]["content"], "sys");
+        assert_eq!(body["messages"][1]["content"], "look [image]");
+        assert_eq!(body["messages"][2]["content"], "hi");
+    }
+
+    #[test]
+    fn test_build_request_body_strips_images_for_text_model() {
+        let provider = DeepSeekProvider {
+            api_key: "test-key".into(),
+            base_url: "https://api.deepseek.com/v1/chat/completions".into(),
+            model: "deepseek-v4-pro".into(),
+            http_client: reqwest::Client::new(),
+        };
+
+        let request = ChatRequest {
+            model: "deepseek-v4-pro".into(),
+            messages: vec![ChatMessage::user_with_images(
+                "Look at this",
+                vec!["data:image/png;base64,abc".into()],
+            )],
+            tools: None,
+            stream: false,
+            temperature: None,
+            max_tokens: None,
+            thinking: None,
+            reasoning_effort: None,
+            tool_choice: None,
+        };
+
+        let body = provider.build_request_body(&request);
+        assert_eq!(body["messages"][0]["content"], "Look at this [image]");
     }
 }

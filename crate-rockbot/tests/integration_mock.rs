@@ -78,6 +78,128 @@ async fn test_complete_simple_response() {
 }
 
 #[tokio::test]
+async fn test_deepseek_vision_model_forwards_images_in_user_messages() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(header("Authorization", "Bearer sk-test-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "chatcmpl-vision",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "The image is blue."},
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let config = ProviderConfig {
+        name: ProviderName::try_new("deepseek".to_string()).unwrap(),
+        api_key: "sk-test-key".into(),
+        base_url: ConfigUrl::try_new(mock_server.uri()).unwrap(),
+        basecf_url: None,
+        chat_path: Some("/chat/completions".into()),
+        draw_path: None,
+        models: HashMap::new(),
+    };
+    let provider = DeepSeekProvider::new(&config, "deepseek-v4-flash-vision-exp").unwrap();
+
+    let request = ChatRequest {
+        model: "deepseek-v4-flash-vision-exp".into(),
+        messages: vec![
+            ChatMessage::system("You are helpful"),
+            ChatMessage::user_with_images(
+                "Attached: ![a.png](a.png)",
+                vec!["data:image/png;base64,abc".into()],
+            ),
+        ],
+        tools: None,
+        stream: false,
+        temperature: None,
+        max_tokens: None,
+        thinking: None,
+        reasoning_effort: None,
+        tool_choice: None,
+    };
+
+    let result = provider.complete(request).await.unwrap();
+    assert_eq!(result.text, Some("The image is blue.".into()));
+
+    // The wire body must keep the ImageUrl part in the user message and must
+    // NOT contain the [image] placeholder conversion.
+    let received = mock_server.received_requests().await.unwrap();
+    let sent: serde_json::Value =
+        serde_json::from_slice(&received[0].body).expect("request body is JSON");
+    let parts = sent["messages"][1]["content"].as_array().unwrap();
+    assert_eq!(parts.len(), 2);
+    assert_eq!(parts[1]["type"], "image_url");
+    assert_eq!(parts[1]["image_url"]["url"], "data:image/png;base64,abc");
+    assert_eq!(parts[1]["image_url"]["detail"], "high");
+    assert!(sent["messages"][1]["content"].to_string().contains("image_url"));
+    assert!(received[0].body.windows(7).all(|w| w != b"[image]"));
+}
+
+#[tokio::test]
+async fn test_deepseek_text_model_strips_images_before_send() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(header("Authorization", "Bearer sk-test-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "chatcmpl-text",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "OK"},
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let config = ProviderConfig {
+        name: ProviderName::try_new("deepseek".to_string()).unwrap(),
+        api_key: "sk-test-key".into(),
+        base_url: ConfigUrl::try_new(mock_server.uri()).unwrap(),
+        basecf_url: None,
+        chat_path: Some("/chat/completions".into()),
+        draw_path: None,
+        models: HashMap::new(),
+    };
+    let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();
+
+    let request = ChatRequest {
+        model: "deepseek-v4-pro".into(),
+        messages: vec![ChatMessage::user_with_images(
+            "Look at this",
+            vec!["data:image/png;base64,abc".into()],
+        )],
+        tools: None,
+        stream: false,
+        temperature: None,
+        max_tokens: None,
+        thinking: None,
+        reasoning_effort: None,
+        tool_choice: None,
+    };
+
+    provider.complete(request).await.unwrap();
+
+    // Text-only model: ImageUrl is stripped to a plain [image] placeholder —
+    // no multipart content array survives on the wire.
+    let received = mock_server.received_requests().await.unwrap();
+    let sent: serde_json::Value =
+        serde_json::from_slice(&received[0].body).expect("request body is JSON");
+    assert_eq!(sent["messages"][0]["content"], "Look at this [image]");
+    assert!(sent["messages"][0]["content"].is_string());
+    assert!(!sent.to_string().contains("image_url"));
+}
+
+#[tokio::test]
 async fn test_complete_with_tool_calls() {
     let mock_server = MockServer::start().await;
 

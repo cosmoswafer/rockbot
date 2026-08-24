@@ -244,12 +244,15 @@ provider, `ContentPart::ImageUrl` parts are preserved only on the most recent
 user message. Earlier user messages with images are collapsed to `[image]` text
 placeholders (see `memory.rs:strip_images_from_message`).
 
-**Text-only LLM handling**: after context is built, text-only providers (DeepSeek)
-additionally strip all `ImageUrl` parts from every message — including the
-most recent — replacing them with `[image]` placeholders via
-`strip_message_images()` at the provider layer. This is a provider-level
-concern separate from memory reset; the harness always embeds images
-in `ChatMessage` regardless of the provider. See
+**Text-only LLM handling**: after context is built, text-only DeepSeek models
+(anything except `deepseek-v4-flash-vision-exp`, decided by
+`AiProvider::supports_vision()`) additionally strip all `ImageUrl` parts from
+every message — including the most recent — replacing them with `[image]`
+placeholders via `strip_message_images()` at the provider layer. Vision-capable
+DeepSeek models keep images in **user** messages (system/assistant images are
+rejected with HTTP 400, so those roles are still converted to `[image]` text).
+This is a provider-level concern separate from memory reset; the harness always
+embeds images in `ChatMessage` regardless of the provider. See
 [ai-provider.md §2c](../ai/ai-provider.md#2c-vision-payload-deep-dive).
 
 ### 2f. Per-Room State Routing

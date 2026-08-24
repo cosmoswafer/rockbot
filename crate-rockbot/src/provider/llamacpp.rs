@@ -386,6 +386,10 @@ impl AiProvider for LlamaCppProvider {
     fn model_name(&self) -> &str {
         &self.model
     }
+
+    fn supports_vision(&self) -> bool {
+        true
+    }
 }
 
 #[cfg(test)]
