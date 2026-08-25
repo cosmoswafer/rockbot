@@ -3,8 +3,9 @@ name: dfd-md
 description: |
   Create, document, and maintain Data Flow Diagrams (DFDs) as .md files using
   Mermaid flowchart syntax. Covers Context (Level 0), Level 1 decompositions,
-  and Level 2 inline process deep-dives. Use for modeling data movement,
-  pipeline documentation, or illustrating data flow through a system.
+  and Level 2/3 detail diagrams — exactly one dataflow per .md file, level 2/3
+  in dedicated subdirectories. Use for modeling data movement, pipeline
+  documentation, or illustrating data flow through a system.
 license: CC0-1.0
 ---
 
@@ -18,6 +19,9 @@ DFD must be:
 - **Data-movement focused** — arrows are data packets, not control flow, UI, or
   implementation details
 - **Level-appropriate** — one level per diagram; don't mix levels
+- **One dataflow per file** — a `.md` file contains **exactly one** dataflow
+  (one Mermaid diagram). Never pack multiple flows, flows plus unrelated
+  reference material, or level 2 diagrams into one file
 - **Verifiable** — every flow maps to a real API call, function parameter, DB
   read/write, or message queue in the codebase
 - **Constraint-verified** — DFDs are verified against explicit constraints (e.g.,
@@ -25,30 +29,30 @@ DFD must be:
   traceable to ≥1 flow in the diagram. Constraints are never complete — extra
   flows beyond those required by the specified constraints are expected and
   allowed
-- **Compact & cohesive** — one DFD per subsystem; split large systems across
-  multiple files. Each Level 1 DFD is composed of several small, standalone,
-  simple happy flows — not one monolithic diagram
+- **Compact & cohesive** — split large systems across multiple small files,
+  each a standalone dataflow. Happy paths stay under 5–7 nodes; split flows
+  rather than growing a diagram
 - **Low redundancy** — cross-reference instead of duplicating flows. Never
   repeat the same data structure or flow in multiple DFDs; reference the
   original document instead
 - **Data-structure coupled** — DFDs are linked together through shared data
   structures: an upstream DFD produces a data shape that a downstream DFD
   consumes. Every cross-DFD reference must name the specific data structure
-  (section 3 table) that forms the coupling
-
+  (section 3 / `structures.md`) that forms the coupling
 
 ## DFD-Driven Development Workflow ("DFD Dev Flow")
 
-1. **Integration probe (data collection; optional)** — write a live-data probe
-   (no mocking; targets a live server, API, or resource) and run it to collect
-   actual data shapes.  Skip if the project already has sufficient real-world
-   data to reference.  Use collected data as reference for the DFD revision and
-   implementation phases.
-2. **Revise DFD** — design or update the DFD so it accurately models the
-   desired data movement.  Base the data structures (section 3) on the shapes
-   observed in the integration probe (step 1) when available.  Keep at the
-   correct level; use the notation and structure rules above.
-3. **Implement data flow validation constraints** — enforce data structure
+0. **Integration probe (data collection; optional, manual only)** — a
+   live-data probe (no mocking; targets a live server, API, or resource) to
+   collect actual data shapes for DFD revision. Skip if the project already has
+   sufficient real-world data to reference, and **only run when explicitly
+   requested** — it is not part of the routine change cycle. Use collected data
+   as reference for the DFD revision and implementation phases.
+1. **Revise DFD** — design or update the DFD so it accurately models the
+   desired data movement.  Base the data structures on the shapes observed in
+   the integration probe (step 0) when available.  Keep at the correct level;
+   use the notation and structure rules above.
+2. **Implement data flow validation constraints** — enforce data structure
    correctness through code-level constraints (see
    [Type-Driven Design & Validation Implementation](#type-driven-design--validation-implementation)
    below).  Parse and validate at subsystem entry points ("parse, don't
@@ -56,15 +60,15 @@ DFD must be:
    and imported by both producer and consumer modules for compile-time (or
    static-analysis) enforcement.  Where runtime validation is unavoidable, fail
    fast naming the expected DFD data structure and offending field.
-4. **Concrete implementation** — code the types, core logic, and wiring
+3. **Concrete implementation** — code the types, core logic, and wiring
    described by the DFD. Favour incremental, type-first implementation.
-5. **Review all DFDs** — once the implementation is stable, re-read every DFD
+4. **Review all DFDs** — once the implementation is stable, re-read every DFD
    in the project and confirm it still matches the code. Update any DFD that
    has drifted.
 
 ## Type-Driven Design & Validation Implementation
 
-DFD data structures (section 3) are implemented following strict
+DFD data structures are implemented following strict
 **"Parse, don't validate"** discipline.  These principles apply regardless of
 language:
 
@@ -82,8 +86,8 @@ language:
   constructor).  Equivalent patterns exist in every language: data classes with
   private constructors, tagged types, opaque types, smart constructors, or
   newtype structs with a `TryFrom` impl.
-- **Type-first implementation** — design types from the DFD data structure
-  tables *before* writing functions.  Each table row becomes a record or enum
+- **Type-first implementation** — design types from the data structure tables
+  *before* writing functions.  Each table row becomes a record or enum
   variant.  Functions operate on those types; the compiler/type-checker
   enforces correctness at every call site.
 - **Cross-DFD shared types** — a data structure consumed by multiple DFDs is
@@ -121,7 +125,34 @@ language:
 
 ## DFD Levels
 
-DFDs use exactly three levels (0, 1, 2). No deeper decomposition is needed.
+DFDs use levels 0, 1, and 2. Level 3 is optional and only used when a Level 2
+diagram itself needs decomposition.
+
+| Level                     | Location                                  | Filename                |
+| ------------------------- | ----------------------------------------- | ----------------------- |
+| Level 0 — context         | `context-diagram.md` (one per project)    | `context-diagram.md`    |
+| Level 1 — sub-process     | ✓ of the DFD directory                    | `{flow}.md`             |
+| Level 2 — detail          | ✓/level-2/ of the DFD directory           | `{concern}.md`          |
+| Level 3 — deeper detail   | ✓/level-3/ of the DFD directory           | `{concern}.md`          |
+| Shared (cross-cutting)    | `_dfd/shared/` (project root)             | `{concern}.md`          |
+
+The directory layout:
+
+```
+_dfd/
+  context-diagram.md            # Level 0 — one dataflow (system + externals)
+  shared/                       # cross-cutting concerns reused across DFDs
+    error-toast.md
+  {domain}/                     # e.g. memory, tools, agent, ...
+    {dfd-name}/                 # one directory per DFD
+      {flow}.md                 # Level 1 — ONE dataflow per file
+      level-2/
+        {concern}.md            # Level 2 — ONE dataflow per file
+      level-3/
+        {concern}.md            # Level 3 — only if a Level 2 needs decomposition
+      structures.md             # reference doc (NO diagrams) — shared data
+                                # structures, configuration, integration tables
+```
 
 ### Level 0 — Context (`flowchart LR`)
 
@@ -147,12 +178,15 @@ flowchart LR
 Decomposes the Context diagram's single process into major sub-processes. Adds
 data stores where processes read/write persistent data.
 
-A Level 1 DFD is composed of several **small, standalone, simple happy flows**
-(2a, 2b, …), each covering a distinct sub-process or data path. Keep each happy
-flow under 5–7 nodes. Exception handling, non-functional concerns, and abstract
-components belong in Level 2 inline diagrams — never mixed into the happy flow.
+A Level 1 DFD is a set of **small, standalone, simple happy flows** (and other
+primary data paths), one per file. Keep each dataflow under 5–7 nodes.
+Exception handling, non-functional concerns, and abstract components belong in
+Level 2 diagrams — never mixed into the happy flow, never in the same file.
 
-**Happy Flow example (one of several):**
+Happy flows may share one subsystem-level `structures.md` (data structures,
+configuration, integration tables) instead of duplicating tables per file.
+
+**Happy Flow example (one dataflow, one file):**
 
 ```mermaid
 flowchart TD
@@ -171,23 +205,23 @@ flowchart TD
 **Rules:**
 
 - Each process maps to one identifiable subsystem or module
-- Each happy flow is a self-contained data path — a reader can understand it
-  without consulting other happy flows
+- Each dataflow file is a self-contained data path — a reader can understand it
+  without consulting other files
 - Data stores appear only when ≥2 processes read/write the same store
 - Every process must be reachable from ≥1 flow
 - Caching layers are Level 2 details; at Level 1, show only the authoritative
   store
 - Error paths, fallbacks, rate limits, and other non-functional concerns go in
-  Level 2 inline diagrams — not in the happy flow
+  Level 2 files — not in the happy flow
 
-### Level 2 — Inline Detail Diagrams
+### Level 2 — Detail Diagrams (`{dfd-name}/level-2/`)
 
-Level 2 diagrams live **inline** within the parent Level 1 `.md` file as
-`2c`, `2d`, … — not as separate files. One diagram per Level 1 process or
-concern needing deeper detail.
+Level 2 diagrams live as **separate files** in the `level-2/` subdirectory of
+their DFD — never inline, never in the same file as a Level 1 flow. One diagram
+per concern or process.
 
-Level 2 inline diagrams cover categories of detail that are never mixed into
-the happy flow:
+Level 2 diagrams cover categories of detail that are never mixed into the
+happy flow:
 
 | Category | When to use |
 | -------- | ----------- |
@@ -218,29 +252,39 @@ flowchart TD
 
 **Rules:**
 
-- Inline within the parent Level 1 file as `2c`, `2d`, etc.
-- One diagram per concern or process
-- Title each diagram as `2c. {Concern}`, e.g. `2c. Loading States`,
-  `2d. Rate Limiting`, `2e. Validate Prompt Deep Dive`
+- One file per concern or process, named `{concern}.md` (e.g.
+  `rate-limiting.md`, `validate-prompt-deep-dive.md`) — no `2c`/`2d`
+  numbering; the filename is the title
+- Filename should read as `{level-1-flow}-{concern}` when the detail ties to a
+  single flow (e.g. `charge-payment-idempotency.md`), otherwise just
+  `{concern}` (e.g. `error-handling.md`)
 - Dashed `-.->` arrows for fallback paths (cache-miss reads, retries, error
   recovery, silent fallbacks with no user-visible error)
-- Use `shared/{concern}.md` when the same detail diagram is reused across
-  multiple Level 1 DFDs
+- Use `_dfd/shared/{concern}.md` when the same detail diagram is reused across
+  multiple DFDs
+
+### Level 3 — Deeper Detail (`{dfd-name}/level-3/`)
+
+Only when a Level 2 diagram itself needs decomposition. Same rules as Level 2,
+located in the `level-3/` subdirectory of the DFD directory. Keep this level
+rare — deeper decomposition usually means a separate Level 1 subsystem DFD
+instead.
 
 ## File Naming
 
 | Level                  | Filename                                                                 |
 | ---------------------- | ------------------------------------------------------------------------ |
 | Context (Level 0)      | `context-diagram.md` (one per project)                                   |
-| Level 1                | `{dfd-name}.md` (e.g. `image-generate.md`)                               |
-| Level 2                | Inline within the parent Level 1 file — no separate file                 |
-| Shared (cross-cutting) | `shared/{concern}.md` — for concerns reused across multiple Level 1 DFDs |
+| Level 1                | `{domain}/{dfd-name}/{flow}.md` — one dataflow per file                  |
+| Level 2                | `{domain}/{dfd-name}/level-2/{concern}.md` — one dataflow per file       |
+| Level 3                | `{domain}/{dfd-name}/level-3/{concern}.md` — one dataflow per file       |
+| Shared (cross-cutting) | `shared/{concern}.md` — for concerns reused across multiple DFDs         |
+| Structures (shared types, no diagrams) | `{domain}/{dfd-name}/structures.md`                              |
 
 ## Document Structure
 
-Every DFD `.md` file uses the numbered sections below. Section 3 is only for
-Level 1 diagrams — do not include section 3 (not even as a "skipped"
-placeholder) in Context (Level 0) files.
+Every dataflow `.md` file uses the numbered sections below. Never include more
+than one diagram in a file, and never mix levels in one file.
 
 ### Anti-Patterns
 
@@ -248,57 +292,91 @@ placeholder) in Context (Level 0) files.
   References. Every DFD lives in the same project; the reader already knows the
   context diagram exists. Only link diagrams with direct data-flow coupling.
 - **Duplicate data structures** — if a data shape already appears in another
-  DFD, reference that file's section 3 instead of copying the table.
+  DFD (or in the same DFD's `structures.md`), reference that file instead of
+  copying the table.
 - **Boilerplate "See also" blocks** — section 1 References should list only
   files that are _functional prerequisites or shared dependencies_ of this
   diagram's flows. Omit the section entirely when there are no such links.
+- **Multi-diagram files** — a `.md` file holds exactly ONE dataflow. Multiple
+  happy flows live in separate files; detail diagrams live in `level-2/`
+  (or `level-3/`) files.
+- **Unnumbered-anchor drift** — since section numbering grows per file (see
+  `{file}#2. Diagram`), always link to the flow *file*, not to the old
+  `#2a` anchors.
 
-### 1. Purpose
+### Level 1 file
 
-Single sentence describing the subsystem or scope. May include an optional
-**References** bullet list linking to upstream/downstream DFDs, API docs, or
-shared diagrams.
+```markdown
+# {Flow Name}
 
-**Do not** include a reference to the context diagram (`context-diagram.md`) —
-it is the project-level entry point already known to every reader. Only link
-DFDs whose _data flows directly feed into or consume from_ this diagram's flows
-(upstream/downstream), plus any shared cross-cutting diagrams actually used.
+## 1. Purpose
 
-### 2. Diagram
+Single sentence describing the dataflow. May include an optional **References**
+bullet list linking to upstream/downstream DFDs, API docs, or shared diagrams.
 
-Mermaid `flowchart` block. `LR` for Level 0, `TD` for Level 1+. Keep under 20
-nodes. Apply shape conventions from the notation table above.
+## 2. Diagram
 
-For Level 1, split into sub-sections as needed:
+Mermaid `flowchart` block — ONE dataflow. Keep under 5–7 nodes for happy
+paths. Apply shape conventions from the notation table above.
 
-- **2a, 2b, … — Happy Flows** — _required_. Each is a small, standalone,
-  simple data path (one sub-process or subsystem). No error handling, no
-  non-functional concerns. Keep each happy flow under 5–7 nodes. A typical
-  Level 1 DFD has 2–4 happy flows.
-- **2c+. Level 2 Inline Diagrams** — one per exceptional handling path,
-  non-functional requirement, abstract component, UI/UX flow, process deep
-  dive, or other implementation detail: numbered `2c`, `2d`, `2e`, … as
-  needed, titled `2c. {Concern}` (e.g. `2c. Loading States`,
-  `2d. Rate Limiting`). Each diagram is scoped to a single concern or
-  process.
+(optional) Notes defining the data flowing over each arrow.
 
-### 3. Data Structures (Level 1 only)
+## 3. Data Structures
 
-One table per distinct data shape flowing through the diagram. Keep fields
+Only shapes documented by THIS flow — the rest belongs to
+`structures.md` in the same DFD directory. Cross-references mandatory:
+- A shape shared within the DFD → reference `{dfd-name}/structures.md`.
+- A shape produced/consumed by another DFD → reference that DFD's
+  `structures.md` or defining flow file, naming the shape.
+```
+
+### Level 2 / Level 3 file
+
+```markdown
+# {Concern Name}
+
+## 1. Purpose
+
+Single sentence describing the concern. Optional **References** to the parent
+Level 1 flow file and any shared diagrams.
+
+## 2. Diagram
+
+Mermaid `flowchart` block — ONE dataflow. Dashed `-.->` arrows for fallback
+paths.
+
+No Data Structures section: reference `structures.md` or the parent Level 1
+file for shapes.
+```
+
+### `structures.md` (reference doc — no diagrams, no dataflows)
+
+One per DFD directory, when the DFD's flows share data structures,
+configuration, or integration tables:
+
+```markdown
+# {DFD Name} — Shared Structures
+
+## 1. Overview
+
+Preserved subsystem overview/Purpose prose. No diagrams.
+
+## 3. Data Structures
+
+One table per distinct data shape flowing through the DFD. Keep fields
 compact — link full schemas where applicable.
 
 #### `OrderRequest`
 
-| Field              | Type      |
-| ------------------ | --------- |
-| `items`            | `Item[]`  |
-| `shipping_address` | `Address` |
-| `payment`          | `Payment` |
+| Field              | Type      | Description |
+| ------------------ | --------- | ----------- |
+| `items`            | `Item[]`  | ...         |
 
-#### `OrderConfirmation`
+## 4. Configuration
 
-| Field      | Type     |
-| ---------- | -------- |
-| `order_id` | `string` |
-| `status`   | `string` |
-| `eta`      | `date`   |
+Configuration keys consumed by this DFD's flows.
+
+## 5. Integration
+
+Integration tables with the agent harness, platform, or other subsystems.
+```

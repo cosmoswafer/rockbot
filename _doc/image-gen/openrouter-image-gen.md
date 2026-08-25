@@ -24,7 +24,7 @@ qwenimage = "qwen/qwen-image-3-pro"
 > below remains only as fallback for models absent from the image catalog.
 > Pure image models (qwen-image-3, seedream, mai, flux, recraft, …) exist only
 > in the image catalog and are rejected with HTTP 404 on chat/completions.
-> See `_dfd/ai/ai-provider.md` §2d for the routing design.
+> See `_dfd/ai/ai-provider/level-2/openrouter-image-routing.md` for the routing design.
 
 ## API: Single-Request (Synchronous)
 

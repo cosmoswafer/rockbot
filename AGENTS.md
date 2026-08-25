@@ -33,7 +33,7 @@ Multiple bot instances may run concurrently, each driven by its own `CONFIG_FILE
 - **Soul sync is pull-based** — `soul.md` is re-read from WebDAV on every incoming message; no background polling or cross-instance push.
 - **No write coordination** — `edit_soul` does an unconditional PUT (last-write-wins); concurrent edits from both bots can lose a write.
 - **`state_dir` must differ per instance** even when the WebDAV root is shared (Matrix SDK session stores must not collide).
-- **Snapshots are isolated per bot** under `{root}/{snapshot_prefix}/{bot_id}/{webdav_dir}/snapshot.json` — see `_dfd/memory/memory.md` §2g.
+- **Snapshots are isolated per bot** under `{root}/{snapshot_prefix}/{bot_id}/{webdav_dir}/snapshot.json` — see `_dfd/memory/memory/partitioning.md`.
 
 Per-instance operational details (hostnames, account names, config files, restart commands) are deployment info and live only in a gitignored local note (`_doc/config-files.local.md`), never in the repo.
 
@@ -131,29 +131,29 @@ to make data flow violations compile-time errors rather than runtime surprises:
 | DFD | Primary source | Key secondary sources |
 | --- | -------------- | --------------------- |
 | `_dfd/context-diagram.md` | Level 0 system boundary (no code) | — |
-| `_dfd/infra/config.md` | `config.rs` | `example.config.toml`, `default.config.toml` |
-| `_dfd/infra/rocketchat.md` | rocketchat (`client.rs`, `ddp.rs`, `types.rs`), `platform/rocketchat.rs` | — |
-| `_dfd/infra/rocketchat-rest.md` | rocketchat (`rest.rs`), `harness.rs` | — |
-| `_dfd/infra/matrix.md` | `platform/matrix.rs` | `platform/mod.rs` |
-| `_dfd/ai/ai-provider.md` | `provider/mod.rs`, `provider/deepseek.rs`, `provider/openrouter.rs`, `provider/fal.rs`, `provider/llamacpp.rs` | `types.rs` |
-| `_dfd/memory/memory.md` | `memory.rs` | `harness.rs`, webdav crate |
-| `_dfd/memory/memory-reset.md` | `harness.rs` (`reset_room_if_needed`, `check_token_pressure`, `trim_context`) | `memory.rs`, `config.rs` |
-| `_dfd/knowledge/knowledge.md` | `knowledge.rs` | `tools/save_knowledge.rs`, `tools/forget_knowledge.rs`, `tools/recall_knowledge.rs` |
-| `_dfd/knowledge/knowledge-priority.md` | `knowledge.rs` | `harness.rs`, `memory.rs` |
-| `_dfd/agent/agent-loop.md` | `main.rs`, `platform/mod.rs` | `harness.rs`, `config.rs`, `platform/rocketchat.rs`, `platform/matrix.rs` |
-| `_dfd/agent/agent-harness.md` | `harness.rs` | `memory.rs`, `tool.rs`, `provider/mod.rs` |
-| `_dfd/interception/image-interception.md` | `harness.rs` | `tools/image_gen.rs`, `tools/vision.rs`, `tools/webdav.rs`, `provider/fal.rs`, `image_cache.rs` |
-| `_dfd/interception/secret-interception.md` | `harness.rs` (`load_secrets_from_webdav`, `filter_secrets_by_host`, `resolve_secret_refs_deep`, `replace_secret_refs`) | `tools/web_fetch.rs`, `tools/webdav.rs`, webdav crate |
-| `_dfd/tools/reset-memory.md` | `tools/reset_memory.rs` | `harness.rs`, `memory.rs` |
-| `_dfd/tools/webdav.md` | `tools/webdav.rs` | webdav crate |
-| `_dfd/tools/calendar.md` | `tools/calendar.rs` | webdav crate, `utils.rs` |
-| `_dfd/tools/search-web.md` | `tools/web_search.rs` | `tools/web_fetch.rs` |
-| `_dfd/tools/web-fetch.md` | `tools/web_fetch.rs` | `tools/web_search.rs`, `harness.rs` (secret interception) |
-| `_dfd/tools/image-gen.md` | `tools/image_gen.rs` | `provider/fal.rs`, webdav crate |
-| `_dfd/tools/vision.md` | `tools/vision.rs` | — |
-| `_dfd/tools/edit-soul.md` | `tools/edit_soul.rs` | `memory.rs`, webdav crate |
-| `_dfd/tools/acp-delegate.md` | `tools/acp.rs` | `acp.rs`, `config.rs` |
-| `_dfd/tools/knowledge.md` | `tools/save_knowledge.rs`, `tools/forget_knowledge.rs`, `tools/recall_knowledge.rs` | `knowledge.rs`, webdav crate |
+| `_dfd/infra/config/main-path.md` | `config.rs` | `example.config.toml`, `default.config.toml` |
+| `_dfd/infra/rocketchat/main-path.md` | rocketchat (`client.rs`, `ddp.rs`, `types.rs`), `platform/rocketchat.rs` | — |
+| `_dfd/infra/rocketchat-rest/rest-alias-send.md` | rocketchat (`rest.rs`), `harness.rs` | — |
+| `_dfd/infra/matrix/main-path.md` | `platform/matrix.rs` | `platform/mod.rs` |
+| `_dfd/ai/ai-provider/main-path.md` | `provider/mod.rs`, `provider/deepseek.rs`, `provider/openrouter.rs`, `provider/fal.rs`, `provider/llamacpp.rs` | `types.rs` |
+| `_dfd/memory/memory/retrieve-two-layers.md` | `memory.rs` | `harness.rs`, webdav crate |
+| `_dfd/memory/memory-reset/post-reply-decision.md` | `harness.rs` (`reset_room_if_needed`, `check_token_pressure`, `trim_context`) | `memory.rs`, `config.rs` |
+| `_dfd/knowledge/knowledge/write.md` | `knowledge.rs` | `tools/save_knowledge.rs`, `tools/forget_knowledge.rs`, `tools/recall_knowledge.rs` |
+| `_dfd/knowledge/knowledge-priority/priority-state.md` | `knowledge.rs` | `harness.rs`, `memory.rs` |
+| `_dfd/agent/agent-loop/main-path.md` | `main.rs`, `platform/mod.rs` | `harness.rs`, `config.rs`, `platform/rocketchat.rs`, `platform/matrix.rs` |
+| `_dfd/agent/agent-harness/agent-loop.md` | `harness.rs` | `memory.rs`, `tool.rs`, `provider/mod.rs` |
+| `_dfd/interception/image-interception/complete-pipeline.md` | `harness.rs` | `tools/image_gen.rs`, `tools/vision.rs`, `tools/webdav.rs`, `provider/fal.rs`, `image_cache.rs` |
+| `_dfd/interception/secret-interception/uuidv5-scoped-injection.md` | `harness.rs` (`load_secrets_from_webdav`, `filter_secrets_by_host`, `resolve_secret_refs_deep`, `replace_secret_refs`) | `tools/web_fetch.rs`, `tools/webdav.rs`, webdav crate |
+| `_dfd/tools/reset-memory/flag-driven.md` | `tools/reset_memory.rs` | `harness.rs`, `memory.rs` |
+| `_dfd/tools/webdav/main-path.md` | `tools/webdav.rs` | webdav crate |
+| `_dfd/tools/calendar/main-path.md` | `tools/calendar.rs` | webdav crate, `utils.rs` |
+| `_dfd/tools/search-web/main-path.md` | `tools/web_search.rs` | `tools/web_fetch.rs` |
+| `_dfd/tools/web-fetch/main-path.md` | `tools/web_fetch.rs` | `tools/web_search.rs`, `harness.rs` (secret interception) |
+| `_dfd/tools/image-gen/main-path.md` | `tools/image_gen.rs` | `provider/fal.rs`, webdav crate |
+| `_dfd/tools/vision/main-path.md` | `tools/vision.rs` | — |
+| `_dfd/tools/edit-soul/main-path.md` | `tools/edit_soul.rs` | `memory.rs`, webdav crate |
+| `_dfd/tools/acp-delegate/main-path.md` | `tools/acp.rs` | `acp.rs`, `config.rs` |
+| `_dfd/tools/knowledge/save.md` | `tools/save_knowledge.rs`, `tools/forget_knowledge.rs`, `tools/recall_knowledge.rs` | `knowledge.rs`, webdav crate |
 
 ## Gitea issue investigation
 

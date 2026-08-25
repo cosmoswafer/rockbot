@@ -30,28 +30,31 @@ Before writing any code:
 
 ## Phases
 
-### Phase 1 — Integration probe (optional)
+### Phase 0 — Integration probe (optional, manual, explicit request only)
 
 Data collection against the live server/API to capture actual data shapes.
+**Only run it when the user explicitly requests a probe.**
 
 - Write a probe (no mocking — targets the real server) under `crate-*` or a
   throwaway harness in `./tmp/`, or use an existing `--ignored` probe test.
 - Run it, record request/response shapes into `./tmp/` artifacts.
 - **Skip if sufficient real-world data already exists.**
-- Probe output feeds Phase 2's data-structure tables.
+- Probe output feeds Phase 1's data-structure tables.
 
-### Phase 2 — Revise DFD (use the `dfd-md` skill)
+### Phase 1 — Revise DFD (use the `dfd-md` skill)
 
 Design or update the DFD(s) in `_dfd/` so they accurately model the desired
 data movement.
 
 1. Load the `dfd-md` skill and follow its rules:
-   - One level per diagram; notation (squares/rounded/cylinders), naming
-     conventions, and document structure (sections 1–3) exactly as defined.
-   - Base section 3 data structures on shapes observed in the Phase 1 probe
-     when available.
-   - Add/update Level 1 happy flows (2a, 2b, …) and Level 2 inline detail
-     diagrams (2c, …) per the skill.
+   - One level per diagram, **one dataflow per .md file**; notation
+     (squares/rounded/cylinders), naming conventions, and document structure
+     exactly as defined.
+   - Base data structures on shapes observed in the Phase 0 probe when
+     available.
+   - Level 1 flows live as `{dfd-name}/{flow}.md`; Level 2/3 detail diagrams
+     live in `{dfd-name}/level-2/` (and `level-3/`); shared shapes live in
+     `{dfd-name}/structures.md`, all per the skill's layout rules.
    - Cross-reference, never duplicate, data structures across DFDs.
 2. Update the DFD-to-code mapping table in `AGENTS.md` if the change touches a
    module with no mapped DFD, or if the primary source file moves.

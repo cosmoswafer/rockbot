@@ -8,7 +8,7 @@ as a NextCloud share link.
 
 ## Layer 1: Within Harness — LLM sees images
 
-**DFD**: `_dfd/agent-harness.md` §2e (Auto-Attachment Vision Pipeline)
+**DFD**: `_dfd/agent/agent-harness/auto-attachment-vision.md`
 **Code**: `crate-rockbot/src/harness.rs:161–183`, `:381–457`
 
 ```
@@ -25,14 +25,13 @@ RocketChat attachment → download → base64 encode → embed in ChatMessage
      image pixels for multimodal vision (`ChatMessage::user_with_images`)
 4. Message text format: `SenderName: text\nAttached: ![file1.png](file1.png)`
 5. Only the **latest** user message keeps full `ImageUrl` parts; older messages
-   are collapsed to `[image]` text placeholders (per `_dfd/tools/vision.md`
-   §2e, `memory.rs:275–326`)
+   are collapsed to `[image]` text placeholders (per `_dfd/tools/vision/structures.md` §3, `memory.rs:275–326`)
 
 ---
 
 ## Layer 2: Harness → Image Gen Tool injection
 
-**DFD**: `_dfd/tools/image-gen.md` §2d (Harness Attachment Injection)
+**DFD**: `_dfd/tools/image-gen/level-2/image-url-injection.md`
 **Code**: `crate-rockbot/src/harness.rs:272–279`, `:994–1037`
 
 ```
@@ -54,7 +53,7 @@ LLM prompt mentions title? → inject matching data URIs into image_urls
 
 ## Layer 3: Image Gen Tool → Provider → ImageCache + NextCloud Share
 
-**DFD**: `_dfd/tools/image-gen.md` §2a (Happy Flow), §2c (Provider Selection)
+**DFD**: `_dfd/tools/image-gen/main-path.md`, `_dfd/tools/image-gen/level-2/model-provider-selection.md`
 **Code**: `crate-rockbot/src/tools/image_gen.rs:219–280`,
 `provider/fal.rs:326–386`, `provider/openrouter.rs:779–910`,
 `crate-webdav/src/client.rs:76–140`
@@ -87,7 +86,7 @@ data URI? → upload to provider storage → provider.generate_image() → Vec<u
 
 ## Layer 4: Agent Loop → Reply Assembly (main.rs)
 
-**DFD**: `_dfd/agent-loop.md`
+**DFD**: `_dfd/agent/agent-loop/main-path.md`
 **Code**: `crate-rockbot/src/main.rs:437–470`
 
 ```

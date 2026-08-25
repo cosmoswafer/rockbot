@@ -7,13 +7,13 @@ generation to the final bot reply, covering the LLM decision loop, provider
 generation (fal.ai submit/poll/download or OpenRouter synchronous POST), WebDAV
 storage, NextCloud share link creation, and the reply sent back to RocketChat.
 
-- Upstream: [Agent Loop](../_dfd/agent-loop.md) delivers the `IncomingMessage`
+- Upstream: [Agent Loop](../_dfd/agent/agent-loop/main-path.md) delivers the `IncomingMessage`
   and sends the `BotReply`
-- Downstream: [Agent Harness](../_dfd/agent-harness.md) executes the
+- Downstream: [Agent Harness](../_dfd/agent/agent-harness/agent-loop.md) executes the
   LLM ↔ tools loop
-- Downstream: [Image Gen Tool](../_dfd/tools/image-gen.md) handles
+- Downstream: [Image Gen Tool](../_dfd/tools/image-gen/main-path.md) handles
   provider generation + WebDAV upload + NextCloud share link + ImageCache storage
-- Downstream: [AI Provider](../_dfd/base/ai-provider.md) —
+- Downstream: [AI Provider](../_dfd/ai/ai-provider/main-path.md) —
   `FalAiProvider` / `OpenRouterImageProvider` for generation, chat provider for LLM
 - Companion: [_docs/image-data-flow.md](./image-data-flow.md) —
   prose summary of image data movement across layers

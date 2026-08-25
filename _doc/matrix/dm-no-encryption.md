@@ -41,7 +41,7 @@ placed it in.
 
 ### 3. No mention filter (minor, unrelated to encryption)
 
-The DFD spec (`_dfd/infra/matrix.md` section 2c) says the bot should only
+The DFD spec (`_dfd/infra/matrix/level-2/message-filter.md`) says the bot should only
 dispatch DMs and @mentions. The code currently dispatches **all** text messages
 from **all** joined rooms. This means the bot responds to every message in
 every room (not just DMs). This is a spec/code divergence, not a blocker.
@@ -78,7 +78,7 @@ Scored by completeness vs effort:
 
 ## Related DFD Updates
 
-`_dfd/infra/matrix.md` updated to reflect current reality:
+`_dfd/infra/matrix/level-2/message-filter.md` updated to reflect current reality:
 - Section 1: E2EE status note (not compiled in)
 - Section 2c: mention filter and invite handling marked as spec-not-implemented
 - Section 2e: E2EE claim corrected with feature-gate

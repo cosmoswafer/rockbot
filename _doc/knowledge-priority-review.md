@@ -1,6 +1,6 @@
 # Knowledge Priority Algorithm — Deep Review
 
-Reviewed 2026-06-14 from `_dfd/base/knowledge-priority.md` and `crate-rockbot/src/knowledge.rs`.
+Reviewed 2026-06-14 from `_dfd/knowledge/knowledge-priority/priority-state.md` and `crate-rockbot/src/knowledge.rs`.
 
 ---
 
