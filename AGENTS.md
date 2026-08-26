@@ -191,7 +191,6 @@ When the user asks to **investigate a Gitea issue** (e.g. "investigate issue #42
 
 ## OpenCode skills
 
-- `dfd-dev` — Complete DFD-driven development workflow: check Gitea issues, probe, revise DFD (via `dfd-md`), implement type-first, test, build, bump version (bug fix → patch, e.g. 0.0.1; new feature → minor, e.g. 0.1.0), commit with `closes #N`, push, restart bot.
 - `dfd-md` — Creates Data Flow Diagrams as `.md` files using Mermaid flowchart syntax.
 - `gitea-issues` — Lists, creates, comments on, and closes Gitea issues on the repo's Gitea server.
 - `mermaid-cli` — Validates/fixes Mermaid syntax using `mermaid.parse()` with jsdom (no browser). Use only when asked to validate or fix Mermaid syntax.
