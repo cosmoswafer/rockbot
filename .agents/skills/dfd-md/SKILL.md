@@ -40,7 +40,7 @@ DFD must be:
   consumes. Every cross-DFD reference must name the specific data structure
   (section 3 / `structures.md`) that forms the coupling
 
-## DFD-Driven Development Workflow ("DFD Dev Flow")
+## DFD Flow
 
 0. **Integration probe (data collection; optional, manual only)** — a
    live-data probe (no mocking; targets a live server, API, or resource) to
@@ -62,9 +62,24 @@ DFD must be:
    fast naming the expected DFD data structure and offending field.
 3. **Concrete implementation** — code the types, core logic, and wiring
    described by the DFD. Favour incremental, type-first implementation.
-4. **Review all DFDs** — once the implementation is stable, re-read every DFD
-   in the project and confirm it still matches the code. Update any DFD that
-   has drifted.
+
+## DFD Review (all diagrams)
+
+Run independently of the change workflow — as a periodic audit or before a
+release. The goal is to confirm every DFD in the project still matches the
+code:
+
+- **Enumerate** — list every `.md` file under the project's DFD root, including
+  `level-2/`, `level-3/`, `shared/`, and every `structures.md`.
+- **Compare against code** — for each DFD, walk its flows and data structures
+  and confirm each one maps to real code (an API call, function parameter, DB
+  read/write, or message). Verify producer/consumer couplings still agree on
+  the shared data structure.
+- **Update drift** — if the code has changed without a matching DFD update,
+  revise the DFD to match reality; conversely, implement any DFD describing
+  not-yet-built behaviour.
+- **Prune** — delete flows and structures that no longer exist in code; remove
+  references to deleted files.
 
 ## Type-Driven Design & Validation Implementation
 

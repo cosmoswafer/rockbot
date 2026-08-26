@@ -87,8 +87,10 @@ Enforce data-structure correctness through code-level constraints, per the
   MSRV 1.93), ownership-first (`&T`/`&str` transient, `Arc<str>`/`String`
   owned).
 
-### Phase 5 — Review all DFDs
+### Phase 5 — Review all DFDs (optional, explicit request only)
 
+- **Only run it when the user explicitly requests a full DFD review** — it is
+  not part of the routine change cycle.
 - Re-read every DFD in `_dfd/` and confirm it matches the code.
 - If a DFD's `mtime` is newer than its corresponding Rust source (see the
   DFD-to-code mapping table in `AGENTS.md`), the code is stale — update the
