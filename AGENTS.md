@@ -107,9 +107,6 @@ Every DFD section-3 structure becomes a Rust type; make violations compile-time 
 | `_dfd/tools/acp-delegate/main-path.md` | `tools/acp.rs` | `acp.rs`, `config.rs` |
 | `_dfd/tools/knowledge/save.md` | `tools/save_knowledge.rs`, `tools/forget_knowledge.rs`, `tools/recall_knowledge.rs` | `knowledge.rs`, webdav crate |
 
-## Gitea issue investigation
-
-Detailed in the [`gitea-issues` skill](.agents/skills/gitea-issues/SKILL.md) — load it when the user asks to investigate a Gitea issue (analysis only, no code changes; findings posted as an issue comment).
 
 ## OpenCode skills
 
