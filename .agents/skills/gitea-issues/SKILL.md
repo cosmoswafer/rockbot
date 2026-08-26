@@ -1,6 +1,6 @@
 ---
 name: gitea-issues
-description: Use when working with Gitea issues — list, create, comment, close, and manage issues on the project's Gitea server. Determines server and repo from git remote; reads token from .env.
+description: Use when working with Gitea issues — list, create, comment, close, and manage issues on the project's Gitea server; also use when asked to investigate a Gitea issue. Determines server and repo from git remote; reads token from .env.
 license: CC0-1.0
 ---
 
@@ -381,6 +381,40 @@ echo "Current user: $GITEA_USER"
 When creating an issue, use `$GITEA_USER` in the `assignees` array. If the
 username is still unknown, create the issue without `assignees`, extract
 `user.login` from the response, then PATCH the issue to add the assignee.
+
+## Issue Investigation Workflow
+
+When the user asks to **investigate a Gitea issue** (e.g. "investigate issue
+#42", "debug #17", "look into gitea issue 23"):
+
+1. **Do NOT modify source code.** No edits to `crate-*/`, `_dfd/`, `_doc/`,
+   config files, or any other tracked source. The deliverable is analysis only.
+2. **Fetch the issue** using the operations above — the issue body, all
+   comments (read every comment — earlier discussion often contains the key
+   clue), labels, and linked PRs.
+3. **Do deep analysis.** Trace the relevant code paths (Read / Grep / Glob),
+   consult the matching DFDs in `_dfd/`, inspect recent `git log` history for
+   the affected modules, and correlate the symptoms against the implementation.
+   Surface the *root cause*, not just the surface symptom.
+4. **Probe real data when useful.** You may write and run throwaway test
+   scripts, `cargo test -- --ignored` probes, or small debugging binaries under
+   `./tmp/` to capture actual request/response shapes, log output, or error
+   traces from the live server. Treat these as disposable — delete or leave in
+   `./tmp/`; never commit them.
+5. **Post full findings as a comment on the Gitea issue** ("Add a comment"
+   above). The comment must include:
+   - **Summary** (1–2 sentences): what is actually happening.
+   - **Root cause**: which module/function/DFD is responsible, with
+     `file_path:line_number` references.
+   - **Evidence**: relevant log snippets, probe output, code excerpts, or DFD
+     mismatches that prove the diagnosis.
+   - **Recommended fix**: concrete next steps (which file to change, what to
+     change, and why). Do *not* implement it.
+   - **Risks / open questions**: anything the implementer should watch for
+     (regressions, DFD updates needed, related issues).
+6. **Keep the user informed.** Before posting, give the user a one-sentence
+   heads-up in chat that the analysis is being posted to the issue. Do not
+   surprise-post without context.
 
 ## Usage Notes
 
