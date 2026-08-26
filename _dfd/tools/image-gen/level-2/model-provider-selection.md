@@ -2,7 +2,7 @@
 
 ## 1. Purpose
 
-Level 2 detail for the happy-path diagram in [main-path](../main-path.md): how the tool resolves the LLM's optional `model` alias against the provider's model catalog, and how it selects the t2i or edit provider based on `image_urls` presence.
+Level 2 detail for the happy-path diagram in [main-path](../main-path.md): how the tool resolves the LLM's optional `model` alias against the global image model catalog (spans every supported `[[image_providers]]` entry), routes the call to the corresponding provider backend, and selects the t2i or edit backend based on `image_urls` presence (issue #96).
 
 ## 2. Diagram
 
@@ -10,31 +10,42 @@ Level 2 detail for the happy-path diagram in [main-path](../main-path.md): how t
 flowchart TD
     PARSE(ParseArgs)
     RESOLVE(ResolveModelAlias<br/>ImageModelCatalog lookup)
+    ROUTE{Select backend<br/>by provider name}
     CHECK{Has image_urls?}
-    UPLOAD_URI[Upload DataURIs<br/>via provider.upload_file]
-    T2I[t2i provider]
-    IMG2IMG[img2img/edit provider]
+    UPLOAD_URI[Upload DataURIs<br/>via backend.upload_file]
+    BF[fal backend]
+    BOR[openrouter backend]
     GEN(GenerateImage)
 
     PARSE --> RESOLVE
-    RESOLVE -->|"model_id: Some(id) or None"| CHECK
+    RESOLVE -->|"(model_id, provider_name) or None"| ROUTE
+    ROUTE -->|"provider_name = fal"| BF
+    ROUTE -->|"provider_name = openrouter"| BOR
+    ROUTE -->|"None → default_provider"| BF
+    BF --> CHECK
+    BOR --> CHECK
     CHECK -->|"yes (user attachments or LLM-provided URLs)"| UPLOAD_URI
-    CHECK -->|"no"| T2I
-    UPLOAD_URI --> IMG2IMG
-    T2I --> GEN
-    IMG2IMG --> GEN
+    CHECK -->|"no"| GEN
+    UPLOAD_URI --> GEN
 ```
 
-The tool selects the model per call: an optional LLM `model` alias is resolved
-against the active image provider's `ImageModelCatalog` (alias → model id)
-and set as `ImageGenParams.model_id`. Omitted ⇒ the provider instance's own
-configured default is used (`params.model_id = None`). Unknown aliases are
-rejected at parse with a `ToolCallParse` error naming the valid aliases.
+The catalog is built once at registry time from **every** `[[image_providers]]`
+entry backed by a supported provider kind (`fal` / `openrouter`) — entries with
+other names are skipped with a warning, and their models are not advertised.
+Each catalog entry is `(alias, model_id, provider_name)`; a per-call LLM
+`model` alias resolves to `(model_id, provider_name)`:
 
-The tool selects the provider based on `image_urls` presence and configuration.
-Fal requires CDN-hosted URLs (data URIs uploaded first), OpenRouter accepts
-inline base64. The harness is unaware of this difference — both implement
-`ImageProvider::generate_image() -> Vec<u8>`.
+- `model_id` is passed as `ImageGenParams.model_id` — both `FalAiProvider` and
+  `OpenRouterImageProvider` honor it, overriding the model id baked into the
+  backend instance (fallback only when the argument is omitted).
+- `provider_name` selects the backend from the tool's `backends` map; unknown
+  alias or a backend missing for the resolved provider → `ToolCallParse` error
+  naming the valid aliases.
+
+Omitted `model` ⇒ the `[image_model] default_provider` backend is used with
+`params.model_id = None`; that backend was baked with the resolved
+`default_text_model` / `default_edit_model` of its own config entry. The tool
+selects t2i vs edit-backend based on `image_urls` presence (same as before).
 
 **Provider differences:**
 
@@ -45,9 +56,14 @@ inline base64. The harness is unaware of this difference — both implement
 | Image delivery | CDN URL → separate HTTP GET | Base64 inline in response JSON |
 | Protocol | 3-phase async (submit/poll/fetch) | Single synchronous POST |
 
-OpenRouter routing detail: pure image models (present only in the image
+fal requires CDN-hosted URLs (data URIs uploaded first), OpenRouter accepts
+inline base64. The harness is unaware of this difference — both implement
+`ImageProvider::generate_image() -> Vec<u8>`.
+
+OpenRouter routing detail: pure image models (present in the OpenRouter image
 catalog) go to the dedicated Image API `POST /images`; models absent from the
 catalog fall back to `chat/completions`. See
 [AI Provider §2d](../../../ai/ai-provider/level-2/openrouter-image-routing.md).
-
-The `ImageProvider` trait abstracts both — the tool and harness never branch on provider type.
+Because `openai/gpt-image-2` and `xai/grok-imagine-image` model ids are served
+through OpenRouter, their aliases under an `openrouter` entry automatically use
+that backend — there is no separate openai/xai backend in rockbot.

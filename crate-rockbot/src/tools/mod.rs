@@ -16,7 +16,7 @@ pub use calendar::CalendarTool;
 pub use reset_memory::ResetMemoryTool;
 pub use edit_soul::EditSoulTool;
 pub use forget_knowledge::ForgetKnowledgeTool;
-pub use image_gen::ImageGenTool;
+pub use image_gen::{ImageBackend, ImageGenTool};
 pub use recall_knowledge::RecallKnowledgeTool;
 pub use save_knowledge::SaveKnowledgeTool;
 pub use vision::VisionTool;

@@ -151,18 +151,28 @@ async fn test_image_gen_real_text_to_image() {
     let image_cache = std::sync::Arc::new(ImageCache::new());
 
     // 4. Create ImageGenTool
+    let provider_name = provider_cfg.name.as_str().to_string();
     let model_catalog = rockbot::types::ImageModelCatalog::new(
-        provider_cfg.models.clone(),
+        provider_cfg
+            .models
+            .iter()
+            .map(|(alias, model_id)| (alias.clone(), (model_id.clone(), provider_name.clone())))
+            .collect(),
         "mai",
         "mai",
     );
     let tool = ImageGenTool::new(
-        provider,
+        std::collections::HashMap::from([(
+            provider_name.clone(),
+            rockbot::tools::ImageBackend::new(provider, None),
+        )]),
+        provider_name,
         model_catalog,
         "standard".into(), // default_quality
         "png".into(),      // default_output_format
         1,                 // default_num_images
         "2K".into(),       // default_image_size_tier
+        false,             // default_enable_safety_checker
         webdav.clone(),
         image_cache.clone(),
     );
@@ -312,18 +322,28 @@ async fn test_image_gen_real_data_uri_handling() {
 
     let image_cache = std::sync::Arc::new(ImageCache::new());
 
+    let provider_name = provider_cfg.name.as_str().to_string();
     let model_catalog = rockbot::types::ImageModelCatalog::new(
-        provider_cfg.models.clone(),
+        provider_cfg
+            .models
+            .iter()
+            .map(|(alias, model_id)| (alias.clone(), (model_id.clone(), provider_name.clone())))
+            .collect(),
         "mai",
         "mai",
     );
     let tool = ImageGenTool::new(
-        provider,
+        std::collections::HashMap::from([(
+            provider_name.clone(),
+            rockbot::tools::ImageBackend::new(provider, None),
+        )]),
+        provider_name,
         model_catalog,
         "standard".into(),
         "png".into(),
         1,
         "2K".into(),
+        false,
         webdav.clone(),
         image_cache.clone(),
     );

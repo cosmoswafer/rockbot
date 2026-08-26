@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::env;
 use std::sync::Arc;
 use std::time::Duration;
@@ -18,8 +19,8 @@ use rockbot::platform::{MatrixPlatform, MessagingClient, PlatformSender, RcPlatf
 use rockbot::tool::ToolRegistry;
 use rockbot::tools::{
     AcpTool, BraveSearchProvider, CalendarTool, ResetMemoryTool, EditSoulTool, ExaSearchProvider,
-    ForgetKnowledgeTool, ImageGenTool, RecallKnowledgeTool, SaveKnowledgeTool, SearchProvider,
-    VisionTool, WebDavTool, WebFetchTool, WebSearchTool,
+    ForgetKnowledgeTool, ImageBackend, ImageGenTool, RecallKnowledgeTool, SaveKnowledgeTool,
+    SearchProvider, VisionTool, WebDavTool, WebFetchTool, WebSearchTool,
 };
 use rockbot::types::ImageModelCatalog;
 use rockbot::utils::strip_markdown_image_id;
@@ -254,109 +255,111 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
             info!("Calendar tool not registered — WebDAV config missing calendar settings");
         }
 
-        let (image_provider_name, t2i_model_name, edit_model_name, default_quality, default_output_format, default_num_images, default_image_size, default_image_size_tier, default_enable_safety_checker) = {
+        {
             let im = &harness.config().image_model;
-            (
-                im.default_provider.as_str(),
-                im.default_text_model.as_str(),
-                im.default_edit_model.as_str(),
-                im.default_quality.as_str(),
-                im.default_output_format.as_str(),
-                im.default_num_images,
-                im.default_image_size.as_str(),
-                im.default_image_size_tier.as_str(),
-                im.default_enable_safety_checker,
-            )
-        };
+            let default_provider = im.default_provider.as_str().to_string();
 
-        let image_cfg = harness.config().find_image_provider(image_provider_name);
-        if let Some(img_cfg) = image_cfg {
-            info!("Found image provider '{}', resolving models t2i={} edit={}", image_provider_name, t2i_model_name, edit_model_name);
-            let resolved_t2i = harness
-                .config()
-                .resolve_image_model(image_provider_name, t2i_model_name)
-                .unwrap_or_else(|| t2i_model_name.to_string());
+            // Collect backends + catalog from EVERY configured image provider
+            // entry backed by a supported kind (fal / openrouter) — models from
+            // all of them are selectable per call (issue #96).
+            let mut backends: HashMap<String, ImageBackend> = HashMap::new();
+            let mut catalog_models: HashMap<String, (String, String)> = HashMap::new();
 
-            let resolved_edit = harness
-                .config()
-                .resolve_image_model(image_provider_name, edit_model_name)
-                .unwrap_or_else(|| edit_model_name.to_string());
-
-            let same_provider = resolved_t2i == resolved_edit;
-
-            info!("Resolved image models: t2i='{}' edit='{}'", resolved_t2i, resolved_edit);
-
-            let model_catalog = ImageModelCatalog::new(
-                img_cfg.models.clone(),
-                t2i_model_name.to_string(),
-                edit_model_name.to_string(),
-            );
-            let available_aliases = model_catalog.valid_alias_list();
-
-            let t2i_provider: Option<Box<dyn ImageProvider>> = match image_provider_name {
-                "fal" => FalAiProvider::new(img_cfg, &resolved_t2i).ok().map(|p| Box::new(p) as Box<dyn ImageProvider>),
-                "openrouter" => OpenRouterImageProvider::new(img_cfg, &resolved_t2i).ok().map(|p| Box::new(p) as Box<dyn ImageProvider>),
-                other => {
-                    warn!("Unknown image provider '{}' — image_gen tool not registered", other);
-                    None
-                }
-            };
-
-            if let Some(t2i) = t2i_provider {
-                let edit_provider: Option<Box<dyn ImageProvider>> = {
-                    let same_match = if same_provider {
-                        match image_provider_name {
-                            "fal" => FalAiProvider::new(img_cfg, &resolved_edit).ok().map(|p| Box::new(p) as Box<dyn ImageProvider>),
-                            "openrouter" => OpenRouterImageProvider::new(img_cfg, &resolved_edit).ok().map(|p| Box::new(p) as Box<dyn ImageProvider>),
-                            _ => None,
-                        }
-                    } else {
-                        None
-                    };
-                    if same_provider && same_match.is_none() {
-                        warn!("Failed to create same-provider edit provider ({}) — image_gen tool not registered", resolved_edit);
-                    }
-                    if same_provider {
-                        same_match
-                    } else {
-                        match image_provider_name {
-                            "fal" => FalAiProvider::new(img_cfg, &resolved_edit).ok().map(|p| Box::new(p) as Box<dyn ImageProvider>),
-                            "openrouter" => OpenRouterImageProvider::new(img_cfg, &resolved_edit).ok().map(|p| Box::new(p) as Box<dyn ImageProvider>),
-                            _ => {
-                                warn!("image_gen tool not registered — unknown edit provider '{}'", image_provider_name);
-                                None
-                            }
-                        }
-                    }
-                };
-
-                if let Some(edit) = edit_provider {
-                    info!(
-                        "Registered image_gen with t2i={} / edit={} (model aliases: {}){}",
-                        resolved_t2i,
-                        resolved_edit,
-                        available_aliases,
-                        if same_provider { " (same provider)" } else { "" }
+            for cfg in &harness.config().image_providers {
+                let kind = cfg.name.as_str();
+                if !matches!(kind, "fal" | "openrouter") {
+                    warn!(
+                        "Skipping image provider '{}' — unsupported backend (only 'fal' and 'openrouter')",
+                        kind
                     );
-                    tool_registry.register(Box::new(ImageGenTool::with_img2img(
-                        t2i,
-                        edit,
-                        model_catalog,
-                        default_quality.to_string(),
-                        default_output_format.to_string(),
-                        default_num_images,
-                        default_image_size_tier.to_string(),
-                        Some(default_image_size.to_string()),
-                        default_enable_safety_checker,
-                        webdav_client.clone(),
-                        image_cache.clone(),
-                    )));
-                } else {
-                    warn!("image_gen tool not registered — failed to create edit provider for '{}'", resolved_edit);
+                    continue;
+                }
+                let t2i_model = harness
+                    .config()
+                    .resolve_image_model(kind, &im.default_text_model)
+                    .unwrap_or_else(|| im.default_text_model.clone());
+                let edit_model = harness
+                    .config()
+                    .resolve_image_model(kind, &im.default_edit_model)
+                    .unwrap_or_else(|| im.default_edit_model.clone());
+
+                let t2i: Option<Box<dyn ImageProvider>> = match kind {
+                    "fal" => FalAiProvider::new(cfg, &t2i_model)
+                        .ok()
+                        .map(|p| Box::new(p) as Box<dyn ImageProvider>),
+                    _ => OpenRouterImageProvider::new(cfg, &t2i_model)
+                        .ok()
+                        .map(|p| Box::new(p) as Box<dyn ImageProvider>),
+                };
+                let Some(t2i) = t2i else {
+                    warn!(
+                        "Failed to create '{}' text-to-image backend — its models will not be registered",
+                        kind
+                    );
+                    continue;
+                };
+                let edit: Option<Box<dyn ImageProvider>> = match kind {
+                    "fal" => FalAiProvider::new(cfg, &edit_model)
+                        .ok()
+                        .map(|p| Box::new(p) as Box<dyn ImageProvider>),
+                    _ => OpenRouterImageProvider::new(cfg, &edit_model)
+                        .ok()
+                        .map(|p| Box::new(p) as Box<dyn ImageProvider>),
+                };
+                if edit.is_none() {
+                    warn!(
+                        "Failed to create '{}' edit backend — the text-to-image backend will serve edits",
+                        kind
+                    );
+                }
+                if backends.contains_key(kind) {
+                    warn!("Duplicate image provider entry '{}' — later entry wins", kind);
+                }
+                backends.insert(kind.to_string(), ImageBackend::new(t2i, edit));
+
+                for (alias, model_id) in &cfg.models {
+                    if let Some((_existing_id, existing_kind)) = catalog_models.get(alias) {
+                        warn!(
+                            "Duplicate image model alias '{}' across providers '{}' and '{}' — keeping '{}'",
+                            alias, existing_kind, kind, existing_kind
+                        );
+                        continue;
+                    }
+                    catalog_models.insert(alias.clone(), (model_id.clone(), kind.to_string()));
                 }
             }
-        } else {
-            info!("Image provider '{}' not found in config — image_gen tool not registered", image_provider_name);
+
+            if backends.is_empty() {
+                info!("No supported image providers (fal/openrouter) — image_gen tool not registered");
+            } else if !backends.contains_key(&default_provider) {
+                warn!(
+                    "Default image provider '{}' has no available backend — image_gen tool not registered",
+                    default_provider
+                );
+            } else {
+                let model_catalog = ImageModelCatalog::new(
+                    catalog_models,
+                    im.default_text_model.clone(),
+                    im.default_edit_model.clone(),
+                );
+                info!(
+                    "Registered image_gen with provider backends: {} (model aliases: {})",
+                    backends.keys().cloned().collect::<Vec<_>>().join(", "),
+                    model_catalog.valid_alias_list()
+                );
+                tool_registry.register(Box::new(ImageGenTool::new(
+                    backends,
+                    default_provider,
+                    model_catalog,
+                    im.default_quality.clone(),
+                    im.default_output_format.clone(),
+                    im.default_num_images,
+                    im.default_image_size_tier.clone(),
+                    im.default_enable_safety_checker,
+                    webdav_client.clone(),
+                    image_cache.clone(),
+                )));
+            }
         }
     } else {
         info!("WebDAV not configured — WebDAV-dependent tools (webdav, edit_soul, knowledge, calendar, image_gen) not registered");

@@ -437,13 +437,16 @@ impl ImageGenParams {
     }
 }
 
-/// Config-derived catalog of available image model aliases → model ids.
+/// Config-derived catalog of available image model aliases → model ids,
+/// each tagged with the `[[image_providers]]` entry name that owns it.
 ///
-/// Canonical shared type (see `_dfd/tools/image-gen.md` §3): produced by
-/// `main.rs` from the active `[[image_providers]]` entry's `models` map plus
-/// the `[image_model]` default aliases, consumed by `ImageGenTool` for
-/// per-call model selection. Construction is infallible — config leniency is
-/// preserved (an unresolvable default alias is kept as-is and never blocks
+/// Canonical shared type (see `_dfd/tools/image-gen/structures.md` §3):
+/// produced by `main.rs` from the `models` maps of **every** configured image
+/// provider entry backed by a supported kind (fal / openrouter), plus the
+/// `[image_model]` default aliases, and consumed by `ImageGenTool` for
+/// per-call model selection and provider routing (`resolve` returns the
+/// provider name of the alias). Construction is infallible — config leniency
+/// is preserved (an unresolvable default alias is kept as-is and never blocks
 /// tool registration); the tool rejects unknown LLM-provided aliases at the
 /// parse boundary instead.
 /// Model-id marker for the seedream v5 family — the only Fal models whose
@@ -455,18 +458,21 @@ pub const SEEDREAM_V5_MARKER: &str = "seedream/v5";
 
 #[derive(Debug, Clone, Default)]
 pub struct ImageModelCatalog {
-    entries: Vec<(String, String)>,
+    entries: Vec<(String, String, String)>,
     default_text_alias: String,
     default_edit_alias: String,
 }
 
 impl ImageModelCatalog {
     pub fn new(
-        models: std::collections::HashMap<String, String>,
+        models: std::collections::HashMap<String, (String, String)>,
         default_text_alias: impl Into<String>,
         default_edit_alias: impl Into<String>,
     ) -> Self {
-        let mut entries: Vec<(String, String)> = models.into_iter().collect();
+        let mut entries: Vec<(String, String, String)> = models
+            .into_iter()
+            .map(|(alias, (model_id, provider_name))| (alias, model_id, provider_name))
+            .collect();
         entries.sort_by(|a, b| a.0.cmp(&b.0));
         Self {
             entries,
@@ -479,23 +485,31 @@ impl ImageModelCatalog {
         self.entries.is_empty()
     }
 
-    /// Resolve a config alias to its model id.
-    pub fn resolve(&self, alias: &str) -> Option<&str> {
+    /// Resolve a config alias to its `(model_id, provider_name)` pair — the
+    /// tool routes the call to that provider's backend.
+    pub fn resolve(&self, alias: &str) -> Option<(&str, &str)> {
         self.entries
             .iter()
-            .find(|(a, _)| a == alias)
-            .map(|(_, id)| id.as_str())
+            .find(|(a, _, _)| a == alias)
+            .map(|(_, id, p)| (id.as_str(), p.as_str()))
     }
 
     /// Aliases in sorted order — feeds the tool schema `enum`.
     pub fn allowed_aliases(&self) -> Vec<&str> {
-        self.entries.iter().map(|(a, _)| a.as_str()).collect()
+        self.entries.iter().map(|(a, _, _)| a.as_str()).collect()
     }
 
     /// Model ids in alias-sorted order (pairs with `allowed_aliases()` by
     /// index) — feeds the derived tool description.
     pub fn model_ids(&self) -> Vec<&str> {
-        self.entries.iter().map(|(_, id)| id.as_str()).collect()
+        self.entries.iter().map(|(_, id, _)| id.as_str()).collect()
+    }
+
+    /// Provider names in alias-sorted order (index-aligned with
+    /// `allowed_aliases()` and `model_ids()`) — feeds the derived tool
+    /// description with per-model routing info.
+    pub fn provider_names(&self) -> Vec<&str> {
+        self.entries.iter().map(|(_, _, p)| p.as_str()).collect()
     }
 
     /// `true` iff any configured model id is in the seedream v5 family —
@@ -504,7 +518,7 @@ impl ImageModelCatalog {
     pub fn supports_auto_aspect(&self) -> bool {
         self.entries
             .iter()
-            .any(|(_, id)| id.contains(SEEDREAM_V5_MARKER))
+            .any(|(_, id, _)| id.contains(SEEDREAM_V5_MARKER))
     }
 
     /// `"a, b, c"` or `"(none configured)"` — for parse-error messages.
@@ -642,14 +656,23 @@ mod tests {
     #[test]
     fn test_image_model_catalog_resolution() {
         let models = std::collections::HashMap::from([
-            ("seedream5".to_string(), "bytedance/seedream/v5/pro/text-to-image".to_string()),
-            ("mai".to_string(), "microsoft/mai-image-2.5".to_string()),
+            (
+                "seedream5".to_string(),
+                ("bytedance/seedream/v5/pro/text-to-image".to_string(), "fal".to_string()),
+            ),
+            (
+                "mai".to_string(),
+                ("microsoft/mai-image-2.5".to_string(), "openrouter".to_string()),
+            ),
         ]);
         let catalog = ImageModelCatalog::new(models, "mai", "mai");
-        assert_eq!(catalog.resolve("mai"), Some("microsoft/mai-image-2.5"));
+        assert_eq!(
+            catalog.resolve("mai"),
+            Some(("microsoft/mai-image-2.5", "openrouter"))
+        );
         assert_eq!(
             catalog.resolve("seedream5"),
-            Some("bytedance/seedream/v5/pro/text-to-image")
+            Some(("bytedance/seedream/v5/pro/text-to-image", "fal"))
         );
         assert_eq!(catalog.resolve("nope"), None);
         assert!(!catalog.is_empty());
@@ -658,19 +681,23 @@ mod tests {
     #[test]
     fn test_image_model_catalog_sorted_aliases() {
         let models = std::collections::HashMap::from([
-            ("seedream5".to_string(), "a".to_string()),
-            ("banana".to_string(), "b".to_string()),
-            ("mai".to_string(), "c".to_string()),
+            ("seedream5".to_string(), ("a".to_string(), "fal".to_string())),
+            ("banana".to_string(), ("b".to_string(), "openrouter".to_string())),
+            ("mai".to_string(), ("c".to_string(), "fal".to_string())),
         ]);
         let catalog = ImageModelCatalog::new(models, "mai", "mai");
         assert_eq!(catalog.allowed_aliases(), vec!["banana", "mai", "seedream5"]);
         assert_eq!(catalog.valid_alias_list(), "banana, mai, seedream5");
+        assert_eq!(catalog.provider_names(), vec!["openrouter", "fal", "fal"]);
     }
 
     #[test]
     fn test_image_model_catalog_default_aliases() {
         let catalog = ImageModelCatalog::new(
-            std::collections::HashMap::from([("mai".to_string(), "microsoft/mai-image-2.5".to_string())]),
+            std::collections::HashMap::from([(
+                "mai".to_string(),
+                ("microsoft/mai-image-2.5".to_string(), "openrouter".to_string()),
+            )]),
             "mai",
             "qwenimage",
         );
@@ -690,8 +717,14 @@ mod tests {
     fn test_image_model_catalog_auto_aspect_capability() {
         let seedream = ImageModelCatalog::new(
             std::collections::HashMap::from([
-                ("seedream5".to_string(), "bytedance/seedream/v5/pro/text-to-image".to_string()),
-                ("mai".to_string(), "microsoft/mai-image-2.5".to_string()),
+                (
+                    "seedream5".to_string(),
+                    ("bytedance/seedream/v5/pro/text-to-image".to_string(), "fal".to_string()),
+                ),
+                (
+                    "mai".to_string(),
+                    ("microsoft/mai-image-2.5".to_string(), "openrouter".to_string()),
+                ),
             ]),
             "mai",
             "mai",
@@ -703,9 +736,10 @@ mod tests {
         );
 
         let flux = ImageModelCatalog::new(
-            std::collections::HashMap::from([
-                ("flux".to_string(), "fal-ai/flux/schnell".to_string()),
-            ]),
+            std::collections::HashMap::from([(
+                "flux".to_string(),
+                ("fal-ai/flux/schnell".to_string(), "fal".to_string()),
+            )]),
             "flux",
             "flux",
         );

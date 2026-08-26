@@ -20,9 +20,9 @@ flowchart TD
     REG[(Tool Registry)]
     LOOP[Agent Loop]
 
-    CFG -->|"alias to model_id map + default_text/edit aliases"| BUILD
+    CFG -->|"alias to (model_id, provider_name) map + default_text/edit aliases"| BUILD
     CFG -->|"defaults (quality, format, num_images, size_tier)"| GEN_DESC
-    BUILD -->|"ImageModelCatalog (sorted entries)"| GEN_DESC
+    BUILD -->|"ImageModelCatalog (sorted entries, every provider)"| GEN_DESC
     GEN_DESC -->|"derived description String"| REG
     GEN_DESC -->|"catalog (supports_auto_aspect predicate)"| GEN_SCHEMA
     GEN_SCHEMA -->|"model enum + derived aspect_ratio hint"| REG
@@ -33,7 +33,7 @@ flowchart TD
 
 | Output           | Derived from                                                    | Drift risk (if hardcoded) |
 | ---------------- | --------------------------------------------------------------- | ------------------------- |
-| Tool description | alias→id list, default t2i/edit aliases, `supports_auto_aspect` | stale model names (e.g. `seedream5`) |
+| Tool description | alias→(model_id, provider_name) list from **every** provider entry, default t2i/edit aliases, `supports_auto_aspect` | stale model names (e.g. `seedream5`), wrong provider routing hint |
 | `model` param description | valid alias list, default t2i/edit aliases | enum/description mismatch |
 | `model` param `enum` | `allowed_aliases()` (sorted; omitted when catalog empty) | LLM picks a model id that no longer exists |
 | `aspect_ratio` param description | `supports_auto_aspect` (any model id containing `seedream/v5`) | auto-dimensional hint absent/present wrongly |

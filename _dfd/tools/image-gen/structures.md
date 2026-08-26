@@ -9,11 +9,14 @@ with a prompt and optional parameters; the tool delegates to the provider,
 writes to WebDAV, stores to the cache, and returns a minimal result
 (`{ok, webdav_path, image_key}`) so the LLM context stays lightweight.
 
-The LLM can select any model from the active image provider's `models`
-catalog per call via an optional `model` alias arg; omitting it falls back to
-the `[image_model]` defaults (`default_text_model` / `default_edit_model`).
-The catalog (alias → model id) is a shared type
-(`ImageModelCatalog`) produced from config at startup and consumed by the tool.
+The LLM can select any model from **all configured `[[image_providers]]`**
+per call via an optional `model` alias arg; omitting it falls back to the
+`[image_model]` defaults (`default_text_model` / `default_edit_model`) of the
+default provider. The catalog (alias → model id + provider name) is a shared
+type (`ImageModelCatalog`) produced from config at startup and consumed by the
+tool — every model is routed to its own provider's backend (issue #96), so the
+concatenated catalog spans the fal and openrouter entries (the only supported
+backend kinds; other provider names are skipped at registry with a warning).
 
 The tool's description and `parameters()` schema are **generated from the
 catalog at registry time** (issue #95, see
@@ -55,26 +58,29 @@ LLM provides `prompt` and `aspect_ratio` (both required); all other fields come 
 
 #### `ImageModelCatalog`
 
-Shared type produced at startup from the active `[[image_providers]]` entry's
-`models` map (alias → model id) plus the `[image_model]` default aliases.
-Defined in `types.rs` — produced by `main.rs` and consumed by the tool, so
-mismatches are compile-time errors.
+Shared type produced at startup by joining the `models` map of **every**
+configured `[[image_providers]]` entry backed by a supported provider kind
+(fal / openrouter), tagging each alias with its provider name, plus the
+`[image_model]` default aliases. Defined in `types.rs` — produced by `main.rs`
+and consumed by the tool, so mismatches are compile-time errors.
 
 | Field                | Type                    | Description                                      |
 | -------------------- | ----------------------- | ------------------------------------------------ |
-| `entries`            | `[(string, string)]`    | `(alias, model_id)` pairs, sorted by alias — stable schema `enum`. |
+| `entries`            | `[(string, string, string)]` | `(alias, model_id, provider_name)` triples, sorted by alias — stable schema `enum`. |
 | `default_text_alias` | `string`                | `[image_model] default_text_model` (t2i fallback) |
 | `default_edit_alias` | `string`                | `[image_model] default_edit_model` (edit fallback) |
 
-`resolve(alias)` returns the model id or `None` — the tool rejects unknown
-aliases with a `ToolCallParse` error listing the valid aliases.
-`allowed_aliases()` feeds the tool schema `enum`; `model_ids()` exposes the
-resolved ids for the derived tool description.
-`supports_auto_aspect()` is a derived capability flag — `true` iff any entry's
-model id contains the `seedream/v5` marker (same constant used by
-`FalAiProvider`). It drives the `auto_1K`/`auto_2K` hint in the tool and
-`aspect_ratio` parameter descriptions; when `false`, no auto-dimensional
-strings are advertised.
+`resolve(alias)` returns `(model_id, provider_name)` or `None` — the tool
+rejects unknown aliases with a `ToolCallParse` error listing the valid aliases;
+each resolved pair selects that provider's backend. `allowed_aliases()` feeds
+the tool schema `enum`; `model_ids()` / `provider_names()` expose the resolved
+ids and provider tags (index-aligned with `allowed_aliases()`) for the derived
+tool description. Duplicate aliases across provider entries are dropped with a
+warning (first defined wins). `supports_auto_aspect()` is a derived capability
+flag — `true` iff any entry's model id contains the `seedream/v5` marker (same
+constant used by `FalAiProvider`). It drives the `auto_1K`/`auto_2K` hint in
+the tool and `aspect_ratio` parameter descriptions; when `false`, no
+auto-dimensional strings are advertised.
 
 #### `ImageGenResult`
 

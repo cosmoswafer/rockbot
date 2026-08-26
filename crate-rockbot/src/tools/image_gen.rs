@@ -1,6 +1,8 @@
 use async_trait::async_trait;
 use base64::Engine;
 use serde::Deserialize;
+use std::collections::HashMap;
+use std::sync::Arc;
 use tracing::{debug, info, warn};
 use webdav::{WebDavClient, WebDavPath};
 
@@ -29,11 +31,31 @@ struct ImageGenArgs {
     reference_image_key: Option<String>,
 }
 
-use std::sync::Arc;
+/// Provider backends (t2i + optional edit) of one `[[image_providers]]`
+/// entry, keyed by the entry's name — the tool routes each resolved alias to
+/// the backend of its owning provider (issue #96).
+pub struct ImageBackend {
+    pub t2i: Box<dyn ImageProvider>,
+    pub edit: Option<Box<dyn ImageProvider>>,
+}
+
+impl ImageBackend {
+    pub fn new(t2i: Box<dyn ImageProvider>, edit: Option<Box<dyn ImageProvider>>) -> Self {
+        Self { t2i, edit }
+    }
+
+    fn select(&self, is_img2img: bool) -> &dyn ImageProvider {
+        if is_img2img {
+            self.edit.as_deref().unwrap_or(self.t2i.as_ref())
+        } else {
+            self.t2i.as_ref()
+        }
+    }
+}
 
 pub struct ImageGenTool {
-    provider: Box<dyn ImageProvider>,
-    edit_provider: Option<Box<dyn ImageProvider>>,
+    backends: HashMap<String, ImageBackend>,
+    default_backend: String,
     model_catalog: ImageModelCatalog,
     description: String,
     default_quality: String,
@@ -50,19 +72,21 @@ pub struct ImageGenTool {
 impl ImageGenTool {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        provider: Box<dyn ImageProvider>,
+        backends: HashMap<String, ImageBackend>,
+        default_backend: String,
         model_catalog: ImageModelCatalog,
         default_quality: String,
         default_output_format: String,
         default_num_images: u32,
         default_image_size_tier: String,
+        default_enable_safety_checker: bool,
         webdav: WebDavClient,
         image_cache: Arc<ImageCache>,
     ) -> Self {
         let description = build_description(&model_catalog);
         Self {
-            provider,
-            edit_provider: None,
+            backends,
+            default_backend,
             model_catalog,
             description,
             default_quality,
@@ -70,37 +94,6 @@ impl ImageGenTool {
             default_num_images,
             default_image_size_tier,
             default_image_size: None,
-            default_enable_safety_checker: false,
-            webdav,
-            image_cache,
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn with_img2img(
-        text2img: Box<dyn ImageProvider>,
-        img2img: Box<dyn ImageProvider>,
-        model_catalog: ImageModelCatalog,
-        default_quality: String,
-        default_output_format: String,
-        default_num_images: u32,
-        default_image_size_tier: String,
-        default_image_size: Option<String>,
-        default_enable_safety_checker: bool,
-        webdav: WebDavClient,
-        image_cache: Arc<ImageCache>,
-    ) -> Self {
-        let description = build_description(&model_catalog);
-        Self {
-            provider: text2img,
-            edit_provider: Some(img2img),
-            model_catalog,
-            description,
-            default_quality,
-            default_output_format,
-            default_num_images,
-            default_image_size_tier,
-            default_image_size,
             default_enable_safety_checker,
             webdav,
             image_cache,
@@ -120,7 +113,7 @@ impl ImageGenTool {
         desc
     }
 
-    async fn upload_data_uri(&self, data_uri: &str) -> Result<String> {
+    async fn upload_data_uri(&self, provider: &dyn ImageProvider, data_uri: &str) -> Result<String> {
         let after_data = data_uri
             .strip_prefix("data:")
             .ok_or_else(|| RockBotError::ToolCallParse("Invalid data URI".into()))?;
@@ -130,7 +123,7 @@ impl ImageGenTool {
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(b64)
             .map_err(|e| RockBotError::ToolCallParse(format!("Base64 decode failed: {e}")))?;
-        self.provider.upload_file(&bytes, mime_part).await
+        provider.upload_file(&bytes, mime_part).await
     }
 
     async fn upload_to_webdav(&self, room_id: &str, ext: &str, image_bytes: Vec<u8>) -> Result<String> {
@@ -157,7 +150,8 @@ fn build_description(catalog: &ImageModelCatalog) -> String {
             .allowed_aliases()
             .iter()
             .zip(catalog.model_ids())
-            .map(|(alias, id)| format!("{alias} ({id})"))
+            .zip(catalog.provider_names())
+            .map(|((alias, id), provider)| format!("{alias} ({id}, {provider})"))
             .collect::<Vec<_>>()
             .join(", ")
     };
@@ -276,15 +270,41 @@ impl Tool for ImageGenTool {
         params.output_format = Some(self.default_output_format.clone());
         params.num_images = Some(self.default_num_images);
 
-        if let Some(alias) = &args.model {
-            let model_id = self.model_catalog.resolve(alias.as_str()).ok_or_else(|| {
-                RockBotError::ToolCallParse(format!(
-                    "image_gen: model alias '{}' not in image model catalog — valid aliases: {}",
-                    alias.as_str(),
-                    self.model_catalog.valid_alias_list()
-                ))
-            })?;
-            params.model_id = Some(model_id.to_string());
+        // Model alias → (model_id, provider_name) via the catalog; the alias's
+        // owning provider's backend is used (default backend when omitted).
+        let (backend, model_id_override): (&ImageBackend, Option<String>) = match &args.model {
+            Some(alias) => {
+                let (model_id, provider_name) = self
+                    .model_catalog
+                    .resolve(alias.as_str())
+                    .ok_or_else(|| {
+                        RockBotError::ToolCallParse(format!(
+                            "image_gen: model alias '{}' not in image model catalog — valid aliases: {}",
+                            alias.as_str(),
+                            self.model_catalog.valid_alias_list()
+                        ))
+                    })?;
+                let backend = self.backends.get(provider_name).ok_or_else(|| {
+                    RockBotError::ToolCallParse(format!(
+                        "image_gen: model alias '{}' routes to provider '{}' which has no available backend",
+                        alias.as_str(),
+                        provider_name
+                    ))
+                })?;
+                (backend, Some(model_id.to_string()))
+            }
+            None => {
+                let backend = self.backends.get(&self.default_backend).ok_or_else(|| {
+                    RockBotError::Provider(format!(
+                        "image_gen: default image provider '{}' has no available backend",
+                        self.default_backend
+                    ))
+                })?;
+                (backend, None)
+            }
+        };
+        if let Some(model_id) = model_id_override {
+            params.model_id = Some(model_id);
         }
 
         params.image_size = Some(ImageSizeValue::Preset(args.aspect_ratio.as_str().to_string()));
@@ -296,7 +316,7 @@ impl Tool for ImageGenTool {
         if let Some(ref key) = args.reference_image_key {
             if let Some(cached) = self.image_cache.get(key) {
                 let data_uri = cached.data_uri();
-                match self.upload_data_uri(&data_uri).await {
+                match self.upload_data_uri(backend.t2i.as_ref(), &data_uri).await {
                     Ok(uploaded_url) => {
                         debug!("Injected reference_image_key '{}' for editing via uploaded URL: {}", key, uploaded_url);
                         collected_urls.push(uploaded_url);
@@ -314,7 +334,7 @@ impl Tool for ImageGenTool {
             for raw in image_urls {
                 match raw.as_str() {
                     uri if uri.starts_with("data:") => {
-                        if let Ok(uploaded_url) = self.upload_data_uri(uri).await {
+                        if let Ok(uploaded_url) = self.upload_data_uri(backend.t2i.as_ref(), uri).await {
                             debug!("Uploaded image to provider storage: {}", uploaded_url);
                             collected_urls.push(uploaded_url);
                         } else {
@@ -337,11 +357,7 @@ impl Tool for ImageGenTool {
         let ext = ext_from_output_format(params.output_format.as_deref());
 
         let is_img2img = params.image_urls.is_some();
-        let provider: &dyn ImageProvider = if is_img2img {
-            self.edit_provider.as_deref().unwrap_or(self.provider.as_ref())
-        } else {
-            self.provider.as_ref()
-        };
+        let provider: &dyn ImageProvider = backend.select(is_img2img);
 
         debug!(
             "image_gen params: provider={} model={} img2img={} num_images={} quality={:?} output_format={:?} image_size={:?} image_urls_count={} prompt_len={} room={}",
@@ -442,9 +458,29 @@ mod tests {
 
     fn make_model_catalog() -> ImageModelCatalog {
         ImageModelCatalog::new(
-            HashMap::from([("flux".to_string(), "fal-ai/flux/schnell".to_string())]),
+            HashMap::from([(
+                "flux".to_string(),
+                ("fal-ai/flux/schnell".to_string(), "fal".to_string()),
+            )]),
             "flux",
             "flux",
+        )
+    }
+
+    /// Single-fal-backend tool with standard defaults — most unit tests use
+    /// this shape; multi-provider tests build the map manually.
+    fn make_tool(provider: Box<dyn ImageProvider>, catalog: ImageModelCatalog) -> ImageGenTool {
+        ImageGenTool::new(
+            HashMap::from([("fal".to_string(), ImageBackend::new(provider, None))]),
+            "fal".to_string(),
+            catalog,
+            "medium".into(),
+            "png".into(),
+            1,
+            "4K".into(),
+            false,
+            make_webdav(),
+            make_image_cache(),
         )
     }
 
@@ -458,7 +494,7 @@ mod tests {
 
     #[test]
     fn test_image_gen_tool_definition() {
-        let tool = ImageGenTool::new(make_fal_provider(), make_model_catalog(), "medium".into(), "png".into(), 1, "4K".into(), make_webdav(), make_image_cache());
+        let tool = make_tool(make_fal_provider(), make_model_catalog());
 
         assert_eq!(tool.name(), "image_gen");
         assert!(tool.description().contains("Generate or edit an image"));
@@ -483,14 +519,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_missing_prompt() {
-        let tool = ImageGenTool::new(make_fal_provider(), make_model_catalog(), "medium".into(), "png".into(), 1, "4K".into(), make_webdav(), make_image_cache());
+        let tool = make_tool(make_fal_provider(), make_model_catalog());
         let result = tool.execute(r#"{}"#).await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn test_execute_invalid_json() {
-        let tool = ImageGenTool::new(make_fal_provider(), make_model_catalog(), "medium".into(), "png".into(), 1, "4K".into(), make_webdav(), make_image_cache());
+        let tool = make_tool(make_fal_provider(), make_model_catalog());
         let result = tool.execute("not json").await;
         assert!(result.is_err());
     }
@@ -683,11 +719,19 @@ mod tests {
     impl ImageProvider for MockImageProvider {
         async fn generate_image(&self, params: &ImageGenParams) -> crate::Result<Vec<u8>> {
             *self.params_sink.lock().unwrap() = Some(params.clone());
-            self.generate_result.lock().unwrap().take().unwrap()
+            match self.generate_result.lock().unwrap().as_ref() {
+                Some(Ok(bytes)) => Ok(bytes.clone()),
+                Some(Err(e)) => Err(RockBotError::Provider(format!("mock: {e}"))),
+                None => Err(RockBotError::Provider("capture-only".into())),
+            }
         }
 
         async fn upload_file(&self, _data: &[u8], _content_type: &str) -> crate::Result<String> {
-            self.upload_result.lock().unwrap().take().unwrap()
+            match self.upload_result.lock().unwrap().as_ref() {
+                Some(Ok(url)) => Ok(url.clone()),
+                Some(Err(e)) => Err(RockBotError::Provider(format!("mock: {e}"))),
+                None => Err(RockBotError::Provider("upload not stubbed".into())),
+            }
         }
 
         fn provider_name(&self) -> &str {
@@ -715,16 +759,7 @@ mod tests {
 
     #[test]
     fn test_size_tier_is_set_from_config_default() {
-        let tool = ImageGenTool::new(
-            Box::new(MockImageProvider::new()),
-            make_model_catalog(),
-            "medium".into(),
-            "png".into(),
-            1,
-            "4K".into(),
-            make_webdav(),
-            make_image_cache(),
-        );
+        let tool = make_tool(Box::new(MockImageProvider::new()), make_model_catalog());
 
         // Verify default_image_size_tier is stored as "4K" per DFD §3
         assert_eq!(tool.default_image_size_tier, "4K");
@@ -733,12 +768,14 @@ mod tests {
     #[test]
     fn test_size_tier_in_params_construction() {
         let tool = ImageGenTool::new(
-            Box::new(MockImageProvider::new()),
+            HashMap::from([("fal".to_string(), ImageBackend::new(Box::new(MockImageProvider::new()), None))]),
+            "fal".to_string(),
             make_model_catalog(),
             "medium".into(),
             "png".into(),
             1,
             "2K".into(),
+            false,
             make_webdav(),
             make_image_cache(),
         );
@@ -756,89 +793,47 @@ mod tests {
 
     #[tokio::test]
     async fn test_upload_data_uri_decodes_base64_and_uploads() {
-        let provider = Box::new(MockImageProvider::new());
-        let tool = ImageGenTool::new(
-            provider,
-            make_model_catalog(),
-            "medium".into(),
-            "png".into(),
-            1,
-            "4K".into(),
-            make_webdav(),
-            make_image_cache(),
-        );
+        let tool = make_tool(Box::new(MockImageProvider::new()), make_model_catalog());
+        let provider = tool.backends["fal"].t2i.as_ref();
 
         // A minimal valid PNG data URI
         let data_uri = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==";
-        let result = tool.upload_data_uri(data_uri).await;
+        let result = tool.upload_data_uri(provider, data_uri).await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "https://cdn.example.com/uploaded.png");
     }
 
     #[tokio::test]
     async fn test_upload_data_uri_invalid_prefix() {
-        let tool = ImageGenTool::new(
-            Box::new(MockImageProvider::new()),
-            make_model_catalog(),
-            "medium".into(),
-            "png".into(),
-            1,
-            "4K".into(),
-            make_webdav(),
-            make_image_cache(),
-        );
+        let tool = make_tool(Box::new(MockImageProvider::new()), make_model_catalog());
 
-        let result = tool.upload_data_uri("not-a-data-uri").await;
+        let result = tool.upload_data_uri(tool.backends["fal"].t2i.as_ref(), "not-a-data-uri").await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn test_upload_data_uri_missing_base64_delimiter() {
-        let tool = ImageGenTool::new(
-            Box::new(MockImageProvider::new()),
-            make_model_catalog(),
-            "medium".into(),
-            "png".into(),
-            1,
-            "4K".into(),
-            make_webdav(),
-            make_image_cache(),
-        );
+        let tool = make_tool(Box::new(MockImageProvider::new()), make_model_catalog());
 
-        let result = tool.upload_data_uri("data:image/png;no-base64-delimiter").await;
+        let result = tool.upload_data_uri(tool.backends["fal"].t2i.as_ref(), "data:image/png;no-base64-delimiter").await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn test_upload_data_uri_invalid_base64() {
-        let tool = ImageGenTool::new(
-            Box::new(MockImageProvider::new()),
-            make_model_catalog(),
-            "medium".into(),
-            "png".into(),
-            1,
-            "4K".into(),
-            make_webdav(),
-            make_image_cache(),
-        );
+        let tool = make_tool(Box::new(MockImageProvider::new()), make_model_catalog());
 
-        let result = tool.upload_data_uri("data:image/png;base64,!!!invalid-base64!!!").await;
+        let result = tool.upload_data_uri(tool.backends["fal"].t2i.as_ref(), "data:image/png;base64,!!!invalid-base64!!!").await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn test_execute_generate_image_failure() {
-        let tool = ImageGenTool::new(
+        let tool = make_tool(
             Box::new(MockImageProvider::with_generate_error(RockBotError::Provider(
                 "Image generation failed".into(),
             ))),
             make_model_catalog(),
-            "medium".into(),
-            "png".into(),
-            1,
-            "4K".into(),
-            make_webdav(),
-            make_image_cache(),
         );
 
         let args = serde_json::json!({
@@ -875,16 +870,7 @@ mod tests {
 
     #[test]
     fn test_reference_image_key_in_schema() {
-        let tool = ImageGenTool::new(
-            Box::new(MockImageProvider::new()),
-            make_model_catalog(),
-            "medium".into(),
-            "png".into(),
-            1,
-            "4K".into(),
-            make_webdav(),
-            make_image_cache(),
-        );
+        let tool = make_tool(Box::new(MockImageProvider::new()), make_model_catalog());
         let schema = tool.parameters();
         let props = schema["properties"].as_object().unwrap();
         assert!(props.contains_key("reference_image_key"), "schema must include reference_image_key");
@@ -896,8 +882,14 @@ mod tests {
     fn make_multi_model_catalog() -> ImageModelCatalog {
         ImageModelCatalog::new(
             HashMap::from([
-                ("seedream5".to_string(), "bytedance/seedream/v5/pro/text-to-image".to_string()),
-                ("mai".to_string(), "microsoft/mai-image-2.5".to_string()),
+                (
+                    "seedream5".to_string(),
+                    ("bytedance/seedream/v5/pro/text-to-image".to_string(), "fal".to_string()),
+                ),
+                (
+                    "mai".to_string(),
+                    ("microsoft/mai-image-2.5".to_string(), "openrouter".to_string()),
+                ),
             ]),
             "mai",
             "mai",
@@ -907,16 +899,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_model_alias_override_reaches_params() {
         let (provider, sink) = make_recording_provider();
-        let tool = ImageGenTool::new(
-            provider,
-            make_multi_model_catalog(),
-            "medium".into(),
-            "png".into(),
-            1,
-            "4K".into(),
-            make_webdav(),
-            make_image_cache(),
-        );
+        let tool = make_tool(provider, make_multi_model_catalog());
         let args = serde_json::json!({
             "prompt": "a cat",
             "aspect_ratio": "1:1",
@@ -935,16 +918,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_model_alias_omitted_leaves_params_model_id_none() {
         let (provider, sink) = make_recording_provider();
-        let tool = ImageGenTool::new(
-            provider,
-            make_multi_model_catalog(),
-            "medium".into(),
-            "png".into(),
-            1,
-            "4K".into(),
-            make_webdav(),
-            make_image_cache(),
-        );
+        let tool = make_tool(provider, make_multi_model_catalog());
         let args = serde_json::json!({
             "prompt": "a cat",
             "aspect_ratio": "1:1",
@@ -957,15 +931,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_unknown_model_alias_rejected_at_parse() {
-        let tool = ImageGenTool::new(
+        let tool = make_tool(
             Box::new(MockImageProvider::with_generate_error(RockBotError::Provider("x".into()))),
             make_multi_model_catalog(),
-            "medium".into(),
-            "png".into(),
-            1,
-            "4K".into(),
-            make_webdav(),
-            make_image_cache(),
         );
         let args = serde_json::json!({
             "prompt": "a cat",
@@ -978,18 +946,81 @@ mod tests {
         assert!(msg.contains("mai") && msg.contains("seedream5"), "err should list valid aliases: {msg}");
     }
 
-    #[test]
-    fn test_schema_model_enum_lists_catalog_aliases() {
+    // ----- Per-provider backend routing (issue #96) -----
+
+    #[tokio::test]
+    async fn test_execute_routes_model_alias_to_its_own_provider_backend() {
+        let (fal_provider, fal_sink) = make_recording_provider();
+        let (or_provider, or_sink) = make_recording_provider();
         let tool = ImageGenTool::new(
-            Box::new(MockImageProvider::new()),
+            HashMap::from([
+                ("fal".to_string(), ImageBackend::new(fal_provider, None)),
+                ("openrouter".to_string(), ImageBackend::new(or_provider, None)),
+            ]),
+            "openrouter".to_string(),
             make_multi_model_catalog(),
             "medium".into(),
             "png".into(),
             1,
             "4K".into(),
+            false,
             make_webdav(),
             make_image_cache(),
         );
+
+        // seedream5 → fal backend
+        let _ = tool.execute(r#"{"prompt":"a cat","aspect_ratio":"1:1","model":"seedream5"}"#).await;
+        assert_eq!(
+            fal_sink.lock().unwrap().as_ref().unwrap().model_id.as_deref(),
+            Some("bytedance/seedream/v5/pro/text-to-image"),
+            "fal-tagged alias must hit the fal backend"
+        );
+        assert!(or_sink.lock().unwrap().is_none(), "fal alias must not hit openrouter");
+
+        // mai → openrouter backend
+        let _ = tool.execute(r#"{"prompt":"a cat","aspect_ratio":"1:1","model":"mai"}"#).await;
+        assert_eq!(
+            or_sink.lock().unwrap().as_ref().unwrap().model_id.as_deref(),
+            Some("microsoft/mai-image-2.5"),
+            "openrouter-tagged alias must hit the openrouter backend"
+        );
+
+        // omitted model → default backend (openrouter) with model_id None
+        let _ = tool.execute(r#"{"prompt":"a cat","aspect_ratio":"1:1"}"#).await;
+        let or_captured = or_sink.lock().unwrap();
+        let captured = or_captured.as_ref().unwrap();
+        assert!(captured.model_id.is_none(), "omitted alias must keep the backend's default model");
+        assert_eq!(captured.prompt.as_str(), "a cat");
+    }
+
+    #[tokio::test]
+    async fn test_execute_routing_requires_available_backend() {
+        let tool = ImageGenTool::new(
+            HashMap::from([(
+                "fal".to_string(),
+                ImageBackend::new(Box::new(MockImageProvider::new()), None),
+            )]),
+            "fal".to_string(),
+            make_multi_model_catalog(), // mai → openrouter, but no openrouter backend
+            "medium".into(),
+            "png".into(),
+            1,
+            "4K".into(),
+            false,
+            make_webdav(),
+            make_image_cache(),
+        );
+        let err = tool
+            .execute(r#"{"prompt":"a cat","aspect_ratio":"1:1","model":"mai"}"#)
+            .await
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("no available backend") && msg.contains("openrouter"), "err: {msg}");
+    }
+
+    #[test]
+    fn test_schema_model_enum_lists_catalog_aliases() {
+        let tool = make_tool(Box::new(MockImageProvider::new()), make_multi_model_catalog());
         let schema = tool.parameters();
         let model = &schema["properties"]["model"];
         assert_eq!(model["type"], "string");
@@ -998,15 +1029,9 @@ mod tests {
 
     #[test]
     fn test_schema_model_has_no_enum_when_catalog_empty() {
-        let tool = ImageGenTool::new(
+        let tool = make_tool(
             Box::new(MockImageProvider::new()),
             ImageModelCatalog::new(HashMap::new(), "mai", "mai"),
-            "medium".into(),
-            "png".into(),
-            1,
-            "4K".into(),
-            make_webdav(),
-            make_image_cache(),
         );
         let schema = tool.parameters();
         let model = &schema["properties"]["model"];
@@ -1018,51 +1043,27 @@ mod tests {
 
     #[test]
     fn test_tool_description_lists_models_and_defaults() {
-        let tool = ImageGenTool::new(
-            Box::new(MockImageProvider::new()),
-            make_multi_model_catalog(),
-            "medium".into(),
-            "png".into(),
-            1,
-            "4K".into(),
-            make_webdav(),
-            make_image_cache(),
-        );
+        let tool = make_tool(Box::new(MockImageProvider::new()), make_multi_model_catalog());
         let desc = tool.description();
-        assert!(desc.contains("Available image models: mai (microsoft/mai-image-2.5), seedream5 (bytedance/seedream/v5/pro/text-to-image)"), "desc: {desc}");
+        assert!(desc.contains("Available image models: mai (microsoft/mai-image-2.5, openrouter), seedream5 (bytedance/seedream/v5/pro/text-to-image, fal)"), "desc: {desc}");
         assert!(desc.contains("Defaults: text-to-image 'mai' / edit 'mai'"), "desc: {desc}");
         assert!(desc.contains("auto_2K") && desc.contains("auto_1K"), "seedream5 in catalog → auto hint: {desc}");
     }
 
     #[test]
     fn test_tool_description_omits_auto_hint_without_seedream() {
-        let tool = ImageGenTool::new(
-            Box::new(MockImageProvider::new()),
-            make_model_catalog(), // flux only — no seedream/v5
-            "medium".into(),
-            "png".into(),
-            1,
-            "4K".into(),
-            make_webdav(),
-            make_image_cache(),
-        );
+        let tool = make_tool(Box::new(MockImageProvider::new()), make_model_catalog());
         let desc = tool.description();
-        assert!(desc.contains("flux (fal-ai/flux/schnell)"), "desc: {desc}");
+        assert!(desc.contains("flux (fal-ai/flux/schnell, fal)"), "desc: {desc}");
         assert!(!desc.contains("auto_2K") && !desc.contains("auto_1K"), "no seedream → no auto hint: {desc}");
         assert!(desc.contains("Defaults: text-to-image 'flux' / edit 'flux'"), "desc: {desc}");
     }
 
     #[test]
     fn test_tool_description_empty_catalog() {
-        let tool = ImageGenTool::new(
+        let tool = make_tool(
             Box::new(MockImageProvider::new()),
             ImageModelCatalog::new(HashMap::new(), "mai", "mai"),
-            "medium".into(),
-            "png".into(),
-            1,
-            "4K".into(),
-            make_webdav(),
-            make_image_cache(),
         );
         let desc = tool.description();
         assert!(desc.contains("no image models configured"), "desc: {desc}");
@@ -1071,26 +1072,8 @@ mod tests {
 
     #[test]
     fn test_aspect_ratio_description_auto_hint_conditional() {
-        let seedream_tool = ImageGenTool::new(
-            Box::new(MockImageProvider::new()),
-            make_multi_model_catalog(),
-            "medium".into(),
-            "png".into(),
-            1,
-            "4K".into(),
-            make_webdav(),
-            make_image_cache(),
-        );
-        let flux_tool = ImageGenTool::new(
-            Box::new(MockImageProvider::new()),
-            make_model_catalog(),
-            "medium".into(),
-            "png".into(),
-            1,
-            "4K".into(),
-            make_webdav(),
-            make_image_cache(),
-        );
+        let seedream_tool = make_tool(Box::new(MockImageProvider::new()), make_multi_model_catalog());
+        let flux_tool = make_tool(Box::new(MockImageProvider::new()), make_model_catalog());
         let seedream_desc = seedream_tool
             .parameters()["properties"]["aspect_ratio"]["description"]
             .as_str()

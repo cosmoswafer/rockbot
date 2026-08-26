@@ -3,7 +3,7 @@ use rockbot::error::RockBotError;
 use rockbot::validated::{ConfigUrl, NonEmptyString, ProviderName};
     use rockbot::provider::{AiProvider, DeepSeekProvider, FalAiProvider, ImageProvider, LlamaCppProvider, OpenRouterImageProvider, OpenRouterProvider};
     use rockbot::tool::Tool;
-    use rockbot::tools::ImageGenTool;
+    use rockbot::tools::{ImageBackend, ImageGenTool};
     use rockbot::types::{ChatMessage, ChatRequest, FinishReason, ImageGenParams, ImageModelCatalog, ThinkingConfig, ToolCall, ToolDef};
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -3692,17 +3692,8 @@ async fn test_image_gen_tool_model_override_uses_catalog_model() {
         ("flux".to_string(), default_model.to_string()),
     ]);
     let provider = FalAiProvider::new(&img_cfg, default_model).unwrap();
-    let catalog = ImageModelCatalog::new(img_cfg.models.clone(), "flux", "flux");
-    let tool = ImageGenTool::new(
-        Box::new(provider),
-        catalog,
-        "medium".into(),
-        "png".into(),
-        1,
-        "4K".into(),
-        webdav::WebDavClient::new(&base, "user", "pass").unwrap(),
-        Arc::new(rockbot::image_cache::ImageCache::new()),
-    );
+    let catalog = ImageModelCatalog::new(tag_provider_models(img_cfg.models.clone(), "fal"), "flux", "flux");
+    let tool = make_single_fal_tool(Box::new(provider), catalog, &base);
 
     let result = tool
         .execute(
@@ -3736,17 +3727,8 @@ async fn test_image_gen_tool_model_omitted_uses_provider_default() {
         ("flux".to_string(), default_model.to_string()),
     ]);
     let provider = FalAiProvider::new(&img_cfg, default_model).unwrap();
-    let catalog = ImageModelCatalog::new(img_cfg.models.clone(), "flux", "flux");
-    let tool = ImageGenTool::new(
-        Box::new(provider),
-        catalog,
-        "medium".into(),
-        "png".into(),
-        1,
-        "4K".into(),
-        webdav::WebDavClient::new(&base, "user", "pass").unwrap(),
-        Arc::new(rockbot::image_cache::ImageCache::new()),
-    );
+    let catalog = ImageModelCatalog::new(tag_provider_models(img_cfg.models.clone(), "fal"), "flux", "flux");
+    let tool = make_single_fal_tool(Box::new(provider), catalog, &base);
 
     let result = tool
         .execute(r#"{"prompt":"a cat","aspect_ratio":"1:1","room_id":"d-abc"}"#)
@@ -3764,17 +3746,8 @@ async fn test_image_gen_tool_unknown_model_alias_fails_before_http() {
     let mut img_cfg = make_fal_config(&base);
     img_cfg.models = HashMap::from([("flux".to_string(), "fal-ai/flux/schnell".to_string())]);
     let provider = FalAiProvider::new(&img_cfg, "fal-ai/flux/schnell").unwrap();
-    let catalog = ImageModelCatalog::new(img_cfg.models.clone(), "flux", "flux");
-    let tool = ImageGenTool::new(
-        Box::new(provider),
-        catalog,
-        "medium".into(),
-        "png".into(),
-        1,
-        "4K".into(),
-        webdav::WebDavClient::new(&base, "user", "pass").unwrap(),
-        Arc::new(rockbot::image_cache::ImageCache::new()),
-    );
+    let catalog = ImageModelCatalog::new(tag_provider_models(img_cfg.models.clone(), "fal"), "flux", "flux");
+    let tool = make_single_fal_tool(Box::new(provider), catalog, &base);
 
     let err = tool
         .execute(r#"{"prompt":"a cat","aspect_ratio":"1:1","model":"nope"}"#)
@@ -3822,35 +3795,33 @@ async fn test_openrouter_image_gen_model_id_override_in_body() {
 #[test]
 fn test_image_gen_description_and_schema_derived_from_config() {
     let models = HashMap::from([
-        ("seedream5".to_string(), "bytedance/seedream/v5/pro/text-to-image".to_string()),
-        ("mai".to_string(), "microsoft/mai-image-2.5".to_string()),
+        (
+            "seedream5".to_string(),
+            ("bytedance/seedream/v5/pro/text-to-image".to_string(), "fal".to_string()),
+        ),
+        (
+            "mai".to_string(),
+            ("microsoft/mai-image-2.5".to_string(), "openrouter".to_string()),
+        ),
     ]);
     let catalog = ImageModelCatalog::new(models, "mai", "mai");
-    let tool = ImageGenTool::new(
-        Box::new(rockbot::provider::fal::FalAiProvider::new(
-            &rockbot::config::ProviderConfig {
-                name: rockbot::validated::ProviderName::try_new("fal".to_string()).unwrap(),
-                api_key: "test-key".into(),
-                base_url: rockbot::validated::ConfigUrl::try_new("https://queue.fal.run".to_string()).unwrap(),
-                basecf_url: None,
-                chat_path: None,
-                draw_path: None,
-                models: HashMap::new(),
-            },
-            "bytedance/seedream/v5/pro/text-to-image",
-        )
-        .unwrap()),
-        catalog,
-        "medium".into(),
-        "png".into(),
-        1,
-        "4K".into(),
-        webdav::WebDavClient::new("https://example.com", "user", "pass").unwrap(),
-        Arc::new(rockbot::image_cache::ImageCache::new()),
-    );
+    let provider = rockbot::provider::fal::FalAiProvider::new(
+        &rockbot::config::ProviderConfig {
+            name: rockbot::validated::ProviderName::try_new("fal".to_string()).unwrap(),
+            api_key: "test-key".into(),
+            base_url: rockbot::validated::ConfigUrl::try_new("https://queue.fal.run".to_string()).unwrap(),
+            basecf_url: None,
+            chat_path: None,
+            draw_path: None,
+            models: HashMap::new(),
+        },
+        "bytedance/seedream/v5/pro/text-to-image",
+    )
+    .unwrap();
+    let tool = make_single_fal_tool(Box::new(provider), catalog, "https://example.com");
 
     let desc = tool.description();
-    assert!(desc.contains("Available image models: mai (microsoft/mai-image-2.5), seedream5 (bytedance/seedream/v5/pro/text-to-image)"), "desc: {desc}");
+    assert!(desc.contains("Available image models: mai (microsoft/mai-image-2.5, openrouter), seedream5 (bytedance/seedream/v5/pro/text-to-image, fal)"), "desc: {desc}");
     assert!(desc.contains("Defaults: text-to-image 'mai' / edit 'mai'"), "desc: {desc}");
     assert!(desc.contains("'auto_2K'"), "seedream configured → auto hint in tool description: {desc}");
 
@@ -3872,18 +3843,12 @@ fn test_image_gen_description_and_schema_derived_from_config() {
 
 #[test]
 fn test_image_gen_description_no_auto_hint_without_seedream() {
-    let models = HashMap::from([("flux".to_string(), "fal-ai/flux/schnell".to_string())]);
+    let models = HashMap::from([(
+        "flux".to_string(),
+        ("fal-ai/flux/schnell".to_string(), "fal".to_string()),
+    )]);
     let catalog = ImageModelCatalog::new(models, "flux", "flux");
-    let tool = ImageGenTool::new(
-        Box::new(MockImageProviderStub),
-        catalog,
-        "medium".into(),
-        "png".into(),
-        1,
-        "4K".into(),
-        webdav::WebDavClient::new("https://example.com", "user", "pass").unwrap(),
-        Arc::new(rockbot::image_cache::ImageCache::new()),
-    );
+    let tool = make_single_fal_tool(Box::new(MockImageProviderStub), catalog, "https://example.com");
 
     let desc = tool.description();
     assert!(!desc.contains("auto_2K") && !desc.contains("auto_1K"), "no seedream → no auto hint: {desc}");
@@ -3912,5 +3877,190 @@ impl rockbot::provider::ImageProvider for MockImageProviderStub {
     fn model_id(&self) -> &str {
         "stub-model"
     }
+}
+
+// ─── Per-provider backend routing (issue #96) ────────────────────────────────
+//
+// The catalog spans ALL supported [[image_providers]] entries; each alias is
+// routed to its owning provider's backend. DFD
+// _dfd/tools/image-gen/level-2/model-provider-selection.md.
+
+/// Tags a provider entry's `models` map with the given provider name — the
+/// shape `ImageModelCatalog::new` expects.
+fn tag_provider_models(
+    models: HashMap<String, String>,
+    provider: &str,
+) -> HashMap<String, (String, String)> {
+    models
+        .into_iter()
+        .map(|(alias, model_id)| (alias, (model_id, provider.to_string())))
+        .collect()
+}
+
+/// ImageGenTool with a single `fal` backend and standard defaults —
+/// the legacy single-provider shape used by most mock tests.
+fn make_single_fal_tool(
+    provider: Box<dyn ImageProvider>,
+    catalog: ImageModelCatalog,
+    base: &str,
+) -> ImageGenTool {
+    ImageGenTool::new(
+        HashMap::from([("fal".to_string(), ImageBackend::new(provider, None))]),
+        "fal".to_string(),
+        catalog,
+        "medium".into(),
+        "png".into(),
+        1,
+        "4K".into(),
+        false,
+        webdav::WebDavClient::new(base, "user", "pass").unwrap(),
+        Arc::new(rockbot::image_cache::ImageCache::new()),
+    )
+}
+
+#[tokio::test]
+async fn test_image_gen_routes_alias_to_its_own_provider_backend() {
+    let mock_server = MockServer::start().await;
+    let base = mock_server.uri();
+
+    let seedream_model = "bytedance/seedream/v5/pro/text-to-image";
+    let mai_model = "microsoft/mai-image-2.5";
+
+    // fal queue pipeline for the seedream alias (expect(1) — only the fal
+    // call may hit these endpoints).
+    mount_fal_queue_pipeline(&mock_server, &base, seedream_model).await;
+    // openrouter chat fallback (no image catalog loaded → /images/models 404s,
+    // falling back to chat/completions).
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(body_string_contains(format!("\"model\":\"{mai_model}\"")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "choices": [{
+                "message": {
+                    "images": [{
+                        "image_url": { "url": "data:image/png;base64,AAAA" }
+                    }]
+                }
+            }]
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    mount_result_image_and_webdav(&mock_server, &base).await;
+
+    let mut fal_cfg = make_fal_config(&base);
+    fal_cfg.models = HashMap::from([
+        ("seedream5".to_string(), seedream_model.to_string()),
+    ]);
+    let or_cfg = make_openrouter_image_config(&base);
+
+    let catalog = ImageModelCatalog::new(
+        HashMap::from([
+            ("seedream5".to_string(), (seedream_model.to_string(), "fal".to_string())),
+            ("mai".to_string(), (mai_model.to_string(), "openrouter".to_string())),
+        ]),
+        "mai",
+        "mai",
+    );
+    let tool = ImageGenTool::new(
+        HashMap::from([
+            (
+                "fal".to_string(),
+                ImageBackend::new(
+                    Box::new(FalAiProvider::new(&fal_cfg, seedream_model).unwrap()),
+                    None,
+                ),
+            ),
+            (
+                "openrouter".to_string(),
+                ImageBackend::new(
+                    Box::new(OpenRouterImageProvider::new(&or_cfg, mai_model).unwrap()),
+                    None,
+                ),
+            ),
+        ]),
+        "mai".to_string(),
+        catalog,
+        "medium".into(),
+        "png".into(),
+        1,
+        "4K".into(),
+        false,
+        webdav::WebDavClient::new(&base, "user", "pass").unwrap(),
+        Arc::new(rockbot::image_cache::ImageCache::new()),
+    );
+
+    // openrouter-tagged alias → openrouter backend (chat/completions).
+    let result = tool
+        .execute(r#"{"prompt":"a sunrise over waves","aspect_ratio":"16:9","model":"mai","room_id":"d-abc"}"#)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_str(&result).unwrap();
+    assert_eq!(v["ok"], true, "openrouter alias must succeed: {result}");
+
+    // fal-tagged alias → fal backend (queue pipeline + CDN download).
+    let result = tool
+        .execute(r#"{"prompt":"a cyberpunk city","aspect_ratio":"16:9","model":"seedream5","room_id":"d-abc"}"#)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_str(&result).unwrap();
+    assert_eq!(v["ok"], true, "fal alias must succeed: {result}");
+}
+
+#[tokio::test]
+async fn test_image_gen_catalog_spans_multiple_provider_entries() {
+    let mock_server = MockServer::start().await;
+    let base = mock_server.uri();
+
+    let mut fal_cfg = make_fal_config(&base);
+    fal_cfg.models = HashMap::from([
+        ("seedream5".to_string(), "bytedance/seedream/v5/pro/text-to-image".to_string()),
+        ("flux".to_string(), "fal-ai/flux/schnell".to_string()),
+    ]);
+    let mut or_cfg = make_openrouter_image_config(&base);
+    or_cfg.models = HashMap::from([
+        ("mai".to_string(), "microsoft/mai-image-2.5".to_string()),
+    ]);
+
+    // Simulate the registry-time join of main.rs: merge both entries' models,
+    // tagging each with its provider name.
+    let mut merged: HashMap<String, (String, String)> = HashMap::new();
+    for (alias, id) in &fal_cfg.models {
+        merged.insert(alias.clone(), (id.clone(), "fal".to_string()));
+    }
+    for (alias, id) in &or_cfg.models {
+        merged.insert(alias.clone(), (id.clone(), "openrouter".to_string()));
+    }
+    let catalog = ImageModelCatalog::new(merged, "seedream5", "seedream5");
+
+    assert_eq!(
+        catalog.allowed_aliases(),
+        vec!["flux", "mai", "seedream5"],
+        "catalog must span ALL provider entries"
+    );
+    assert_eq!(
+        catalog.resolve("mai"),
+        Some(("microsoft/mai-image-2.5", "openrouter")),
+        "openrouter entry's model must resolve with its provider"
+    );
+    assert_eq!(
+        catalog.resolve("seedream5"),
+        Some(("bytedance/seedream/v5/pro/text-to-image", "fal")),
+        "fal entry's model must resolve with its provider"
+    );
+
+    // Registry-time description enumerates both providers' models.
+    let tool = make_single_fal_tool(
+        Box::new(FalAiProvider::new(&fal_cfg, "fal-ai/flux/schnell").unwrap()),
+        catalog,
+        &base,
+    );
+    let desc = tool.description();
+    assert!(
+        desc.contains("flux (fal-ai/flux/schnell, fal)")
+            && desc.contains("seedream5 (bytedance/seedream/v5/pro/text-to-image, fal)")
+            && desc.contains("mai (microsoft/mai-image-2.5, openrouter)"),
+        "description must enumerate all providers' models: {desc}"
+    );
 }
 
