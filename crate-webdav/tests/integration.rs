@@ -81,3 +81,66 @@ fn test_webdav_path_config_backup_path() {
         "/rockbot/config/2026-06-01_config.toml"
     );
 }
+
+const OCS_SHARE_XML: &str = r#"<?xml version="1.0"?>
+<ocs>
+  <meta>
+    <status>ok</status>
+    <statuscode>100</statuscode>
+  </meta>
+  <data>
+    <id>42</id>
+    <url>https://nc.example.com/s/iPNxaew4YLjeGzG</url>
+  </data>
+</ocs>"#;
+
+fn ocs_share_matchers() -> wiremock::MockBuilder {
+    wiremock::Mock::given(wiremock::matchers::method("POST")).and(
+        wiremock::matchers::path("/ocs/v2.php/apps/files_sharing/api/v1/shares"),
+    )
+}
+
+// DFD tools/image-gen: OCS share creation happy path — returned share_url must
+// carry the /preview suffix (inline rendering, real MIME type), not /download
+// (303 redirect + Content-Disposition: attachment). See issue #97.
+#[tokio::test]
+async fn test_create_nextcloud_share_link_appends_preview_suffix() {
+    let server = wiremock::MockServer::start().await;
+    ocs_share_matchers()
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(OCS_SHARE_XML))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client =
+        WebDavClient::new(format!("{}/remote.php/dav/files/user", server.uri()), "user", "pass")
+            .unwrap();
+    let share = client
+        .create_nextcloud_share_link("/rockbot/general/images/pic.png")
+        .await
+        .expect("share link should be created from OCS <url>");
+
+    // The OCS <url> is authoritative (public share host), suffix appended locally
+    assert_eq!(share, "https://nc.example.com/s/iPNxaew4YLjeGzG/preview");
+    assert!(!share.ends_with("/download"));
+    server.verify().await;
+}
+
+// DFD tools/image-gen fallback: no <url> element in OCS response → None,
+// callers fall back to DDP attachment path.
+#[tokio::test]
+async fn test_create_nextcloud_share_link_none_without_url_element() {
+    let server = wiremock::MockServer::start().await;
+    ocs_share_matchers()
+        .respond_with(
+            wiremock::ResponseTemplate::new(200)
+                .set_body_string("<ocs><meta><status>failure</status></meta><data/></ocs>"),
+        )
+        .mount(&server)
+        .await;
+
+    let client =
+        WebDavClient::new(format!("{}/remote.php/dav/files/user", server.uri()), "user", "pass")
+            .unwrap();
+    assert!(client.create_nextcloud_share_link("/rockbot/general/images/pic.png").await.is_none());
+}

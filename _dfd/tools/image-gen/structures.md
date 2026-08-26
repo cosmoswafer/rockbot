@@ -106,7 +106,10 @@ Stored in `Arc<Mutex<HashMap<String, GeneratedImage>>>` keyed by call_id.
 After WebDAV upload, the tool calls `create_nextcloud_share_link()` on the
 `WebDavClient` which POSTs to `/ocs/v2.php/apps/files_sharing/api/v1/shares`
 with `shareType=3`, `permissions=1`, and `expireDate={today+7d}`. The resulting
-short URL is stored in `share_url`. The agent loop (main.rs) prefers this URL
-for the reply text — appending `![Generated image](share_url)` — which
-RocketChat renders as an inline image preview. If share generation fails,
-the agent falls back to a `data:` URI as a DDP attachment.
+short URL with a `/preview` suffix is stored in `share_url` — the preview
+endpoint serves the image inline (`Content-Disposition: inline`, real MIME
+type), unlike `/download` which 303-redirects to an attachment download.
+The agent loop (main.rs) prefers this URL for the reply text — appending
+`![Generated image](share_url)` — which RocketChat renders as an inline image
+preview. If share generation fails, the agent falls back to a `data:` URI as
+a DDP attachment.
