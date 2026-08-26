@@ -446,6 +446,13 @@ impl ImageGenParams {
 /// preserved (an unresolvable default alias is kept as-is and never blocks
 /// tool registration); the tool rejects unknown LLM-provided aliases at the
 /// parse boundary instead.
+/// Model-id marker for the seedream v5 family — the only Fal models whose
+/// request bodies accept the `auto_1K`/`auto_2K` auto-dimensional aspect
+/// strings. Shared between the catalog's `supports_auto_aspect()` predicate
+/// and `FalAiProvider`'s request builder so the tool description hint and the
+/// wire body can never disagree.
+pub const SEEDREAM_V5_MARKER: &str = "seedream/v5";
+
 #[derive(Debug, Clone, Default)]
 pub struct ImageModelCatalog {
     entries: Vec<(String, String)>,
@@ -483,6 +490,21 @@ impl ImageModelCatalog {
     /// Aliases in sorted order — feeds the tool schema `enum`.
     pub fn allowed_aliases(&self) -> Vec<&str> {
         self.entries.iter().map(|(a, _)| a.as_str()).collect()
+    }
+
+    /// Model ids in alias-sorted order (pairs with `allowed_aliases()` by
+    /// index) — feeds the derived tool description.
+    pub fn model_ids(&self) -> Vec<&str> {
+        self.entries.iter().map(|(_, id)| id.as_str()).collect()
+    }
+
+    /// `true` iff any configured model id is in the seedream v5 family —
+    /// determines whether the tool advertises the `auto_1K`/`auto_2K`
+    /// aspect strings to the LLM.
+    pub fn supports_auto_aspect(&self) -> bool {
+        self.entries
+            .iter()
+            .any(|(_, id)| id.contains(SEEDREAM_V5_MARKER))
     }
 
     /// `"a, b, c"` or `"(none configured)"` — for parse-error messages.
@@ -662,5 +684,34 @@ mod tests {
         assert!(catalog.is_empty());
         assert_eq!(catalog.resolve("mai"), None);
         assert_eq!(catalog.valid_alias_list(), "(none configured)");
+    }
+
+    #[test]
+    fn test_image_model_catalog_auto_aspect_capability() {
+        let seedream = ImageModelCatalog::new(
+            std::collections::HashMap::from([
+                ("seedream5".to_string(), "bytedance/seedream/v5/pro/text-to-image".to_string()),
+                ("mai".to_string(), "microsoft/mai-image-2.5".to_string()),
+            ]),
+            "mai",
+            "mai",
+        );
+        assert!(seedream.supports_auto_aspect(), "seedream/v5 id → auto aspect supported");
+        assert_eq!(
+            seedream.model_ids(),
+            vec!["microsoft/mai-image-2.5", "bytedance/seedream/v5/pro/text-to-image"]
+        );
+
+        let flux = ImageModelCatalog::new(
+            std::collections::HashMap::from([
+                ("flux".to_string(), "fal-ai/flux/schnell".to_string()),
+            ]),
+            "flux",
+            "flux",
+        );
+        assert!(!flux.supports_auto_aspect(), "non-seedream models → no auto aspect");
+
+        let empty = ImageModelCatalog::new(std::collections::HashMap::new(), "mai", "mai");
+        assert!(!empty.supports_auto_aspect());
     }
 }

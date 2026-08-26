@@ -15,6 +15,11 @@ the `[image_model]` defaults (`default_text_model` / `default_edit_model`).
 The catalog (alias → model id) is a shared type
 (`ImageModelCatalog`) produced from config at startup and consumed by the tool.
 
+The tool's description and `parameters()` schema are **generated from the
+catalog at registry time** (issue #95, see
+[level-2/tool-description.md](level-2/tool-description.md)) — config is the
+single source of truth; no model names are hardcoded anywhere in the schema.
+
 - Upstream: [Agent Harness](../../agent/agent-harness/image-interception.md) injects `room_id`, `webdav_dir`,
   and `image_cache_key` (call_id) into tool args before invoking `execute_by_name()`
 - Upstream: [Image Injection Pipeline](../../agent/agent-harness/image-sharing.md)
@@ -62,8 +67,14 @@ mismatches are compile-time errors.
 | `default_edit_alias` | `string`                | `[image_model] default_edit_model` (edit fallback) |
 
 `resolve(alias)` returns the model id or `None` — the tool rejects unknown
-aliases with a `ToolCallParse` error listing the valid aliases. `allowed_aliases()`
-feeds the tool schema `enum`.
+aliases with a `ToolCallParse` error listing the valid aliases.
+`allowed_aliases()` feeds the tool schema `enum`; `model_ids()` exposes the
+resolved ids for the derived tool description.
+`supports_auto_aspect()` is a derived capability flag — `true` iff any entry's
+model id contains the `seedream/v5` marker (same constant used by
+`FalAiProvider`). It drives the `auto_1K`/`auto_2K` hint in the tool and
+`aspect_ratio` parameter descriptions; when `false`, no auto-dimensional
+strings are advertised.
 
 #### `ImageGenResult`
 

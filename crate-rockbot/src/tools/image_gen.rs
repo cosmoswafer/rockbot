@@ -35,6 +35,7 @@ pub struct ImageGenTool {
     provider: Box<dyn ImageProvider>,
     edit_provider: Option<Box<dyn ImageProvider>>,
     model_catalog: ImageModelCatalog,
+    description: String,
     default_quality: String,
     default_output_format: String,
     default_num_images: u32,
@@ -58,10 +59,12 @@ impl ImageGenTool {
         webdav: WebDavClient,
         image_cache: Arc<ImageCache>,
     ) -> Self {
+        let description = build_description(&model_catalog);
         Self {
             provider,
             edit_provider: None,
             model_catalog,
+            description,
             default_quality,
             default_output_format,
             default_num_images,
@@ -87,10 +90,12 @@ impl ImageGenTool {
         webdav: WebDavClient,
         image_cache: Arc<ImageCache>,
     ) -> Self {
+        let description = build_description(&model_catalog);
         Self {
             provider: text2img,
             edit_provider: Some(img2img),
             model_catalog,
+            description,
             default_quality,
             default_output_format,
             default_num_images,
@@ -100,6 +105,19 @@ impl ImageGenTool {
             webdav,
             image_cache,
         }
+    }
+
+    /// `aspect_ratio` parameter description — the auto-dimensional hint is
+    /// derived from the catalog, so it appears only while a seedream v5 model
+    /// is actually configured.
+    fn aspect_ratio_description(&self) -> String {
+        let mut desc = String::from(
+            "Aspect ratio: '16:9', '2:3', '1:1', '4:3', '3:4', '3:2' as W:H.",
+        );
+        if self.model_catalog.supports_auto_aspect() {
+            desc.push_str(" Seedream5 (Fal) also accepts 'auto_2K' or 'auto_1K' to auto-select dimensions.");
+        }
+        desc
     }
 
     async fn upload_data_uri(&self, data_uri: &str) -> Result<String> {
@@ -125,6 +143,38 @@ impl ImageGenTool {
             .map_err(|e| RockBotError::Provider(format!("WebDAV upload failed: {e}")))?;
         Ok(filename)
     }
+}
+
+/// Derives the LLM-facing tool description from the catalog at registry time
+/// (issue #95). Config is the single source of truth — model names, defaults,
+/// and the auto-dimensional aspect hint all come from `ImageModelCatalog`, so
+/// the text can never drift from `[image_providers]` / `[image_model]`.
+fn build_description(catalog: &ImageModelCatalog) -> String {
+    let models = if catalog.is_empty() {
+        "(no image models configured)".to_string()
+    } else {
+        catalog
+            .allowed_aliases()
+            .iter()
+            .zip(catalog.model_ids())
+            .map(|(alias, id)| format!("{alias} ({id})"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let mut desc = format!(
+        "Generate or edit an image. Provide a prompt and required aspect_ratio. \
+         Available image models: {models}. \
+         Defaults: text-to-image '{}' / edit '{}'. \
+         Standard ratios: '16:9', '2:3', '1:1', '4:3', '3:4', '3:2'. \
+         User attachments are auto-provided as image_urls for editing. \
+         Returns {{\"ok\": true, \"image_key\": \"...\"}} — share result as `![desc]({{image_key}})`.",
+        catalog.default_text_alias(),
+        catalog.default_edit_alias(),
+    );
+    if catalog.supports_auto_aspect() {
+        desc.push_str(" Seedream5 models also accept 'auto_2K' or 'auto_1K' to auto-select dimensions.");
+    }
+    desc
 }
 
 fn uuid_string() -> String {
@@ -154,11 +204,7 @@ impl Tool for ImageGenTool {
     }
 
     fn description(&self) -> &str {
-        "Generate or edit an image. Provide a prompt and required aspect_ratio. \
-         For seedream5 (Fal), use aspect_ratio 'auto_2K' (auto-selects dimensions) \
-         or 'auto_1K'. Standard ratios: '16:9', '2:3', '1:1', etc. \
-         User attachments are auto-provided as image_urls for editing. \
-         Returns {\"ok\": true, \"image_key\": \"...\"} — share result as `![desc]({image_key})`."
+        &self.description
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -176,7 +222,7 @@ impl Tool for ImageGenTool {
                 },
                 "aspect_ratio": {
                     "type": "string",
-                    "description": "Aspect ratio: '16:9', '2:3', '1:1', '4:3', '3:4', '3:2'. For seedream5 (Fal): 'auto_2K' or 'auto_1K' auto-select dimensions."
+                    "description": self.aspect_ratio_description(),
                 },
                 "model": {
                     "type": "string",
@@ -966,6 +1012,98 @@ mod tests {
         let model = &schema["properties"]["model"];
         assert!(model.get("enum").is_none(), "empty catalog must not emit an enum");
         assert!(model["description"].as_str().unwrap().contains("no models configured"));
+    }
+
+    // ----- Dynamic tool description from [image_providers] config (issue #95) -----
+
+    #[test]
+    fn test_tool_description_lists_models_and_defaults() {
+        let tool = ImageGenTool::new(
+            Box::new(MockImageProvider::new()),
+            make_multi_model_catalog(),
+            "medium".into(),
+            "png".into(),
+            1,
+            "4K".into(),
+            make_webdav(),
+            make_image_cache(),
+        );
+        let desc = tool.description();
+        assert!(desc.contains("Available image models: mai (microsoft/mai-image-2.5), seedream5 (bytedance/seedream/v5/pro/text-to-image)"), "desc: {desc}");
+        assert!(desc.contains("Defaults: text-to-image 'mai' / edit 'mai'"), "desc: {desc}");
+        assert!(desc.contains("auto_2K") && desc.contains("auto_1K"), "seedream5 in catalog → auto hint: {desc}");
+    }
+
+    #[test]
+    fn test_tool_description_omits_auto_hint_without_seedream() {
+        let tool = ImageGenTool::new(
+            Box::new(MockImageProvider::new()),
+            make_model_catalog(), // flux only — no seedream/v5
+            "medium".into(),
+            "png".into(),
+            1,
+            "4K".into(),
+            make_webdav(),
+            make_image_cache(),
+        );
+        let desc = tool.description();
+        assert!(desc.contains("flux (fal-ai/flux/schnell)"), "desc: {desc}");
+        assert!(!desc.contains("auto_2K") && !desc.contains("auto_1K"), "no seedream → no auto hint: {desc}");
+        assert!(desc.contains("Defaults: text-to-image 'flux' / edit 'flux'"), "desc: {desc}");
+    }
+
+    #[test]
+    fn test_tool_description_empty_catalog() {
+        let tool = ImageGenTool::new(
+            Box::new(MockImageProvider::new()),
+            ImageModelCatalog::new(HashMap::new(), "mai", "mai"),
+            "medium".into(),
+            "png".into(),
+            1,
+            "4K".into(),
+            make_webdav(),
+            make_image_cache(),
+        );
+        let desc = tool.description();
+        assert!(desc.contains("no image models configured"), "desc: {desc}");
+        assert!(!desc.contains("auto_2K"), "no seedream → no auto hint: {desc}");
+    }
+
+    #[test]
+    fn test_aspect_ratio_description_auto_hint_conditional() {
+        let seedream_tool = ImageGenTool::new(
+            Box::new(MockImageProvider::new()),
+            make_multi_model_catalog(),
+            "medium".into(),
+            "png".into(),
+            1,
+            "4K".into(),
+            make_webdav(),
+            make_image_cache(),
+        );
+        let flux_tool = ImageGenTool::new(
+            Box::new(MockImageProvider::new()),
+            make_model_catalog(),
+            "medium".into(),
+            "png".into(),
+            1,
+            "4K".into(),
+            make_webdav(),
+            make_image_cache(),
+        );
+        let seedream_desc = seedream_tool
+            .parameters()["properties"]["aspect_ratio"]["description"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let flux_desc = flux_tool
+            .parameters()["properties"]["aspect_ratio"]["description"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(seedream_desc.contains("auto_2K") && seedream_desc.contains("auto_1K"), "seedream_desc: {seedream_desc}");
+        assert!(!flux_desc.contains("auto_2K"), "flux_desc must not advertise auto hint: {flux_desc}");
+        assert!(flux_desc.contains("'16:9', '2:3', '1:1', '4:3', '3:4', '3:2'"), "flux_desc: {flux_desc}");
     }
 
     #[test]

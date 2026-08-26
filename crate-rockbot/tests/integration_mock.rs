@@ -3812,3 +3812,105 @@ async fn test_openrouter_image_gen_model_id_override_in_body() {
     assert!(!bytes.is_empty());
 }
 
+// ─── Dynamic tool description from [image_providers] config (issue #95) ──────
+//
+// The tool's description and schema are generated from the catalog at registry
+// time — config is the single source of truth. No wiremock served data is
+// needed: these tests assert the registry-time derivation (DFD
+// _dfd/tools/image-gen/level-2/tool-description.md).
+
+#[test]
+fn test_image_gen_description_and_schema_derived_from_config() {
+    let models = HashMap::from([
+        ("seedream5".to_string(), "bytedance/seedream/v5/pro/text-to-image".to_string()),
+        ("mai".to_string(), "microsoft/mai-image-2.5".to_string()),
+    ]);
+    let catalog = ImageModelCatalog::new(models, "mai", "mai");
+    let tool = ImageGenTool::new(
+        Box::new(rockbot::provider::fal::FalAiProvider::new(
+            &rockbot::config::ProviderConfig {
+                name: rockbot::validated::ProviderName::try_new("fal".to_string()).unwrap(),
+                api_key: "test-key".into(),
+                base_url: rockbot::validated::ConfigUrl::try_new("https://queue.fal.run".to_string()).unwrap(),
+                basecf_url: None,
+                chat_path: None,
+                draw_path: None,
+                models: HashMap::new(),
+            },
+            "bytedance/seedream/v5/pro/text-to-image",
+        )
+        .unwrap()),
+        catalog,
+        "medium".into(),
+        "png".into(),
+        1,
+        "4K".into(),
+        webdav::WebDavClient::new("https://example.com", "user", "pass").unwrap(),
+        Arc::new(rockbot::image_cache::ImageCache::new()),
+    );
+
+    let desc = tool.description();
+    assert!(desc.contains("Available image models: mai (microsoft/mai-image-2.5), seedream5 (bytedance/seedream/v5/pro/text-to-image)"), "desc: {desc}");
+    assert!(desc.contains("Defaults: text-to-image 'mai' / edit 'mai'"), "desc: {desc}");
+    assert!(desc.contains("'auto_2K'"), "seedream configured → auto hint in tool description: {desc}");
+
+    let params = tool.parameters();
+    assert_eq!(
+        params["properties"]["model"]["enum"],
+        serde_json::json!(["mai", "seedream5"])
+    );
+    let aspect_desc = params["properties"]["aspect_ratio"]["description"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(aspect_desc.contains("auto_2K") && aspect_desc.contains("auto_1K"), "aspect_desc: {aspect_desc}");
+
+    let model_desc = params["properties"]["model"]["description"].as_str().unwrap();
+    assert!(model_desc.contains("mai") && model_desc.contains("seedream5"), "model_desc: {model_desc}");
+    assert!(model_desc.contains("Default: 'mai' (text-to-image) / 'mai' (edit)"), "model_desc: {model_desc}");
+}
+
+#[test]
+fn test_image_gen_description_no_auto_hint_without_seedream() {
+    let models = HashMap::from([("flux".to_string(), "fal-ai/flux/schnell".to_string())]);
+    let catalog = ImageModelCatalog::new(models, "flux", "flux");
+    let tool = ImageGenTool::new(
+        Box::new(MockImageProviderStub),
+        catalog,
+        "medium".into(),
+        "png".into(),
+        1,
+        "4K".into(),
+        webdav::WebDavClient::new("https://example.com", "user", "pass").unwrap(),
+        Arc::new(rockbot::image_cache::ImageCache::new()),
+    );
+
+    let desc = tool.description();
+    assert!(!desc.contains("auto_2K") && !desc.contains("auto_1K"), "no seedream → no auto hint: {desc}");
+    let params = tool.parameters();
+    let aspect_desc = params["properties"]["aspect_ratio"]["description"]
+        .as_str()
+        .unwrap();
+    assert!(!aspect_desc.contains("auto_2K"), "aspect_desc: {aspect_desc}");
+}
+
+/// Minimal `ImageProvider` holding no state — registry-time schema tests only
+/// (never calls `generate_image`).
+struct MockImageProviderStub;
+
+#[async_trait::async_trait]
+impl rockbot::provider::ImageProvider for MockImageProviderStub {
+    async fn generate_image(&self, _params: &ImageGenParams) -> rockbot::Result<Vec<u8>> {
+        unreachable!("schema-derived tests never generate")
+    }
+    async fn upload_file(&self, _data: &[u8], _content_type: &str) -> rockbot::Result<String> {
+        unreachable!("schema-derived tests never upload")
+    }
+    fn provider_name(&self) -> &str {
+        "stub"
+    }
+    fn model_id(&self) -> &str {
+        "stub-model"
+    }
+}
+

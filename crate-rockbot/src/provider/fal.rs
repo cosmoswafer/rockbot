@@ -2,7 +2,7 @@ use tracing::{debug, info, warn};
 use crate::config::ProviderConfig;
 use crate::error::{Result, RockBotError};
 #[allow(unused_imports)]
-use crate::types::{ImageGenParams, ImageSizeValue};
+use crate::types::{ImageGenParams, ImageSizeValue, SEEDREAM_V5_MARKER};
 use crate::validated::NonEmptyString;
 
 struct SubmittedRequest {
@@ -33,7 +33,7 @@ fn build_request_body(params: &ImageGenParams, model_id: &str) -> serde_json::Va
         }
     }
 
-    let is_seedream5 = model_id.contains("seedream/v5");
+    let is_seedream5 = model_id.contains(SEEDREAM_V5_MARKER);
 
     if let Some(enable_safety) = params.enable_safety_checker {
         if is_seedream5 {

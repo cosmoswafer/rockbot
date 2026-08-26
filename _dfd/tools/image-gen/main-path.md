@@ -14,6 +14,9 @@ catalog per call via an optional `model` alias arg; omitting it falls back to
 the `[image_model]` defaults (`default_text_model` / `default_edit_model`).
 The catalog (alias → model id) is a shared type
 (`ImageModelCatalog`) produced from config at startup and consumed by the tool.
+The tool's `description()` and `parameters()` schema are generated from the
+catalog at registry time (issue #95) — see
+[Level 2: Tool Description Generation](level-2/tool-description.md).
 
 - Upstream: [Agent Harness](../../agent/agent-harness/image-interception.md) injects `room_id`, `webdav_dir`,
   and `image_cache_key` (call_id) into tool args before invoking `execute_by_name()`
