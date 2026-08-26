@@ -386,6 +386,7 @@ fn test_provider_chat_url_default() {
         chat_path: None,
         draw_path: None,
         models: HashMap::new(),
+        edit_models: std::collections::HashMap::new(),
     };
     assert_eq!(
         config.chat_url(),
@@ -403,6 +404,7 @@ fn test_provider_chat_url_custom() {
         chat_path: Some("/v2/chat".into()),
         draw_path: None,
         models: HashMap::new(),
+        edit_models: std::collections::HashMap::new(),
     };
     assert_eq!(config.chat_url(), "https://api.example.com/v1/v2/chat");
 }
@@ -417,6 +419,7 @@ fn test_provider_chat_url_trailing_slash() {
         chat_path: None,
         draw_path: None,
         models: HashMap::new(),
+        edit_models: std::collections::HashMap::new(),
     };
     assert_eq!(
         config.chat_url(),
@@ -746,6 +749,7 @@ fn test_deepseek_provider_new_success() {
         chat_path: None,
         draw_path: None,
         models,
+        edit_models: std::collections::HashMap::new(),
     };
     let provider = DeepSeekProvider::new(&config, "deepseek-chat").unwrap();
     assert_eq!(provider.provider_name(), "deepseek");
@@ -762,6 +766,7 @@ fn test_deepseek_provider_with_client() {
         chat_path: None,
         draw_path: None,
         models: HashMap::new(),
+        edit_models: std::collections::HashMap::new(),
     };
     let client = reqwest::Client::new();
     let provider = DeepSeekProvider::with_client(&config, "deepseek-v4-pro", client).unwrap();
@@ -778,6 +783,7 @@ fn test_openrouter_provider_new_success() {
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
         models: HashMap::new(),
+        edit_models: std::collections::HashMap::new(),
     };
     let provider = OpenRouterProvider::new(&config, "openai/gpt-4").unwrap();
     assert_eq!(provider.provider_name(), "openrouter");
@@ -794,6 +800,7 @@ fn test_deepseek_new_rejects_editme_key() {
         chat_path: None,
         draw_path: None,
         models: HashMap::new(),
+        edit_models: std::collections::HashMap::new(),
     };
     let result = DeepSeekProvider::new(&config, "chat");
     assert!(result.is_err());
@@ -813,6 +820,7 @@ fn test_openrouter_new_rejects_empty_key() {
         chat_path: None,
         draw_path: None,
         models: HashMap::new(),
+        edit_models: std::collections::HashMap::new(),
     };
     let result = OpenRouterProvider::new(&config, "gpt");
     assert!(result.is_err());
@@ -834,6 +842,7 @@ fn test_ai_provider_is_object_safe() {
         chat_path: None,
         draw_path: None,
         models: HashMap::new(),
+        edit_models: std::collections::HashMap::new(),
     };
     let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();
     // Verify it can be used as a trait object
@@ -852,6 +861,7 @@ fn test_image_provider_is_object_safe() {
         chat_path: None,
         draw_path: None,
         models: HashMap::new(),
+        edit_models: std::collections::HashMap::new(),
     };
     let provider = FalAiProvider::new(&config, "fal-ai/flux/schnell").unwrap();
     // Verify it can be used as a trait object

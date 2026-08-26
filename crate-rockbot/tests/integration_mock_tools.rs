@@ -1281,6 +1281,7 @@ fn make_test_config(webdav_url: &str) -> rockbot::config::AppConfig {
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
         models: HashMap::new(),
+        edit_models: std::collections::HashMap::new(),
     };
 
     let image_config = ImageModelConfig {
@@ -1332,6 +1333,7 @@ fn make_test_config(webdav_url: &str) -> rockbot::config::AppConfig {
             chat_path: None,
             draw_path: Some("/draw".into()),
             models: HashMap::new(),
+            edit_models: std::collections::HashMap::new(),
         }],
         image_model: image_config,
         tools: HashMap::new(),
@@ -1378,6 +1380,7 @@ mod openrouter_image_api {
             chat_path: Some("/chat/completions".into()),
             draw_path: Some("/images".into()),
             models: std::collections::HashMap::new(),
+            edit_models: std::collections::HashMap::new(),
         };
         OpenRouterImageProvider::new(&config, model).unwrap()
     }

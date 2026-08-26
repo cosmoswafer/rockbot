@@ -10,7 +10,7 @@ use crate::error::{Result, RockBotError};
 use crate::image_cache::{GeneratedImage, ImageCache};
 use crate::provider::ImageProvider;
 use crate::tool::Tool;
-use crate::types::{ImageGenParams, ImageModelCatalog, ImageSizeValue};
+use crate::types::{ImageGenParams, ImageModelCatalog, ImageModelEntry, ImageSizeValue};
 use crate::validated::{ModelAlias, NonEmptyString};
 
 #[derive(Debug, Deserialize)]
@@ -149,21 +149,27 @@ fn build_description(catalog: &ImageModelCatalog) -> String {
         catalog
             .allowed_aliases()
             .iter()
-            .zip(catalog.model_ids())
-            .zip(catalog.provider_names())
-            .map(|((alias, id), provider)| format!("{alias} ({id}, {provider})"))
+            .filter_map(|alias| {
+                catalog.entry(alias).map(|e| {
+                    let base = format!("{} ({}, {}", alias, e.model_id, e.provider_name);
+                    match &e.edit_model_id {
+                        Some(id) => format!("{base}, edit:{id})"),
+                        None => format!("{base})"),
+                    }
+                })
+            })
             .collect::<Vec<_>>()
             .join(", ")
     };
     let mut desc = format!(
         "Generate or edit an image. Provide a prompt and required aspect_ratio. \
          Available image models: {models}. \
-         Defaults: text-to-image '{}' / edit '{}'. \
+         Default: '{}'. Editing passes the input images to the same alias — \
+         dedicated edit endpoints are selected automatically when available. \
          Standard ratios: '16:9', '2:3', '1:1', '4:3', '3:4', '3:2'. \
          User attachments are auto-provided as image_urls for editing. \
          Returns {{\"ok\": true, \"image_key\": \"...\"}} — share result as `![desc]({{image_key}})`.",
-        catalog.default_text_alias(),
-        catalog.default_edit_alias(),
+        catalog.default_alias(),
     );
     if catalog.supports_auto_aspect() {
         desc.push_str(" Seedream5 models also accept 'auto_2K' or 'auto_1K' to auto-select dimensions.");
@@ -221,9 +227,8 @@ impl Tool for ImageGenTool {
                 "model": {
                     "type": "string",
                     "description": format!(
-                        "Image model alias (from [image_providers] models). Default: '{}' (text-to-image) / '{}' (edit). Available: {}",
-                        self.model_catalog.default_text_alias(),
-                        self.model_catalog.default_edit_alias(),
+                        "Image model alias (from [image_providers] models). Default: '{}'. Editing reuses the same alias. Available: {}",
+                        self.model_catalog.default_alias(),
                         available
                     )
                 },
@@ -270,42 +275,51 @@ impl Tool for ImageGenTool {
         params.output_format = Some(self.default_output_format.clone());
         params.num_images = Some(self.default_num_images);
 
-        // Model alias → (model_id, provider_name) via the catalog; the alias's
-        // owning provider's backend is used (default backend when omitted).
-        let (backend, model_id_override): (&ImageBackend, Option<String>) = match &args.model {
+        // Model alias → owning provider entry via the catalog (default alias
+        // when omitted). The backend is picked first; the exact model id is
+        // resolved mode-aware AFTER input images are collected — edit-mode
+        // calls swap to the entry's dedicated edit endpoint when one exists
+        // (issue #100).
+        let backend_for =
+            |provider: &str| -> Option<&ImageBackend> { self.backends.get(provider) };
+
+        let (backend, effective): (&ImageBackend, Option<ImageModelEntry>) = match &args.model {
             Some(alias) => {
-                let (model_id, provider_name) = self
-                    .model_catalog
-                    .resolve(alias.as_str())
-                    .ok_or_else(|| {
-                        RockBotError::ToolCallParse(format!(
-                            "image_gen: model alias '{}' not in image model catalog — valid aliases: {}",
-                            alias.as_str(),
-                            self.model_catalog.valid_alias_list()
-                        ))
-                    })?;
-                let backend = self.backends.get(provider_name).ok_or_else(|| {
+                let e = self.model_catalog.entry(alias.as_str()).ok_or_else(|| {
+                    RockBotError::ToolCallParse(format!(
+                        "image_gen: model alias '{}' not in image model catalog — valid aliases: {}",
+                        alias.as_str(),
+                        self.model_catalog.valid_alias_list()
+                    ))
+                })?;
+                let b = backend_for(&e.provider_name).ok_or_else(|| {
                     RockBotError::ToolCallParse(format!(
                         "image_gen: model alias '{}' routes to provider '{}' which has no available backend",
                         alias.as_str(),
-                        provider_name
+                        e.provider_name
                     ))
                 })?;
-                (backend, Some(model_id.to_string()))
+                (b, Some(e.clone()))
             }
             None => {
-                let backend = self.backends.get(&self.default_backend).ok_or_else(|| {
+                let b = backend_for(&self.default_backend).ok_or_else(|| {
                     RockBotError::Provider(format!(
                         "image_gen: default image provider '{}' has no available backend",
                         self.default_backend
                     ))
                 })?;
-                (backend, None)
+                // Lenient default: adopt the default alias's entry only when
+                // it belongs to the default provider (config leniency — an
+                // unresolvable/mismatched default keeps the baked backend
+                // model and never blocks tool use).
+                let e = self
+                    .model_catalog
+                    .entry(self.model_catalog.default_alias())
+                    .filter(|e| e.provider_name == self.default_backend)
+                    .cloned();
+                (b, e)
             }
         };
-        if let Some(model_id) = model_id_override {
-            params.model_id = Some(model_id);
-        }
 
         params.image_size = Some(ImageSizeValue::Preset(args.aspect_ratio.as_str().to_string()));
         params.size_tier = Some(self.default_image_size_tier.clone());
@@ -357,6 +371,14 @@ impl Tool for ImageGenTool {
         let ext = ext_from_output_format(params.output_format.as_deref());
 
         let is_img2img = params.image_urls.is_some();
+
+        // Mode-aware model id (issue #100): dedicated edit endpoint when the
+        // call edits images and the alias carries an edit companion; the plain
+        // model id otherwise (same-model providers).
+        if let Some(e) = &effective {
+            params.model_id = Some(e.model_id_for_mode(is_img2img).to_string());
+        }
+
         let provider: &dyn ImageProvider = backend.select(is_img2img);
 
         debug!(
@@ -434,6 +456,7 @@ impl Tool for ImageGenTool {
 mod tests {
     use super::*;
     use crate::config::ProviderConfig;
+    use crate::types::ImageModelEntry;
     use crate::validated::{ConfigUrl, ProviderName};
     use serde_json::Value;
     use std::collections::HashMap;
@@ -447,6 +470,7 @@ mod tests {
             chat_path: None,
             draw_path: None,
             models: HashMap::new(),
+            edit_models: HashMap::new(),
         }
     }
 
@@ -456,13 +480,18 @@ mod tests {
         Box::new(FalAiProvider::new(&config, "fal-ai/flux/schnell").unwrap())
     }
 
+    fn entry(alias: &str, model_id: &str, edit: Option<&str>, provider: &str) -> ImageModelEntry {
+        ImageModelEntry {
+            alias: alias.to_string(),
+            model_id: model_id.to_string(),
+            edit_model_id: edit.map(|s| s.to_string()),
+            provider_name: provider.to_string(),
+        }
+    }
+
     fn make_model_catalog() -> ImageModelCatalog {
         ImageModelCatalog::new(
-            HashMap::from([(
-                "flux".to_string(),
-                ("fal-ai/flux/schnell".to_string(), "fal".to_string()),
-            )]),
-            "flux",
+            vec![entry("flux", "fal-ai/flux/schnell", None, "fal")],
             "flux",
         )
     }
@@ -881,17 +910,15 @@ mod tests {
 
     fn make_multi_model_catalog() -> ImageModelCatalog {
         ImageModelCatalog::new(
-            HashMap::from([
-                (
-                    "seedream5".to_string(),
-                    ("bytedance/seedream/v5/pro/text-to-image".to_string(), "fal".to_string()),
+            vec![
+                entry(
+                    "seedream5",
+                    "bytedance/seedream/v5/pro/text-to-image",
+                    Some("bytedance/seedream/v5/pro/edit"),
+                    "fal",
                 ),
-                (
-                    "mai".to_string(),
-                    ("microsoft/mai-image-2.5".to_string(), "openrouter".to_string()),
-                ),
-            ]),
-            "mai",
+                entry("mai", "microsoft/mai-image-2.5", None, "openrouter"),
+            ],
             "mai",
         )
     }
@@ -985,12 +1012,69 @@ mod tests {
             "openrouter-tagged alias must hit the openrouter backend"
         );
 
-        // omitted model → default backend (openrouter) with model_id None
+        // omitted model → default backend (openrouter); default alias 'mai'
+        // belongs to openrouter, so its entry now resolves mode-aware and sets
+        // the t2i id explicitly
         let _ = tool.execute(r#"{"prompt":"a cat","aspect_ratio":"1:1"}"#).await;
         let or_captured = or_sink.lock().unwrap();
         let captured = or_captured.as_ref().unwrap();
-        assert!(captured.model_id.is_none(), "omitted alias must keep the backend's default model");
+        assert_eq!(
+            captured.model_id.as_deref(),
+            Some("microsoft/mai-image-2.5"),
+            "omitted alias adopts the default alias entry (mode-aware)"
+        );
         assert_eq!(captured.prompt.as_str(), "a cat");
+    }
+
+    #[tokio::test]
+    async fn test_execute_edit_mode_swaps_to_dedicated_endpoint() {
+        // Default alias = seedream5 (fal pair); tool default backend = fal.
+        let catalog = ImageModelCatalog::new(
+            vec![
+                entry(
+                    "seedream5",
+                    "bytedance/seedream/v5/pro/text-to-image",
+                    Some("bytedance/seedream/v5/pro/edit"),
+                    "fal",
+                ),
+                entry("mai", "microsoft/mai-image-2.5", None, "openrouter"),
+            ],
+            "seedream5",
+        );
+        let (fal_provider, fal_sink) = make_recording_provider();
+        let (or_provider, or_sink) = make_recording_provider();
+        let tool = ImageGenTool::new(
+            HashMap::from([
+                ("fal".to_string(), ImageBackend::new(fal_provider, None)),
+                ("openrouter".to_string(), ImageBackend::new(or_provider, None)),
+            ]),
+            "fal".to_string(),
+            catalog,
+            "medium".into(),
+            "png".into(),
+            1,
+            "4K".into(),
+            false,
+            make_webdav(),
+            make_image_cache(),
+        );
+
+        // Edit call WITHOUT explicit model → default alias pair swaps to the
+        // dedicated edit endpoint id (issue #100)
+        let _ = tool.execute(r#"{"prompt":"recolor","aspect_ratio":"1:1","image_urls":["https://example.com/in.png"]}"#).await;
+        assert_eq!(
+            fal_sink.lock().unwrap().as_ref().unwrap().model_id.as_deref(),
+            Some("bytedance/seedream/v5/pro/edit"),
+            "default paired alias must swap to its edit endpoint in edit mode"
+        );
+
+        // Same-model editing: mai (no companion) keeps the plain id in edit mode
+        let _ = tool.execute(r#"{"prompt":"recolor","aspect_ratio":"1:1","model":"mai","image_urls":["https://example.com/in.png"]}"#).await;
+        assert_eq!(
+            or_sink.lock().unwrap().as_ref().unwrap().model_id.as_deref(),
+            Some("microsoft/mai-image-2.5"),
+            "alias without companion reuses the t2i id when editing (issue #100)"
+        );
     }
 
     #[tokio::test]
@@ -1031,7 +1115,7 @@ mod tests {
     fn test_schema_model_has_no_enum_when_catalog_empty() {
         let tool = make_tool(
             Box::new(MockImageProvider::new()),
-            ImageModelCatalog::new(HashMap::new(), "mai", "mai"),
+            ImageModelCatalog::new(Vec::new(), "mai"),
         );
         let schema = tool.parameters();
         let model = &schema["properties"]["model"];
@@ -1045,8 +1129,8 @@ mod tests {
     fn test_tool_description_lists_models_and_defaults() {
         let tool = make_tool(Box::new(MockImageProvider::new()), make_multi_model_catalog());
         let desc = tool.description();
-        assert!(desc.contains("Available image models: mai (microsoft/mai-image-2.5, openrouter), seedream5 (bytedance/seedream/v5/pro/text-to-image, fal)"), "desc: {desc}");
-        assert!(desc.contains("Defaults: text-to-image 'mai' / edit 'mai'"), "desc: {desc}");
+        assert!(desc.contains("Available image models: mai (microsoft/mai-image-2.5, openrouter), seedream5 (bytedance/seedream/v5/pro/text-to-image, fal, edit:bytedance/seedream/v5/pro/edit)"), "desc: {desc}");
+        assert!(desc.contains("Default: 'mai'"), "desc: {desc}");
         assert!(desc.contains("auto_2K") && desc.contains("auto_1K"), "seedream5 in catalog → auto hint: {desc}");
     }
 
@@ -1056,14 +1140,14 @@ mod tests {
         let desc = tool.description();
         assert!(desc.contains("flux (fal-ai/flux/schnell, fal)"), "desc: {desc}");
         assert!(!desc.contains("auto_2K") && !desc.contains("auto_1K"), "no seedream → no auto hint: {desc}");
-        assert!(desc.contains("Defaults: text-to-image 'flux' / edit 'flux'"), "desc: {desc}");
+        assert!(desc.contains("Default: 'flux'"), "desc: {desc}");
     }
 
     #[test]
     fn test_tool_description_empty_catalog() {
         let tool = make_tool(
             Box::new(MockImageProvider::new()),
-            ImageModelCatalog::new(HashMap::new(), "mai", "mai"),
+            ImageModelCatalog::new(Vec::new(), "mai"),
         );
         let desc = tool.description();
         assert!(desc.contains("no image models configured"), "desc: {desc}");

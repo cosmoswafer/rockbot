@@ -443,12 +443,18 @@ impl ImageGenParams {
 /// Canonical shared type (see `_dfd/tools/image-gen/structures.md` §3):
 /// produced by `main.rs` from the `models` maps of **every** configured image
 /// provider entry backed by a supported kind (fal / openrouter), plus the
-/// `[image_model]` default aliases, and consumed by `ImageGenTool` for
+/// `[image_model]` default alias, and consumed by `ImageGenTool` for
 /// per-call model selection and provider routing (`resolve` returns the
 /// provider name of the alias). Construction is infallible — config leniency
 /// is preserved (an unresolvable default alias is kept as-is and never blocks
 /// tool registration); the tool rejects unknown LLM-provided aliases at the
 /// parse boundary instead.
+///
+/// One alias per model family (issue #100): `edit_model_id` is `Some` only
+/// where the provider genuinely uses a separate edit endpoint (fal); editing
+/// otherwise reuses the t2i id, so no `*_edit` selectable aliases exist.
+/// Chat-only models never enter this catalog — image-provider default tables
+/// are role-scoped from chat defaults at config load (issue #99).
 /// Model-id marker for the seedream v5 family — the only Fal models whose
 /// request bodies accept the `auto_1K`/`auto_2K` auto-dimensional aspect
 /// strings. Shared between the catalog's `supports_auto_aspect()` predicate
@@ -456,28 +462,41 @@ impl ImageGenParams {
 /// wire body can never disagree.
 pub const SEEDREAM_V5_MARKER: &str = "seedream/v5";
 
+/// One catalog entry: a selectable alias and the provider it routes to.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImageModelEntry {
+    pub alias: String,
+    pub model_id: String,
+    /// Dedicated edit-endpoint id; `None` ⇒ edits reuse `model_id`.
+    pub edit_model_id: Option<String>,
+    pub provider_name: String,
+}
+
+impl ImageModelEntry {
+    /// Mode-appropriate model id for this entry.
+    pub fn model_id_for_mode(&self, is_edit: bool) -> &str {
+        match (is_edit, &self.edit_model_id) {
+            (true, Some(edit_id)) => edit_id,
+            _ => &self.model_id,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct ImageModelCatalog {
-    entries: Vec<(String, String, String)>,
-    default_text_alias: String,
-    default_edit_alias: String,
+    entries: Vec<ImageModelEntry>,
+    default_alias: String,
 }
 
 impl ImageModelCatalog {
     pub fn new(
-        models: std::collections::HashMap<String, (String, String)>,
-        default_text_alias: impl Into<String>,
-        default_edit_alias: impl Into<String>,
+        mut entries: Vec<ImageModelEntry>,
+        default_alias: impl Into<String>,
     ) -> Self {
-        let mut entries: Vec<(String, String, String)> = models
-            .into_iter()
-            .map(|(alias, (model_id, provider_name))| (alias, model_id, provider_name))
-            .collect();
-        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        entries.sort_by(|a, b| a.alias.cmp(&b.alias));
         Self {
             entries,
-            default_text_alias: default_text_alias.into(),
-            default_edit_alias: default_edit_alias.into(),
+            default_alias: default_alias.into(),
         }
     }
 
@@ -488,28 +507,42 @@ impl ImageModelCatalog {
     /// Resolve a config alias to its `(model_id, provider_name)` pair — the
     /// tool routes the call to that provider's backend.
     pub fn resolve(&self, alias: &str) -> Option<(&str, &str)> {
-        self.entries
-            .iter()
-            .find(|(a, _, _)| a == alias)
-            .map(|(_, id, p)| (id.as_str(), p.as_str()))
+        self.entry(alias)
+            .map(|e| (e.model_id.as_str(), e.provider_name.as_str()))
+    }
+
+    /// Resolve to the full entry (edit companion included).
+    pub fn entry(&self, alias: &str) -> Option<&ImageModelEntry> {
+        self.entries.iter().find(|e| e.alias == alias)
+    }
+
+    /// Mode-appropriate model id for an alias (`edit_model_id` when editing
+    /// and a companion exists, else the plain id).
+    pub fn resolve_for_mode(&self, alias: &str, is_edit: bool) -> Option<(&str, &str)> {
+        self.entry(alias).map(|e| {
+            (
+                e.model_id_for_mode(is_edit),
+                e.provider_name.as_str(),
+            )
+        })
     }
 
     /// Aliases in sorted order — feeds the tool schema `enum`.
     pub fn allowed_aliases(&self) -> Vec<&str> {
-        self.entries.iter().map(|(a, _, _)| a.as_str()).collect()
+        self.entries.iter().map(|e| e.alias.as_str()).collect()
     }
 
     /// Model ids in alias-sorted order (pairs with `allowed_aliases()` by
     /// index) — feeds the derived tool description.
     pub fn model_ids(&self) -> Vec<&str> {
-        self.entries.iter().map(|(_, id, _)| id.as_str()).collect()
+        self.entries.iter().map(|e| e.model_id.as_str()).collect()
     }
 
     /// Provider names in alias-sorted order (index-aligned with
     /// `allowed_aliases()` and `model_ids()`) — feeds the derived tool
     /// description with per-model routing info.
     pub fn provider_names(&self) -> Vec<&str> {
-        self.entries.iter().map(|(_, _, p)| p.as_str()).collect()
+        self.entries.iter().map(|e| e.provider_name.as_str()).collect()
     }
 
     /// `true` iff any configured model id is in the seedream v5 family —
@@ -518,7 +551,7 @@ impl ImageModelCatalog {
     pub fn supports_auto_aspect(&self) -> bool {
         self.entries
             .iter()
-            .any(|(_, id, _)| id.contains(SEEDREAM_V5_MARKER))
+            .any(|e| e.model_id.contains(SEEDREAM_V5_MARKER))
     }
 
     /// `"a, b, c"` or `"(none configured)"` — for parse-error messages.
@@ -530,12 +563,8 @@ impl ImageModelCatalog {
         }
     }
 
-    pub fn default_text_alias(&self) -> &str {
-        &self.default_text_alias
-    }
-
-    pub fn default_edit_alias(&self) -> &str {
-        &self.default_edit_alias
+    pub fn default_alias(&self) -> &str {
+        &self.default_alias
     }
 }
 
@@ -653,19 +682,27 @@ mod tests {
         assert!(err.to_string().contains("pixel count"));
     }
 
+    fn entry(alias: &str, model_id: &str, edit: Option<&str>, provider: &str) -> ImageModelEntry {
+        ImageModelEntry {
+            alias: alias.to_string(),
+            model_id: model_id.to_string(),
+            edit_model_id: edit.map(|s| s.to_string()),
+            provider_name: provider.to_string(),
+        }
+    }
+
     #[test]
     fn test_image_model_catalog_resolution() {
-        let models = std::collections::HashMap::from([
-            (
-                "seedream5".to_string(),
-                ("bytedance/seedream/v5/pro/text-to-image".to_string(), "fal".to_string()),
+        let entries = vec![
+            entry(
+                "seedream5",
+                "bytedance/seedream/v5/pro/text-to-image",
+                Some("bytedance/seedream/v5/pro/edit"),
+                "fal",
             ),
-            (
-                "mai".to_string(),
-                ("microsoft/mai-image-2.5".to_string(), "openrouter".to_string()),
-            ),
-        ]);
-        let catalog = ImageModelCatalog::new(models, "mai", "mai");
+            entry("mai", "microsoft/mai-image-2.5", None, "openrouter"),
+        ];
+        let catalog = ImageModelCatalog::new(entries, "mai");
         assert_eq!(
             catalog.resolve("mai"),
             Some(("microsoft/mai-image-2.5", "openrouter"))
@@ -679,35 +716,62 @@ mod tests {
     }
 
     #[test]
+    fn test_image_model_catalog_mode_aware_resolution() {
+        let catalog = ImageModelCatalog::new(
+            vec![
+                entry(
+                    "seedream5",
+                    "bytedance/seedream/v5/pro/text-to-image",
+                    Some("bytedance/seedream/v5/pro/edit"),
+                    "fal",
+                ),
+                entry("mai", "microsoft/mai-image-2.5", None, "openrouter"),
+            ],
+            "mai",
+        );
+        // fal pair: edit mode swaps to the dedicated endpoint id (issue #100)
+        assert_eq!(
+            catalog.resolve_for_mode("seedream5", true),
+            Some(("bytedance/seedream/v5/pro/edit", "fal"))
+        );
+        // same-model editing: no companion → t2i id in both modes
+        assert_eq!(
+            catalog.resolve_for_mode("mai", true),
+            Some(("microsoft/mai-image-2.5", "openrouter"))
+        );
+        assert_eq!(
+            catalog.resolve_for_mode("mai", false),
+            Some(("microsoft/mai-image-2.5", "openrouter"))
+        );
+    }
+
+    #[test]
     fn test_image_model_catalog_sorted_aliases() {
-        let models = std::collections::HashMap::from([
-            ("seedream5".to_string(), ("a".to_string(), "fal".to_string())),
-            ("banana".to_string(), ("b".to_string(), "openrouter".to_string())),
-            ("mai".to_string(), ("c".to_string(), "fal".to_string())),
-        ]);
-        let catalog = ImageModelCatalog::new(models, "mai", "mai");
+        let catalog = ImageModelCatalog::new(
+            vec![
+                entry("seedream5", "a", None, "fal"),
+                entry("banana", "b", None, "openrouter"),
+                entry("mai", "c", None, "fal"),
+            ],
+            "mai",
+        );
         assert_eq!(catalog.allowed_aliases(), vec!["banana", "mai", "seedream5"]);
         assert_eq!(catalog.valid_alias_list(), "banana, mai, seedream5");
         assert_eq!(catalog.provider_names(), vec!["openrouter", "fal", "fal"]);
     }
 
     #[test]
-    fn test_image_model_catalog_default_aliases() {
+    fn test_image_model_catalog_default_alias() {
         let catalog = ImageModelCatalog::new(
-            std::collections::HashMap::from([(
-                "mai".to_string(),
-                ("microsoft/mai-image-2.5".to_string(), "openrouter".to_string()),
-            )]),
+            vec![entry("mai", "microsoft/mai-image-2.5", None, "openrouter")],
             "mai",
-            "qwenimage",
         );
-        assert_eq!(catalog.default_text_alias(), "mai");
-        assert_eq!(catalog.default_edit_alias(), "qwenimage");
+        assert_eq!(catalog.default_alias(), "mai");
     }
 
     #[test]
     fn test_image_model_catalog_empty() {
-        let catalog = ImageModelCatalog::new(std::collections::HashMap::new(), "mai", "mai");
+        let catalog = ImageModelCatalog::new(Vec::new(), "mai");
         assert!(catalog.is_empty());
         assert_eq!(catalog.resolve("mai"), None);
         assert_eq!(catalog.valid_alias_list(), "(none configured)");
@@ -716,17 +780,15 @@ mod tests {
     #[test]
     fn test_image_model_catalog_auto_aspect_capability() {
         let seedream = ImageModelCatalog::new(
-            std::collections::HashMap::from([
-                (
-                    "seedream5".to_string(),
-                    ("bytedance/seedream/v5/pro/text-to-image".to_string(), "fal".to_string()),
+            vec![
+                entry(
+                    "seedream5",
+                    "bytedance/seedream/v5/pro/text-to-image",
+                    None,
+                    "fal",
                 ),
-                (
-                    "mai".to_string(),
-                    ("microsoft/mai-image-2.5".to_string(), "openrouter".to_string()),
-                ),
-            ]),
-            "mai",
+                entry("mai", "microsoft/mai-image-2.5", None, "openrouter"),
+            ],
             "mai",
         );
         assert!(seedream.supports_auto_aspect(), "seedream/v5 id → auto aspect supported");
@@ -736,16 +798,12 @@ mod tests {
         );
 
         let flux = ImageModelCatalog::new(
-            std::collections::HashMap::from([(
-                "flux".to_string(),
-                ("fal-ai/flux/schnell".to_string(), "fal".to_string()),
-            )]),
-            "flux",
+            vec![entry("flux", "fal-ai/flux/schnell", None, "fal")],
             "flux",
         );
         assert!(!flux.supports_auto_aspect(), "non-seedream models → no auto aspect");
 
-        let empty = ImageModelCatalog::new(std::collections::HashMap::new(), "mai", "mai");
+        let empty = ImageModelCatalog::new(Vec::new(), "mai");
         assert!(!empty.supports_auto_aspect());
     }
 }

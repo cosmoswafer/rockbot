@@ -32,20 +32,35 @@ flowchart TD
 The catalog is built once at registry time from **every** `[[image_providers]]`
 entry backed by a supported provider kind (`fal` / `openrouter`) — entries with
 other names are skipped with a warning, and their models are not advertised.
-Each catalog entry is `(alias, model_id, provider_name)`; a per-call LLM
-`model` alias resolves to `(model_id, provider_name)`:
+Default model tables are role-scoped: image providers inherit only
+image-capable models; chat aliases never enter the image catalog (issue #99).
+Each catalog entry is `(alias, model_id, edit_model_id?, provider_name)` — one
+alias per model family, with an optional edit companion id for providers that
+genuinely use separate edit endpoints (currently only fal; issue #100):
 
-- `model_id` is passed as `ImageGenParams.model_id` — both `FalAiProvider` and
-  `OpenRouterImageProvider` honor it, overriding the model id baked into the
-  backend instance (fallback only when the argument is omitted).
-- `provider_name` selects the backend from the tool's `backends` map; unknown
-  alias or a backend missing for the resolved provider → `ToolCallParse` error
-  naming the valid aliases.
+| alias        | t2i id                                  | edit companion                  | provider |
+| ------------ | --------------------------------------- | ------------------------------- | -------- |
+| `seedream5`  | `bytedance/seedream/v5/pro/text-to-image` | `bytedance/seedream/v5/pro/edit` | fal |
+| `gptimage`   | `openai/gpt-image-2`                    | `openai/gpt-image-2/edit`       | fal      |
+| `grok`       | `xai/grok-imagine-image/quality/text-to-image` | `xai/grok-imagine-image/quality/edit` | fal |
+| others       | single id                                | *(none — same id both modes)*   | fal/openrouter |
 
-Omitted `model` ⇒ the `[image_model] default_provider` backend is used with
-`params.model_id = None`; that backend was baked with the resolved
-`default_text_model` / `default_edit_model` of its own config entry. The tool
-selects t2i vs edit-backend based on `image_urls` presence (same as before).
+A per-call LLM `model` alias resolves to `(model_id, edit_model_id?,
+provider_name)`:
+
+- The owning entry's `provider_name` selects the backend from the tool's
+  `backends` map.
+- The tool picks t2i vs edit by `image_urls` presence and sets
+  `params.model_id` to the **mode-appropriate id**: the edit companion when
+  editing and one exists, otherwise the plain `model_id`. Unknown explicit
+  alias or a backend missing for the resolved provider → `ToolCallParse`
+  error naming the valid aliases. No `*_edit` selectable aliases exist
+  anymore — mode switching is data-driven from the entry pair.
+
+Omitted `model` ⇒ the `[image_model] default_text_model` alias of the default
+provider backend is used (with its edit companion when editing);
+`params.model_id = None` only if that alias is unresolvable (config leniency),
+in which case the baked backend default applies.
 
 **Provider differences:**
 

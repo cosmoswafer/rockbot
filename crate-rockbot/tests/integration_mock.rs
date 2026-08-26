@@ -4,7 +4,7 @@ use rockbot::validated::{ConfigUrl, NonEmptyString, ProviderName};
     use rockbot::provider::{AiProvider, DeepSeekProvider, FalAiProvider, ImageProvider, LlamaCppProvider, OpenRouterImageProvider, OpenRouterProvider};
     use rockbot::tool::Tool;
     use rockbot::tools::{ImageBackend, ImageGenTool};
-    use rockbot::types::{ChatMessage, ChatRequest, FinishReason, ImageGenParams, ImageModelCatalog, ThinkingConfig, ToolCall, ToolDef};
+    use rockbot::types::{ChatMessage, ChatRequest, FinishReason, ImageGenParams, ImageModelCatalog, ImageModelEntry, ThinkingConfig, ToolCall, ToolDef};
     use std::collections::HashMap;
     use std::sync::Arc;
 use wiremock::matchers::{body_string_contains, header, method, path};
@@ -56,6 +56,7 @@ async fn test_complete_simple_response() {
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
         models: HashMap::new(),
+            edit_models: HashMap::new(),
     };
     let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();
 
@@ -104,6 +105,7 @@ async fn test_deepseek_vision_model_forwards_images_in_user_messages() {
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
         models: HashMap::new(),
+            edit_models: HashMap::new(),
     };
     let provider = DeepSeekProvider::new(&config, "deepseek-v4-flash-vision-exp").unwrap();
 
@@ -169,6 +171,7 @@ async fn test_deepseek_text_model_strips_images_before_send() {
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
         models: HashMap::new(),
+            edit_models: HashMap::new(),
     };
     let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();
 
@@ -234,6 +237,7 @@ async fn test_complete_with_tool_calls() {
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
         models: HashMap::new(),
+            edit_models: HashMap::new(),
     };
     let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();
 
@@ -327,6 +331,7 @@ async fn test_deepseek_repairs_truncated_history_tool_args_before_send() {
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
         models: HashMap::new(),
+            edit_models: HashMap::new(),
     };
     let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();
 
@@ -394,6 +399,7 @@ async fn test_deepseek_response_truncated_tool_args_repaired() {
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
         models: HashMap::new(),
+            edit_models: HashMap::new(),
     };
     let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();
 
@@ -445,6 +451,7 @@ async fn test_complete_with_reasoning() {
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
         models: HashMap::new(),
+            edit_models: HashMap::new(),
     };
     let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();
 
@@ -489,6 +496,7 @@ async fn test_complete_401_unauthorized() {
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
         models: HashMap::new(),
+            edit_models: HashMap::new(),
     };
     let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();
 
@@ -529,6 +537,7 @@ async fn test_complete_429_rate_limit() {
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
         models: HashMap::new(),
+            edit_models: HashMap::new(),
     };
     let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();
 
@@ -566,6 +575,7 @@ async fn test_complete_500_server_error() {
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
         models: HashMap::new(),
+            edit_models: HashMap::new(),
     };
     let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();
 
@@ -606,6 +616,7 @@ async fn test_complete_503_overloaded() {
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
         models: HashMap::new(),
+            edit_models: HashMap::new(),
     };
     let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();
 
@@ -649,6 +660,7 @@ async fn test_complete_402_insufficient_balance() {
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
         models: HashMap::new(),
+            edit_models: HashMap::new(),
     };
     let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();
 
@@ -696,6 +708,7 @@ async fn test_complete_with_thinking_and_tools() {
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
         models: HashMap::new(),
+            edit_models: HashMap::new(),
     };
     let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();
 
@@ -747,6 +760,7 @@ async fn test_complete_custom_chat_path() {
         chat_path: Some("/v1/chat/completions".into()),
         draw_path: None,
         models: HashMap::new(),
+            edit_models: HashMap::new(),
     };
     let provider = DeepSeekProvider::new(&config, "deepseek-v4-flash").unwrap();
 
@@ -795,6 +809,7 @@ async fn test_complete_multi_turn_conversation() {
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
         models: HashMap::new(),
+            edit_models: HashMap::new(),
     };
     let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();
 
@@ -842,6 +857,7 @@ async fn test_complete_422_invalid_params() {
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
         models: HashMap::new(),
+            edit_models: HashMap::new(),
     };
     let provider = DeepSeekProvider::new(&config, "invalid-model").unwrap();
 
@@ -897,6 +913,7 @@ async fn test_openrouter_complete_simple_response() {
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
         models: HashMap::new(),
+            edit_models: HashMap::new(),
     };
     let provider = OpenRouterProvider::new(&config, "openai/gpt-4").unwrap();
 
@@ -952,6 +969,7 @@ async fn test_openrouter_complete_with_tools() {
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
         models: HashMap::new(),
+            edit_models: HashMap::new(),
     };
     let provider = OpenRouterProvider::new(&config, "openai/gpt-4").unwrap();
 
@@ -1004,6 +1022,7 @@ async fn test_openrouter_complete_with_temperature() {
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
         models: HashMap::new(),
+            edit_models: HashMap::new(),
     };
     let provider = OpenRouterProvider::new(&config, "openai/gpt-4").unwrap();
 
@@ -1044,6 +1063,7 @@ async fn test_openrouter_complete_401() {
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
         models: HashMap::new(),
+            edit_models: HashMap::new(),
     };
     let provider = OpenRouterProvider::new(&config, "openai/gpt-4").unwrap();
 
@@ -1084,6 +1104,7 @@ async fn test_openrouter_complete_429() {
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
         models: HashMap::new(),
+            edit_models: HashMap::new(),
     };
     let provider = OpenRouterProvider::new(&config, "openai/gpt-4").unwrap();
 
@@ -1121,6 +1142,7 @@ async fn test_openrouter_complete_500() {
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
         models: HashMap::new(),
+            edit_models: HashMap::new(),
     };
     let provider = OpenRouterProvider::new(&config, "openai/gpt-4").unwrap();
 
@@ -1171,6 +1193,7 @@ async fn test_openrouter_complete_with_reasoning() {
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
         models: HashMap::new(),
+            edit_models: HashMap::new(),
     };
     let provider = OpenRouterProvider::new(&config, "openai/gpt-4").unwrap();
 
@@ -1831,6 +1854,7 @@ fn make_openrouter_image_config(mock_uri: &str) -> ProviderConfig {
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
         models: HashMap::new(),
+            edit_models: HashMap::new(),
     }
 }
 
@@ -1994,6 +2018,7 @@ fn make_fal_config(mock_uri: &str) -> ProviderConfig {
         chat_path: None,
         draw_path: None,
         models: HashMap::new(),
+            edit_models: HashMap::new(),
     }
 }
 
@@ -2536,6 +2561,7 @@ async fn test_llamacpp_complete_passes_image_through_to_server() {
         chat_path: Some("/v1/chat/completions".into()),
         draw_path: None,
         models: HashMap::new(),
+            edit_models: HashMap::new(),
     };
     let provider =
         rockbot::provider::LlamaCppProvider::new(&config, "local-model").unwrap();
@@ -2634,6 +2660,7 @@ async fn test_llamacpp_complete_coalesces_leading_system_messages() {
         chat_path: Some("/v1/chat/completions".into()),
         draw_path: None,
         models: HashMap::new(),
+            edit_models: HashMap::new(),
     };
     let provider = LlamaCppProvider::new(&config, "local-model").unwrap();
 
@@ -2768,6 +2795,7 @@ mod summarization_tests {
                 chat_path: Some("/chat/completions".into()),
                 draw_path: None,
                 models: HashMap::new(),
+            edit_models: HashMap::new(),
             }],
             image_providers: vec![],
             image_model: ImageModelConfig {
@@ -3061,6 +3089,7 @@ dav_path = "remote.php/dav"
                 chat_path: Some("/chat/completions".into()),
                 draw_path: None,
                 models: HashMap::new(),
+            edit_models: HashMap::new(),
             }],
             image_providers: vec![],
             image_model: ImageModelConfig {
@@ -3232,6 +3261,7 @@ async fn test_llamacpp_sends_bearer_header_when_key_set() {
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
         models: HashMap::new(),
+            edit_models: HashMap::new(),
     };
     let provider = LlamaCppProvider::new(&config, "local-model").unwrap();
 
@@ -3278,6 +3308,7 @@ async fn test_llamacpp_omits_auth_header_when_key_empty() {
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
         models: HashMap::new(),
+            edit_models: HashMap::new(),
     };
     let provider = LlamaCppProvider::new(&config, "local-model").unwrap();
 
@@ -3317,6 +3348,7 @@ async fn test_llamacpp_401_maps_to_auth_failed() {
         chat_path: Some("/chat/completions".into()),
         draw_path: None,
         models: HashMap::new(),
+            edit_models: HashMap::new(),
     };
     let provider = LlamaCppProvider::new(&config, "local-model").unwrap();
 
@@ -3393,6 +3425,7 @@ mod tool_call_parse_recovery_tests {
                 chat_path: Some("/chat/completions".into()),
                 draw_path: None,
                 models: HashMap::new(),
+            edit_models: HashMap::new(),
             }],
             image_providers: vec![],
             image_model: ImageModelConfig {
@@ -3692,7 +3725,7 @@ async fn test_image_gen_tool_model_override_uses_catalog_model() {
         ("flux".to_string(), default_model.to_string()),
     ]);
     let provider = FalAiProvider::new(&img_cfg, default_model).unwrap();
-    let catalog = ImageModelCatalog::new(tag_provider_models(img_cfg.models.clone(), "fal"), "flux", "flux");
+    let catalog = ImageModelCatalog::new(tag_provider_models(img_cfg.models.clone(), "fal"), "flux");
     let tool = make_single_fal_tool(Box::new(provider), catalog, &base);
 
     let result = tool
@@ -3727,7 +3760,7 @@ async fn test_image_gen_tool_model_omitted_uses_provider_default() {
         ("flux".to_string(), default_model.to_string()),
     ]);
     let provider = FalAiProvider::new(&img_cfg, default_model).unwrap();
-    let catalog = ImageModelCatalog::new(tag_provider_models(img_cfg.models.clone(), "fal"), "flux", "flux");
+    let catalog = ImageModelCatalog::new(tag_provider_models(img_cfg.models.clone(), "fal"), "flux");
     let tool = make_single_fal_tool(Box::new(provider), catalog, &base);
 
     let result = tool
@@ -3746,7 +3779,7 @@ async fn test_image_gen_tool_unknown_model_alias_fails_before_http() {
     let mut img_cfg = make_fal_config(&base);
     img_cfg.models = HashMap::from([("flux".to_string(), "fal-ai/flux/schnell".to_string())]);
     let provider = FalAiProvider::new(&img_cfg, "fal-ai/flux/schnell").unwrap();
-    let catalog = ImageModelCatalog::new(tag_provider_models(img_cfg.models.clone(), "fal"), "flux", "flux");
+    let catalog = ImageModelCatalog::new(tag_provider_models(img_cfg.models.clone(), "fal"), "flux");
     let tool = make_single_fal_tool(Box::new(provider), catalog, &base);
 
     let err = tool
@@ -3794,17 +3827,21 @@ async fn test_openrouter_image_gen_model_id_override_in_body() {
 
 #[test]
 fn test_image_gen_description_and_schema_derived_from_config() {
-    let models = HashMap::from([
-        (
-            "seedream5".to_string(),
-            ("bytedance/seedream/v5/pro/text-to-image".to_string(), "fal".to_string()),
-        ),
-        (
-            "mai".to_string(),
-            ("microsoft/mai-image-2.5".to_string(), "openrouter".to_string()),
-        ),
-    ]);
-    let catalog = ImageModelCatalog::new(models, "mai", "mai");
+    let models = vec![
+        ImageModelEntry {
+            alias: "seedream5".to_string(),
+            model_id: "bytedance/seedream/v5/pro/text-to-image".to_string(),
+            edit_model_id: None,
+            provider_name: "fal".to_string(),
+        },
+        ImageModelEntry {
+            alias: "mai".to_string(),
+            model_id: "microsoft/mai-image-2.5".to_string(),
+            edit_model_id: None,
+            provider_name: "openrouter".to_string(),
+        },
+    ];
+    let catalog = ImageModelCatalog::new(models, "mai");
     let provider = rockbot::provider::fal::FalAiProvider::new(
         &rockbot::config::ProviderConfig {
             name: rockbot::validated::ProviderName::try_new("fal".to_string()).unwrap(),
@@ -3814,6 +3851,7 @@ fn test_image_gen_description_and_schema_derived_from_config() {
             chat_path: None,
             draw_path: None,
             models: HashMap::new(),
+            edit_models: HashMap::new(),
         },
         "bytedance/seedream/v5/pro/text-to-image",
     )
@@ -3822,7 +3860,7 @@ fn test_image_gen_description_and_schema_derived_from_config() {
 
     let desc = tool.description();
     assert!(desc.contains("Available image models: mai (microsoft/mai-image-2.5, openrouter), seedream5 (bytedance/seedream/v5/pro/text-to-image, fal)"), "desc: {desc}");
-    assert!(desc.contains("Defaults: text-to-image 'mai' / edit 'mai'"), "desc: {desc}");
+    assert!(desc.contains("Default: 'mai'"), "desc: {desc}");
     assert!(desc.contains("'auto_2K'"), "seedream configured → auto hint in tool description: {desc}");
 
     let params = tool.parameters();
@@ -3838,16 +3876,17 @@ fn test_image_gen_description_and_schema_derived_from_config() {
 
     let model_desc = params["properties"]["model"]["description"].as_str().unwrap();
     assert!(model_desc.contains("mai") && model_desc.contains("seedream5"), "model_desc: {model_desc}");
-    assert!(model_desc.contains("Default: 'mai' (text-to-image) / 'mai' (edit)"), "model_desc: {model_desc}");
+    assert!(model_desc.contains("Default: 'mai'"), "model_desc: {model_desc}");
 }
 
 #[test]
 fn test_image_gen_description_no_auto_hint_without_seedream() {
-    let models = HashMap::from([(
-        "flux".to_string(),
-        ("fal-ai/flux/schnell".to_string(), "fal".to_string()),
-    )]);
-    let catalog = ImageModelCatalog::new(models, "flux", "flux");
+    let catalog = ImageModelCatalog::new(vec![ImageModelEntry {
+        alias: "flux".to_string(),
+        model_id: "fal-ai/flux/schnell".to_string(),
+        edit_model_id: None,
+        provider_name: "fal".to_string(),
+    }], "flux");
     let tool = make_single_fal_tool(Box::new(MockImageProviderStub), catalog, "https://example.com");
 
     let desc = tool.description();
@@ -3890,10 +3929,15 @@ impl rockbot::provider::ImageProvider for MockImageProviderStub {
 fn tag_provider_models(
     models: HashMap<String, String>,
     provider: &str,
-) -> HashMap<String, (String, String)> {
+) -> Vec<ImageModelEntry> {
     models
         .into_iter()
-        .map(|(alias, model_id)| (alias, (model_id, provider.to_string())))
+        .map(|(alias, model_id)| ImageModelEntry {
+            alias,
+            model_id,
+            edit_model_id: None,
+            provider_name: provider.to_string(),
+        })
         .collect()
 }
 
@@ -3955,11 +3999,20 @@ async fn test_image_gen_routes_alias_to_its_own_provider_backend() {
     let or_cfg = make_openrouter_image_config(&base);
 
     let catalog = ImageModelCatalog::new(
-        HashMap::from([
-            ("seedream5".to_string(), (seedream_model.to_string(), "fal".to_string())),
-            ("mai".to_string(), (mai_model.to_string(), "openrouter".to_string())),
-        ]),
-        "mai",
+        vec![
+            ImageModelEntry {
+                alias: "seedream5".to_string(),
+                model_id: seedream_model.to_string(),
+                edit_model_id: None,
+                provider_name: "fal".to_string(),
+            },
+            ImageModelEntry {
+                alias: "mai".to_string(),
+                model_id: mai_model.to_string(),
+                edit_model_id: None,
+                provider_name: "openrouter".to_string(),
+            },
+        ],
         "mai",
     );
     let tool = ImageGenTool::new(
@@ -4024,14 +4077,24 @@ async fn test_image_gen_catalog_spans_multiple_provider_entries() {
 
     // Simulate the registry-time join of main.rs: merge both entries' models,
     // tagging each with its provider name.
-    let mut merged: HashMap<String, (String, String)> = HashMap::new();
+    let mut merged: Vec<ImageModelEntry> = Vec::new();
     for (alias, id) in &fal_cfg.models {
-        merged.insert(alias.clone(), (id.clone(), "fal".to_string()));
+        merged.push(ImageModelEntry {
+            alias: alias.clone(),
+            model_id: id.clone(),
+            edit_model_id: None,
+            provider_name: "fal".to_string(),
+        });
     }
     for (alias, id) in &or_cfg.models {
-        merged.insert(alias.clone(), (id.clone(), "openrouter".to_string()));
+        merged.push(ImageModelEntry {
+            alias: alias.clone(),
+            model_id: id.clone(),
+            edit_model_id: None,
+            provider_name: "openrouter".to_string(),
+        });
     }
-    let catalog = ImageModelCatalog::new(merged, "seedream5", "seedream5");
+    let catalog = ImageModelCatalog::new(merged, "seedream5");
 
     assert_eq!(
         catalog.allowed_aliases(),

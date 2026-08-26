@@ -11,8 +11,7 @@ writes to WebDAV, stores to the cache, and returns a minimal result
 
 The LLM can select any model from **all configured image providers** per call
 via an optional `model` alias arg; omitting it falls back to the
-`[image_model]` defaults (`default_text_model` / `default_edit_model`) of the
-default provider. The catalog (alias → model id + provider name) is a shared
+`[image_model] default_text_model` alias of the default provider. The catalog (alias → model id + provider name) is a shared
 type (`ImageModelCatalog`) produced from config at startup and consumed by the
 tool; every alias is routed to its own provider's backend (fal / openrouter —
 the only supported backend kinds, #96). The tool's `description()` and

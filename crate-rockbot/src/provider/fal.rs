@@ -432,6 +432,7 @@ mod tests {
             chat_path: None,
             draw_path: None,
             models: HashMap::new(),
+            edit_models: HashMap::new(),
         }
     }
 

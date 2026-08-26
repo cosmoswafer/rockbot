@@ -846,6 +846,7 @@ mod tests {
             chat_path: Some("/chat/completions".into()),
             draw_path: None,
             models: std::collections::HashMap::new(),
+            edit_models: std::collections::HashMap::new(),
         };
         OpenRouterProvider::new(&config, model).unwrap()
     }
@@ -1150,6 +1151,7 @@ mod tests {
             chat_path: None,
             draw_path: None,
             models: std::collections::HashMap::new(),
+            edit_models: std::collections::HashMap::new(),
         };
         let result = OpenRouterProvider::new(&config, "openai/gpt-4");
         assert!(result.is_err());
@@ -1165,6 +1167,7 @@ mod tests {
             chat_path: None,
             draw_path: None,
             models: std::collections::HashMap::new(),
+            edit_models: std::collections::HashMap::new(),
         };
         let result = OpenRouterProvider::new(&config, "gpt");
         assert!(result.is_err());
@@ -1187,6 +1190,7 @@ mod tests {
             chat_path: Some("/v2/chat".into()),
             draw_path: None,
             models: std::collections::HashMap::new(),
+            edit_models: std::collections::HashMap::new(),
         };
         let provider = OpenRouterProvider::new(&config, "model").unwrap();
         assert_eq!(provider.base_url, "https://custom.api.com/v2/chat");
@@ -1202,6 +1206,7 @@ mod tests {
             chat_path: None,
             draw_path: None,
             models: std::collections::HashMap::new(),
+            edit_models: std::collections::HashMap::new(),
         };
         let client = reqwest::Client::new();
         let provider = OpenRouterProvider::with_client(&config, "openai/gpt-4", client).unwrap();
@@ -1223,6 +1228,7 @@ mod tests {
                 chat_path: Some("/chat/completions".into()),
                 draw_path: None,
                 models: std::collections::HashMap::new(),
+                edit_models: std::collections::HashMap::new(),
             };
             OpenRouterImageProvider::new(&config, model).unwrap()
         }
@@ -1237,6 +1243,7 @@ mod tests {
                 chat_path: None,
                 draw_path: None,
                 models: std::collections::HashMap::new(),
+                edit_models: std::collections::HashMap::new(),
             };
             assert!(OpenRouterImageProvider::new(&config, "test-model").is_err());
         }
@@ -1251,6 +1258,7 @@ mod tests {
                 chat_path: None,
                 draw_path: None,
                 models: std::collections::HashMap::new(),
+                edit_models: std::collections::HashMap::new(),
             };
             assert!(OpenRouterImageProvider::new(&config, "test-model").is_err());
         }

@@ -407,10 +407,100 @@ pub struct ProviderConfig {
     pub draw_path: Option<String>,
     #[serde(default)]
     pub models: HashMap<String, String>,
+    /// Alias → dedicated edit-endpoint model id, for providers that genuinely
+    /// use separate edit endpoints (currently only fal). Aliases absent from
+    /// this map reuse their `models` id for editing (issue #100).
+    #[serde(default)]
+    pub edit_models: HashMap<String, String>,
 }
 
 fn default_base_url() -> ConfigUrl {
     ConfigUrl::try_new("http://localhost".to_string()).expect("hardcoded default")
+}
+
+/// Which provider role a `[[..._providers]]` entry serves. Role-scoped
+/// default tables guarantee chat-only aliases (e.g. `gpt`) can never leak
+/// into the image catalog or vice versa (issue #99).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderRole {
+    Chat,
+    Image,
+}
+
+fn chat_default_models(kind: &str) -> HashMap<String, String> {
+    let mut m = HashMap::new();
+    match kind {
+        "openrouter" => {
+            m.insert("gpt".to_string(), "openai/gpt-oss-120b:online".to_string());
+            m.insert("qwen".to_string(), "qwen/qwen3.7-plus".to_string());
+            m.insert("qwenflash".to_string(), "qwen/qwen3.7-flash".to_string());
+            m.insert("minimax".to_string(), "minimax/minimax-m3".to_string());
+            m.insert("mimo".to_string(), "xiaomi/mimo-v2.5".to_string());
+            // Vision-capable chat models are also valid here.
+            m.insert("seedream".to_string(), "bytedance-seed/seedream-4.5".to_string());
+            m.insert("banana".to_string(), "google/gemini-3.1-flash-image-preview".to_string());
+            m.insert("mai".to_string(), "microsoft/mai-image-2.5".to_string());
+            m.insert("qwenimage".to_string(), "qwen/qwen-image-3-pro".to_string());
+        }
+        "deepseek" => {
+            m.insert("flash".to_string(), "deepseek-v4-flash-vision-exp".to_string());
+            m.insert("pro".to_string(), "deepseek-v4-pro".to_string());
+        }
+        "llamacpp" => {
+            m.insert("local".to_string(), "local-model".to_string());
+        }
+        _ => {}
+    }
+    m
+}
+
+/// Image-role default tables — **image-capable models only** (issue #99):
+/// no chat aliases. Edit companions exist only where the provider genuinely
+/// hosts a separate edit endpoint — currently only fal (issue #100); ids
+/// verified against the fal.ai public model registry.
+fn image_default_models(kind: &str) -> HashMap<String, String> {
+    let mut m = HashMap::new();
+    match kind {
+        "openrouter" => {
+            m.insert("seedream".to_string(), "bytedance-seed/seedream-4.5".to_string());
+            m.insert("banana".to_string(), "google/gemini-3.1-flash-image-preview".to_string());
+            m.insert("mai".to_string(), "microsoft/mai-image-2.5".to_string());
+            m.insert("qwenimage".to_string(), "qwen/qwen-image-3-pro".to_string());
+        }
+        "fal" => {
+            m.insert(
+                "seedream".to_string(),
+                "fal-ai/bytedance/seedream/v4.5/text-to-image".to_string(),
+            );
+            m.insert(
+                "seedream5".to_string(),
+                "bytedance/seedream/v5/pro/text-to-image".to_string(),
+            );
+            m.insert("gptimage".to_string(), "openai/gpt-image-2".to_string());
+            m.insert(
+                "grok".to_string(),
+                "xai/grok-imagine-image/quality/text-to-image".to_string(),
+            );
+        }
+        _ => {}
+    }
+    m
+}
+
+fn image_default_edit_models(kind: &str) -> HashMap<String, String> {
+    let mut m = HashMap::new();
+    if kind == "fal" {
+        m.insert(
+            "seedream5".to_string(),
+            "bytedance/seedream/v5/pro/edit".to_string(),
+        );
+        m.insert("gptimage".to_string(), "openai/gpt-image-2/edit".to_string());
+        m.insert(
+            "grok".to_string(),
+            "xai/grok-imagine-image/quality/edit".to_string(),
+        );
+    }
+    m
 }
 
 fn provider_defaults() -> HashMap<String, ProviderConfig> {
@@ -426,19 +516,8 @@ fn provider_defaults() -> HashMap<String, ProviderConfig> {
             basecf_url: None,
             chat_path: Some("/chat/completions".to_string()),
             draw_path: Some("/images".to_string()),
-            models: {
-                let mut m = HashMap::new();
-                m.insert("gpt".to_string(), "openai/gpt-oss-120b:online".to_string());
-                m.insert("qwen".to_string(), "qwen/qwen3.7-plus".to_string());
-                m.insert("qwenflash".to_string(), "qwen/qwen3.7-flash".to_string());
-                m.insert("minimax".to_string(), "minimax/minimax-m3".to_string());
-                m.insert("mimo".to_string(), "xiaomi/mimo-v2.5".to_string());
-                m.insert("seedream".to_string(), "bytedance-seed/seedream-4.5".to_string());
-                m.insert("banana".to_string(), "google/gemini-3.1-flash-image-preview".to_string());
-                m.insert("mai".to_string(), "microsoft/mai-image-2.5".to_string());
-                m.insert("qwenimage".to_string(), "qwen/qwen-image-3-pro".to_string());
-                m
-            },
+            models: HashMap::new(),
+            edit_models: HashMap::new(),
         },
     );
 
@@ -452,12 +531,8 @@ fn provider_defaults() -> HashMap<String, ProviderConfig> {
             basecf_url: None,
             chat_path: None,
             draw_path: None,
-            models: {
-                let mut m = HashMap::new();
-                m.insert("flash".to_string(), "deepseek-v4-flash-vision-exp".to_string());
-                m.insert("pro".to_string(), "deepseek-v4-pro".to_string());
-                m
-            },
+            models: HashMap::new(),
+            edit_models: HashMap::new(),
         },
     );
 
@@ -471,11 +546,8 @@ fn provider_defaults() -> HashMap<String, ProviderConfig> {
             basecf_url: None,
             chat_path: Some("/chat/completions".to_string()),
             draw_path: None,
-            models: {
-                let mut m = HashMap::new();
-                m.insert("local".to_string(), "local-model".to_string());
-                m
-            },
+            models: HashMap::new(),
+            edit_models: HashMap::new(),
         },
     );
 
@@ -489,16 +561,8 @@ fn provider_defaults() -> HashMap<String, ProviderConfig> {
             basecf_url: None,
             chat_path: None,
             draw_path: None,
-            models: {
-                let mut m = HashMap::new();
-                m.insert("seedream".to_string(), "fal-ai/bytedance/seedream/v4.5/text-to-image".to_string());
-                 m.insert("seedream5".to_string(), "bytedance/seedream/v5/pro/text-to-image".to_string());
-                 m.insert("seedream5_edit".to_string(), "bytedance/seedream/v5/pro/edit".to_string());
-                m.insert("gptimage".to_string(), "openai/gpt-image-2".to_string());
-                m.insert("gptimage_edit".to_string(), "openai/gpt-image-2/edit".to_string());
-                m.insert("grok_edit".to_string(), "xai/grok-imagine-image/quality/edit".to_string());
-                m
-            },
+            models: HashMap::new(),
+            edit_models: HashMap::new(),
         },
     );
 
@@ -571,20 +635,28 @@ impl AppConfig {
 
     fn apply_provider_defaults(&mut self) {
         for p in &mut self.chat_providers {
-            Self::fill_provider_defaults(p);
+            Self::fill_provider_defaults(p, ProviderRole::Chat);
         }
         for p in &mut self.image_providers {
-            Self::fill_provider_defaults(p);
+            Self::fill_provider_defaults(p, ProviderRole::Image);
         }
     }
 
-    fn fill_provider_defaults(p: &mut ProviderConfig) {
+    fn fill_provider_defaults(p: &mut ProviderConfig, role: ProviderRole) {
         const SENTINEL: &str = "http://localhost";
         if p.base_url.as_str() == SENTINEL {
             if let Some(defaults) = provider_defaults().get(p.name.as_str()) {
                 p.base_url = defaults.base_url.clone();
                 if p.models.is_empty() {
-                    p.models = defaults.models.clone();
+                    p.models = match role {
+                        // Role-scoped tables (issue #99): chat aliases and
+                        // image aliases live in disjoint default maps.
+                        ProviderRole::Chat => chat_default_models(p.name.as_str()),
+                        ProviderRole::Image => image_default_models(p.name.as_str()),
+                    };
+                }
+                if p.edit_models.is_empty() {
+                    p.edit_models = image_default_edit_models(p.name.as_str());
                 }
                 if p.chat_path.is_none() {
                     p.chat_path = defaults.chat_path.clone();
@@ -716,6 +788,80 @@ impl ProviderConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_image_defaults_are_role_scoped_no_chat_models() {
+        // Issue #99: image providers inherit an image-only default table;
+        // chat aliases like 'gpt' must never leak into the image catalog,
+        // while the chat role keeps them.
+        let toml_str = r#"
+[[chat_providers]]
+name = "openrouter"
+api_key = "k"
+
+[[image_providers]]
+name = "openrouter"
+api_key = "k"
+"#;
+        let mut config = AppConfig::from_toml(toml_str).unwrap();
+        config.apply_provider_defaults();
+
+        let img = config.find_image_provider("openrouter").unwrap();
+        assert!(
+            !img.models.contains_key("gpt"),
+            "chat alias 'gpt' leaked into image defaults (#99)"
+        );
+        assert!(!img.models.contains_key("qwen"));
+        assert!(!img.models.contains_key("minimax"));
+        assert!(img.models.contains_key("banana"));
+        assert!(img.models.contains_key("mai"));
+
+        let chat = config.find_chat_provider("openrouter").unwrap();
+        assert_eq!(
+            chat.models.get("gpt").map(|s| s.as_str()),
+            Some("openai/gpt-oss-120b:online"),
+            "chat role keeps the full default table"
+        );
+    }
+
+    #[test]
+    fn test_fal_defaults_unified_aliases_with_edit_companions() {
+        // Issue #100: one alias per model family; dedicated edit endpoints
+        // live in edit_models (fal only) instead of separate *_edit aliases.
+        let toml_str = r#"
+[[image_providers]]
+name = "fal"
+api_key = "k"
+
+[[image_providers]]
+name = "openrouter"
+api_key = "k"
+"#;
+        let mut config = AppConfig::from_toml(toml_str).unwrap();
+        config.apply_provider_defaults();
+
+        let fal = config.find_image_provider("fal").unwrap();
+        assert!(fal.models.contains_key("seedream5"), "unified alias");
+        assert!(fal.models.contains_key("gptimage"), "unified alias");
+        assert!(fal.models.contains_key("grok"), "base grok alias now exists");
+        assert!(
+            !fal.models.keys().any(|a| a.ends_with("_edit")),
+            "no selectable *_edit aliases: {:?}",
+            fal.models.keys().collect::<Vec<_>>()
+        );
+        assert_eq!(
+            fal.edit_models.get("seedream5").map(|s| s.as_str()),
+            Some("bytedance/seedream/v5/pro/edit")
+        );
+        assert_eq!(
+            fal.edit_models.get("grok").map(|s| s.as_str()),
+            Some("xai/grok-imagine-image/quality/edit")
+        );
+
+        // Non-fal providers get no edit companions — same model both modes
+        let or = config.find_image_provider("openrouter").unwrap();
+        assert!(or.edit_models.is_empty(), "openrouter edits reuse the t2i id");
+    }
 
     fn make_base_config() -> String {
         r#"

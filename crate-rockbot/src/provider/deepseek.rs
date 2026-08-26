@@ -603,6 +603,7 @@ mod tests {
             chat_path: None,
             draw_path: None,
             models: std::collections::HashMap::new(),
+            edit_models: std::collections::HashMap::new(),
         };
         let result = DeepSeekProvider::new(&config, "deepseek-chat");
         assert!(result.is_err());
@@ -618,6 +619,7 @@ mod tests {
             chat_path: None,
             draw_path: None,
             models: std::collections::HashMap::new(),
+            edit_models: std::collections::HashMap::new(),
         };
         let result = DeepSeekProvider::new(&config, "deepseek-chat");
         assert!(result.is_err());
@@ -633,6 +635,7 @@ mod tests {
             chat_path: None,
             draw_path: None,
             models: std::collections::HashMap::new(),
+            edit_models: std::collections::HashMap::new(),
         };
         let provider = DeepSeekProvider::new(&config, "deepseek-chat").unwrap();
         assert_eq!(
@@ -651,6 +654,7 @@ mod tests {
             chat_path: Some("/v2/chat".into()),
             draw_path: None,
             models: std::collections::HashMap::new(),
+            edit_models: std::collections::HashMap::new(),
         };
         let provider = DeepSeekProvider::new(&config, "model").unwrap();
         assert_eq!(provider.base_url, "https://custom.api.com/v2/chat");
@@ -666,6 +670,7 @@ mod tests {
             chat_path: None,
             draw_path: None,
             models: std::collections::HashMap::new(),
+            edit_models: std::collections::HashMap::new(),
         };
         let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();
         assert_eq!(provider.provider_name(), "deepseek");

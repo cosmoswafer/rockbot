@@ -43,6 +43,7 @@ fn load_fal_config() -> ProviderConfig {
                 chat_path: None,
                 draw_path: None,
                 models,
+                edit_models: std::collections::HashMap::new(),
             };
         }
     }

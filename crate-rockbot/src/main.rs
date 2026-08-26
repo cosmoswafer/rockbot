@@ -22,7 +22,7 @@ use rockbot::tools::{
     ForgetKnowledgeTool, ImageBackend, ImageGenTool, RecallKnowledgeTool, SaveKnowledgeTool,
     SearchProvider, VisionTool, WebDavTool, WebFetchTool, WebSearchTool,
 };
-use rockbot::types::ImageModelCatalog;
+use rockbot::types::{ImageModelCatalog, ImageModelEntry};
 use rockbot::utils::strip_markdown_image_id;
 
 fn setup_logging() {
@@ -261,9 +261,11 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
 
             // Collect backends + catalog from EVERY configured image provider
             // entry backed by a supported kind (fal / openrouter) — models from
-            // all of them are selectable per call (issue #96).
+            // all of them are selectable per call (issue #96). Catalog entries
+            // carry the optional fal-only edit companion (issue #100); chat
+            // aliases can never appear — image defaults are role-scoped (#99).
             let mut backends: HashMap<String, ImageBackend> = HashMap::new();
-            let mut catalog_models: HashMap<String, (String, String)> = HashMap::new();
+            let mut catalog_entries: Vec<ImageModelEntry> = Vec::new();
 
             for cfg in &harness.config().image_providers {
                 let kind = cfg.name.as_str();
@@ -278,9 +280,10 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                     .config()
                     .resolve_image_model(kind, &im.default_text_model)
                     .unwrap_or_else(|| im.default_text_model.clone());
-                let edit_model = harness
+                let edit_alias_fallback = harness
                     .config()
                     .resolve_image_model(kind, &im.default_edit_model)
+                    .or_else(|| harness.config().resolve_image_model(kind, &im.default_text_model))
                     .unwrap_or_else(|| im.default_edit_model.clone());
 
                 let t2i: Option<Box<dyn ImageProvider>> = match kind {
@@ -299,10 +302,10 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                     continue;
                 };
                 let edit: Option<Box<dyn ImageProvider>> = match kind {
-                    "fal" => FalAiProvider::new(cfg, &edit_model)
+                    "fal" => FalAiProvider::new(cfg, &edit_alias_fallback)
                         .ok()
                         .map(|p| Box::new(p) as Box<dyn ImageProvider>),
-                    _ => OpenRouterImageProvider::new(cfg, &edit_model)
+                    _ => OpenRouterImageProvider::new(cfg, &edit_alias_fallback)
                         .ok()
                         .map(|p| Box::new(p) as Box<dyn ImageProvider>),
                 };
@@ -318,14 +321,30 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                 backends.insert(kind.to_string(), ImageBackend::new(t2i, edit));
 
                 for (alias, model_id) in &cfg.models {
-                    if let Some((_existing_id, existing_kind)) = catalog_models.get(alias) {
+                    if catalog_entries.iter().any(|e| e.alias == *alias) {
                         warn!(
-                            "Duplicate image model alias '{}' across providers '{}' and '{}' — keeping '{}'",
-                            alias, existing_kind, kind, existing_kind
+                            "Duplicate image model alias '{}' across providers — keeping first",
+                            alias
                         );
                         continue;
                     }
-                    catalog_models.insert(alias.clone(), (model_id.clone(), kind.to_string()));
+                    if kind != "fal" && cfg.edit_models.contains_key(alias) {
+                        warn!(
+                            "Image provider '{}' declares an edit companion for '{}' but only fal \
+                             uses separate edit endpoints — ignoring the companion",
+                            kind, alias
+                        );
+                    }
+                    catalog_entries.push(ImageModelEntry {
+                        alias: alias.clone(),
+                        model_id: model_id.clone(),
+                        edit_model_id: if kind == "fal" {
+                            cfg.edit_models.get(alias).cloned()
+                        } else {
+                            None
+                        },
+                        provider_name: kind.to_string(),
+                    });
                 }
             }
 
@@ -338,9 +357,8 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                 );
             } else {
                 let model_catalog = ImageModelCatalog::new(
-                    catalog_models,
+                    catalog_entries,
                     im.default_text_model.clone(),
-                    im.default_edit_model.clone(),
                 );
                 info!(
                     "Registered image_gen with provider backends: {} (model aliases: {})",

@@ -10,13 +10,20 @@ writes to WebDAV, stores to the cache, and returns a minimal result
 (`{ok, webdav_path, image_key}`) so the LLM context stays lightweight.
 
 The LLM can select any model from **all configured `[[image_providers]]`**
-per call via an optional `model` alias arg; omitting it falls back to the
-`[image_model]` defaults (`default_text_model` / `default_edit_model`) of the
-default provider. The catalog (alias → model id + provider name) is a shared
-type (`ImageModelCatalog`) produced from config at startup and consumed by the
-tool — every model is routed to its own provider's backend (issue #96), so the
-concatenated catalog spans the fal and openrouter entries (the only supported
-backend kinds; other provider names are skipped at registry with a warning).
+per call via an optional `model` alias arg; omitting it falls back to
+`[image_model] default_text_model` of the default provider. The catalog
+(alias → model ids + provider name) is a shared type (`ImageModelCatalog`)
+produced from config at startup and consumed by the tool — every model is
+routed to its own provider's backend (issue #96), so the concatenated catalog
+spans the fal and openrouter entries (the only supported backend kinds; other
+provider names are skipped at registry with a warning). Default model tables
+are **role-scoped** (issue #99): image providers inherit only image-capable
+models — chat aliases (`gpt`, `qwen`, `minimax`, …) exist solely in the chat
+role's table and can never leak into the image catalog.
+Editing is **unified per alias** (issue #100): an alias may carry an optional
+edit companion id for providers that genuinely use separate endpoints
+(currently only fal); otherwise the same model id serves both modes and no
+`*_edit` alias is exposed.
 
 The tool's description and `parameters()` schema are **generated from the
 catalog at registry time** (issue #95, see
@@ -50,7 +57,7 @@ LLM provides `prompt` and `aspect_ratio` (both required); all other fields come 
 | `image_urls`    | Harness (auto)    | `[]string`                                     | Injected from 5 converging sources (see §2e): user attachments, vision/WebDAV pool, agent-provided URLs, message image URLs (auto-injected unconditionally), and `reference_image_key` (ImageCache lookup) |
 | `reference_image_key` | LLM | `string` | Alternative to `image_urls` — the `image_key` from a prior `image_gen` result. Looked up in ImageCache; data URI uploaded to provider CDN. Tool-level arg — not a field on the Rust struct; resolved before `ImageGenParams` construction. |
 | `model`       | LLM              | `string` (alias)                              | **Optional.** Config alias for the active image provider's `models` catalog. Exposed in the tool schema as an `enum` of valid aliases (omitted when catalog empty). Resolved via `ImageModelCatalog`; unknown alias → `ToolCallParse` error at the parse boundary. |
-| `model_id`    | Tool (resolved)  | `string`                                       | Populated by the tool from the LLM's `model` alias when given (see `ImageModelCatalog`); `None` when omitted — the provider instance then uses its configured default model id (`provider.model_id()`). |
+| `model_id`    | Tool (resolved)  | `string`                                       | Mode-aware id from the resolved alias's entry (`resolve_for_mode`): edit companion when editing and paired (#100), else the plain id. Stays `None` only when no alias was given and the default alias is unresolvable — the provider instance then uses its configured default (`provider.model_id()`). |
 | `quality`       | Config            | `string`                                       | From `default_quality`                           |
 | `output_format` | Config            | `string`                                       | From `default_output_format`                     |
 | `num_images`    | Config            | `integer`                                      | From `default_num_images`                        |
@@ -60,27 +67,46 @@ LLM provides `prompt` and `aspect_ratio` (both required); all other fields come 
 
 Shared type produced at startup by joining the `models` map of **every**
 configured `[[image_providers]]` entry backed by a supported provider kind
-(fal / openrouter), tagging each alias with its provider name, plus the
-`[image_model]` default aliases. Defined in `types.rs` — produced by `main.rs`
-and consumed by the tool, so mismatches are compile-time errors.
+(fal / openrouter), tagging each alias with its provider name and optional
+edit companion, plus the `[image_model]` default alias. Defined in `types.rs`
+— produced by `main.rs` and consumed by the tool, so mismatches are
+compile-time errors.
 
 | Field                | Type                    | Description                                      |
 | -------------------- | ----------------------- | ------------------------------------------------ |
-| `entries`            | `[(string, string, string)]` | `(alias, model_id, provider_name)` triples, sorted by alias — stable schema `enum`. |
-| `default_text_alias` | `string`                | `[image_model] default_text_model` (t2i fallback) |
-| `default_edit_alias` | `string`                | `[image_model] default_edit_model` (edit fallback) |
+| `entries`            | `[ImageModelEntry]`     | One per model family, sorted by alias — stable schema `enum`. See below. |
+| `default_alias`      | `string`                | `[image_model] default_text_model` (fallback alias) |
+
+`ImageModelEntry` fields:
+
+| Field             | Type             | Description                                                                 |
+| ----------------- | ---------------- | --------------------------------------------------------------------------- |
+| `alias`           | `string`         | LLM-facing selection name (e.g. `seedream5`).                                |
+| `model_id`        | `string`         | Text-to-image model id sent to the provider.                                 |
+| `edit_model_id`   | `Option<string>` | Dedicated edit-endpoint id. `None` ⇒ edits reuse `model_id` (issue #100).    |
+| `provider_name`   | `string`         | Owning `[[image_providers]]` entry name — selects the backend.               |
+
+Config shape: `models` maps alias → t2i id; the sibling `edit_models` map
+(serde default: empty) maps alias → edit companion id for providers with
+genuinely separate endpoints (fal only). Role-scoped default tables in
+`config.rs` guarantee chat-only aliases never enter image-provider defaults
+(#99); they are probed against the fal model registry when the fal map changes.
 
 `resolve(alias)` returns `(model_id, provider_name)` or `None` — the tool
 rejects unknown aliases with a `ToolCallParse` error listing the valid aliases;
-each resolved pair selects that provider's backend. `allowed_aliases()` feeds
-the tool schema `enum`; `model_ids()` / `provider_names()` expose the resolved
-ids and provider tags (index-aligned with `allowed_aliases()`) for the derived
-tool description. Duplicate aliases across provider entries are dropped with a
-warning (first defined wins). `supports_auto_aspect()` is a derived capability
-flag — `true` iff any entry's model id contains the `seedream/v5` marker (same
-constant used by `FalAiProvider`). It drives the `auto_1K`/`auto_2K` hint in
-the tool and `aspect_ratio` parameter descriptions; when `false`, no
-auto-dimensional strings are advertised.
+each resolved pair selects that provider's backend.
+`resolve_for_mode(alias, is_edit)` swaps in the edit companion id when the
+call carries input images (`Option::unwrap_or(model_id)`), so edit requests
+always hit the correct endpoint id without the LLM choosing a separate alias.
+`allowed_aliases()` feeds the tool schema `enum`; `model_ids()` /
+`provider_names()` expose the resolved ids and provider tags (index-aligned
+with `allowed_aliases()`) for the derived tool description. Duplicate aliases
+across provider entries are dropped with a warning (first defined wins).
+`supports_auto_aspect()` is a derived capability flag — `true` iff any entry's
+model id contains the `seedream/v5` marker (same constant used by
+`FalAiProvider`). It drives the `auto_1K`/`auto_2K` hint in the tool and
+`aspect_ratio` parameter descriptions; when `false`, no auto-dimensional
+strings are advertised.
 
 #### `ImageGenResult`
 

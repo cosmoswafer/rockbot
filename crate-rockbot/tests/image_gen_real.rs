@@ -64,6 +64,7 @@ fn load_image_provider(name: &str) -> Option<ProviderConfig> {
                 chat_path: None,
                 draw_path: None,
                 models,
+                edit_models: std::collections::HashMap::new(),
             });
         }
     }
@@ -156,11 +157,15 @@ async fn test_image_gen_real_text_to_image() {
         provider_cfg
             .models
             .iter()
-            .map(|(alias, model_id)| (alias.clone(), (model_id.clone(), provider_name.clone())))
+            .map(|(alias, model_id)| rockbot::types::ImageModelEntry {
+                alias: alias.clone(),
+                model_id: model_id.clone(),
+                edit_model_id: None,
+                provider_name: provider_name.clone(),
+            })
             .collect(),
         "mai",
-        "mai",
-    );
+);
     let tool = ImageGenTool::new(
         std::collections::HashMap::from([(
             provider_name.clone(),
@@ -327,11 +332,15 @@ async fn test_image_gen_real_data_uri_handling() {
         provider_cfg
             .models
             .iter()
-            .map(|(alias, model_id)| (alias.clone(), (model_id.clone(), provider_name.clone())))
+            .map(|(alias, model_id)| rockbot::types::ImageModelEntry {
+                alias: alias.clone(),
+                model_id: model_id.clone(),
+                edit_model_id: None,
+                provider_name: provider_name.clone(),
+            })
             .collect(),
         "mai",
-        "mai",
-    );
+);
     let tool = ImageGenTool::new(
         std::collections::HashMap::from([(
             provider_name.clone(),

@@ -417,6 +417,7 @@ mod tests {
             chat_path: None,
             draw_path: None,
             models: std::collections::HashMap::new(),
+            edit_models: std::collections::HashMap::new(),
         };
         let result = LlamaCppProvider::new(&config, "local-model");
         assert!(result.is_ok());
@@ -791,6 +792,7 @@ mod tests {
             chat_path: None,
             draw_path: None,
             models: std::collections::HashMap::new(),
+            edit_models: std::collections::HashMap::new(),
         };
         let provider = LlamaCppProvider::new(&config, "local").unwrap();
         assert_eq!(
