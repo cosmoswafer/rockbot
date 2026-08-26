@@ -101,10 +101,10 @@ fn ocs_share_matchers() -> wiremock::MockBuilder {
 }
 
 // DFD tools/image-gen: OCS share creation happy path — returned share_url must
-// carry the /preview suffix (inline rendering, real MIME type), not /download
-// (303 redirect + Content-Disposition: attachment). See issue #97.
+// carry the /download suffix. /preview was tried in #97 but RocketChat failed
+// to render it in production despite correct headers, so it was reverted.
 #[tokio::test]
-async fn test_create_nextcloud_share_link_appends_preview_suffix() {
+async fn test_create_nextcloud_share_link_appends_download_suffix() {
     let server = wiremock::MockServer::start().await;
     ocs_share_matchers()
         .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(OCS_SHARE_XML))
@@ -121,8 +121,7 @@ async fn test_create_nextcloud_share_link_appends_preview_suffix() {
         .expect("share link should be created from OCS <url>");
 
     // The OCS <url> is authoritative (public share host), suffix appended locally
-    assert_eq!(share, "https://nc.example.com/s/iPNxaew4YLjeGzG/preview");
-    assert!(!share.ends_with("/download"));
+    assert_eq!(share, "https://nc.example.com/s/iPNxaew4YLjeGzG/download");
     server.verify().await;
 }
 

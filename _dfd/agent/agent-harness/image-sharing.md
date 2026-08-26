@@ -53,14 +53,14 @@ the `image_key` placeholder is still present for main.rs to replace.
 **ImageGenTool role**: calls `create_nextcloud_share_link()` on `WebDavClient`
 right after WebDAV upload — `POST /ocs/v2.php/apps/files_sharing/api/v1/shares`
 with `shareType=3`, `permissions=1`, `expireDate={today+7d}`. Stores the
-result (with `/preview` suffix for correct-MIME inline rendering) as
+result (with `/download` suffix for direct raw image access) as
 `GeneratedImage.share_url`. Stores the entire `GeneratedImage` in `ImageCache`
 keyed by `call_id`.
 
 **Agent loop role** (main.rs): after `process_message()` returns, calls
 `take_last_image_ids()` to get the call IDs, then `take_image()` for each one.
 If `share_url` is present, appends `![Generated image]({share_url})`
-(the URL already carries the `/preview` suffix) to the reply text and strips
+(the URL already carries the `/download` suffix) to the reply text and strips
 the original `![desc](image_key)` markdown.
 If `share_url` is `None`, falls back to a DDP attachment with `data_uri()`.
 Uses `final_reply` (the modified text or original) for the outgoing message.
@@ -70,15 +70,19 @@ builds a DDP `sendMessage` with a `data:` URI in the `attachments` field, using
 `GeneratedImage::data_uri()`. This is a worst-case path for when NextCloud's
 sharing API is unavailable.
 
-**Design rationale**: NextCloud share URLs are short — the `/preview` endpoint
-(`PublicPreviewController::directLink`) serves the image directly with HTTP 200,
-the file's real MIME type (e.g. `image/png`), and `Content-Disposition: inline`,
-which RocketChat renders inline. The `/download` endpoint is unsuitable: it
-responds 303 to `public.php/dav/files/{token}` with
-`Content-Disposition: attachment`, forcing a download instead of inline
-rendering. This eliminates both the `Message_MaxAllowedSize` REST limit
+**Design rationale**: NextCloud share URLs are short — the `/download` endpoint
+returns raw image bytes with correct `Content-Type` for inline rendering in
+RocketChat. This eliminates both the `Message_MaxAllowedSize` REST limit
 (short URL, no base64 in msg text) and the DDP attachments schema restriction
 (Match failed [400]). Share links expire after 7 days, longer than typical
-chat message lifetimes. Caveat: when Imaginary is enabled server-side, `/preview`
-may serve a downscaled rendition rather than original bytes (#97 probe: full-size
-PNG served).
+chat message lifetimes.
+
+**Suffix choice (probed, issue #97)**: on paper `/preview`
+(`PublicPreviewController::directLink`) looks superior — HTTP 200 directly,
+real MIME type (`image/png`), `Content-Disposition: inline`, 24h cache — while
+`/download` responds 303 to `public.php/dav/files/{token}` with
+`Content-Disposition: attachment`. Production testing showed the opposite:
+RocketChat failed to render `/preview` URLs inline despite correct headers,
+while `/download` renders fine. The suffix was switched to `/preview` and then
+reverted back to `/download`. Caveat: when Imaginary is enabled server-side,
+`/preview` may serve a downscaled rendition rather than original bytes.

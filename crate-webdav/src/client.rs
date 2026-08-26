@@ -184,16 +184,17 @@ impl WebDavClient {
                     .replace("&amp;", "&")
                     .replace("&lt;", "<")
                     .replace("&gt;", ">");
-                // Append /preview: serves the file inline (HTTP 200, real MIME type,
-                // Content-Disposition: inline) — unlike /download, which 303-redirects
-                // to public.php/dav/files/{token} with Content-Disposition: attachment
-                let preview_url = format!("{}/preview", cleaned.trim_end_matches('/'));
+                // Append /download for direct raw file access. Verified in
+                // production: /preview serves correct headers (image/png,
+                // Content-Disposition: inline) but RocketChat fails to render
+                // it inline (issue #97 revert), while /download renders fine.
+                let download_url = format!("{}/download", cleaned.trim_end_matches('/'));
                 tracing::debug!(
                     "Created NextCloud share link for '{}': {}",
                     file_path,
-                    preview_url
+                    download_url
                 );
-                return Some(preview_url);
+                return Some(download_url);
             }
         }
 
