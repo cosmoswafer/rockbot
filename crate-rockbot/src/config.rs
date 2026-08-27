@@ -263,10 +263,10 @@ fn default_image_provider() -> ProviderName {
     ProviderName::try_new("openrouter".to_string()).expect("hardcoded default")
 }
 fn default_image_text_model() -> String {
-    "mai".into()
+    "mai2pro".into()
 }
 fn default_image_edit_model() -> String {
-    "mai".into()
+    "mai2pro".into()
 }
 fn default_image_quality() -> String {
     "medium".into()
@@ -464,7 +464,12 @@ fn image_default_models(kind: &str) -> HashMap<String, String> {
         "openrouter" => {
             m.insert("seedream".to_string(), "bytedance-seed/seedream-4.5".to_string());
             m.insert("banana".to_string(), "google/gemini-3.1-flash-image-preview".to_string());
-            m.insert("mai".to_string(), "microsoft/mai-image-2.5".to_string());
+            // Issue #101: pro-only mai variant + new OpenRouter image models
+            // (ids verified against GET /api/v1/images/models).
+            m.insert("mai2pro".to_string(), "microsoft/mai-image-2.5-pro".to_string());
+            m.insert("seedream5pro".to_string(), "bytedance-seed/seedream-5-0-pro".to_string());
+            m.insert("grok2".to_string(), "x-ai/grok-imagine-image-2.0".to_string());
+            m.insert("muse".to_string(), "meta/muse-image".to_string());
             m.insert("qwenimage".to_string(), "qwen/qwen-image-3-pro".to_string());
         }
         "fal" => {
@@ -814,7 +819,7 @@ api_key = "k"
         assert!(!img.models.contains_key("qwen"));
         assert!(!img.models.contains_key("minimax"));
         assert!(img.models.contains_key("banana"));
-        assert!(img.models.contains_key("mai"));
+        assert!(img.models.contains_key("mai2pro"));
 
         let chat = config.find_chat_provider("openrouter").unwrap();
         assert_eq!(
@@ -861,6 +866,49 @@ api_key = "k"
         // Non-fal providers get no edit companions — same model both modes
         let or = config.find_image_provider("openrouter").unwrap();
         assert!(or.edit_models.is_empty(), "openrouter edits reuse the t2i id");
+    }
+
+    #[test]
+    fn test_openrouter_image_defaults_issue101_aliases() {
+        // Issue #101: new OpenRouter image models (ids verified against
+        // GET /api/v1/images/models); the non-pro mai alias is removed.
+        let toml_str = r#"
+[[image_providers]]
+name = "openrouter"
+api_key = "k"
+
+[image_model]
+default_provider = "openrouter"
+"#;
+        let mut config = AppConfig::from_toml(toml_str).unwrap();
+        config.apply_provider_defaults();
+
+        let or = config.find_image_provider("openrouter").unwrap();
+        assert_eq!(
+            or.models.get("mai2pro").map(|s| s.as_str()),
+            Some("microsoft/mai-image-2.5-pro"),
+            "pro variant replaces the deprecated non-pro alias"
+        );
+        assert_eq!(
+            or.models.get("seedream5pro").map(|s| s.as_str()),
+            Some("bytedance-seed/seedream-5-0-pro")
+        );
+        assert_eq!(
+            or.models.get("grok2").map(|s| s.as_str()),
+            Some("x-ai/grok-imagine-image-2.0")
+        );
+        assert_eq!(
+            or.models.get("muse").map(|s| s.as_str()),
+            Some("meta/muse-image")
+        );
+        assert!(
+            !or.models.contains_key("mai"),
+            "non-pro mai alias must be removed (issue #101)"
+        );
+
+        // [image_model] defaults point at the surviving pro alias
+        assert_eq!(config.image_model.default_text_model, "mai2pro");
+        assert_eq!(config.image_model.default_edit_model, "mai2pro");
     }
 
     fn make_base_config() -> String {

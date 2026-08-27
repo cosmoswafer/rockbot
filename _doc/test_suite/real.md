@@ -67,7 +67,7 @@ Tests connecting to live servers and APIs with real credentials. All `#[ignore]`
 |---|------|-------------|----------|
 | 1 | `test_image_gen_real_text_to_image` | Loads fal + WebDAV config, creates `ImageGenTool` with real provider and WebDAV client, executes a text-to-image prompt. Validates the DFD's `ImageGenResult` shape (`{"ok": true, "webdav_path": "...", "image_key": "..."}`), verifies image is in `ImageCache`, confirms WebDAV existence, collects share URL format. Cleans up generated file. | fal.ai, WebDAV |
 | 2 | `test_image_gen_real_data_uri_handling` | Same setup as above but reads the test image `_docs/test_suite/p0.png` (4x4 red square), base64-encodes it as a `data:` URI, and passes it in `image_urls` — exercises the `upload_data_uri` → provider CDN → img2img path. Validates that data URIs injected by the harness (per image-interception.md §2d) are correctly translated to provider CDN URLs by the tool. | fal.ai, WebDAV |
-| 3 | `test_openrouter_image_gen_mai` | Loads OpenRouter image provider config, creates `OpenRouterImageProvider` with `microsoft/mai-image-2.5`, calls `generate_image()` with a text-to-image prompt. Validates the returned bytes are non-empty and PNG format. Standalone — no WebDAV or ImageCache dependency. | OpenRouter |
+| 3 | `test_openrouter_image_gen_mai2pro` | Loads OpenRouter image provider config, creates `OpenRouterImageProvider` with `microsoft/mai-image-2.5-pro` (alias `mai2pro`, issue #101), calls `generate_image()` with a text-to-image prompt. Validates the returned bytes are non-empty and PNG format. Standalone — no WebDAV or ImageCache dependency. | OpenRouter |
 
 **Helpers:** `workspace_root()`, `load_config()`, `load_image_provider()`, `load_webdav_config()`
 

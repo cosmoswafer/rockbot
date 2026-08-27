@@ -164,7 +164,7 @@ async fn test_image_gen_real_text_to_image() {
                 provider_name: provider_name.clone(),
             })
             .collect(),
-        "mai",
+        "mai2pro",
 );
     let tool = ImageGenTool::new(
         std::collections::HashMap::from([(
@@ -339,7 +339,7 @@ async fn test_image_gen_real_data_uri_handling() {
                 provider_name: provider_name.clone(),
             })
             .collect(),
-        "mai",
+        "mai2pro",
 );
     let tool = ImageGenTool::new(
         std::collections::HashMap::from([(
@@ -413,12 +413,13 @@ async fn test_image_gen_real_data_uri_handling() {
     }
 }
 
-/// Verify the OpenRouter image provider with the "mai" model (microsoft/mai-image-2.5).
+/// Verify the OpenRouter image provider with the "mai2pro" model
+/// (microsoft/mai-image-2.5-pro — issue #101 replaced the non-pro alias).
 /// Tests text-to-image generation only (no WebDAV, no ImageCache).
-/// Run manually: cargo test -p rockbot --test image_gen_real test_openrouter_image_gen_mai -- --ignored --nocapture
+/// Run manually: cargo test -p rockbot --test image_gen_real test_openrouter_image_gen_mai2pro -- --ignored --nocapture
 #[ignore]
 #[tokio::test]
-async fn test_openrouter_image_gen_mai() {
+async fn test_openrouter_image_gen_mai2pro() {
     let provider_cfg = match load_image_provider("openrouter") {
         Some(cfg) => {
             eprintln!("Using image provider: openrouter");
@@ -432,10 +433,10 @@ async fn test_openrouter_image_gen_mai() {
 
     let model = provider_cfg
         .models
-        .get("mai")
+        .get("mai2pro")
         .cloned()
-        .unwrap_or_else(|| "microsoft/mai-image-2.5".into());
-    eprintln!("Model alias: mai -> {}", model);
+        .unwrap_or_else(|| "microsoft/mai-image-2.5-pro".into());
+    eprintln!("Model alias: mai2pro -> {}", model);
 
     let provider = match OpenRouterImageProvider::new(&provider_cfg, &model) {
         Ok(p) => p,

@@ -47,26 +47,35 @@ draw_path = "/images"
 [image_providers.models]
 seedream = "bytedance-seed/seedream-4.5"
 banana = "google/gemini-3.1-flash-image-preview"
-mai = "microsoft/mai-image-2.5"
 qwenimage = "qwen/qwen-image-3-pro"
+# Issue #101 — new OpenRouter image models (non-pro `mai` alias removed):
+mai2pro = "microsoft/mai-image-2.5-pro"
+seedream5pro = "bytedance-seed/seedream-5-0-pro"
+grok2 = "x-ai/grok-imagine-image-2.0"
+muse = "meta/muse-image"
 
 [[image_providers]]
 name = "fal"
 api_key = ""
 base_url = "https://queue.fal.run"
 
+# Unified aliases (#100): one entry per model family; providers that host
+# genuinely separate edit endpoints map them in [image_providers.edit_models].
 [image_providers.models]
 seedream = "fal-ai/bytedance/seedream/v4.5/text-to-image"
-gptimage = "openai/gpt-image-2"
-gptimage_edit = "openai/gpt-image-2/edit"
-grok_edit = "xai/grok-imagine-image/quality/edit"
 seedream5 = "bytedance/seedream/v5/pro/text-to-image"
-seedream5_edit = "bytedance/seedream/v5/pro/edit"
+gptimage = "openai/gpt-image-2"
+grok = "xai/grok-imagine-image/quality/text-to-image"
+
+[image_providers.edit_models]
+seedream5 = "bytedance/seedream/v5/pro/edit"
+gptimage = "openai/gpt-image-2/edit"
+grok = "xai/grok-imagine-image/quality/edit"
 
 [image_model]
 default_provider = "openrouter"
-default_text_model = "mai"
-default_edit_model = "mai"
+default_text_model = "mai2pro"
+default_edit_model = "mai2pro"
 default_quality = "medium"
 default_output_format = "png"
 default_num_images = 1

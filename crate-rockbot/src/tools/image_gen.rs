@@ -917,9 +917,9 @@ mod tests {
                     Some("bytedance/seedream/v5/pro/edit"),
                     "fal",
                 ),
-                entry("mai", "microsoft/mai-image-2.5", None, "openrouter"),
+                entry("mai2pro", "microsoft/mai-image-2.5-pro", None, "openrouter"),
             ],
-            "mai",
+            "mai2pro",
         )
     }
 
@@ -970,7 +970,7 @@ mod tests {
         let err = tool.execute(&args.to_string()).await.unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("not in image model catalog"), "err: {msg}");
-        assert!(msg.contains("mai") && msg.contains("seedream5"), "err should list valid aliases: {msg}");
+        assert!(msg.contains("mai2pro") && msg.contains("seedream5"), "err should list valid aliases: {msg}");
     }
 
     // ----- Per-provider backend routing (issue #96) -----
@@ -1004,15 +1004,15 @@ mod tests {
         );
         assert!(or_sink.lock().unwrap().is_none(), "fal alias must not hit openrouter");
 
-        // mai → openrouter backend
-        let _ = tool.execute(r#"{"prompt":"a cat","aspect_ratio":"1:1","model":"mai"}"#).await;
+        // mai2pro → openrouter backend
+        let _ = tool.execute(r#"{"prompt":"a cat","aspect_ratio":"1:1","model":"mai2pro"}"#).await;
         assert_eq!(
             or_sink.lock().unwrap().as_ref().unwrap().model_id.as_deref(),
-            Some("microsoft/mai-image-2.5"),
+            Some("microsoft/mai-image-2.5-pro"),
             "openrouter-tagged alias must hit the openrouter backend"
         );
 
-        // omitted model → default backend (openrouter); default alias 'mai'
+        // omitted model → default backend (openrouter); default alias 'mai2pro'
         // belongs to openrouter, so its entry now resolves mode-aware and sets
         // the t2i id explicitly
         let _ = tool.execute(r#"{"prompt":"a cat","aspect_ratio":"1:1"}"#).await;
@@ -1020,7 +1020,7 @@ mod tests {
         let captured = or_captured.as_ref().unwrap();
         assert_eq!(
             captured.model_id.as_deref(),
-            Some("microsoft/mai-image-2.5"),
+            Some("microsoft/mai-image-2.5-pro"),
             "omitted alias adopts the default alias entry (mode-aware)"
         );
         assert_eq!(captured.prompt.as_str(), "a cat");
@@ -1037,7 +1037,7 @@ mod tests {
                     Some("bytedance/seedream/v5/pro/edit"),
                     "fal",
                 ),
-                entry("mai", "microsoft/mai-image-2.5", None, "openrouter"),
+                entry("mai2pro", "microsoft/mai-image-2.5-pro", None, "openrouter"),
             ],
             "seedream5",
         );
@@ -1068,11 +1068,11 @@ mod tests {
             "default paired alias must swap to its edit endpoint in edit mode"
         );
 
-        // Same-model editing: mai (no companion) keeps the plain id in edit mode
-        let _ = tool.execute(r#"{"prompt":"recolor","aspect_ratio":"1:1","model":"mai","image_urls":["https://example.com/in.png"]}"#).await;
+        // Same-model editing: mai2pro (no companion) keeps the plain id in edit mode
+        let _ = tool.execute(r#"{"prompt":"recolor","aspect_ratio":"1:1","model":"mai2pro","image_urls":["https://example.com/in.png"]}"#).await;
         assert_eq!(
             or_sink.lock().unwrap().as_ref().unwrap().model_id.as_deref(),
-            Some("microsoft/mai-image-2.5"),
+            Some("microsoft/mai-image-2.5-pro"),
             "alias without companion reuses the t2i id when editing (issue #100)"
         );
     }
@@ -1085,7 +1085,7 @@ mod tests {
                 ImageBackend::new(Box::new(MockImageProvider::new()), None),
             )]),
             "fal".to_string(),
-            make_multi_model_catalog(), // mai → openrouter, but no openrouter backend
+            make_multi_model_catalog(), // mai2pro → openrouter, but no openrouter backend
             "medium".into(),
             "png".into(),
             1,
@@ -1095,7 +1095,7 @@ mod tests {
             make_image_cache(),
         );
         let err = tool
-            .execute(r#"{"prompt":"a cat","aspect_ratio":"1:1","model":"mai"}"#)
+            .execute(r#"{"prompt":"a cat","aspect_ratio":"1:1","model":"mai2pro"}"#)
             .await
             .unwrap_err();
         let msg = err.to_string();
@@ -1108,14 +1108,14 @@ mod tests {
         let schema = tool.parameters();
         let model = &schema["properties"]["model"];
         assert_eq!(model["type"], "string");
-        assert_eq!(model["enum"], serde_json::json!(["mai", "seedream5"]));
+        assert_eq!(model["enum"], serde_json::json!(["mai2pro", "seedream5"]));
     }
 
     #[test]
     fn test_schema_model_has_no_enum_when_catalog_empty() {
         let tool = make_tool(
             Box::new(MockImageProvider::new()),
-            ImageModelCatalog::new(Vec::new(), "mai"),
+            ImageModelCatalog::new(Vec::new(), "mai2pro"),
         );
         let schema = tool.parameters();
         let model = &schema["properties"]["model"];
@@ -1129,8 +1129,8 @@ mod tests {
     fn test_tool_description_lists_models_and_defaults() {
         let tool = make_tool(Box::new(MockImageProvider::new()), make_multi_model_catalog());
         let desc = tool.description();
-        assert!(desc.contains("Available image models: mai (microsoft/mai-image-2.5, openrouter), seedream5 (bytedance/seedream/v5/pro/text-to-image, fal, edit:bytedance/seedream/v5/pro/edit)"), "desc: {desc}");
-        assert!(desc.contains("Default: 'mai'"), "desc: {desc}");
+        assert!(desc.contains("Available image models: mai2pro (microsoft/mai-image-2.5-pro, openrouter), seedream5 (bytedance/seedream/v5/pro/text-to-image, fal, edit:bytedance/seedream/v5/pro/edit)"), "desc: {desc}");
+        assert!(desc.contains("Default: 'mai2pro'"), "desc: {desc}");
         assert!(desc.contains("auto_2K") && desc.contains("auto_1K"), "seedream5 in catalog → auto hint: {desc}");
     }
 
@@ -1147,7 +1147,7 @@ mod tests {
     fn test_tool_description_empty_catalog() {
         let tool = make_tool(
             Box::new(MockImageProvider::new()),
-            ImageModelCatalog::new(Vec::new(), "mai"),
+            ImageModelCatalog::new(Vec::new(), "mai2pro"),
         );
         let desc = tool.description();
         assert!(desc.contains("no image models configured"), "desc: {desc}");
@@ -1178,10 +1178,10 @@ mod tests {
         let args = serde_json::json!({
             "prompt": "a cat",
             "aspect_ratio": "1:1",
-            "model": "mai",
+            "model": "mai2pro",
         });
         let parsed: ImageGenArgs = serde_json::from_value(args).unwrap();
-        assert_eq!(parsed.model.as_ref().map(|m| m.as_str()), Some("mai"));
+        assert_eq!(parsed.model.as_ref().map(|m| m.as_str()), Some("mai2pro"));
     }
 
     #[test]

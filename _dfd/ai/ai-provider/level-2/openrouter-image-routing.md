@@ -5,7 +5,7 @@
 OpenRouter keeps two separate model catalogs: the chat catalog
 (`GET /api/v1/models`) and the image catalog (`GET /api/v1/images/models`).
 Pure image models (e.g. `qwen/qwen-image-3-pro`, `bytedance-seed/seedream-4.5`,
-`microsoft/mai-image-2.5`) exist **only** in the image catalog and are
+`microsoft/mai-image-2.5-pro`) exist **only** in the image catalog and are
 rejected with HTTP 404 on `chat/completions`. Dual-modality models
 (e.g. Gemini image models) appear in both catalogs and are routed to the
 Image API as well. The catalog is fetched lazily on first generation and

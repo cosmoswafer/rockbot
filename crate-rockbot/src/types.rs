@@ -700,12 +700,12 @@ mod tests {
                 Some("bytedance/seedream/v5/pro/edit"),
                 "fal",
             ),
-            entry("mai", "microsoft/mai-image-2.5", None, "openrouter"),
+            entry("mai2pro", "microsoft/mai-image-2.5-pro", None, "openrouter"),
         ];
-        let catalog = ImageModelCatalog::new(entries, "mai");
+        let catalog = ImageModelCatalog::new(entries, "mai2pro");
         assert_eq!(
-            catalog.resolve("mai"),
-            Some(("microsoft/mai-image-2.5", "openrouter"))
+            catalog.resolve("mai2pro"),
+            Some(("microsoft/mai-image-2.5-pro", "openrouter"))
         );
         assert_eq!(
             catalog.resolve("seedream5"),
@@ -725,9 +725,9 @@ mod tests {
                     Some("bytedance/seedream/v5/pro/edit"),
                     "fal",
                 ),
-                entry("mai", "microsoft/mai-image-2.5", None, "openrouter"),
+                entry("mai2pro", "microsoft/mai-image-2.5-pro", None, "openrouter"),
             ],
-            "mai",
+            "mai2pro",
         );
         // fal pair: edit mode swaps to the dedicated endpoint id (issue #100)
         assert_eq!(
@@ -736,12 +736,12 @@ mod tests {
         );
         // same-model editing: no companion → t2i id in both modes
         assert_eq!(
-            catalog.resolve_for_mode("mai", true),
-            Some(("microsoft/mai-image-2.5", "openrouter"))
+            catalog.resolve_for_mode("mai2pro", true),
+            Some(("microsoft/mai-image-2.5-pro", "openrouter"))
         );
         assert_eq!(
-            catalog.resolve_for_mode("mai", false),
-            Some(("microsoft/mai-image-2.5", "openrouter"))
+            catalog.resolve_for_mode("mai2pro", false),
+            Some(("microsoft/mai-image-2.5-pro", "openrouter"))
         );
     }
 
@@ -751,29 +751,29 @@ mod tests {
             vec![
                 entry("seedream5", "a", None, "fal"),
                 entry("banana", "b", None, "openrouter"),
-                entry("mai", "c", None, "fal"),
+                entry("mai2pro", "c", None, "fal"),
             ],
-            "mai",
+            "mai2pro",
         );
-        assert_eq!(catalog.allowed_aliases(), vec!["banana", "mai", "seedream5"]);
-        assert_eq!(catalog.valid_alias_list(), "banana, mai, seedream5");
+        assert_eq!(catalog.allowed_aliases(), vec!["banana", "mai2pro", "seedream5"]);
+        assert_eq!(catalog.valid_alias_list(), "banana, mai2pro, seedream5");
         assert_eq!(catalog.provider_names(), vec!["openrouter", "fal", "fal"]);
     }
 
     #[test]
     fn test_image_model_catalog_default_alias() {
         let catalog = ImageModelCatalog::new(
-            vec![entry("mai", "microsoft/mai-image-2.5", None, "openrouter")],
-            "mai",
+            vec![entry("mai2pro", "microsoft/mai-image-2.5-pro", None, "openrouter")],
+            "mai2pro",
         );
-        assert_eq!(catalog.default_alias(), "mai");
+        assert_eq!(catalog.default_alias(), "mai2pro");
     }
 
     #[test]
     fn test_image_model_catalog_empty() {
-        let catalog = ImageModelCatalog::new(Vec::new(), "mai");
+        let catalog = ImageModelCatalog::new(Vec::new(), "mai2pro");
         assert!(catalog.is_empty());
-        assert_eq!(catalog.resolve("mai"), None);
+        assert_eq!(catalog.resolve("mai2pro"), None);
         assert_eq!(catalog.valid_alias_list(), "(none configured)");
     }
 
@@ -787,14 +787,14 @@ mod tests {
                     None,
                     "fal",
                 ),
-                entry("mai", "microsoft/mai-image-2.5", None, "openrouter"),
+                entry("mai2pro", "microsoft/mai-image-2.5-pro", None, "openrouter"),
             ],
-            "mai",
+            "mai2pro",
         );
         assert!(seedream.supports_auto_aspect(), "seedream/v5 id → auto aspect supported");
         assert_eq!(
             seedream.model_ids(),
-            vec!["microsoft/mai-image-2.5", "bytedance/seedream/v5/pro/text-to-image"]
+            vec!["microsoft/mai-image-2.5-pro", "bytedance/seedream/v5/pro/text-to-image"]
         );
 
         let flux = ImageModelCatalog::new(
@@ -803,7 +803,7 @@ mod tests {
         );
         assert!(!flux.supports_auto_aspect(), "non-seedream models → no auto aspect");
 
-        let empty = ImageModelCatalog::new(Vec::new(), "mai");
+        let empty = ImageModelCatalog::new(Vec::new(), "mai2pro");
         assert!(!empty.supports_auto_aspect());
     }
 }
