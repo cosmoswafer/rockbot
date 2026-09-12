@@ -260,13 +260,13 @@ pub struct ImageModelConfig {
 }
 
 fn default_image_provider() -> ProviderName {
-    ProviderName::try_new("openrouter".to_string()).expect("hardcoded default")
+    ProviderName::try_new("fal".to_string()).expect("hardcoded default")
 }
 fn default_image_text_model() -> String {
-    "mai2pro".into()
+    "gptimage".into()
 }
 fn default_image_edit_model() -> String {
-    "mai2pro".into()
+    "gptimage".into()
 }
 fn default_image_quality() -> String {
     "medium".into()
@@ -481,7 +481,11 @@ fn image_default_models(kind: &str) -> HashMap<String, String> {
                 "seedream5".to_string(),
                 "bytedance/seedream/v5/pro/text-to-image".to_string(),
             );
-            m.insert("gptimage".to_string(), "openai/gpt-image-2".to_string());
+            m.insert("gptimage".to_string(), "openai/gpt-image-2.5/flare/text-to-image".to_string());
+            m.insert(
+                "sunburst".to_string(),
+                "openai/gpt-image-2.5/sunburst/text-to-image".to_string(),
+            );
             m.insert(
                 "grok".to_string(),
                 "xai/grok-imagine-image/quality/text-to-image".to_string(),
@@ -499,7 +503,11 @@ fn image_default_edit_models(kind: &str) -> HashMap<String, String> {
             "seedream5".to_string(),
             "bytedance/seedream/v5/pro/edit".to_string(),
         );
-        m.insert("gptimage".to_string(), "openai/gpt-image-2/edit".to_string());
+        m.insert("gptimage".to_string(), "openai/gpt-image-2.5/flare/edit".to_string());
+        m.insert(
+            "sunburst".to_string(),
+            "openai/gpt-image-2.5/sunburst/edit".to_string(),
+        );
         m.insert(
             "grok".to_string(),
             "xai/grok-imagine-image/quality/edit".to_string(),
@@ -848,6 +856,7 @@ api_key = "k"
         let fal = config.find_image_provider("fal").unwrap();
         assert!(fal.models.contains_key("seedream5"), "unified alias");
         assert!(fal.models.contains_key("gptimage"), "unified alias");
+        assert!(fal.models.contains_key("sunburst"), "GPT Image 2.5 Sunburst alias");
         assert!(fal.models.contains_key("grok"), "base grok alias now exists");
         assert!(
             !fal.models.keys().any(|a| a.ends_with("_edit")),
@@ -855,8 +864,26 @@ api_key = "k"
             fal.models.keys().collect::<Vec<_>>()
         );
         assert_eq!(
+            fal.models.get("gptimage").map(|s| s.as_str()),
+            Some("openai/gpt-image-2.5/flare/text-to-image"),
+            "gptimage is now the GPT Image 2.5 Flare variant (issue #102)"
+        );
+        assert_eq!(
+            fal.models.get("sunburst").map(|s| s.as_str()),
+            Some("openai/gpt-image-2.5/sunburst/text-to-image")
+        );
+        assert_eq!(
             fal.edit_models.get("seedream5").map(|s| s.as_str()),
             Some("bytedance/seedream/v5/pro/edit")
+        );
+        assert_eq!(
+            fal.edit_models.get("gptimage").map(|s| s.as_str()),
+            Some("openai/gpt-image-2.5/flare/edit"),
+            "Flare carries a dedicated edit endpoint (issue #102)"
+        );
+        assert_eq!(
+            fal.edit_models.get("sunburst").map(|s| s.as_str()),
+            Some("openai/gpt-image-2.5/sunburst/edit")
         );
         assert_eq!(
             fal.edit_models.get("grok").map(|s| s.as_str()),
@@ -905,10 +932,45 @@ default_provider = "openrouter"
             !or.models.contains_key("mai"),
             "non-pro mai alias must be removed (issue #101)"
         );
+    }
 
-        // [image_model] defaults point at the surviving pro alias
-        assert_eq!(config.image_model.default_text_model, "mai2pro");
-        assert_eq!(config.image_model.default_edit_model, "mai2pro");
+    #[test]
+    fn test_gpt_image_2_5_flare_is_default_issue102() {
+        // Issue #102: the GPT Image 2 default is replaced by GPT Image 2.5;
+        // Flare is the global default, Sunburst the precision companion.
+        let toml_str = r#"
+[[image_providers]]
+name = "fal"
+api_key = "k"
+"#;
+        let mut config = AppConfig::from_toml(toml_str).unwrap();
+        config.apply_provider_defaults();
+
+        assert_eq!(config.image_model.default_provider.as_str(), "fal");
+        assert_eq!(config.image_model.default_text_model, "gptimage");
+        assert_eq!(config.image_model.default_edit_model, "gptimage");
+
+        let fal = config.find_image_provider("fal").unwrap();
+        assert_eq!(
+            fal.models.get("gptimage").map(|s| s.as_str()),
+            Some("openai/gpt-image-2.5/flare/text-to-image")
+        );
+        assert_eq!(
+            fal.edit_models.get("gptimage").map(|s| s.as_str()),
+            Some("openai/gpt-image-2.5/flare/edit")
+        );
+        assert_eq!(
+            fal.models.get("sunburst").map(|s| s.as_str()),
+            Some("openai/gpt-image-2.5/sunburst/text-to-image")
+        );
+        assert_eq!(
+            fal.edit_models.get("sunburst").map(|s| s.as_str()),
+            Some("openai/gpt-image-2.5/sunburst/edit")
+        );
+        assert!(
+            !fal.models.values().any(|id| id == "openai/gpt-image-2"),
+            "the old GPT Image 2 id must be replaced"
+        );
     }
 
     fn make_base_config() -> String {

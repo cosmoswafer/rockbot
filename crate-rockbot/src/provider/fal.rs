@@ -486,7 +486,7 @@ mod tests {
             size_tier: None,
             output_format: Some("png".into()),
             num_images: Some(2),
-            model_id: Some("openai/gpt-image-2".into()),
+            model_id: Some("openai/gpt-image-2.5/flare/text-to-image".into()),
             image_urls: Some(vec!["https://example.com/img.png".into()]),
             enable_safety_checker: None,
         };

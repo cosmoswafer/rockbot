@@ -122,9 +122,9 @@ async fn test_image_gen_real_text_to_image() {
 
     let model = provider_cfg
         .models
-        .get("gptimage_text")
+        .get("gptimage")
         .cloned()
-        .unwrap_or_else(|| "fal-ai/flux-pro/v1.1-ultra".into());
+        .unwrap_or_else(|| "openai/gpt-image-2.5/flare/text-to-image".into());
     eprintln!("Model: {}", model);
 
     let provider = match rockbot::FalAiProvider::new(&provider_cfg, &model) {
@@ -164,8 +164,8 @@ async fn test_image_gen_real_text_to_image() {
                 provider_name: provider_name.clone(),
             })
             .collect(),
-        "mai2pro",
-);
+        "gptimage",
+    );
     let tool = ImageGenTool::new(
         std::collections::HashMap::from([(
             provider_name.clone(),
@@ -302,9 +302,9 @@ async fn test_image_gen_real_data_uri_handling() {
 
     let model = provider_cfg
         .models
-        .get("gptimage_text")
+        .get("gptimage")
         .cloned()
-        .unwrap_or_else(|| "fal-ai/flux-pro/v1.1-ultra".into());
+        .unwrap_or_else(|| "openai/gpt-image-2.5/flare/text-to-image".into());
 
     let provider = match rockbot::FalAiProvider::new(&provider_cfg, &model) {
         Ok(p) => Box::new(p),
@@ -339,8 +339,8 @@ async fn test_image_gen_real_data_uri_handling() {
                 provider_name: provider_name.clone(),
             })
             .collect(),
-        "mai2pro",
-);
+        "gptimage",
+    );
     let tool = ImageGenTool::new(
         std::collections::HashMap::from([(
             provider_name.clone(),

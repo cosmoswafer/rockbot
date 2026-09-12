@@ -7,8 +7,8 @@ How `ImageGenParams` fields map to each provider's API request body.
 | Field | Default | Used By | Description |
 |-------|---------|---------|-------------|
 | `default_provider` | `"fal"` | Both | Which `[[image_providers]]` entry to use |
-| `default_text_model` | `"seedream"` | Both | Model alias for text-to-image |
-| `default_edit_model` | `"fal-ai/nano-banana-pro/edit"` | Both | Model alias for img2img |
+| `default_text_model` | `"gptimage"` | Both | Model alias for text-to-image (GPT Image 2.5 Flare; #102) |
+| `default_edit_model` | `"gptimage"` | Both | Model alias for img2img (GPT Image 2.5 Flare edit; #102) |
 | `default_quality` | `"medium"` | Both | Quality tier |
 | `default_output_format` | `"png"` | Both | Output file format (models may ignore) |
 | `default_num_images` | `1` | Both | Images per request |

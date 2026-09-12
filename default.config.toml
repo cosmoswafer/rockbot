@@ -61,21 +61,24 @@ base_url = "https://queue.fal.run"
 
 # Unified aliases (#100): one entry per model family; providers that host
 # genuinely separate edit endpoints map them in [image_providers.edit_models].
+# GPT Image 2.5 (#102): `gptimage` = Flare (default), `sunburst` = Sunburst.
 [image_providers.models]
 seedream = "fal-ai/bytedance/seedream/v4.5/text-to-image"
 seedream5 = "bytedance/seedream/v5/pro/text-to-image"
-gptimage = "openai/gpt-image-2"
+gptimage = "openai/gpt-image-2.5/flare/text-to-image"
+sunburst = "openai/gpt-image-2.5/sunburst/text-to-image"
 grok = "xai/grok-imagine-image/quality/text-to-image"
 
 [image_providers.edit_models]
 seedream5 = "bytedance/seedream/v5/pro/edit"
-gptimage = "openai/gpt-image-2/edit"
+gptimage = "openai/gpt-image-2.5/flare/edit"
+sunburst = "openai/gpt-image-2.5/sunburst/edit"
 grok = "xai/grok-imagine-image/quality/edit"
 
 [image_model]
-default_provider = "openrouter"
-default_text_model = "mai2pro"
-default_edit_model = "mai2pro"
+default_provider = "fal"
+default_text_model = "gptimage"
+default_edit_model = "gptimage"
 default_quality = "medium"
 default_output_format = "png"
 default_num_images = 1

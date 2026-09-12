@@ -91,6 +91,10 @@ Config shape: `models` maps alias → t2i id; the sibling `edit_models` map
 genuinely separate endpoints (fal only). Role-scoped default tables in
 `config.rs` guarantee chat-only aliases never enter image-provider defaults
 (#99); they are probed against the fal model registry when the fal map changes.
+The fal defaults carry the GPT Image 2.5 pair (issue #102): `gptimage` →
+`openai/gpt-image-2.5/flare/{text-to-image,edit}` (**Flare**, the
+`[image_model]` default) and `sunburst` →
+`openai/gpt-image-2.5/sunburst/{text-to-image,edit}` (Sunburst).
 
 `resolve(alias)` returns `(model_id, provider_name)` or `None` — the tool
 rejects unknown aliases with a `ToolCallParse` error listing the valid aliases;

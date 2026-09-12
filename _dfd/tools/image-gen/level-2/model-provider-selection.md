@@ -2,7 +2,7 @@
 
 ## 1. Purpose
 
-Level 2 detail for the happy-path diagram in [main-path](../main-path.md): how the tool resolves the LLM's optional `model` alias against the global image model catalog (spans every supported `[[image_providers]]` entry), routes the call to the corresponding provider backend, and selects the t2i or edit backend based on `image_urls` presence (issue #96).
+Level 2 detail for the happy-path diagram in [main-path](../main-path.md): how the tool resolves the LLM's optional `model` alias against the global image model catalog (spans every supported `[[image_providers]]` entry), routes the call to the corresponding provider backend, and selects the t2i or edit backend based on `image_urls` presence (issue #96). The default catalog includes the two GPT Image 2.5 variants (issue #102): `gptimage` → **Flare** (the `[image_model]` default) and `sunburst` → Sunburst.
 
 ## 2. Diagram
 
@@ -41,9 +41,16 @@ genuinely use separate edit endpoints (currently only fal; issue #100):
 | alias        | t2i id                                  | edit companion                  | provider |
 | ------------ | --------------------------------------- | ------------------------------- | -------- |
 | `seedream5`  | `bytedance/seedream/v5/pro/text-to-image` | `bytedance/seedream/v5/pro/edit` | fal |
-| `gptimage`   | `openai/gpt-image-2`                    | `openai/gpt-image-2/edit`       | fal      |
+| `gptimage`   | `openai/gpt-image-2.5/flare/text-to-image` | `openai/gpt-image-2.5/flare/edit` | fal    |
+| `sunburst`   | `openai/gpt-image-2.5/sunburst/text-to-image` | `openai/gpt-image-2.5/sunburst/edit` | fal |
 | `grok`       | `xai/grok-imagine-image/quality/text-to-image` | `xai/grok-imagine-image/quality/edit` | fal |
 | others       | single id                                | *(none — same id both modes)*   | fal/openrouter |
+
+`gptimage` and `sunburst` are the GPT Image 2.5 pair (issue #102): two tunings
+of the same model with identical APIs — **Flare** is the everyday, lower-latency
+default, **Sunburst** the precision-focused variant. Both expose separate
+text-to-image and edit endpoints, so each alias carries an edit companion and
+mode switching stays data-driven (issue #100).
 
 A per-call LLM `model` alias resolves to `(model_id, edit_model_id?,
 provider_name)`:
@@ -79,6 +86,7 @@ OpenRouter routing detail: pure image models (present in the OpenRouter image
 catalog) go to the dedicated Image API `POST /images`; models absent from the
 catalog fall back to `chat/completions`. See
 [AI Provider §2d](../../../ai/ai-provider/level-2/openrouter-image-routing.md).
-Because `openai/gpt-image-2` and `xai/grok-imagine-image` model ids are served
-through OpenRouter, their aliases under an `openrouter` entry automatically use
-that backend — there is no separate openai/xai backend in rockbot.
+Because `openai/gpt-image-2.5/flare` and `xai/grok-imagine-image` model ids are
+served through OpenRouter, their aliases under an `openrouter` entry
+automatically use that backend — there is no separate openai/xai backend in
+rockbot.

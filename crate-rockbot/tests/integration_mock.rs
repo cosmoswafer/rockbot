@@ -4127,3 +4127,138 @@ async fn test_image_gen_catalog_spans_multiple_provider_entries() {
     );
 }
 
+// ─── GPT Image 2.5 Flare/Sunburst (issue #102) ───────────────────────────────
+
+/// Flare is the default `gptimage` alias and carries a dedicated edit endpoint:
+/// an edit call must swap to `openai/gpt-image-2.5/flare/edit` and forward the
+/// input images. Only the edit endpoint is mounted — resolving to the t2i id
+/// would 404 and fail the test.
+#[tokio::test]
+async fn test_image_gen_gpt_image_2_5_flare_edit_uses_dedicated_endpoint() {
+    let mock_server = MockServer::start().await;
+    let base = mock_server.uri();
+
+    let flare_t2i = "openai/gpt-image-2.5/flare/text-to-image";
+    let flare_edit = "openai/gpt-image-2.5/flare/edit";
+    let request_id = "req-flare-edit";
+
+    Mock::given(method("POST"))
+        .and(path(format!("/{flare_edit}")))
+        .and(body_string_contains("\"image_urls\""))
+        .and(body_string_contains("https://example.com/input.png"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "request_id": request_id,
+            "status_url": format!("{base}/{flare_edit}/requests/{request_id}/status"),
+            "response_url": format!("{base}/{flare_edit}/requests/{request_id}"),
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/{flare_edit}/requests/{request_id}/status")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "status": "COMPLETED"
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/{flare_edit}/requests/{request_id}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "images": [{"url": format!("{base}/result.png"), "width": 1024, "height": 1024}]
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    mount_result_image_and_webdav(&mock_server, &base).await;
+
+    let cfg = make_fal_config(&base);
+    let t2i = FalAiProvider::new(&cfg, flare_t2i).unwrap();
+    let edit = FalAiProvider::new(&cfg, flare_edit).unwrap();
+    let catalog = ImageModelCatalog::new(
+        vec![ImageModelEntry {
+            alias: "gptimage".to_string(),
+            model_id: flare_t2i.to_string(),
+            edit_model_id: Some(flare_edit.to_string()),
+            provider_name: "fal".to_string(),
+        }],
+        "gptimage",
+    );
+    let tool = ImageGenTool::new(
+        HashMap::from([(
+            "fal".to_string(),
+            ImageBackend::new(Box::new(t2i), Some(Box::new(edit))),
+        )]),
+        "fal".to_string(),
+        catalog,
+        "medium".into(),
+        "png".into(),
+        1,
+        "4K".into(),
+        false,
+        webdav::WebDavClient::new(&base, "user", "pass").unwrap(),
+        Arc::new(rockbot::image_cache::ImageCache::new()),
+    );
+
+    let result = tool
+        .execute(
+            r#"{"prompt":"brighten the scene","aspect_ratio":"16:9","model":"gptimage","image_urls":["https://example.com/input.png"],"room_id":"d-abc"}"#,
+        )
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_str(&result).unwrap();
+    assert_eq!(v["ok"], true, "Flare edit must succeed: {result}");
+}
+
+/// Sunburst shares Flare's API shape; a text-to-image call (no input images)
+/// must hit the plain `sunburst/text-to-image` id, not the edit companion.
+#[tokio::test]
+async fn test_image_gen_gpt_image_2_5_sunburst_t2i_uses_plain_endpoint() {
+    let mock_server = MockServer::start().await;
+    let base = mock_server.uri();
+
+    let sunburst_t2i = "openai/gpt-image-2.5/sunburst/text-to-image";
+    let sunburst_edit = "openai/gpt-image-2.5/sunburst/edit";
+
+    // Only the t2i path is mounted — edit resolution would 404.
+    mount_fal_queue_pipeline(&mock_server, &base, sunburst_t2i).await;
+    mount_result_image_and_webdav(&mock_server, &base).await;
+
+    let cfg = make_fal_config(&base);
+    let t2i = FalAiProvider::new(&cfg, sunburst_t2i).unwrap();
+    let edit = FalAiProvider::new(&cfg, sunburst_edit).unwrap();
+    let catalog = ImageModelCatalog::new(
+        vec![ImageModelEntry {
+            alias: "sunburst".to_string(),
+            model_id: sunburst_t2i.to_string(),
+            edit_model_id: Some(sunburst_edit.to_string()),
+            provider_name: "fal".to_string(),
+        }],
+        "gptimage",
+    );
+    let tool = ImageGenTool::new(
+        HashMap::from([(
+            "fal".to_string(),
+            ImageBackend::new(Box::new(t2i), Some(Box::new(edit))),
+        )]),
+        "fal".to_string(),
+        catalog,
+        "medium".into(),
+        "png".into(),
+        1,
+        "4K".into(),
+        false,
+        webdav::WebDavClient::new(&base, "user", "pass").unwrap(),
+        Arc::new(rockbot::image_cache::ImageCache::new()),
+    );
+
+    let result = tool
+        .execute(
+            r#"{"prompt":"a sunburst over mountains","aspect_ratio":"16:9","model":"sunburst","room_id":"d-abc"}"#,
+        )
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_str(&result).unwrap();
+    assert_eq!(v["ok"], true, "Sunburst t2i must succeed: {result}");
+}
+

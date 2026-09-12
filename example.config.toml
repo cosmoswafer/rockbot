@@ -10,6 +10,16 @@ api_key = "EDITME"
 name = "openrouter"
 api_key = "sk-or-v1-EDITME"
 
+[[image_providers]]
+name = "fal"
+api_key = "EDITME"
+
+# Global image defaults (GPT Image 2.5 Flare is the shipped default; #102):
+# [image_model]
+# default_provider = "fal"
+# default_text_model = "gptimage"
+# default_edit_model = "gptimage"
+
 [rocketchat.server]
 url = "your-server.example.com"
 username = "EDITME"

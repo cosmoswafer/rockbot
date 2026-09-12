@@ -37,6 +37,14 @@ fn load_fal_config() -> ProviderConfig {
                     }
                 }
             }
+            let mut edit_models = HashMap::new();
+            if let Some(edit_table) = provider.get("edit_models").and_then(|v| v.as_table()) {
+                for (k, v) in edit_table {
+                    if let Some(val) = v.as_str() {
+                        edit_models.insert(k.clone(), val.to_string());
+                    }
+                }
+            }
             return ProviderConfig {
                 name: ProviderName::try_new("fal".to_string()).unwrap(),
                 api_key: provider["api_key"].as_str().unwrap_or("").into(),
@@ -45,7 +53,7 @@ fn load_fal_config() -> ProviderConfig {
                 chat_path: None,
                 draw_path: None,
                 models,
-                edit_models: std::collections::HashMap::new(),
+                edit_models,
             };
         }
     }
@@ -58,10 +66,10 @@ async fn test_fal_image_edit_with_p1() {
     // Load fal config and resolve the edit model
     let fal_cfg = load_fal_config();
     let edit_model = fal_cfg
-        .models
-        .get("gptimage_edit")
+        .edit_models
+        .get("gptimage")
         .cloned()
-        .unwrap_or_else(|| "openai/gpt-image-2/edit".to_string());
+        .unwrap_or_else(|| "openai/gpt-image-2.5/flare/edit".to_string());
 
     eprintln!("FAL base_url: {}", fal_cfg.base_url.as_str());
     eprintln!("FAL edit model: {}", edit_model);
