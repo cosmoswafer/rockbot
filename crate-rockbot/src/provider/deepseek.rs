@@ -9,9 +9,9 @@ use crate::types::{
     ToolCall, UsageInfo,
 };
 
-/// The only DeepSeek chat model that accepts image input — see
+/// The sole DeepSeek chat model — vision-capable, see
 /// https://api-docs.deepseek.com/guides/vision.
-pub(crate) const VISION_MODEL: &str = "deepseek-v4-flash-vision-exp";
+pub(crate) const VISION_MODEL: &str = "deepseek-flash";
 
 pub struct DeepSeekProvider {
     api_key: String,
@@ -374,12 +374,12 @@ mod tests {
         let provider = DeepSeekProvider {
             api_key: "test-key".into(),
             base_url: "https://api.deepseek.com/v1/chat/completions".into(),
-            model: "deepseek-v4-pro".into(),
+            model: "deepseek-flash".into(),
             http_client: reqwest::Client::new(),
         };
 
         let request = ChatRequest {
-            model: "deepseek-v4-pro".into(),
+            model: "deepseek-flash".into(),
             messages: vec![ChatMessage::user("Hello")],
             tools: None,
             stream: false,
@@ -391,7 +391,7 @@ mod tests {
         };
 
         let body = provider.build_request_body(&request);
-        assert_eq!(body["model"], "deepseek-v4-pro");
+        assert_eq!(body["model"], "deepseek-flash");
         assert_eq!(body["stream"], false);
         assert_eq!(body["messages"][0]["role"], "user");
         assert_eq!(body["messages"][0]["content"], "Hello");
@@ -402,12 +402,12 @@ mod tests {
         let provider = DeepSeekProvider {
             api_key: "test-key".into(),
             base_url: "https://api.deepseek.com/v1/chat/completions".into(),
-            model: "deepseek-v4-flash".into(),
+            model: "deepseek-flash".into(),
             http_client: reqwest::Client::new(),
         };
 
         let request = ChatRequest {
-            model: "deepseek-v4-flash".into(),
+            model: "deepseek-flash".into(),
             messages: vec![
                 ChatMessage::system("You are helpful"),
                 ChatMessage::user("Hi"),
@@ -426,7 +426,7 @@ mod tests {
         };
 
         let body = provider.build_request_body(&request);
-        assert_eq!(body["model"], "deepseek-v4-flash");
+        assert_eq!(body["model"], "deepseek-flash");
         let temp = body["temperature"].as_f64().unwrap();
         assert!((temp - 0.7).abs() < 0.001, "temperature was {temp}");
         assert_eq!(body["max_tokens"], 2048);
@@ -672,9 +672,9 @@ mod tests {
             models: std::collections::HashMap::new(),
             edit_models: std::collections::HashMap::new(),
         };
-        let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();
+        let provider = DeepSeekProvider::new(&config, "deepseek-flash").unwrap();
         assert_eq!(provider.provider_name(), "deepseek");
-        assert_eq!(provider.model_name(), "deepseek-v4-pro");
+        assert_eq!(provider.model_name(), "deepseek-flash");
     }
 
     #[test]
@@ -682,12 +682,12 @@ mod tests {
         let provider = DeepSeekProvider {
             api_key: "test-key".into(),
             base_url: "https://api.deepseek.com/v1/chat/completions".into(),
-            model: "deepseek-v4-flash".into(),
+            model: "deepseek-flash".into(),
             http_client: reqwest::Client::new(),
         };
 
         let request = ChatRequest {
-            model: "deepseek-v4-flash".into(),
+            model: "deepseek-flash".into(),
             messages: vec![ChatMessage::user("Hello")],
             tools: None,
             stream: false,
@@ -758,7 +758,7 @@ mod tests {
         let provider = DeepSeekProvider {
             api_key: "test-key".into(),
             base_url: "https://api.deepseek.com/v1/chat/completions".into(),
-            model: "deepseek-v4-pro".into(),
+            model: "deepseek-text-only".into(),
             http_client: reqwest::Client::new(),
         };
         assert!(!provider.supports_vision());
@@ -848,12 +848,12 @@ mod tests {
         let provider = DeepSeekProvider {
             api_key: "test-key".into(),
             base_url: "https://api.deepseek.com/v1/chat/completions".into(),
-            model: "deepseek-v4-pro".into(),
+            model: "deepseek-text-only".into(),
             http_client: reqwest::Client::new(),
         };
 
         let request = ChatRequest {
-            model: "deepseek-v4-pro".into(),
+            model: "deepseek-text-only".into(),
             messages: vec![ChatMessage::user_with_images(
                 "Look at this",
                 vec!["data:image/png;base64,abc".into()],

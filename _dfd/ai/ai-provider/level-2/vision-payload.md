@@ -43,15 +43,16 @@ flowchart TD
 resolved model via `AiProvider::supports_vision()`:
 
 - **Vision-capable** (OpenRouter, llama.cpp with a multimodal GGUF, DeepSeek
-  `deepseek-v4-flash-vision-exp`): `ContentPart::ImageUrl` parts pass through
-  unchanged — the LLM sees the actual pixels. For DeepSeek, images are kept
-  only in **user** messages: DeepSeek rejects `image_url` parts in system/
-  assistant messages with HTTP 400 (`Image in system/assistant message is not
-  supported`), so non-user roles still go through the `[image]` conversion.
-- **Text-only DeepSeek models** (`deepseek-v4-pro` and friends): all
+  `deepseek-flash` — the sole DeepSeek chat model): `ContentPart::ImageUrl`
+  parts pass through unchanged — the LLM sees the actual pixels. For DeepSeek,
+  images are kept only in **user** messages: DeepSeek rejects `image_url` parts
+  in system/assistant messages with HTTP 400 (`Image in system/assistant message
+  is not supported`), so non-user roles still go through the `[image]`
+  conversion.
+- **Non-vision DeepSeek model ids** (any id other than `deepseek-flash`): all
   `ImageUrl` parts from every `ChatMessage` are stripped via
   `DeepSeekProvider::strip_message_images()`, converting multipart content to
-  plain text with `[image]` placeholders. This keeps the shared
+  plain text with `[image]` placeholders. This defensive path keeps the shared
   `ChatMessage`/`ContentPart` data structures intact across all providers while
   preventing 400 errors — historically `unknown variant 'image_url', expected
   'text'`, today `This model does not support image` (live probe,

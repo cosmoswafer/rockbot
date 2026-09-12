@@ -506,7 +506,7 @@ fn test_thinking_config() {
 #[test]
 fn test_chat_request_json_serialization() {
     let request = ChatRequest {
-        model: "deepseek-v4-pro".into(),
+        model: "deepseek-flash".into(),
         messages: vec![ChatMessage::user("Hello")],
         tools: None,
         stream: false,
@@ -518,7 +518,7 @@ fn test_chat_request_json_serialization() {
     };
 
     let json = serde_json::to_value(&request).unwrap();
-    assert_eq!(json["model"], "deepseek-v4-pro");
+    assert_eq!(json["model"], "deepseek-flash");
     let temp = json["temperature"].as_f64().unwrap_or(0.0);
     assert!((temp - 0.7).abs() < 0.001, "temperature was {temp}");
     assert_eq!(json["thinking"]["type"], "enabled");
@@ -769,8 +769,8 @@ fn test_deepseek_provider_with_client() {
         edit_models: std::collections::HashMap::new(),
     };
     let client = reqwest::Client::new();
-    let provider = DeepSeekProvider::with_client(&config, "deepseek-v4-pro", client).unwrap();
-    assert_eq!(provider.model_name(), "deepseek-v4-pro");
+    let provider = DeepSeekProvider::with_client(&config, "deepseek-flash", client).unwrap();
+    assert_eq!(provider.model_name(), "deepseek-flash");
 }
 
 #[test]
@@ -844,11 +844,11 @@ fn test_ai_provider_is_object_safe() {
         models: HashMap::new(),
         edit_models: std::collections::HashMap::new(),
     };
-    let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();
+    let provider = DeepSeekProvider::new(&config, "deepseek-flash").unwrap();
     // Verify it can be used as a trait object
     let _: &dyn AiProvider = &provider;
     assert_eq!(provider.provider_name(), "deepseek");
-    assert_eq!(provider.model_name(), "deepseek-v4-pro");
+    assert_eq!(provider.model_name(), "deepseek-flash");
 }
 
 #[test]

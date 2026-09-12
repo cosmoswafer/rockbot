@@ -443,8 +443,7 @@ fn chat_default_models(kind: &str) -> HashMap<String, String> {
             m.insert("qwenimage".to_string(), "qwen/qwen-image-3-pro".to_string());
         }
         "deepseek" => {
-            m.insert("flash".to_string(), "deepseek-v4-flash-vision-exp".to_string());
-            m.insert("pro".to_string(), "deepseek-v4-pro".to_string());
+            m.insert("flash".to_string(), "deepseek-flash".to_string());
         }
         "llamacpp" => {
             m.insert("local".to_string(), "local-model".to_string());

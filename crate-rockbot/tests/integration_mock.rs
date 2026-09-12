@@ -58,10 +58,10 @@ async fn test_complete_simple_response() {
         models: HashMap::new(),
             edit_models: HashMap::new(),
     };
-    let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();
+    let provider = DeepSeekProvider::new(&config, "deepseek-flash").unwrap();
 
     let request = ChatRequest {
-        model: "deepseek-v4-pro".into(),
+        model: "deepseek-flash".into(),
         messages: vec![ChatMessage::user("Hello")],
         tools: None,
         stream: false,
@@ -107,10 +107,10 @@ async fn test_deepseek_vision_model_forwards_images_in_user_messages() {
         models: HashMap::new(),
             edit_models: HashMap::new(),
     };
-    let provider = DeepSeekProvider::new(&config, "deepseek-v4-flash-vision-exp").unwrap();
+    let provider = DeepSeekProvider::new(&config, "deepseek-flash").unwrap();
 
     let request = ChatRequest {
-        model: "deepseek-v4-flash-vision-exp".into(),
+        model: "deepseek-flash".into(),
         messages: vec![
             ChatMessage::system("You are helpful"),
             ChatMessage::user_with_images(
@@ -173,10 +173,10 @@ async fn test_deepseek_text_model_strips_images_before_send() {
         models: HashMap::new(),
             edit_models: HashMap::new(),
     };
-    let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();
+    let provider = DeepSeekProvider::new(&config, "deepseek-text-only").unwrap();
 
     let request = ChatRequest {
-        model: "deepseek-v4-pro".into(),
+        model: "deepseek-text-only".into(),
         messages: vec![ChatMessage::user_with_images(
             "Look at this",
             vec!["data:image/png;base64,abc".into()],
@@ -239,10 +239,10 @@ async fn test_complete_with_tool_calls() {
         models: HashMap::new(),
             edit_models: HashMap::new(),
     };
-    let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();
+    let provider = DeepSeekProvider::new(&config, "deepseek-flash").unwrap();
 
     let request = ChatRequest {
-        model: "deepseek-v4-pro".into(),
+        model: "deepseek-flash".into(),
         messages: vec![ChatMessage::user("Weather in Tokyo?")],
         tools: Some(vec![ToolDef::new(
             "get_weather",
@@ -333,7 +333,7 @@ async fn test_deepseek_repairs_truncated_history_tool_args_before_send() {
         models: HashMap::new(),
             edit_models: HashMap::new(),
     };
-    let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();
+    let provider = DeepSeekProvider::new(&config, "deepseek-flash").unwrap();
 
     // History contains a truncated 11K-char-style report argument (missing
     // closing quote, embedded JSON braces).
@@ -343,7 +343,7 @@ async fn test_deepseek_repairs_truncated_history_tool_args_before_send() {
 ```
 more text"#;
     let request = ChatRequest {
-        model: "deepseek-v4-pro".into(),
+        model: "deepseek-flash".into(),
         messages: vec![ChatMessage::assistant_with_tool_calls(
             "",
             vec![ToolCall::new("call_001", "save_knowledge", truncated.to_string())],
@@ -401,10 +401,10 @@ async fn test_deepseek_response_truncated_tool_args_repaired() {
         models: HashMap::new(),
             edit_models: HashMap::new(),
     };
-    let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();
+    let provider = DeepSeekProvider::new(&config, "deepseek-flash").unwrap();
 
     let request = ChatRequest {
-        model: "deepseek-v4-pro".into(),
+        model: "deepseek-flash".into(),
         messages: vec![ChatMessage::user("Write a report")],
         tools: None,
         stream: false,
@@ -453,10 +453,10 @@ async fn test_complete_with_reasoning() {
         models: HashMap::new(),
             edit_models: HashMap::new(),
     };
-    let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();
+    let provider = DeepSeekProvider::new(&config, "deepseek-flash").unwrap();
 
     let request = ChatRequest {
-        model: "deepseek-v4-pro".into(),
+        model: "deepseek-flash".into(),
         messages: vec![ChatMessage::user("What is the answer?")],
         tools: None,
         stream: false,
@@ -498,10 +498,10 @@ async fn test_complete_401_unauthorized() {
         models: HashMap::new(),
             edit_models: HashMap::new(),
     };
-    let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();
+    let provider = DeepSeekProvider::new(&config, "deepseek-flash").unwrap();
 
     let request = ChatRequest {
-        model: "deepseek-v4-pro".into(),
+        model: "deepseek-flash".into(),
         messages: vec![ChatMessage::user("Hi")],
         tools: None,
         stream: false,
@@ -539,10 +539,10 @@ async fn test_complete_429_rate_limit() {
         models: HashMap::new(),
             edit_models: HashMap::new(),
     };
-    let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();
+    let provider = DeepSeekProvider::new(&config, "deepseek-flash").unwrap();
 
     let request = ChatRequest {
-        model: "deepseek-v4-pro".into(),
+        model: "deepseek-flash".into(),
         messages: vec![ChatMessage::user("Hi")],
         tools: None,
         stream: false,
@@ -577,10 +577,10 @@ async fn test_complete_500_server_error() {
         models: HashMap::new(),
             edit_models: HashMap::new(),
     };
-    let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();
+    let provider = DeepSeekProvider::new(&config, "deepseek-flash").unwrap();
 
     let request = ChatRequest {
-        model: "deepseek-v4-pro".into(),
+        model: "deepseek-flash".into(),
         messages: vec![ChatMessage::user("Hi")],
         tools: None,
         stream: false,
@@ -618,10 +618,10 @@ async fn test_complete_503_overloaded() {
         models: HashMap::new(),
             edit_models: HashMap::new(),
     };
-    let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();
+    let provider = DeepSeekProvider::new(&config, "deepseek-flash").unwrap();
 
     let request = ChatRequest {
-        model: "deepseek-v4-pro".into(),
+        model: "deepseek-flash".into(),
         messages: vec![ChatMessage::user("Hi")],
         tools: None,
         stream: false,
@@ -662,10 +662,10 @@ async fn test_complete_402_insufficient_balance() {
         models: HashMap::new(),
             edit_models: HashMap::new(),
     };
-    let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();
+    let provider = DeepSeekProvider::new(&config, "deepseek-flash").unwrap();
 
     let request = ChatRequest {
-        model: "deepseek-v4-pro".into(),
+        model: "deepseek-flash".into(),
         messages: vec![ChatMessage::user("Hi")],
         tools: None,
         stream: false,
@@ -710,10 +710,10 @@ async fn test_complete_with_thinking_and_tools() {
         models: HashMap::new(),
             edit_models: HashMap::new(),
     };
-    let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();
+    let provider = DeepSeekProvider::new(&config, "deepseek-flash").unwrap();
 
     let request = ChatRequest {
-        model: "deepseek-v4-pro".into(),
+        model: "deepseek-flash".into(),
         messages: vec![ChatMessage::user("Weather in Beijing?")],
         tools: Some(vec![ToolDef::new(
             "get_weather",
@@ -762,10 +762,10 @@ async fn test_complete_custom_chat_path() {
         models: HashMap::new(),
             edit_models: HashMap::new(),
     };
-    let provider = DeepSeekProvider::new(&config, "deepseek-v4-flash").unwrap();
+    let provider = DeepSeekProvider::new(&config, "deepseek-flash").unwrap();
 
     let request = ChatRequest {
-        model: "deepseek-v4-flash".into(),
+        model: "deepseek-flash".into(),
         messages: vec![ChatMessage::user("Test")],
         tools: None,
         stream: false,
@@ -811,7 +811,7 @@ async fn test_complete_multi_turn_conversation() {
         models: HashMap::new(),
             edit_models: HashMap::new(),
     };
-    let provider = DeepSeekProvider::new(&config, "deepseek-v4-pro").unwrap();
+    let provider = DeepSeekProvider::new(&config, "deepseek-flash").unwrap();
 
     let messages = vec![
         ChatMessage::system("You are a helpful math tutor."),
@@ -821,7 +821,7 @@ async fn test_complete_multi_turn_conversation() {
     ];
 
     let request = ChatRequest {
-        model: "deepseek-v4-pro".into(),
+        model: "deepseek-flash".into(),
         messages,
         tools: None,
         stream: false,
