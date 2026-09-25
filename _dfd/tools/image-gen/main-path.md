@@ -19,6 +19,14 @@ the only supported backend kinds, #96). The tool's `description()` and
 (issue #95) — see
 [Level 2: Tool Description Generation](level-2/tool-description.md).
 
+Per-model wire traits (issue #104, [structures.md](structures.md) §3
+`ImageModelTraits`) shape the request beyond the catalog: the `ming` alias
+(`inclusionai/ming-image-0.1-design`, Ming Image 0.1 Design — promo `$0.00` on
+NovitaAI, single route) is **self-sized** (the provider omits `resolution` /
+`aspect_ratio`, the tool returns a one-line `note` instead) and
+**text-to-image-only** (an edit call carrying input images fails at the parse
+boundary with a clear `ToolCallParse` error before any provider request).
+
 - Upstream: [Agent Harness](../../agent/agent-harness/image-interception.md) injects `room_id`, `webdav_dir`,
   and `image_cache_key` (call_id) into tool args before invoking `execute_by_name()`
 - Upstream: [Image Injection Pipeline](../../agent/agent-harness/image-sharing.md)

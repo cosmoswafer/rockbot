@@ -3818,6 +3818,74 @@ async fn test_openrouter_image_gen_model_id_override_in_body() {
     assert!(!bytes.is_empty());
 }
 
+#[tokio::test]
+async fn test_openrouter_image_gen_ming_omits_size_params() {
+    // Issue #104 acceptance: the Image API body for ming must contain no
+    // size/aspect-ratio fields, while output_format/n pass through. The
+    // catalog fixture mirrors the live GET /images/models entry (no
+    // resolution/aspect_ratio descriptors, n capped at 1).
+    let mock_server = MockServer::start().await;
+    let base = mock_server.uri();
+
+    Mock::given(method("GET"))
+        .and(path("/images/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": [{
+                "id": "inclusionai/ming-image-0.1-design",
+                "supported_parameters": {
+                    "output_format": { "type": "enum", "values": ["png", "jpeg", "webp"] },
+                    "n": { "type": "range", "min": 1, "max": 1 },
+                    "input_references": { "type": "range", "min": 0, "max": 0 }
+                }
+            }]
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/images"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": [{ "b64_json": "iVBORw0KGgo=", "media_type": "image/png" }]
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let config = make_openrouter_image_config(&base);
+    let provider =
+        OpenRouterImageProvider::new(&config, "inclusionai/ming-image-0.1-design").unwrap();
+    let mut params = ImageGenParams::new("a poster with legible text");
+    params.size_tier = Some("4K".into());
+    params.image_size = Some(rockbot::ImageSizeValue::Preset("2:3".into()));
+    params.num_images = Some(4);
+    params.quality = Some("medium".into());
+    params.output_format = Some("png".into());
+
+    let bytes = provider.generate_image(&params).await.unwrap();
+    assert!(!bytes.is_empty());
+
+    let received = mock_server.received_requests().await.unwrap();
+    let post = received
+        .iter()
+        .find(|r| r.url.path() == "/images")
+        .expect("images POST captured");
+    let body: serde_json::Value = serde_json::from_slice(&post.body).expect("request body is JSON");
+    assert_eq!(body["model"], "inclusionai/ming-image-0.1-design");
+    assert!(
+        body.get("resolution").is_none(),
+        "self-sized model must omit resolution: {body}"
+    );
+    assert!(
+        body.get("aspect_ratio").is_none(),
+        "self-sized model rejects aspect_ratio: {body}"
+    );
+    assert!(body.get("quality").is_none(), "ming does not advertise quality: {body}");
+    assert_eq!(body["n"], 1, "num_images clamps to the catalog max");
+    assert_eq!(body["output_format"], "png");
+    assert_eq!(body["prompt"], "a poster with legible text");
+}
+
 // ─── Dynamic tool description from [image_providers] config (issue #95) ──────
 //
 // The tool's description and schema are generated from the catalog at registry

@@ -25,6 +25,15 @@ edit companion id for providers that genuinely use separate endpoints
 (currently only fal); otherwise the same model id serves both modes and no
 `*_edit` alias is exposed.
 
+Per-model **wire-level traits** (issue #104, `ImageModelTraits`) cover quirks
+the OpenRouter image catalog does not advertise: *self-sized* models
+(`ming` → `inclusionai/ming-image-0.1-design`, Ming Image 0.1 Design) choose
+their own output dimensions, so the request builder drops `resolution` /
+`aspect_ratio`, and *text-to-image-only* models reject edit calls at the tool
+parse boundary with a clear error. Neither trait affects catalog routing — the
+alias is registered once in `models` (never in `edit_models`) and every call
+still resolves through `ImageModelCatalog`.
+
 The tool's description and `parameters()` schema are **generated from the
 catalog at registry time** (issue #95, see
 [level-2/tool-description.md](level-2/tool-description.md)) — config is the
@@ -49,8 +58,8 @@ LLM provides `prompt` and `aspect_ratio` (both required); all other fields come 
 | --------------- | ----------------- | ---------------------------------------------- | ------------------------------------------------ |
 | `prompt`        | LLM               | `NonEmptyString`                               | **Required.** Validated at JSON deserialization — empty prompt fails at parse boundary. |
 | `aspect_ratio`  | LLM               | `NonEmptyString`                              | **Required.** Aspect ratio as `W:H` (e.g. `"16:9"`, `"2:3"`, `"1:1"`). Validated non-empty at deserialization. Stored directly as `image_size: Preset(ratio_string)`. |
-| `image_size`    | Tool (resolved)  | preset name → pixels                         | Resolved from LLM's `aspect_ratio` per-provider. Hidden from LLM. |
-| `size_tier`     | Config            | `"4K"`, `"2K"`, `"1K"`                        | Resolution tier for OpenRouter. Set from `default_image_size_tier`. Ignored by fal. |
+| `image_size`    | Tool (resolved)  | preset name → pixels                         | Resolved from LLM's `aspect_ratio` per-provider. Hidden from LLM. Dropped on the wire by self-sized models (#104). |
+| `size_tier`     | Config            | `"4K"`, `"2K"`, `"1K"`                        | Resolution tier for OpenRouter. Set from `default_image_size_tier`. Ignored by fal and by self-sized OpenRouter models (#104). |
 | `room_id`       | Harness           | `string`                                       | Room UUID for image storage (injected if omitted). **Note:** injected at execute time, not stored in the Rust struct. |
 | `webdav_dir`    | Harness           | `string`                                       | Type-prefixed room path (injected; falls back to room_id). **Note:** injected at execute time, not stored in the Rust struct; also absent from the LLM-facing tool schema. |
 | `image_cache_key`| Harness          | `string`                                       | Tool call_id — used as ImageCache lookup key. **Note:** injected at execute time, not in LLM-facing schema. |
@@ -112,6 +121,26 @@ model id contains the `seedream/v5` marker (same constant used by
 `aspect_ratio` parameter descriptions; when `false`, no auto-dimensional
 strings are advertised.
 
+#### `ImageModelTraits`
+
+Per-model wire-level quirks **not** advertised by the OpenRouter image catalog,
+derived from the model id once (`ImageModelTraits::for_model_id` in `types.rs`,
+issue #104) — the canonical type consumed by both `ImageGenTool` and
+`OpenRouterImageProvider`, so tool behaviour and wire body can never disagree.
+The only marked model today is `ming` (`inclusionai/ming-image-0.1-design`,
+Ming Image 0.1 Design — text-to-image only, model-chosen dimensions, promo
+`$0.00` pricing on NovitaAI). Both traits default to `false`.
+
+| Field                 | Type   | Description                                                                 |
+| --------------------- | ------ | --------------------------------------------------------------------------- |
+| `self_sized`          | `bool` | Model picks its own dimensions — the request builder omits `resolution` / `aspect_ratio`; the tool appends a one-line `note` to the result instead of the params. |
+| `text_to_image_only`  | `bool` | Model accepts no input references — `image_gen` rejects edit calls at the parse boundary with a `ToolCallParse` text-to-image-only error naming the model id. |
+
+`ImageModelEntry::traits()` exposes the flags for an entry; the provider
+derives them from the effective model id it is about to send
+(`params.model_id` or its configured default), so a direct provider call
+without the tool is guarded too.
+
 #### `ImageGenResult`
 
 The tool returns minimal JSON — no base64. The actual image bytes are in `ImageCache` keyed by `image_key`.
@@ -121,6 +150,12 @@ The tool returns minimal JSON — no base64. The actual image bytes are in `Imag
 ```
 
 The `share_url` field is conditionally present — included only when a NextCloud share link was successfully created for the generated image. It is absent when share generation failed (fallback to DDP attachment path).
+
+The `note` field is conditionally present — included only when the resolved
+model is self-sized (`ImageModelTraits.self_sized`, issue #104). It is a
+one-line hint that the model chose the output dimensions and the
+`aspect_ratio` / size-tier params were omitted (preferred behaviour per the
+issue: silent drop + hint, rather than a hard error).
 
 #### `ImageCache` Entry (GeneratedImage)
 

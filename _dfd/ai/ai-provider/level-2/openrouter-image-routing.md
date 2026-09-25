@@ -57,6 +57,14 @@ omitted rather than sent:
   `supported_parameters`.
 - `input_references` — img2img `image_urls` map to
   `[{"type": "image_url", "image_url": {"url": ...}}]`.
+- self-sized models (issue #104: `inclusionai/ming-image-0.1-design`) —
+  `resolution`, `aspect_ratio`, and the chat-path `image_size` tier are
+  omitted even when requested: the model picks its own dimensions and rejects
+  explicit sizes. Derived from `ImageModelTraits::for_model_id(model).self_sized`
+  (`types.rs`), so the tool result hint and the wire body cannot disagree.
+  Text-to-image-only traits are enforced a level up: the `image_gen` tool
+  rejects edit calls before this request builder runs (see
+  [image-gen structures §3](../../../tools/image-gen/structures.md)).
 
 The Image API response is `{data: [{b64_json, media_type}], usage}`; the
 first entry's `b64_json` is base64-decoded to the returned bytes.

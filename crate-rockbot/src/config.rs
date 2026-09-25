@@ -469,6 +469,10 @@ fn image_default_models(kind: &str) -> HashMap<String, String> {
             m.insert("seedream5pro".to_string(), "bytedance-seed/seedream-5-0-pro".to_string());
             m.insert("grok2".to_string(), "x-ai/grok-imagine-image-2.0".to_string());
             m.insert("muse".to_string(), "meta/muse-image".to_string());
+            // Issue #104: Ming Image 0.1 Design — text-to-image only, model-chosen
+            // dimensions (never registered in edit_models). Promo $0.00 pricing on
+            // NovitaAI (its only route); treat the free price as promotional.
+            m.insert("ming".to_string(), "inclusionai/ming-image-0.1-design".to_string());
             m.insert("qwenimage".to_string(), "qwen/qwen-image-3-pro".to_string());
         }
         "fal" => {
@@ -930,6 +934,33 @@ default_provider = "openrouter"
         assert!(
             !or.models.contains_key("mai"),
             "non-pro mai alias must be removed (issue #101)"
+        );
+    }
+
+    #[test]
+    fn test_openrouter_image_defaults_issue104_ming_alias() {
+        // Issue #104: Ming Image 0.1 Design registers as a text-to-image alias
+        // in `models` only — never as an edit companion (the model rejects
+        // input references).
+        let toml_str = r#"
+[[image_providers]]
+name = "openrouter"
+api_key = "k"
+
+[image_model]
+default_provider = "openrouter"
+"#;
+        let mut config = AppConfig::from_toml(toml_str).unwrap();
+        config.apply_provider_defaults();
+
+        let or = config.find_image_provider("openrouter").unwrap();
+        assert_eq!(
+            or.models.get("ming").map(|s| s.as_str()),
+            Some("inclusionai/ming-image-0.1-design")
+        );
+        assert!(
+            !or.edit_models.contains_key("ming"),
+            "ming must not register an edit endpoint (text-to-image only)"
         );
     }
 

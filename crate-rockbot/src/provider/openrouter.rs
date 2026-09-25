@@ -470,6 +470,17 @@ impl crate::provider::ImageProvider for OpenRouterImageProvider {
             .model_id
             .clone()
             .unwrap_or_else(|| self.model.clone());
+        // Defense in depth (issue #104): the tool rejects edit calls for
+        // text-to-image-only models at the parse boundary, but a direct
+        // provider call with input references must fail clearly too.
+        if crate::types::ImageModelTraits::for_model_id(&model).text_to_image_only
+            && params.image_urls.as_ref().is_some_and(|urls| !urls.is_empty())
+        {
+            return Err(RockBotError::Provider(format!(
+                "OpenRouter image gen: model '{}' is text-to-image only — it accepts no input images",
+                model
+            )));
+        }
         let caps = self.catalog_caps().await;
         match caps.get(&model) {
             Some(caps) => self.generate_via_image_api(params, caps).await,
@@ -580,17 +591,23 @@ impl OpenRouterImageProvider {
         use crate::types::ImageSizeValue;
 
         let mut body = serde_json::Map::new();
-        body.insert(
-            "model".into(),
-            serde_json::json!(params.model_id.as_deref().unwrap_or(&self.model)),
-        );
+        let model_id = params.model_id.as_deref().unwrap_or(&self.model);
+        body.insert("model".into(), serde_json::json!(model_id));
         body.insert("prompt".into(), serde_json::json!(params.prompt));
 
-        if let Some(resolution) = Self::resolve_resolution(params.size_tier.as_deref(), caps) {
+        // Self-sized models (issue #104) choose their own output dimensions
+        // and reject explicit size params — omit them entirely.
+        let self_sized = crate::types::ImageModelTraits::for_model_id(model_id).self_sized;
+
+        if !self_sized
+            && let Some(resolution) = Self::resolve_resolution(params.size_tier.as_deref(), caps)
+        {
             body.insert("resolution".into(), serde_json::json!(resolution));
         }
 
-        if let Some(ref size) = params.image_size {
+        if !self_sized
+            && let Some(ref size) = params.image_size
+        {
             let ratio = match size {
                 ImageSizeValue::Preset(name) => Self::preset_to_aspect_ratio(name).to_string(),
                 ImageSizeValue::Custom { width, height } => format!("{width}:{height}"),
@@ -737,26 +754,34 @@ impl OpenRouterImageProvider {
 
         // Build image_config
         let mut image_config = serde_json::Map::new();
-        if let Some(ref size) = params.image_size {
-            match size {
-                ImageSizeValue::Preset(name) => {
-                    image_config.insert(
-                        "aspect_ratio".into(),
-                        serde_json::json!(Self::preset_to_aspect_ratio(name)),
-                    );
-                }
-                ImageSizeValue::Custom { width, height } => {
-                    image_config.insert(
-                        "aspect_ratio".into(),
-                        serde_json::json!(format!("{}:{}", width, height)),
-                    );
+        // Self-sized models (issue #104) reject explicit dimensions in the
+        // chat fallback path too — omit aspect_ratio and the size tier.
+        let self_sized = crate::types::ImageModelTraits::for_model_id(
+            params.model_id.as_deref().unwrap_or(&self.model),
+        )
+        .self_sized;
+        if !self_sized {
+            if let Some(ref size) = params.image_size {
+                match size {
+                    ImageSizeValue::Preset(name) => {
+                        image_config.insert(
+                            "aspect_ratio".into(),
+                            serde_json::json!(Self::preset_to_aspect_ratio(name)),
+                        );
+                    }
+                    ImageSizeValue::Custom { width, height } => {
+                        image_config.insert(
+                            "aspect_ratio".into(),
+                            serde_json::json!(format!("{}:{}", width, height)),
+                        );
+                    }
                 }
             }
+            image_config.insert(
+                "image_size".into(),
+                serde_json::json!(params.size_tier.as_deref().unwrap_or("4K")),
+            );
         }
-        image_config.insert(
-            "image_size".into(),
-            serde_json::json!(params.size_tier.as_deref().unwrap_or("4K")),
-        );
         if let Some(ref format) = params.output_format {
             image_config.insert("output_format".into(), serde_json::json!(format));
         }
@@ -1525,6 +1550,70 @@ mod tests {
             assert_eq!(body["quality"], "high");
             assert_eq!(body["output_format"], "webp");
             assert_eq!(body["n"], 2);
+        }
+
+        /// Live catalog shape for `inclusionai/ming-image-0.1-design`
+        /// (GET /api/v1/images/models): no resolution/aspect_ratio descriptors,
+        /// `n` capped at 1, `output_format` enum uses `jpeg` (not `jpg`).
+        fn ming_catalog_entry() -> serde_json::Value {
+            serde_json::json!({
+                "id": "inclusionai/ming-image-0.1-design",
+                "supported_parameters": {
+                    "output_format": { "type": "enum", "values": ["png", "jpeg", "webp"] },
+                    "n": { "type": "range", "min": 1, "max": 1 },
+                    "input_references": { "type": "range", "min": 0, "max": 0 }
+                }
+            })
+        }
+
+        #[test]
+        fn test_build_image_api_body_self_sized_omits_size_params() {
+            // Issue #104: Ming Design is self-sized — it rejects explicit sizes
+            // and aspect ratios, so neither may appear in the wire body even
+            // though the tool always supplies them.
+            let provider = make_image_provider("microsoft/mai-image-2.5-pro");
+            let model: ImageCatalogModel = serde_json::from_value(ming_catalog_entry()).unwrap();
+            let caps = ImageApiCaps::from(&model);
+
+            let mut params = ImageGenParams::new("a poster with legible text");
+            params.model_id = Some("inclusionai/ming-image-0.1-design".into());
+            params.size_tier = Some("4K".into());
+            params.image_size = Some(crate::types::ImageSizeValue::Preset("2:3".into()));
+            params.num_images = Some(4);
+            params.quality = Some("medium".into());
+            params.output_format = Some("png".into());
+
+            let body = provider.build_image_api_body(&params, &caps);
+            assert_eq!(body["model"], "inclusionai/ming-image-0.1-design");
+            assert!(
+                body.get("resolution").is_none(),
+                "self-sized model must omit resolution: {body}"
+            );
+            assert!(
+                body.get("aspect_ratio").is_none(),
+                "self-sized model rejects aspect_ratio: {body}"
+            );
+            assert_eq!(body["n"], 1, "num_images clamps to the catalog max");
+            assert_eq!(body["output_format"], "png", "output_format passes through as-is");
+            assert!(body.get("quality").is_none(), "ming does not advertise quality");
+            assert_eq!(body["prompt"], "a poster with legible text");
+        }
+
+        #[tokio::test]
+        async fn test_generate_image_text_to_image_only_rejects_input_references() {
+            // Issue #104: provider-level guard mirrors the tool parse-boundary
+            // check, so direct provider calls fail clearly too (before any
+            // HTTP request).
+            let provider = make_image_provider("inclusionai/ming-image-0.1-design");
+            let mut params = ImageGenParams::new("edit this image");
+            params.image_urls = Some(vec!["https://example.com/in.png".into()]);
+
+            let err = crate::provider::ImageProvider::generate_image(&provider, &params)
+                .await
+                .unwrap_err();
+            let msg = err.to_string();
+            assert!(msg.contains("text-to-image only"), "err: {msg}");
+            assert!(msg.contains("inclusionai/ming-image-0.1-design"), "err: {msg}");
         }
     }
 }

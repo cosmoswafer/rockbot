@@ -478,3 +478,84 @@ async fn test_openrouter_image_gen_mai2pro() {
         }
     }
 }
+
+/// Verify the OpenRouter image provider with the "ming" model
+/// (inclusionai/ming-image-0.1-design — issue #104): text-to-image generation
+/// with size params supplied but dropped (self-sized model). Also asserts the
+/// provider-level text-to-image-only guard without any HTTP request.
+/// Run manually: cargo test -p rockbot --test image_gen_real test_openrouter_image_gen_ming -- --ignored --nocapture
+#[ignore]
+#[tokio::test]
+async fn test_openrouter_image_gen_ming() {
+    let provider_cfg = match load_image_provider("openrouter") {
+        Some(cfg) => {
+            eprintln!("Using image provider: openrouter");
+            cfg
+        }
+        None => {
+            eprintln!("Skipping: no image_provider config (openrouter) found in config.toml");
+            return;
+        }
+    };
+
+    let model = provider_cfg
+        .models
+        .get("ming")
+        .cloned()
+        .unwrap_or_else(|| "inclusionai/ming-image-0.1-design".into());
+    eprintln!("Model alias: ming -> {}", model);
+
+    let provider = match OpenRouterImageProvider::new(&provider_cfg, &model) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("Skipping: failed to create OpenRouterImageProvider: {e}");
+            return;
+        }
+    };
+    eprintln!("Provider created: {} model={}", provider.provider_name(), provider.model_id());
+
+    // Provider-side text-to-image-only guard: no HTTP request is made.
+    let mut edit_params = ImageGenParams::new("recolor this image");
+    edit_params.model_id = Some(model.clone());
+    edit_params.image_urls = Some(vec!["https://example.com/in.png".into()]);
+    let edit_err = provider.generate_image(&edit_params).await.unwrap_err();
+    assert!(
+        edit_err.to_string().contains("text-to-image only"),
+        "edit call must fail with a text-to-image-only error: {edit_err}"
+    );
+    eprintln!("Edit guard validated: {edit_err}");
+
+    // Size params are intentionally supplied here — the provider must drop
+    // them (self-sized model) and the request must still succeed.
+    let params = ImageGenParams {
+        prompt: "A minimal poster with the word 'rockbot' in large legible letters".into(),
+        model_id: Some(model.clone()),
+        image_size: Some(ImageSizeValue::Preset("2:3".into())),
+        size_tier: Some("4K".into()),
+        quality: Some("standard".into()),
+        output_format: Some("png".into()),
+        num_images: Some(1),
+        image_urls: None,
+        enable_safety_checker: None,
+    };
+    eprintln!("Executing generate_image with params: prompt={:?} size={:?} tier={:?}",
+        params.prompt, params.image_size, params.size_tier);
+
+    let t_start = std::time::Instant::now();
+    let result = provider.generate_image(&params).await;
+
+    match result {
+        Ok(bytes) => {
+            let elapsed = t_start.elapsed();
+            eprintln!("generate_image completed in {elapsed:.2?}");
+            eprintln!("Result: {} bytes, MIME: image/png", bytes.len());
+            assert!(!bytes.is_empty(), "Generated image bytes should not be empty");
+            assert_eq!(&bytes[..4], &[137, 80, 78, 71],
+                "Result should be a PNG image");
+            eprintln!("PNG header validated OK (size params were dropped)");
+        }
+        Err(e) => {
+            panic!("OpenRouter image gen (ming) failed: {e}");
+        }
+    }
+}

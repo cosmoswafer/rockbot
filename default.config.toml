@@ -52,6 +52,13 @@ mai2pro = "microsoft/mai-image-2.5-pro"
 seedream5pro = "bytedance-seed/seedream-5-0-pro"
 grok2 = "x-ai/grok-imagine-image-2.0"
 muse = "meta/muse-image"
+# Issue #104 — Ming Image 0.1 Design: strong text rendering inside the image
+# (UI mockups/posters), native RGBA. Text-to-image ONLY (never add it to
+# [image_providers.edit_models]) and self-sized: the model chooses its own
+# dimensions, so resolution/aspect_ratio are dropped on the wire. ~38s per
+# image, NovitaAI is the only route, and $0.00 pricing is promotional — do not
+# rely on it for cost models or fast presets.
+ming = "inclusionai/ming-image-0.1-design"
 
 [[image_providers]]
 name = "fal"

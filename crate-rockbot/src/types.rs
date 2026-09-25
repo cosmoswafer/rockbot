@@ -462,6 +462,38 @@ impl ImageGenParams {
 /// wire body can never disagree.
 pub const SEEDREAM_V5_MARKER: &str = "seedream/v5";
 
+/// Model-id marker for Ming Image 0.1 Design (issue #104) — the only model
+/// known to be both self-sized (rejects explicit sizes/aspect ratios) and
+/// text-to-image only (accepts no input references). Single source for both
+/// `ImageModelTraits` flags so tool behaviour and the OpenRouter request
+/// builder can never disagree about this model.
+const MING_DESIGN_MODEL_ID: &str = "inclusionai/ming-image-0.1-design";
+
+/// Wire-level per-model traits that the OpenRouter image catalog does **not**
+/// advertise (issue #104). Derived from the model id once at the parse
+/// boundary — canonical shared type consumed by `ImageGenTool` (edit-call
+/// rejection + result hint) and `OpenRouterImageProvider` (size-param bypass).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ImageModelTraits {
+    /// Model picks its own output dimensions: the provider rejects
+    /// `resolution` / `aspect_ratio` params, so the request builder omits them.
+    pub self_sized: bool,
+    /// Model accepts no input references: edit calls must fail with a clear
+    /// text-to-image-only error instead of reaching the provider.
+    pub text_to_image_only: bool,
+}
+
+impl ImageModelTraits {
+    /// Derive the traits for a model id. Unknown ids get all-default (`false`).
+    pub fn for_model_id(model_id: &str) -> Self {
+        let is_ming_design = model_id == MING_DESIGN_MODEL_ID;
+        Self {
+            self_sized: is_ming_design,
+            text_to_image_only: is_ming_design,
+        }
+    }
+}
+
 /// One catalog entry: a selectable alias and the provider it routes to.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImageModelEntry {
@@ -479,6 +511,11 @@ impl ImageModelEntry {
             (true, Some(edit_id)) => edit_id,
             _ => &self.model_id,
         }
+    }
+
+    /// Wire-level traits of the entry's text-to-image model id (issue #104).
+    pub fn traits(&self) -> ImageModelTraits {
+        ImageModelTraits::for_model_id(&self.model_id)
     }
 }
 
@@ -805,5 +842,28 @@ mod tests {
 
         let empty = ImageModelCatalog::new(Vec::new(), "mai2pro");
         assert!(!empty.supports_auto_aspect());
+    }
+
+    #[test]
+    fn test_image_model_traits_ming_design() {
+        // Issue #104: Ming Design is self-sized and text-to-image only.
+        let ming = ImageModelTraits::for_model_id("inclusionai/ming-image-0.1-design");
+        assert!(ming.self_sized, "ming rejects explicit size params");
+        assert!(ming.text_to_image_only, "ming accepts no input references");
+
+        // Sibling layer model is not the registered alias — no false match.
+        let layer = ImageModelTraits::for_model_id("inclusionai/ming-image-0.1-design-layer");
+        assert!(!layer.text_to_image_only, "layer variant must not match the t2i marker");
+
+        let other = ImageModelTraits::for_model_id("microsoft/mai-image-2.5-pro");
+        assert_eq!(other, ImageModelTraits::default(), "unmarked models get all-default traits");
+    }
+
+    #[test]
+    fn test_image_model_entry_traits() {
+        let ming = entry("ming", "inclusionai/ming-image-0.1-design", None, "openrouter");
+        assert!(ming.traits().self_sized && ming.traits().text_to_image_only);
+        let mai = entry("mai2pro", "microsoft/mai-image-2.5-pro", None, "openrouter");
+        assert!(!mai.traits().self_sized && !mai.traits().text_to_image_only);
     }
 }

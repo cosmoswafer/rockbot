@@ -44,6 +44,7 @@ genuinely use separate edit endpoints (currently only fal; issue #100):
 | `gptimage`   | `openai/gpt-image-2.5/flare/text-to-image` | `openai/gpt-image-2.5/flare/edit` | fal    |
 | `sunburst`   | `openai/gpt-image-2.5/sunburst/text-to-image` | `openai/gpt-image-2.5/sunburst/edit` | fal |
 | `grok`       | `xai/grok-imagine-image/quality/text-to-image` | `xai/grok-imagine-image/quality/edit` | fal |
+| `ming`       | `inclusionai/ming-image-0.1-design`     | *(none — text-to-image only, #104)* | openrouter |
 | others       | single id                                | *(none — same id both modes)*   | fal/openrouter |
 
 `gptimage` and `sunburst` are the GPT Image 2.5 pair (issue #102): two tunings
@@ -51,6 +52,18 @@ of the same model with identical APIs — **Flare** is the everyday, lower-laten
 default, **Sunburst** the precision-focused variant. Both expose separate
 text-to-image and edit endpoints, so each alias carries an edit companion and
 mode switching stays data-driven (issue #100).
+
+`ming` (issue #104) is registered in an openrouter entry's `models` map only —
+never in `edit_models`. It is **text-to-image only** (the model accepts `0–0`
+input references; the async sibling `inclusionai/ming-image-0.1-design-layer`
+is not registered as an `image_gen` alias) and **self-sized** (it rejects
+explicit sizes and aspect ratios; see [aspect-ratio.md](aspect-ratio.md)). When
+an edit call resolves to a text-to-image-only model id, the tool fails at the
+parse boundary with `ToolCallParse` before selecting a backend: the entry's
+`ImageModelTraits.text_to_image_only` flag (`types.rs`) is checked against the
+mode-resolved model id. `ming` is excluded from any fast/low-latency preset by
+convention: ~38 s end-to-end, NovitaAI is the only route, and pricing is promo
+`$0.00` — treat the free price as promotional, not a cost basis.
 
 A per-call LLM `model` alias resolves to `(model_id, edit_model_id?,
 provider_name)`:

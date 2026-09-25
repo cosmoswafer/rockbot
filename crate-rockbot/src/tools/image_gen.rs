@@ -10,7 +10,9 @@ use crate::error::{Result, RockBotError};
 use crate::image_cache::{GeneratedImage, ImageCache};
 use crate::provider::ImageProvider;
 use crate::tool::Tool;
-use crate::types::{ImageGenParams, ImageModelCatalog, ImageModelEntry, ImageSizeValue};
+use crate::types::{
+    ImageGenParams, ImageModelCatalog, ImageModelEntry, ImageModelTraits, ImageSizeValue,
+};
 use crate::validated::{ModelAlias, NonEmptyString};
 
 #[derive(Debug, Deserialize)]
@@ -381,6 +383,21 @@ impl Tool for ImageGenTool {
 
         let provider: &dyn ImageProvider = backend.select(is_img2img);
 
+        // Text-to-image-only models reject input references (issue #104): fail
+        // at the parse boundary with a clear error instead of sending a body
+        // the provider refuses. Checked against the wire model id so an
+        // omitted alias backed by such a model is caught too.
+        let wire_model = params.model_id.as_deref().unwrap_or_else(|| provider.model_id());
+        let traits = ImageModelTraits::for_model_id(wire_model);
+        if is_img2img && traits.text_to_image_only {
+            return Err(RockBotError::ToolCallParse(format!(
+                "image_gen: model '{}' is text-to-image only and cannot edit images — \
+                 omit image_urls/reference_image_key or choose another alias: {}",
+                wire_model,
+                self.model_catalog.valid_alias_list()
+            )));
+        }
+
         debug!(
             "image_gen params: provider={} model={} img2img={} num_images={} quality={:?} output_format={:?} image_size={:?} image_urls_count={} prompt_len={} room={}",
             provider.provider_name(),
@@ -447,6 +464,11 @@ impl Tool for ImageGenTool {
         });
         if let Some(ref url) = share_url {
             result["share_url"] = serde_json::json!(url);
+        }
+        if traits.self_sized {
+            result["note"] = serde_json::json!(
+                "Model chose the output dimensions; aspect_ratio/size tier were omitted."
+            );
         }
         Ok(result.to_string())
     }
@@ -954,6 +976,80 @@ mod tests {
         let guard = sink.lock().unwrap();
         let captured = guard.as_ref().expect("provider received params");
         assert!(captured.model_id.is_none(), "omitted model alias must keep provider's configured default");
+    }
+
+    /// Single-openrouter-backend tool whose catalog carries the issue #104
+    /// Ming Design alias.
+    fn make_ming_tool(provider: Box<dyn ImageProvider>) -> ImageGenTool {
+        ImageGenTool::new(
+            HashMap::from([(
+                "openrouter".to_string(),
+                ImageBackend::new(provider, None),
+            )]),
+            "openrouter".to_string(),
+            ImageModelCatalog::new(
+                vec![entry(
+                    "ming",
+                    "inclusionai/ming-image-0.1-design",
+                    None,
+                    "openrouter",
+                )],
+                "ming",
+            ),
+            "medium".into(),
+            "png".into(),
+            1,
+            "4K".into(),
+            false,
+            make_webdav(),
+            make_image_cache(),
+        )
+    }
+
+    #[tokio::test]
+    async fn test_execute_ming_alias_resolves_to_inclusionai_id() {
+        // Issue #104 acceptance: image_gen(model="ming") resolves to
+        // inclusionai/ming-image-0.1-design on the openrouter backend (the
+        // actual wire-body bypass is asserted in provider/openrouter.rs).
+        let (provider, sink) = make_recording_provider();
+        let tool = make_ming_tool(provider);
+        let args = serde_json::json!({
+            "prompt": "a poster with legible text",
+            "aspect_ratio": "2:3",
+            "model": "ming",
+        });
+        let _ = tool.execute(&args.to_string()).await;
+        let guard = sink.lock().unwrap();
+        let captured = guard.as_ref().expect("provider received params");
+        assert_eq!(
+            captured.model_id.as_deref(),
+            Some("inclusionai/ming-image-0.1-design"),
+            "ming alias must resolve to its catalog model id"
+        );
+        match captured.image_size.as_ref() {
+            Some(ImageSizeValue::Preset(ratio)) => assert_eq!(ratio, "2:3"),
+            other => panic!("expected Preset aspect ratio, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_text_to_image_only_alias_rejects_edit() {
+        // Issue #104 acceptance: an edit call (input image) for ming fails
+        // before any provider request with a clear text-to-image-only error.
+        let tool = make_ming_tool(Box::new(MockImageProvider::new()));
+        let err = tool
+            .execute(
+                r#"{"prompt":"recolor","aspect_ratio":"1:1","model":"ming","image_urls":["https://example.com/in.png"]}"#,
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, RockBotError::ToolCallParse(_)),
+            "edit rejection must be a parse-boundary error, got: {err:?}"
+        );
+        let msg = err.to_string();
+        assert!(msg.contains("text-to-image only"), "err: {msg}");
+        assert!(msg.contains("inclusionai/ming-image-0.1-design"), "err: {msg}");
     }
 
     #[tokio::test]
