@@ -218,7 +218,6 @@ mod tests {
             "banana",
             "qwenimage",
             "qwen3",
-            "seedream5pro",
             "seedream5flash",
             "grok2",
         ] {
@@ -227,7 +226,11 @@ mod tests {
                 "manifest must define '{required}'"
             );
         }
-        assert_eq!(catalog.allowed_aliases().len(), 8, "roster is trimmed to 8 aliases");
+        assert_eq!(catalog.allowed_aliases().len(), 7, "roster is trimmed to 7 aliases");
+        assert!(
+            catalog.entry("seedream5pro").is_none(),
+            "Seedream 5 Pro was dropped in #119"
+        );
     }
 
     #[test]
@@ -275,7 +278,7 @@ mod tests {
             .map(|e| e.alias.as_str())
             .collect();
         assert_eq!(fal_aliases, vec!["gptimage", "sunburst"]);
-        let openrouter_only = ["banana", "qwenimage", "qwen3", "seedream5pro", "seedream5flash", "grok2"];
+        let openrouter_only = ["banana", "qwenimage", "qwen3", "seedream5flash", "grok2"];
         for alias in openrouter_only {
             assert_eq!(
                 catalog.entry(alias).unwrap().default_route().provider_name,

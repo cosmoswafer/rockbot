@@ -1199,13 +1199,13 @@ mod tests {
                     "fal",
                 ),
                 entry(
-                    "seedream5pro",
-                    "bytedance-seed/seedream-5-0-pro",
+                    "seedream5flash",
+                    "bytedance-seed/seedream-5-0-flash",
                     None,
                     "openrouter",
                 ),
             ],
-            "seedream5pro",
+            "seedream5flash",
         )
     }
 
@@ -1240,8 +1240,8 @@ mod tests {
                     "fal",
                 ),
                 entry(
-                    "seedream5pro",
-                    "bytedance-seed/seedream-5-0-pro",
+                    "seedream5flash",
+                    "bytedance-seed/seedream-5-0-flash",
                     None,
                     "openrouter",
                 ),
@@ -1278,7 +1278,7 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("not in image model catalog"), "err: {msg}");
         assert!(
-            msg.contains("gptimage") && msg.contains("seedream5pro"),
+            msg.contains("gptimage") && msg.contains("seedream5flash"),
             "err should list valid aliases: {msg}"
         );
     }
@@ -1299,7 +1299,7 @@ mod tests {
         assert!(msg.contains("not in image model catalog"), "err: {msg}");
         assert!(msg.contains("alias 'mai2pro'"), "err should name the dropped alias: {msg}");
         assert!(
-            msg.contains("valid aliases: gptimage, seedream5pro"),
+            msg.contains("valid aliases: gptimage, seedream5flash"),
             "err should list the surviving roster: {msg}"
         );
     }
@@ -1335,22 +1335,22 @@ mod tests {
         );
         assert!(or_sink.lock().unwrap().is_none(), "fal alias must not hit openrouter");
 
-        // seedream5pro → openrouter backend
-        let _ = tool.execute(r#"{"prompt":"a cat","aspect_ratio":"1:1","model":"seedream5pro"}"#).await;
+        // seedream5flash → openrouter backend
+        let _ = tool.execute(r#"{"prompt":"a cat","aspect_ratio":"1:1","model":"seedream5flash"}"#).await;
         assert_eq!(
             or_sink.lock().unwrap().as_ref().unwrap().model_id.as_deref(),
-            Some("bytedance-seed/seedream-5-0-pro"),
+            Some("bytedance-seed/seedream-5-0-flash"),
             "openrouter-tagged alias must hit the openrouter backend"
         );
 
-        // omitted model → default alias 'seedream5pro' (openrouter), so its
+        // omitted model → default alias 'seedream5flash' (openrouter), so its
         // entry resolves mode-aware and sets the t2i id explicitly
         let _ = tool.execute(r#"{"prompt":"a cat","aspect_ratio":"1:1"}"#).await;
         let or_captured = or_sink.lock().unwrap();
         let captured = or_captured.as_ref().unwrap();
         assert_eq!(
             captured.model_id.as_deref(),
-            Some("bytedance-seed/seedream-5-0-pro"),
+            Some("bytedance-seed/seedream-5-0-flash"),
             "omitted alias adopts the default alias entry (mode-aware)"
         );
         assert_eq!(captured.prompt.as_str(), "a cat");
@@ -1368,8 +1368,8 @@ mod tests {
                     "fal",
                 ),
                 entry(
-                    "seedream5pro",
-                    "bytedance-seed/seedream-5-0-pro",
+                    "seedream5flash",
+                    "bytedance-seed/seedream-5-0-flash",
                     None,
                     "openrouter",
                 ),
@@ -1403,11 +1403,11 @@ mod tests {
             "default paired alias must swap to its edit endpoint in edit mode"
         );
 
-        // Same-model editing: seedream5pro (no companion) keeps the plain id in edit mode
-        let _ = tool.execute(r#"{"prompt":"recolor","aspect_ratio":"1:1","model":"seedream5pro","image_urls":["https://example.com/in.png"]}"#).await;
+        // Same-model editing: seedream5flash (no companion) keeps the plain id in edit mode
+        let _ = tool.execute(r#"{"prompt":"recolor","aspect_ratio":"1:1","model":"seedream5flash","image_urls":["https://example.com/in.png"]}"#).await;
         assert_eq!(
             or_sink.lock().unwrap().as_ref().unwrap().model_id.as_deref(),
-            Some("bytedance-seed/seedream-5-0-pro"),
+            Some("bytedance-seed/seedream-5-0-flash"),
             "alias without companion reuses the t2i id when editing (issue #100)"
         );
     }
@@ -1420,7 +1420,7 @@ mod tests {
                 ImageBackend::new(Box::new(MockImageProvider::new()), None),
             )]),
             "fal".to_string(),
-            make_multi_model_catalog(), // seedream5pro → openrouter, but no openrouter backend
+            make_multi_model_catalog(), // seedream5flash → openrouter, but no openrouter backend
             "medium".into(),
             "png".into(),
             1,
@@ -1430,7 +1430,7 @@ mod tests {
             make_image_cache(),
         );
         let err = tool
-            .execute(r#"{"prompt":"a cat","aspect_ratio":"1:1","model":"seedream5pro"}"#)
+            .execute(r#"{"prompt":"a cat","aspect_ratio":"1:1","model":"seedream5flash"}"#)
             .await
             .unwrap_err();
         let msg = err.to_string();
@@ -1443,7 +1443,7 @@ mod tests {
         let schema = tool.parameters();
         let model = &schema["properties"]["model"];
         assert_eq!(model["type"], "string");
-        assert_eq!(model["enum"], serde_json::json!(["gptimage", "seedream5pro"]));
+        assert_eq!(model["enum"], serde_json::json!(["gptimage", "seedream5flash"]));
     }
 
     #[test]
@@ -1466,7 +1466,7 @@ mod tests {
         let desc = tool.description();
         assert!(
             desc.contains(
-                "seedream5pro (seedream5pro, openrouter:bytedance-seed/seedream-5-0-pro)"
+                "seedream5flash (seedream5flash, openrouter:bytedance-seed/seedream-5-0-flash)"
             ),
             "desc: {desc}"
         );
@@ -1477,7 +1477,7 @@ mod tests {
             ),
             "desc: {desc}"
         );
-        assert!(desc.contains("Default: 'seedream5pro'"), "desc: {desc}");
+        assert!(desc.contains("Default: 'seedream5flash'"), "desc: {desc}");
         assert!(
             !desc.contains("auto_2K") && !desc.contains("auto_1K"),
             "surviving roster has no fal seedream/v5 route → no auto hint: {desc}"

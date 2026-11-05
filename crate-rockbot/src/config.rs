@@ -506,7 +506,6 @@ fn image_default_models(kind: &str) -> HashMap<String, String> {
             m.insert("banana".to_string(), "google/gemini-nano-banana-2.1".to_string());
             m.insert("qwenimage".to_string(), "qwen/qwen-image-2.1-turbo".to_string());
             m.insert("qwen3".to_string(), "qwen/qwen-image-3-pro".to_string());
-            m.insert("seedream5pro".to_string(), "bytedance-seed/seedream-5-0-pro".to_string());
             m.insert(
                 "seedream5flash".to_string(),
                 "bytedance-seed/seedream-5-0-flash".to_string(),
@@ -849,7 +848,8 @@ api_key = "k"
         assert!(!img.models.contains_key("qwen"));
         assert!(!img.models.contains_key("minimax"));
         assert!(img.models.contains_key("banana"));
-        assert!(img.models.contains_key("seedream5pro"));
+        assert!(img.models.contains_key("seedream5flash"));
+        assert!(!img.models.contains_key("seedream5pro"), "pro alias removed (#119)");
 
         let chat = config.find_chat_provider("openrouter").unwrap();
         assert_eq!(
@@ -934,7 +934,6 @@ default_provider = "openrouter"
             ("banana", "google/gemini-nano-banana-2.1"),
             ("qwenimage", "qwen/qwen-image-2.1-turbo"),
             ("qwen3", "qwen/qwen-image-3-pro"),
-            ("seedream5pro", "bytedance-seed/seedream-5-0-pro"),
             ("seedream5flash", "bytedance-seed/seedream-5-0-flash"),
             ("grok2", "x-ai/grok-imagine-image-2.0"),
         ] {
@@ -944,10 +943,10 @@ default_provider = "openrouter"
                 "alias '{alias}' must map to its surviving slug"
             );
         }
-        for dropped in ["mai2pro", "mai2flash", "muse", "ming", "seedream", "grok", "qwen3-flash"] {
+        for dropped in ["mai2pro", "mai2flash", "muse", "ming", "seedream", "grok", "qwen3-flash", "seedream5pro"] {
             assert!(
                 !or.models.contains_key(dropped),
-                "dropped alias '{dropped}' must not be registered (#114)"
+                "dropped alias '{dropped}' must not be registered (#114, #119)"
             );
         }
     }

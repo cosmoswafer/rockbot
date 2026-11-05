@@ -34,7 +34,7 @@ How `ImageGenParams` fields map to each provider's API request body.
 
 ```json
 {
-  "model": "bytedance-seed/seedream-5-0-pro",
+  "model": "bytedance-seed/seedream-5-0-flash",
   "modalities": ["image"],
   "image_config": {
     "aspect_ratio": "2:3",

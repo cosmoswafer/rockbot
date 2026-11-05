@@ -110,10 +110,10 @@ Pro-tier routes are charged to the room's daily budget before the call
   `image_gen ledger room=… provider=… model=… tier=… img2img=… elapsed_ms=…`.
   There is no per-model pricing table in this repo — `tier` is the cost proxy.
 
-## 6. Manifest roster (2026-11-05, #114)
+## 6. Manifest roster (2026-11-05, #114, #119)
 
 All slugs were verified against `GET https://openrouter.ai/api/v1/images/models`
-and the fal model registry. The roster is exactly eight aliases; every alias
+and the fal model registry. The roster is exactly seven aliases; every alias
 has **one provider** (no cross-provider failover routes):
 
 | alias            | provider: generate / edit                                                     | tier |
@@ -123,17 +123,16 @@ has **one provider** (no cross-provider failover routes):
 | `banana`         | openrouter: `google/gemini-nano-banana-2.1`                                   | standard |
 | `qwenimage`      | openrouter: `qwen/qwen-image-2.1-turbo`                                       | turbo |
 | `qwen3`          | openrouter: `qwen/qwen-image-3-pro`                                           | pro |
-| `seedream5pro`   | openrouter: `bytedance-seed/seedream-5-0-pro`                                 | standard |
 | `seedream5flash` | openrouter: `bytedance-seed/seedream-5-0-flash`                               | flash |
 | `grok2`          | openrouter: `x-ai/grok-imagine-image-2.0`                                     | standard |
 
 `gptimage` remains the sole `default = true` alias and the only fal route pair
 alongside `sunburst`. The former 2.5 aliases (`gptimage25`, `sunburst25`) and
 the other eleven roster entries (`mai2pro`, `mai2flash`, `grok`, `seedream`,
-`seedream5`, `fibo`, `moss`, `muse`, `ming`) were removed in #114. A request
-naming a removed alias fails at the parse boundary with a `ToolCallParse` error
-listing the eight surviving aliases — there is no silent fallback to the
-default.
+`seedream5`, `fibo`, `moss`, `muse`, `ming`) were removed in #114;
+`seedream5pro` was removed in #119. A request naming a removed alias fails at
+the parse boundary with a `ToolCallParse` error listing the seven surviving
+aliases — there is no silent fallback to the default.
 
 `qwenimage` is turbo-only (the pro route was removed in #118); `seedream5flash`
 is the only flash-tier alias; `qwen3` is the only pro-tier alias.

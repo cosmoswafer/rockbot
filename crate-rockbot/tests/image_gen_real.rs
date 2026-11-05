@@ -429,13 +429,13 @@ async fn test_image_gen_real_data_uri_handling() {
     }
 }
 
-/// Verify the OpenRouter image provider with the surviving "seedream5pro"
-/// alias (bytedance-seed/seedream-5-0-pro, #114).
+/// Verify the OpenRouter image provider with the surviving "seedream5flash"
+/// alias (bytedance-seed/seedream-5-0-flash, #114).
 /// Tests text-to-image generation only (no WebDAV, no ImageCache).
-/// Run manually: cargo test -p rockbot --test image_gen_real test_openrouter_image_gen_seedream5pro -- --ignored --nocapture
+/// Run manually: cargo test -p rockbot --test image_gen_real test_openrouter_image_gen_seedream5flash -- --ignored --nocapture
 #[ignore]
 #[tokio::test]
-async fn test_openrouter_image_gen_seedream5pro() {
+async fn test_openrouter_image_gen_seedream5flash() {
     let provider_cfg = match load_image_provider("openrouter") {
         Some(cfg) => {
             eprintln!("Using image provider: openrouter");
@@ -449,10 +449,10 @@ async fn test_openrouter_image_gen_seedream5pro() {
 
     let model = provider_cfg
         .models
-        .get("seedream5pro")
+        .get("seedream5flash")
         .cloned()
-        .unwrap_or_else(|| "bytedance-seed/seedream-5-0-pro".into());
-    eprintln!("Model alias: seedream5pro -> {}", model);
+        .unwrap_or_else(|| "bytedance-seed/seedream-5-0-flash".into());
+    eprintln!("Model alias: seedream5flash -> {}", model);
 
     let provider = match OpenRouterImageProvider::new(&provider_cfg, &model) {
         Ok(p) => p,
@@ -490,7 +490,7 @@ async fn test_openrouter_image_gen_seedream5pro() {
             eprintln!("PNG header validated OK");
         }
         Err(e) => {
-            panic!("OpenRouter image gen (seedream5pro) failed: {e}");
+            panic!("OpenRouter image gen (seedream5flash) failed: {e}");
         }
     }
 }

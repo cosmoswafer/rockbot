@@ -14,13 +14,12 @@ draw_path = "/images"
 banana        = "google/gemini-nano-banana-2.1"
 qwenimage     = "qwen/qwen-image-2.1-turbo"
 qwen3         = "qwen/qwen-image-3-pro"
-seedream5pro  = "bytedance-seed/seedream-5-0-pro"
 seedream5flash = "bytedance-seed/seedream-5-0-flash"
 grok2         = "x-ai/grok-imagine-image-2.0"
 ```
 
 > `models/image.toml` is the canonical alias roster (#114); the table above is
-> the legacy config fallback. All six aliases are OpenRouter-only.
+> the legacy config fallback. All five aliases are OpenRouter-only.
 
 > **Note:** Since Gitea issue #84, `draw_path` **is** used: models present in
 > OpenRouter's image catalog (`GET {base_url}/images/models`) are generated via
@@ -226,7 +225,6 @@ Known working models (as of writing):
 | `google/gemini-nano-banana-2.1` | `banana` — Nano Banana 2.1 |
 | `qwen/qwen-image-2.1-turbo` | `qwenimage` — fast/turbo tier |
 | `qwen/qwen-image-3-pro` | `qwen3` — pro tier |
-| `bytedance-seed/seedream-5-0-pro` | `seedream5pro` |
 | `bytedance-seed/seedream-5-0-flash` | `seedream5flash` — flash tier |
 | `x-ai/grok-imagine-image-2.0` | `grok2` |
 | `google/gemini-3.1-flash-image-preview` | Extended aspect ratios (`1:4`, `4:1`, `1:8`, `8:1`), `0.5K` resolution tier (not in the current roster) |

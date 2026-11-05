@@ -1020,16 +1020,16 @@ mod tests {
                 "fal",
             ),
             entry(
-                "seedream5pro",
-                "bytedance-seed/seedream-5-0-pro",
+                "seedream5flash",
+                "bytedance-seed/seedream-5-0-flash",
                 None,
                 "openrouter",
             ),
         ];
         let catalog = ImageModelCatalog::new(entries, "gptimage");
         assert_eq!(
-            catalog.resolve("seedream5pro"),
-            Some(("bytedance-seed/seedream-5-0-pro", "openrouter"))
+            catalog.resolve("seedream5flash"),
+            Some(("bytedance-seed/seedream-5-0-flash", "openrouter"))
         );
         assert_eq!(
             catalog.resolve("gptimage"),
@@ -1050,8 +1050,8 @@ mod tests {
                     "fal",
                 ),
                 entry(
-                    "seedream5pro",
-                    "bytedance-seed/seedream-5-0-pro",
+                    "seedream5flash",
+                    "bytedance-seed/seedream-5-0-flash",
                     None,
                     "openrouter",
                 ),
@@ -1065,12 +1065,12 @@ mod tests {
         );
         // same-model editing: no companion → t2i id in both modes
         assert_eq!(
-            catalog.resolve_for_mode("seedream5pro", true),
-            Some(("bytedance-seed/seedream-5-0-pro", "openrouter"))
+            catalog.resolve_for_mode("seedream5flash", true),
+            Some(("bytedance-seed/seedream-5-0-flash", "openrouter"))
         );
         assert_eq!(
-            catalog.resolve_for_mode("seedream5pro", false),
-            Some(("bytedance-seed/seedream-5-0-pro", "openrouter"))
+            catalog.resolve_for_mode("seedream5flash", false),
+            Some(("bytedance-seed/seedream-5-0-flash", "openrouter"))
         );
     }
 
@@ -1078,14 +1078,14 @@ mod tests {
     fn test_image_model_catalog_sorted_aliases() {
         let catalog = ImageModelCatalog::new(
             vec![
-                entry("seedream5pro", "a", None, "openrouter"),
+                entry("seedream5flash", "a", None, "openrouter"),
                 entry("banana", "b", None, "openrouter"),
                 entry("qwen3", "c", None, "openrouter"),
             ],
             "qwen3",
         );
-        assert_eq!(catalog.allowed_aliases(), vec!["banana", "qwen3", "seedream5pro"]);
-        assert_eq!(catalog.valid_alias_list(), "banana, qwen3, seedream5pro");
+        assert_eq!(catalog.allowed_aliases(), vec!["banana", "qwen3", "seedream5flash"]);
+        assert_eq!(catalog.valid_alias_list(), "banana, qwen3, seedream5flash");
         assert_eq!(catalog.referenced_providers(), vec!["openrouter"]);
     }
 
@@ -1119,13 +1119,13 @@ mod tests {
                     "fal",
                 ),
                 entry(
-                    "seedream5pro",
-                    "bytedance-seed/seedream-5-0-pro",
+                    "seedream5flash",
+                    "bytedance-seed/seedream-5-0-flash",
                     None,
                     "openrouter",
                 ),
             ],
-            "seedream5pro",
+            "seedream5flash",
         );
         assert!(seedream.supports_auto_aspect(), "seedream/v5 id → auto aspect supported");
         assert_eq!(

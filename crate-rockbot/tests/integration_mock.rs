@@ -3963,7 +3963,7 @@ async fn test_openrouter_image_gen_model_id_override_in_body() {
 
     let config = make_openrouter_image_config(&base);
     let provider =
-        OpenRouterImageProvider::new(&config, "bytedance-seed/seedream-5-0-pro").unwrap();
+        OpenRouterImageProvider::new(&config, "bytedance-seed/seedream-5-0-flash").unwrap();
     let mut params = ImageGenParams::new("a sunset");
     params.model_id = Some("qwen/qwen-image-3-pro".into());
     let bytes = provider.generate_image(&params).await.unwrap();
@@ -4046,13 +4046,13 @@ fn test_image_gen_description_and_schema_derived_from_config() {
             "fal",
         ),
         test_entry(
-            "seedream5pro",
-            "bytedance-seed/seedream-5-0-pro",
+            "seedream5flash",
+            "bytedance-seed/seedream-5-0-flash",
             None,
             "openrouter",
         ),
     ];
-    let catalog = ImageModelCatalog::new(models, "seedream5pro");
+    let catalog = ImageModelCatalog::new(models, "seedream5flash");
     let provider = rockbot::provider::fal::FalAiProvider::new(
         &rockbot::config::ProviderConfig {
             name: rockbot::validated::ProviderName::try_new("fal".to_string()).unwrap(),
@@ -4076,11 +4076,11 @@ fn test_image_gen_description_and_schema_derived_from_config() {
     );
     assert!(
         desc.contains(
-            "seedream5pro (seedream5pro, openrouter:bytedance-seed/seedream-5-0-pro)"
+            "seedream5flash (seedream5flash, openrouter:bytedance-seed/seedream-5-0-flash)"
         ),
         "desc: {desc}"
     );
-    assert!(desc.contains("Default: 'seedream5pro'"), "desc: {desc}");
+    assert!(desc.contains("Default: 'seedream5flash'"), "desc: {desc}");
     assert!(
         !desc.contains("'auto_2K'"),
         "surviving roster has no fal seedream/v5 route → no auto hint: {desc}"
@@ -4089,7 +4089,7 @@ fn test_image_gen_description_and_schema_derived_from_config() {
     let params = tool.parameters();
     assert_eq!(
         params["properties"]["model"]["enum"],
-        serde_json::json!(["gptimage", "seedream5pro"])
+        serde_json::json!(["gptimage", "seedream5flash"])
     );
     let aspect_desc = params["properties"]["aspect_ratio"]["description"]
         .as_str()
@@ -4099,10 +4099,10 @@ fn test_image_gen_description_and_schema_derived_from_config() {
 
     let model_desc = params["properties"]["model"]["description"].as_str().unwrap();
     assert!(
-        model_desc.contains("gptimage") && model_desc.contains("seedream5pro"),
+        model_desc.contains("gptimage") && model_desc.contains("seedream5flash"),
         "model_desc: {model_desc}"
     );
-    assert!(model_desc.contains("Default: 'seedream5pro'"), "model_desc: {model_desc}");
+    assert!(model_desc.contains("Default: 'seedream5flash'"), "model_desc: {model_desc}");
 }
 
 #[test]
@@ -4187,7 +4187,7 @@ async fn test_image_gen_routes_alias_to_its_own_provider_backend() {
     let base = mock_server.uri();
 
     let fal_model = "openai/gpt-image-2.6/flare/text-to-image";
-    let or_model = "bytedance-seed/seedream-5-0-pro";
+    let or_model = "bytedance-seed/seedream-5-0-flash";
 
     // fal queue pipeline for the gptimage alias (expect(1) — only the fal
     // call may hit these endpoints).
@@ -4220,9 +4220,9 @@ async fn test_image_gen_routes_alias_to_its_own_provider_backend() {
     let catalog = ImageModelCatalog::new(
         vec![
             test_entry("gptimage", fal_model, None, "fal"),
-            test_entry("seedream5pro", or_model, None, "openrouter"),
+            test_entry("seedream5flash", or_model, None, "openrouter"),
         ],
-        "seedream5pro",
+        "seedream5flash",
     );
     let tool = ImageGenTool::new(
         HashMap::from([
@@ -4241,7 +4241,7 @@ async fn test_image_gen_routes_alias_to_its_own_provider_backend() {
                 ),
             ),
         ]),
-        "seedream5pro".to_string(),
+        "seedream5flash".to_string(),
         catalog,
         "medium".into(),
         "png".into(),
@@ -4254,7 +4254,7 @@ async fn test_image_gen_routes_alias_to_its_own_provider_backend() {
 
     // openrouter-tagged alias → openrouter backend (chat/completions).
     let result = tool
-        .execute(r#"{"prompt":"a sunrise over waves","aspect_ratio":"16:9","model":"seedream5pro","room_id":"d-abc"}"#)
+        .execute(r#"{"prompt":"a sunrise over waves","aspect_ratio":"16:9","model":"seedream5flash","room_id":"d-abc"}"#)
         .await
         .unwrap();
     let v: serde_json::Value = serde_json::from_str(&result).unwrap();
@@ -4285,8 +4285,8 @@ async fn test_image_gen_catalog_spans_multiple_provider_entries() {
     let mut or_cfg = make_openrouter_image_config(&base);
     or_cfg.models = HashMap::from([
         (
-            "seedream5pro".to_string(),
-            "bytedance-seed/seedream-5-0-pro".to_string(),
+            "seedream5flash".to_string(),
+            "bytedance-seed/seedream-5-0-flash".to_string(),
         ),
     ]);
 
@@ -4303,12 +4303,12 @@ async fn test_image_gen_catalog_spans_multiple_provider_entries() {
 
     assert_eq!(
         catalog.allowed_aliases(),
-        vec!["flux", "gptimage", "seedream5pro"],
+        vec!["flux", "gptimage", "seedream5flash"],
         "catalog must span ALL provider entries"
     );
     assert_eq!(
-        catalog.resolve("seedream5pro"),
-        Some(("bytedance-seed/seedream-5-0-pro", "openrouter")),
+        catalog.resolve("seedream5flash"),
+        Some(("bytedance-seed/seedream-5-0-flash", "openrouter")),
         "openrouter entry's model must resolve with its provider"
     );
     assert_eq!(
@@ -4327,7 +4327,7 @@ async fn test_image_gen_catalog_spans_multiple_provider_entries() {
     assert!(
         desc.contains("flux (flux, fal:fal-ai/flux/schnell)")
             && desc.contains("gptimage (gptimage, fal:openai/gpt-image-2.6/flare/text-to-image)")
-            && desc.contains("seedream5pro (seedream5pro, openrouter:bytedance-seed/seedream-5-0-pro)"),
+            && desc.contains("seedream5flash (seedream5flash, openrouter:bytedance-seed/seedream-5-0-flash)"),
         "description must enumerate all providers' models: {desc}"
     );
 }

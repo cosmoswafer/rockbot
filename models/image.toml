@@ -14,7 +14,7 @@
 # `GET /api/v1/images/models`; every fal slug checked against the fal model
 # registry (`https://fal.ai/api/models`). `edit = ""` means the route is
 # generate-only — it is not a broken reference.
-version = "2026-11-05.2"
+version = "2026-11-05.3"
 
 # ------------------------------- GPT Image -------------------------------
 
@@ -97,20 +97,6 @@ notes = "Previous qwenimage default, kept selectable under its own alias. OpenRo
   tier = "pro"
 
 # -------------------------------- ByteDance ------------------------------
-
-[[model]]
-alias = "seedream5pro"
-label = "Seedream 5 Pro"
-family = "bytedance"
-version = "5"
-ratios = ["16:9", "2:3", "1:1", "4:3", "3:4", "3:2"]
-tags = ["general", "pro"]
-notes = "Seedream 5 Pro via OpenRouter. OpenRouter-only route."
-
-  [[model.route]]
-  provider = "openrouter"
-  generate = "bytedance-seed/seedream-5-0-pro"
-  edit = "bytedance-seed/seedream-5-0-pro"
 
 [[model]]
 alias = "seedream5flash"

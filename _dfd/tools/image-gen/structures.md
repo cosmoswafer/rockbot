@@ -89,7 +89,7 @@ by `main.rs`, and consumed by the tool — mismatches are compile-time errors.
 
 | Field             | Type             | Description                                                                 |
 | ----------------- | ---------------- | --------------------------------------------------------------------------- |
-| `alias`           | `string`         | LLM-facing selection name (e.g. `seedream5pro`).                             |
+| `alias`           | `string`         | LLM-facing selection name (e.g. `seedream5flash`).                           |
 | `label`           | `string`         | Human-facing model name (`GPT Image 2.6 · Flare`) — description text.        |
 | `family`          | `string`         | Model family (`openai`, `google`, `qwen`, …).                                |
 | `version`         | `string`         | Family version (`2.6`, `2.1`, …).                                            |
