@@ -41,6 +41,14 @@ RUST_LOG=debug cargo test -p rocketchat --test integration_real -- --ignored --n
 
 No CI, no `rustfmt.toml`/`clippy.toml`/`rust-toolchain`.
 
+## Versioning, tags & releases
+
+- **App version**: `crate-rockbot/Cargo.toml` → `[package] version`. The root `[workspace.package] version` is unused legacy — never edit it.
+- **Library versions**: `crate-rocketchat/Cargo.toml` and `crate-webdav/Cargo.toml` carry their own `[package] version`; bump one only when that crate itself changes.
+- **Semver**: fix → patch, feature → minor, breaking → major. The bump rides the change commit (no separate `chore: bump …` commit).
+- **Tag every release**: lightweight `vX.Y.Z` on the commit that carries the bump (`git tag v2.11.0` right after committing, or `git tag v2.10.0 <sha>` to backfill). Push to both remotes: `git push origin <tag> && git push github <tag>`.
+- **Create the Gitea release** for every pushed tag. Derive `$GITEA_API`/`$REPO` from `origin` exactly as in the [`gitea-issues` skill](.agents/skills/gitea-issues/SKILL.md), then `POST $GITEA_API/repos/$REPO/releases` with `{"tag_name":"vX.Y.Z","name":"vX.Y.Z","body":"## vX.Y.Z\n\n### New\n- …\n\n### Fixes\n- …","draft":false,"prerelease":false}` (write the body to `./tmp/release.json`, pass with `-d @./tmp/release.json`). Body mirrors the commits since the previous tag, grouped `### New` / `### Fixes`, with `closes #<N>` references.
+
 ## Code style
 
 - Async Rust everywhere (sole exception: `crate-rocketchat/src/main.rs` debug binary uses sync `fn main` + `block_on`). Edition 2024, MSRV 1.93, modern Rust welcome.
@@ -68,7 +76,7 @@ DFDs in `_dfd/` are the design spec; notation/layout/file rules come from the [`
 4. **Implementation** — code types/logic/wiring from the DFD; incremental, type-first.
 5. **Review all DFDs** (optional, explicit request only) — confirm every DFD matches code; newer DFD `mtime` ⇒ stale code, vice versa ⇒ stale DFD.
 6. **Integration test** — Wiremock-mocked end-to-end tests; every DFD happy path covered by mocks; run `cargo test`.
-7. **Release** — `cargo build --release` → bump `Cargo.toml` (fix → patch, feature → minor; bump rides the change commit) → commit (never `Cargo.lock`/`config.toml`) → push → restart bot only if requested; `closes #<N>` for resolved issues.
+7. **Release** — `cargo build --release` → bump `crate-rockbot/Cargo.toml` (fix → patch, feature → minor; bump rides the change commit) → commit (never `Cargo.lock`/`config.toml`) → tag `vX.Y.Z` → push commits + tag to both remotes → create the Gitea release (see [Versioning, tags & releases](#versioning-tags--releases)) → restart bot only if requested; `closes #<N>` for resolved issues.
 
 ### Rust type-driven design rules
 
