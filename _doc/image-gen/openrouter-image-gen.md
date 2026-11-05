@@ -12,7 +12,7 @@ draw_path = "/images"
 
 [image_providers.models]
 banana        = "google/gemini-nano-banana-2.1"
-qwenimage     = "qwen/qwen-image-2.1-pro"
+qwenimage     = "qwen/qwen-image-2.1-turbo"
 qwen3         = "qwen/qwen-image-3-pro"
 seedream5pro  = "bytedance-seed/seedream-5-0-pro"
 seedream5flash = "bytedance-seed/seedream-5-0-flash"
@@ -224,7 +224,7 @@ Known working models (as of writing):
 | Model slug | Notes |
 |---|---|
 | `google/gemini-nano-banana-2.1` | `banana` — Nano Banana 2.1 |
-| `qwen/qwen-image-2.1-pro` | `qwenimage` — pro tier |
+| `qwen/qwen-image-2.1-turbo` | `qwenimage` — fast/turbo tier |
 | `qwen/qwen-image-3-pro` | `qwen3` — pro tier |
 | `bytedance-seed/seedream-5-0-pro` | `seedream5pro` |
 | `bytedance-seed/seedream-5-0-flash` | `seedream5flash` — flash tier |

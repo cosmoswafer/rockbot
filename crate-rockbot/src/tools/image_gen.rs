@@ -1685,8 +1685,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_tier_selects_route_over_default() {
-        // Generic tier-selection mechanism; the surviving roster only exposes
-        // pro (qwenimage/qwen3) and flash (seedream5flash) tiers (#114).
+        // Generic tier-selection mechanism; the surviving roster exposes
+        // pro (qwen3), turbo (qwenimage) and flash (seedream5flash) tiers
+        // (#114, #118).
         let entry = route_entry(
             "tier-demo",
             vec![
@@ -1777,17 +1778,17 @@ mod tests {
     #[tokio::test]
     async fn test_execute_pro_tier_daily_cap() {
         let entry = route_entry(
-            "qwenimage",
+            "pro-demo",
             vec![(
                 "openrouter",
-                "qwen/qwen-image-2.1-pro",
-                Some("qwen/qwen-image-2.1-pro"),
+                "demo/pro",
+                Some("demo/pro"),
                 ImageTier::Pro,
                 true,
             )],
         );
         let tool = make_multi_backend_tool(
-            ImageModelCatalog::new(vec![entry], "qwenimage"),
+            ImageModelCatalog::new(vec![entry], "pro-demo"),
             Box::new(MockImageProvider::named("fal", "fal-default")),
             Box::new(MockImageProvider::named("openrouter", "or-default")),
             1,
@@ -1795,11 +1796,11 @@ mod tests {
 
         // First call is charged (and then fails at the WebDAV upload).
         let _ = tool
-            .execute(r#"{"prompt":"final art","aspect_ratio":"1:1","model":"qwenimage","room_id":"room-a"}"#)
+            .execute(r#"{"prompt":"final art","aspect_ratio":"1:1","model":"pro-demo","room_id":"room-a"}"#)
             .await;
 
         let err = tool
-            .execute(r#"{"prompt":"final art again","aspect_ratio":"1:1","model":"qwenimage","room_id":"room-a"}"#)
+            .execute(r#"{"prompt":"final art again","aspect_ratio":"1:1","model":"pro-demo","room_id":"room-a"}"#)
             .await
             .unwrap_err();
         assert!(
@@ -1809,7 +1810,7 @@ mod tests {
 
         // A different room has its own budget.
         let other = tool
-            .execute(r#"{"prompt":"final art","aspect_ratio":"1:1","model":"qwenimage","room_id":"room-b"}"#)
+            .execute(r#"{"prompt":"final art","aspect_ratio":"1:1","model":"pro-demo","room_id":"room-b"}"#)
             .await;
         assert!(
             !other

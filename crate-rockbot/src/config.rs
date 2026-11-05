@@ -504,7 +504,7 @@ fn image_default_models(kind: &str) -> HashMap<String, String> {
             // Issue #114 roster: OpenRouter-only aliases (ids verified against
             // GET /api/v1/images/models).
             m.insert("banana".to_string(), "google/gemini-nano-banana-2.1".to_string());
-            m.insert("qwenimage".to_string(), "qwen/qwen-image-2.1-pro".to_string());
+            m.insert("qwenimage".to_string(), "qwen/qwen-image-2.1-turbo".to_string());
             m.insert("qwen3".to_string(), "qwen/qwen-image-3-pro".to_string());
             m.insert("seedream5pro".to_string(), "bytedance-seed/seedream-5-0-pro".to_string());
             m.insert(
@@ -932,7 +932,7 @@ default_provider = "openrouter"
         let or = config.find_image_provider("openrouter").unwrap();
         for (alias, slug) in [
             ("banana", "google/gemini-nano-banana-2.1"),
-            ("qwenimage", "qwen/qwen-image-2.1-pro"),
+            ("qwenimage", "qwen/qwen-image-2.1-turbo"),
             ("qwen3", "qwen/qwen-image-3-pro"),
             ("seedream5pro", "bytedance-seed/seedream-5-0-pro"),
             ("seedream5flash", "bytedance-seed/seedream-5-0-flash"),

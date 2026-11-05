@@ -244,10 +244,14 @@ mod tests {
                 .all(|r| r.provider_name == "fal"),
             "gptimage is fal-only (#114)"
         );
-        // qwenimage: pro only, no turbo route.
+        // qwenimage: turbo only, no pro default (#118).
         let qwen = catalog.entry("qwenimage").unwrap();
-        assert_eq!(qwen.default_route().tier, ImageTier::Pro);
-        assert_eq!(qwen.tiers(), vec![ImageTier::Pro]);
+        assert_eq!(qwen.default_route().tier, ImageTier::Turbo);
+        assert_eq!(qwen.tiers(), vec![ImageTier::Turbo]);
+        assert_eq!(
+            qwen.default_route().generate_model_id,
+            "qwen/qwen-image-2.1-turbo"
+        );
         assert!(qwen.routes.iter().all(|r| r.provider_name == "openrouter"));
     }
 

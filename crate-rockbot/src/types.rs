@@ -1092,7 +1092,7 @@ mod tests {
     #[test]
     fn test_image_model_catalog_default_alias() {
         let catalog = ImageModelCatalog::new(
-            vec![entry("qwenimage", "qwen/qwen-image-2.1-pro", None, "openrouter")],
+            vec![entry("qwenimage", "qwen/qwen-image-2.1-turbo", None, "openrouter")],
             "qwenimage",
         );
         assert_eq!(catalog.default_alias(), "qwenimage");
@@ -1156,7 +1156,7 @@ mod tests {
         let layer = ImageModelTraits::for_model_id("inclusionai/ming-image-0.1-design-layer");
         assert!(!layer.text_to_image_only, "layer variant must not match the t2i marker");
 
-        let other = ImageModelTraits::for_model_id("qwen/qwen-image-2.1-pro");
+        let other = ImageModelTraits::for_model_id("qwen/qwen-image-2.1-turbo");
         assert_eq!(other, ImageModelTraits::default(), "unmarked models get all-default traits");
     }
 
@@ -1164,7 +1164,7 @@ mod tests {
     fn test_image_model_entry_traits() {
         let ming = entry("synthetic-ming", "inclusionai/ming-image-0.1-design", None, "openrouter");
         assert!(ming.traits().self_sized && ming.traits().text_to_image_only);
-        let qwen = entry("qwenimage", "qwen/qwen-image-2.1-pro", None, "openrouter");
+        let qwen = entry("qwenimage", "qwen/qwen-image-2.1-turbo", None, "openrouter");
         assert!(!qwen.traits().self_sized && !qwen.traits().text_to_image_only);
     }
 

@@ -14,7 +14,7 @@
 # `GET /api/v1/images/models`; every fal slug checked against the fal model
 # registry (`https://fal.ai/api/models`). `edit = ""` means the route is
 # generate-only — it is not a broken reference.
-version = "2026-11-05.1"
+version = "2026-11-05.2"
 
 # ------------------------------- GPT Image -------------------------------
 
@@ -67,18 +67,18 @@ notes = "Strong all-rounder with cheap, fast edits. OpenRouter-only route."
 
 [[model]]
 alias = "qwenimage"
-label = "Qwen Image 2.1 · Pro"
+label = "Qwen Image 2.1 · Turbo"
 family = "qwen"
 version = "2.1"
 ratios = ["16:9", "2:3", "1:1", "4:3", "3:4", "3:2"]
-tags = ["general", "pro"]
-notes = "Pro tier: final output. OpenRouter-only route."
+tags = ["general", "fast"]
+notes = "Fast, lower-cost tier: drafts, storyboards, quick iteration. OpenRouter-only route."
 
   [[model.route]]
   provider = "openrouter"
-  generate = "qwen/qwen-image-2.1-pro"
-  edit = "qwen/qwen-image-2.1-pro"
-  tier = "pro"
+  generate = "qwen/qwen-image-2.1-turbo"
+  edit = "qwen/qwen-image-2.1-turbo"
+  tier = "turbo"
   default = true
 
 [[model]]

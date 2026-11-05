@@ -121,7 +121,7 @@ has **one provider** (no cross-provider failover routes):
 | `gptimage` (default) | fal: `openai/gpt-image-2.6/flare/{text-to-image,edit}`                    | standard |
 | `sunburst`       | fal: `openai/gpt-image-2.6/sunburst/{text-to-image,edit}`                     | standard |
 | `banana`         | openrouter: `google/gemini-nano-banana-2.1`                                   | standard |
-| `qwenimage`      | openrouter: `qwen/qwen-image-2.1-pro`                                         | pro |
+| `qwenimage`      | openrouter: `qwen/qwen-image-2.1-turbo`                                       | turbo |
 | `qwen3`          | openrouter: `qwen/qwen-image-3-pro`                                           | pro |
 | `seedream5pro`   | openrouter: `bytedance-seed/seedream-5-0-pro`                                 | standard |
 | `seedream5flash` | openrouter: `bytedance-seed/seedream-5-0-flash`                               | flash |
@@ -135,8 +135,8 @@ naming a removed alias fails at the parse boundary with a `ToolCallParse` error
 listing the eight surviving aliases — there is no silent fallback to the
 default.
 
-`qwenimage` is pro-only (the turbo route was dropped); `seedream5flash` is the
-only flash-tier alias; `qwenimage`/`qwen3` are the only pro-tier aliases.
+`qwenimage` is turbo-only (the pro route was removed in #118); `seedream5flash`
+is the only flash-tier alias; `qwen3` is the only pro-tier alias.
 
 The Ming Design wire traits (self-sized / text-to-image-only) remain
 model-id driven in `ImageModelTraits`, but the `ming` alias is no longer in the
