@@ -14,6 +14,7 @@ use crate::types::{
     ImageGenParams, ImageModelCatalog, ImageModelEntry, ImageModelTraits, ImageRoute,
     ImageSizeValue, ImageTier,
 };
+use crate::utils::uuid_string;
 use crate::validated::{ModelAlias, NonEmptyString, ProviderName};
 
 #[derive(Debug, Deserialize)]
@@ -260,17 +261,6 @@ fn build_description(catalog: &ImageModelCatalog) -> String {
         desc.push_str(" Seedream models also accept 'auto_2K' or 'auto_1K' to auto-select dimensions.");
     }
     desc
-}
-
-fn uuid_string() -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    format!(
-        "{:08x}-{:04x}",
-        now.as_secs() as u32,
-        now.subsec_millis() as u16
-    )
 }
 
 fn ext_from_output_format(output_format: Option<&str>) -> &str {

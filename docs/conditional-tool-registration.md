@@ -18,6 +18,7 @@ If the required config is absent, the tool is not registered at all
 | `recall_knowledge` | `[webdav]` config present | Lists knowledge `.md` files from WebDAV |
 | `calendar` | `[webdav]` config present | Creates/manages per-room `.ics` calendars on WebDAV |
 | `image_gen` | `[webdav]` config present **and** matching `[[image_providers]]` entry with resolvable t2i + edit models | Requires WebDAV for persistence + image provider for generation |
+| `share_image` | `[webdav]` config present | Reads a WebDAV image and creates a Nextcloud share; SVG needs `/preview` for display |
 | `compress_memory` | Always registered | Injected separately into harness; self-contained |
 
 ## Boot Logging

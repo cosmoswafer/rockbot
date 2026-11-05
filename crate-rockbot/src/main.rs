@@ -20,8 +20,8 @@ use rockbot::tool::ToolRegistry;
 use rockbot::tools::{
     AcpTool, BraveSearchProvider, CalendarTool, ResetMemoryTool, EditSoulTool, ExaSearchProvider,
     ForgetKnowledgeTool, ImageBackend, ImageGenTool, RecallKnowledgeTool, SaveKnowledgeTool,
-    SearchProvider, VisionTool, WebDavEditLimits, WebDavEditTool, WebDavTool, WebFetchTool,
-    WebSearchTool,
+    SearchProvider, ShareImageTool, VisionTool, WebDavEditLimits, WebDavEditTool, WebDavTool,
+    WebFetchTool, WebSearchTool,
 };
 use rockbot::utils::strip_markdown_image_id;
 
@@ -253,7 +253,12 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
         tool_registry.register(Box::new(SaveKnowledgeTool::new(webdav_client.clone())));
         tool_registry.register(Box::new(ForgetKnowledgeTool::new(webdav_client.clone())));
         tool_registry.register(Box::new(RecallKnowledgeTool::new(webdav_client.clone())));
-        info!("Registered WebDAV tools (webdav, webdav_edit, edit_soul, knowledge)");
+        tool_registry.register(Box::new(ShareImageTool::new(
+            webdav_client.clone(),
+            image_cache.clone(),
+            harness.config().active_model().max_attachment_bytes,
+        )));
+        info!("Registered WebDAV tools (webdav, webdav_edit, edit_soul, knowledge, share_image)");
 
         if let Some(ref wd_cfg) = webdav_config_for_calendar {
             let calendar_tool = CalendarTool::from_config(webdav_client.clone(), wd_cfg);
@@ -381,7 +386,7 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     } else {
-        info!("WebDAV not configured — WebDAV-dependent tools (webdav, edit_soul, knowledge, calendar, image_gen) not registered");
+        info!("WebDAV not configured — WebDAV-dependent tools (webdav, edit_soul, knowledge, calendar, image_gen, share_image) not registered");
     }
 
     if !tool_registry.is_empty() {

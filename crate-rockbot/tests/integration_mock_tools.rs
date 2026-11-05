@@ -2063,3 +2063,169 @@ mod webdav_edit {
         assert!(error.to_string().contains("binary"), "got: {error}");
     }
 }
+
+// ============================================================================
+// docs/dfd/agent/agent-harness/image-sharing.md — share_image (issue #120)
+// ============================================================================
+
+mod share_image {
+    use super::*;
+    use rockbot::tools::ShareImageTool;
+
+    const DAV_BASE: &str = "/remote.php/dav/files/test/clawspaces";
+
+    fn dav_url(server: &MockServer) -> String {
+        format!("{}{DAV_BASE}", server.uri())
+    }
+
+    fn tool(server: &MockServer, cache: Arc<ImageCache>, max_bytes: u64) -> ShareImageTool {
+        ShareImageTool::new(
+            webdav::WebDavClient::new(dav_url(server), "test", "pass").unwrap(),
+            cache,
+            max_bytes,
+        )
+    }
+
+    async fn mount_stat(server: &MockServer, file: &str, size: u64, content_type: &str) {
+        let body = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<d:multistatus xmlns:d="DAV:">
+  <d:response>
+    <d:href>{DAV_BASE}/r-test/{file}</d:href>
+    <d:propstat>
+      <d:prop>
+        <d:getcontentlength>{size}</d:getcontentlength>
+        <d:getcontenttype>{content_type}</d:getcontenttype>
+        <d:getetag>"v1"</d:getetag>
+        <d:resourcetype/>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+</d:multistatus>"#
+        );
+        Mock::given(method("PROPFIND"))
+            .and(path(format!("{DAV_BASE}/r-test/{file}")))
+            .respond_with(
+                ResponseTemplate::new(207)
+                    .set_body_string(body)
+                    .insert_header("Content-Type", "application/xml"),
+            )
+            .mount(server)
+            .await;
+    }
+
+    async fn mount_share(server: &MockServer, token: &str) {
+        let body = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<ocs><data><id>1</id><url>{}/s/{token}</url></data></ocs>"#,
+            server.uri()
+        );
+        Mock::given(method("POST"))
+            .and(path("/ocs/v2.php/apps/files_sharing/api/v1/shares"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(body)
+                    .insert_header("Content-Type", "application/xml"),
+            )
+            .mount(server)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn svg_uses_preview_and_caches_png_bytes() {
+        let server = MockServer::start().await;
+        mount_stat(&server, "diagram.svg", 512, "image/svg+xml").await;
+        mount_share(&server, "tok").await;
+        Mock::given(method("GET"))
+            .and(path("/s/tok/preview"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_bytes(tiny_png_bytes())
+                    .insert_header("Content-Type", "image/png"),
+            )
+            .mount(&server)
+            .await;
+
+        let cache = Arc::new(ImageCache::new());
+        let result = tool(&server, cache.clone(), 1_000_000)
+            .execute(r#"{"path":"diagram.svg","webdav_dir":"r-test","image_cache_key":"call_svg"}"#)
+            .await
+            .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["image_key"], "call_svg");
+        assert_eq!(parsed["mime_type"], "image/png");
+        assert!(parsed["display_url"].as_str().unwrap().ends_with("/preview"));
+
+        let cached = cache.get("call_svg").unwrap();
+        assert_eq!(cached.image_bytes, tiny_png_bytes());
+        assert_eq!(cached.mime_type.as_str(), "image/png");
+        assert!(cached.share_url.unwrap().ends_with("/preview"));
+    }
+
+    #[tokio::test]
+    async fn raster_uses_download_and_caches_original_bytes() {
+        let server = MockServer::start().await;
+        mount_stat(&server, "photo.png", 67, "image/png").await;
+        mount_share(&server, "tok").await;
+        Mock::given(method("GET"))
+            .and(path(format!("{DAV_BASE}/r-test/photo.png")))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_bytes(tiny_png_bytes())
+                    .insert_header("Content-Type", "image/png"),
+            )
+            .mount(&server)
+            .await;
+
+        let cache = Arc::new(ImageCache::new());
+        let result = tool(&server, cache.clone(), 1_000_000)
+            .execute(r#"{"path":"photo.png","webdav_dir":"r-test","image_cache_key":"call_png"}"#)
+            .await
+            .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert!(parsed["display_url"].as_str().unwrap().ends_with("/download"));
+
+        let cached = cache.get("call_png").unwrap();
+        assert_eq!(cached.image_bytes, tiny_png_bytes());
+        assert_eq!(cached.mime_type.as_str(), "image/png");
+        assert!(cached.share_url.unwrap().ends_with("/download"));
+    }
+
+    #[tokio::test]
+    async fn preview_failure_is_a_tool_error_and_caches_nothing() {
+        let server = MockServer::start().await;
+        mount_stat(&server, "diagram.svg", 512, "image/svg+xml").await;
+        mount_share(&server, "tok").await;
+        Mock::given(method("GET"))
+            .and(path("/s/tok/preview"))
+            .respond_with(
+                ResponseTemplate::new(404)
+                    .set_body_string("preview disabled")
+                    .insert_header("Content-Type", "text/html"),
+            )
+            .mount(&server)
+            .await;
+
+        let cache = Arc::new(ImageCache::new());
+        let error = tool(&server, cache.clone(), 1_000_000)
+            .execute(r#"{"path":"diagram.svg","webdav_dir":"r-test","image_cache_key":"call_bad"}"#)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("preview unavailable"), "got: {error}");
+        assert!(cache.get("call_bad").is_none());
+    }
+
+    #[tokio::test]
+    async fn oversized_source_is_rejected_before_share() {
+        let server = MockServer::start().await;
+        mount_stat(&server, "diagram.svg", 2048, "image/svg+xml").await;
+
+        let cache = Arc::new(ImageCache::new());
+        let error = tool(&server, cache.clone(), 1024)
+            .execute(r#"{"path":"diagram.svg","webdav_dir":"r-test"}"#)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("above the 1024 byte limit"), "got: {error}");
+    }
+}

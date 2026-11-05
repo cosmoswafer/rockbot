@@ -1,3 +1,18 @@
+/// Short, time-derived identifier used for image keys and WebDAV filenames.
+///
+/// Not a cryptographic UUID — collisions are only possible within the same
+/// millisecond, which is acceptable for a single-process bot.
+pub fn uuid_string() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    format!(
+        "{:08x}-{:04x}",
+        now.as_secs() as u32,
+        now.subsec_millis() as u16
+    )
+}
+
 /// Returns the current UTC time as an ISO 8601 string.
 pub fn now_iso_string() -> String {
     let now = std::time::SystemTime::now()

@@ -32,7 +32,8 @@ Respond to DMs and @mentions concisely. Keep your reasoning brief. \
 Use tools rather than guessing. You have up to {max_iterations} iterations per task. \
 Current UTC time: {current_utc_time}. Use for all date/time questions. \
 Share image_gen results as markdown `![{description}]({image_key})`. \
-Do NOT fabricate image references — only image_gen produces real images. \
+Share images already stored in WebDAV by calling share_image, then display them the same way. \
+Do NOT fabricate image references — only image_gen and share_image produce real images. \
 Use the edit_soul tool ONLY when the user explicitly asks to update your personality or identity — \
 not for dynamic info (use knowledge notes or WebDAV files). \
 Before saving knowledge, use the recall_knowledge tool to check for existing notes — update rather \
@@ -441,12 +442,6 @@ impl AgentHarness {
                                     serde_json::from_str::<serde_json::Value>(&args)
                                 {
                                     if let Some(obj) = v.as_object_mut() {
-                                        obj.insert(
-                                            "image_cache_key".to_string(),
-                                            serde_json::Value::String(
-                                                tool_call.id.clone(),
-                                            ),
-                                        );
                                         // Auto-inject image URLs from the current message
                                         // (e.g. NextCloud share links) so text-only
                                         // models can edit images without needing vision.
@@ -482,7 +477,7 @@ impl AgentHarness {
                                     }
                                     args = serde_json::to_string(&v).unwrap_or(args);
                                 }
-                                args
+                                inject_image_cache_key(&args, &tool_call.id)
                             } else if tool_call.function.name == "web_fetch" {
                                 match &secrets {
                                     Some(entries) if !entries.is_empty() => {
@@ -517,6 +512,14 @@ impl AgentHarness {
                                     &args,
                                     self.memory.soul_name(room_id),
                                 )
+                            } else if tool_call.function.name == "share_image" {
+                                let wd = compute_webdav_dir(room_name, room_fname, is_dm);
+                                let args = inject_room_context(
+                                    &tool_call.function.arguments,
+                                    room_id,
+                                    &wd,
+                                );
+                                inject_image_cache_key(&args, &tool_call.id)
                             } else if tool_call.function.name == "webdav"
                                 || tool_call.function.name == "webdav_edit"
                                 || tool_call.function.name == "save_knowledge"
@@ -567,33 +570,44 @@ impl AgentHarness {
                                 tool_result.is_error,
                             );
 
-                            if tool_call.function.name == "image_gen" && !tool_result.is_error {
-                                debug!("image_gen call {} completed — queuing for post-reply upload", tool_call.id);
+                            if matches!(
+                                tool_call.function.name.as_str(),
+                                "image_gen" | "share_image"
+                            ) && !tool_result.is_error
+                            {
+                                debug!(
+                                    "{} call {} completed — queuing for post-reply upload",
+                                    tool_call.function.name, tool_call.id
+                                );
                                 image_ids_this_turn.push(tool_call.id.clone());
                                 // Add generated image to image_pool for name-based
                                 // matching in subsequent tool calls (e.g. "make the
-                                // fluffy cat darker" matches a prior image_gen prompt)
-                                if let Some(cached) = self.image_cache.get(&tool_call.id) {
-                                    if let Ok(v) =
-                                        serde_json::from_str::<serde_json::Value>(
-                                            &tool_call.function.arguments,
-                                        )
-                                    {
-                                        if let Some(prompt) =
-                                            v.get("prompt").and_then(|p| p.as_str())
+                                // fluffy cat darker" matches a prior image_gen prompt).
+                                // share_image results are already on WebDAV and are
+                                // not edit inputs, so they stay out of the pool.
+                                if tool_call.function.name == "image_gen" {
+                                    if let Some(cached) = self.image_cache.get(&tool_call.id) {
+                                        if let Ok(v) =
+                                            serde_json::from_str::<serde_json::Value>(
+                                                &tool_call.function.arguments,
+                                            )
                                         {
-                                            let name = truncate_pool_name(prompt);
-                                            self.image_pool
-                                                .entry(room_id.to_string())
-                                                .or_default()
-                                                .push(CachedImage {
-                                                    data_uri: cached.data_uri(),
-                                                    name: name.clone(),
-                                                });
-                                            debug!(
-                                                "Added generated image to image_pool for room {}: {}",
-                                                room_id, name,
-                                            );
+                                            if let Some(prompt) =
+                                                v.get("prompt").and_then(|p| p.as_str())
+                                            {
+                                                let name = truncate_pool_name(prompt);
+                                                self.image_pool
+                                                    .entry(room_id.to_string())
+                                                    .or_default()
+                                                    .push(CachedImage {
+                                                        data_uri: cached.data_uri(),
+                                                        name: name.clone(),
+                                                    });
+                                                debug!(
+                                                    "Added generated image to image_pool for room {}: {}",
+                                                    room_id, name,
+                                                );
+                                            }
                                         }
                                     }
                                 }
@@ -1577,6 +1591,23 @@ fn inject_room_context(arguments: &str, room_id: &str, webdav_dir: &str) -> Stri
     serde_json::to_string(&args).unwrap_or_else(|_| arguments.to_string())
 }
 
+/// Harness-only argument: the tool call id, used as the `ImageCache` key so
+/// `main.rs` can find the bytes after the reply is generated. Shared by
+/// `image_gen` and `share_image`.
+fn inject_image_cache_key(arguments: &str, call_id: &str) -> String {
+    let Ok(mut args) = serde_json::from_str::<serde_json::Value>(arguments) else {
+        return arguments.to_string();
+    };
+    let Some(obj) = args.as_object_mut() else {
+        return arguments.to_string();
+    };
+    obj.insert(
+        "image_cache_key".to_string(),
+        serde_json::Value::String(call_id.to_string()),
+    );
+    serde_json::to_string(&args).unwrap_or_else(|_| arguments.to_string())
+}
+
 /// Harness-only argument: the name the soul had before this edit, so an LLM
 /// rewrite that drops the front matter cannot erase the identity.
 fn inject_previous_soul_name(arguments: &str, previous: Option<&str>) -> String {
@@ -2254,7 +2285,7 @@ chat = "mock-model"
             "Prompt must reference recall_knowledge tool"
         );
         assert!(
-            prompt.contains("only image_gen produces real images"),
+            prompt.contains("only image_gen and share_image produce real images"),
             "Prompt must warn against fabricating fake image references"
         );
         assert!(
@@ -2439,6 +2470,21 @@ chat = "mock-model"
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["room_id"], "general");
         assert_eq!(parsed["webdav_dir"], "r-general");
+    }
+
+    #[test]
+    fn test_inject_image_cache_key() {
+        let args = r#"{"path":"diagram.svg","webdav_dir":"r-test"}"#;
+        let result = inject_image_cache_key(args, "call_123");
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["image_cache_key"], "call_123");
+        assert_eq!(parsed["path"], "diagram.svg");
+        assert_eq!(parsed["webdav_dir"], "r-test");
+    }
+
+    #[test]
+    fn test_inject_image_cache_key_malformed_args() {
+        assert_eq!(inject_image_cache_key("not json", "call_123"), "not json");
     }
 
     #[test]

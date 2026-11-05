@@ -48,6 +48,12 @@ Full `AgentHarness`: simple response, DM handling, provider error fallback, max_
 `ImageGenTool` definition (hidden `image_size` from LLM), execute error paths (missing prompt, invalid JSON), UUID format generation, webdav_dir extraction with room_id fallback, output format extension mapping, `ImageGenParams` construction/parsing (presets, custom sizes, image_urls for img2img, edge cases), catalog-derived description/schema, per-call alias resolution, dropped-alias rejection with the surviving alias list (#114), provider pin/tier/failover routing, pro-tier daily cap, and mode-aware edit endpoints.
 - Helpers: `make_fal_config()`, `make_fal_provider()`, `make_webdav()`, `make_image_cache()`
 
+### `src/image_kind.rs` — 4 tests
+`ImageKind` classification by extension (png/jpg/jpeg/gif/webp/svg, case-insensitive), unsupported/extensionless rejection, MIME/extension mapping, and `is_vector` (SVG only).
+
+### `src/tools/share_image.rs` — 5 tests
+`ShareImageTool` definition (`path` required, harness-only `image_cache_key` hidden), Nextcloud `/preview` URL derivation from `/download`, unsupported-extension and missing-path errors. Wiremock coverage lives in `tests/integration_mock_tools.rs` (`share_image` module): SVG → `/preview` + cached PNG, raster → `/download` + original bytes, preview failure caches nothing, oversized source rejected before share.
+
 ### `src/tools/vision.rs` — 9 tests
 `VisionTool` definition, image name extraction from URLs (with/without query params), MIME detection by extension (png/jpg/jpeg/gif/webp/svg) with content-type preference, markdown tag format, `with_max_bytes` constructor, optional prompt parameter, missing URL error.
 

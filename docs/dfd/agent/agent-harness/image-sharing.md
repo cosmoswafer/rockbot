@@ -77,6 +77,18 @@ RocketChat. This eliminates both the `Message_MaxAllowedSize` REST limit
 (Match failed [400]). Share links expire after 7 days, longer than typical
 chat message lifetimes.
 
+**SVG (`share_image`, issue #120)**: images already stored in WebDAV are shared
+by the `share_image` tool rather than `image_gen`. SVG cannot use `/download` —
+Nextcloud serves it as `text/plain`, which RocketChat's markdown image parser
+will not render. For SVG the tool derives `{share}/preview`, lets Nextcloud
+rasterize the vector to PNG server-side, validates that the response is
+`2xx` + `image/*`, and stores those preview bytes in `ImageCache` under the
+tool call id. The reply pipeline is unchanged: `main.rs` appends the
+`/preview` URL as markdown exactly like an `image_gen` `/download` URL.
+PNG/JPEG/GIF/WebP inputs keep the `/download` path and original bytes. The
+harness injects `image_cache_key` into `share_image` arguments and queues its
+call id in `last_image_ids`, just like `image_gen`.
+
 **Suffix choice (probed, issue #97)**: on paper `/preview`
 (`PublicPreviewController::directLink`) looks superior — HTTP 200 directly,
 real MIME type (`image/png`), `Content-Disposition: inline`, 24h cache — while
