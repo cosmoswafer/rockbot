@@ -3,6 +3,7 @@ pub mod error;
 pub mod acp;
 pub mod harness;
 pub mod image_cache;
+pub mod image_manifest;
 pub mod knowledge;
 pub mod memory;
 pub mod platform;

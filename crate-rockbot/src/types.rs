@@ -494,28 +494,188 @@ impl ImageModelTraits {
     }
 }
 
-/// One catalog entry: a selectable alias and the provider it routes to.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ImageModelEntry {
-    pub alias: String,
-    pub model_id: String,
-    /// Dedicated edit-endpoint id; `None` ⇒ edits reuse `model_id`.
-    pub edit_model_id: Option<String>,
-    pub provider_name: String,
+/// Route tier of an image model (issue #112): `standard` when unspecified,
+/// otherwise a quality/speed split the LLM can request explicitly. `Pro` is
+/// the only tier that counts against the per-room pro-tier daily cap.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ImageTier {
+    #[default]
+    Standard,
+    Pro,
+    Turbo,
+    Flash,
 }
 
-impl ImageModelEntry {
-    /// Mode-appropriate model id for this entry.
+impl ImageTier {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Standard => "standard",
+            Self::Pro => "pro",
+            Self::Turbo => "turbo",
+            Self::Flash => "flash",
+        }
+    }
+}
+
+impl std::fmt::Display for ImageTier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for ImageTier {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "standard" => Ok(Self::Standard),
+            "pro" => Ok(Self::Pro),
+            "turbo" => Ok(Self::Turbo),
+            "flash" => Ok(Self::Flash),
+            other => Err(format!(
+                "unknown image model tier '{other}' — valid tiers: standard, pro, turbo, flash"
+            )),
+        }
+    }
+}
+
+/// One provider route of an alias (issue #112): the slug pair a provider
+/// serves for the same model family. A route with `edit_model_id: None` is
+/// generate-only — edit calls fall through to the next route (or reuse the
+/// generate id when no route declares an edit endpoint).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImageRoute {
+    /// Owning `[[image_providers]]` entry name — selects the backend.
+    pub provider_name: String,
+    /// Text-to-image slug sent to the provider.
+    pub generate_model_id: String,
+    /// Dedicated edit-endpoint slug; `None` ⇒ generate-only route.
+    pub edit_model_id: Option<String>,
+    /// Quality/speed tier this route serves.
+    pub tier: ImageTier,
+    /// Preferred route of the alias (first if none is flagged).
+    pub is_default: bool,
+}
+
+impl ImageRoute {
+    /// Mode-appropriate model id for this route.
     pub fn model_id_for_mode(&self, is_edit: bool) -> &str {
         match (is_edit, &self.edit_model_id) {
             (true, Some(edit_id)) => edit_id,
-            _ => &self.model_id,
+            _ => &self.generate_model_id,
         }
     }
+}
 
-    /// Wire-level traits of the entry's text-to-image model id (issue #104).
+/// Wire-level traits of an image model, plus the fal request-shape selector.
+///
+/// Some fal endpoints do not accept the `{"width","height"}` `image_size`
+/// object the provider sends by default: `bria/fibo-2/*` takes an
+/// `aspect_ratio` string, and `google/nano-banana-2.1*` takes `aspect_ratio`
+/// plus a `resolution` tier (verified against the fal OpenAPI schemas,
+/// 2026-11-05). Deriving the shape from the wire model id keeps the request
+/// builder and the manifest in agreement without per-alias code.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum FalSizeParam {
+    /// `image_size: {"width", "height"}` — gpt-image, seedream, moss.
+    #[default]
+    ImageSizeObject,
+    /// `aspect_ratio: "16:9"` — bria/fibo-2.
+    AspectRatio,
+    /// `aspect_ratio` + `resolution: "1K"|"2K"|"4K"` — nano-banana 2.1.
+    AspectRatioWithResolution,
+}
+
+impl FalSizeParam {
+    pub fn for_model_id(model_id: &str) -> Self {
+        if model_id.starts_with("google/nano-banana-2.1") {
+            Self::AspectRatioWithResolution
+        } else if model_id.starts_with("bria/fibo-2/") {
+            Self::AspectRatio
+        } else {
+            Self::ImageSizeObject
+        }
+    }
+}
+
+/// One catalog entry: a selectable alias and its ordered provider routes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImageModelEntry {
+    pub alias: String,
+    /// Human-facing name shown in the tool description.
+    pub label: String,
+    /// Model family (`openai`, `google`, `qwen`, …).
+    pub family: String,
+    /// Family version string (`2.6`, `2.1`, …).
+    pub version: String,
+    /// Deprecated aliases stay selectable for one release cycle.
+    pub deprecated: bool,
+    /// Ordered routes (preferred first). Never empty after validation.
+    pub routes: Vec<ImageRoute>,
+}
+
+impl ImageModelEntry {
+    /// Preferred route: the one flagged `is_default`, else the first.
+    ///
+    /// Entries reaching the catalog are validated to carry at least one route
+    /// (`image_manifest` rejects zero-route models), so the expect only fires
+    /// on a broken internal invariant.
+    pub fn default_route(&self) -> &ImageRoute {
+        self.routes
+            .iter()
+            .find(|r| r.is_default)
+            .or_else(|| self.routes.first())
+            .expect("ImageModelEntry invariant: at least one route")
+    }
+
+    /// Mode-appropriate model id of the preferred route.
+    pub fn model_id_for_mode(&self, is_edit: bool) -> &str {
+        self.default_route().model_id_for_mode(is_edit)
+    }
+
+    /// Routes eligible for a call, preferred first: optional provider pin,
+    /// optional tier, then — for edit calls — routes with a dedicated edit
+    /// endpoint before generate-only routes.
+    pub fn route_candidates(
+        &self,
+        provider: Option<&str>,
+        tier: Option<ImageTier>,
+        is_edit: bool,
+    ) -> Vec<&ImageRoute> {
+        let mut routes: Vec<&ImageRoute> = self
+            .routes
+            .iter()
+            .filter(|r| provider.is_none_or(|p| r.provider_name == p))
+            .filter(|r| tier.is_none_or(|t| r.tier == t))
+            .collect();
+        routes.sort_by_key(|r| !r.is_default);
+        if is_edit {
+            // Stable sort keeps the default preference inside each group.
+            routes.sort_by_key(|r| r.edit_model_id.is_none());
+        }
+        routes
+    }
+
+    /// Provider names this entry can route to, in declaration order.
+    pub fn providers(&self) -> Vec<&str> {
+        self.routes.iter().map(|r| r.provider_name.as_str()).collect()
+    }
+
+    /// Tiers this entry exposes, in declaration order (deduplicated).
+    pub fn tiers(&self) -> Vec<ImageTier> {
+        let mut tiers: Vec<ImageTier> = Vec::new();
+        for r in &self.routes {
+            if !tiers.contains(&r.tier) {
+                tiers.push(r.tier);
+            }
+        }
+        tiers
+    }
+
+    /// Wire-level traits of the preferred route's text-to-image id (#104).
     pub fn traits(&self) -> ImageModelTraits {
-        ImageModelTraits::for_model_id(&self.model_id)
+        ImageModelTraits::for_model_id(&self.default_route().generate_model_id)
     }
 }
 
@@ -541,54 +701,115 @@ impl ImageModelCatalog {
         self.entries.is_empty()
     }
 
-    /// Resolve a config alias to its `(model_id, provider_name)` pair — the
-    /// tool routes the call to that provider's backend.
-    pub fn resolve(&self, alias: &str) -> Option<(&str, &str)> {
-        self.entry(alias)
-            .map(|e| (e.model_id.as_str(), e.provider_name.as_str()))
+    /// Entries in alias-sorted order — feeds the derived tool description.
+    pub fn entries(&self) -> &[ImageModelEntry] {
+        &self.entries
     }
 
-    /// Resolve to the full entry (edit companion included).
+    /// Resolve a config alias to its preferred route's `(model_id,
+    /// provider_name)` pair — the tool routes the call to that provider's
+    /// backend.
+    pub fn resolve(&self, alias: &str) -> Option<(&str, &str)> {
+        self.entry(alias).map(|e| {
+            let route = e.default_route();
+            (route.generate_model_id.as_str(), route.provider_name.as_str())
+        })
+    }
+
+    /// Resolve to the full entry (all routes included).
     pub fn entry(&self, alias: &str) -> Option<&ImageModelEntry> {
         self.entries.iter().find(|e| e.alias == alias)
     }
 
-    /// Mode-appropriate model id for an alias (`edit_model_id` when editing
-    /// and a companion exists, else the plain id).
+    /// Mode-appropriate model id for an alias's preferred route.
     pub fn resolve_for_mode(&self, alias: &str, is_edit: bool) -> Option<(&str, &str)> {
         self.entry(alias).map(|e| {
+            let route = e.default_route();
             (
-                e.model_id_for_mode(is_edit),
-                e.provider_name.as_str(),
+                route.model_id_for_mode(is_edit),
+                route.provider_name.as_str(),
             )
         })
     }
 
-    /// Aliases in sorted order — feeds the tool schema `enum`.
+    /// Aliases in sorted order — feeds the tool schema `enum` (deprecated
+    /// aliases included so old rooms keep working).
     pub fn allowed_aliases(&self) -> Vec<&str> {
         self.entries.iter().map(|e| e.alias.as_str()).collect()
     }
 
-    /// Model ids in alias-sorted order (pairs with `allowed_aliases()` by
-    /// index) — feeds the derived tool description.
-    pub fn model_ids(&self) -> Vec<&str> {
-        self.entries.iter().map(|e| e.model_id.as_str()).collect()
+    /// Provider names actually referenced by at least one route (sorted).
+    pub fn referenced_providers(&self) -> Vec<&str> {
+        let mut providers: Vec<&str> = self
+            .entries
+            .iter()
+            .flat_map(|e| e.routes.iter().map(|r| r.provider_name.as_str()))
+            .collect();
+        providers.sort_unstable();
+        providers.dedup();
+        providers
     }
 
-    /// Provider names in alias-sorted order (index-aligned with
-    /// `allowed_aliases()` and `model_ids()`) — feeds the derived tool
-    /// description with per-model routing info.
-    pub fn provider_names(&self) -> Vec<&str> {
-        self.entries.iter().map(|e| e.provider_name.as_str()).collect()
+    /// Drop routes whose provider has no backend, then entries left with no
+    /// routes. Used at registration so the schema never advertises a provider
+    /// this process cannot call.
+    pub fn restricted_to_providers(&self, available: &std::collections::HashSet<&str>) -> Self {
+        let entries = self
+            .entries
+            .iter()
+            .filter_map(|e| {
+                let routes: Vec<ImageRoute> = e
+                    .routes
+                    .iter()
+                    .filter(|r| available.contains(r.provider_name.as_str()))
+                    .cloned()
+                    .collect();
+                if routes.is_empty() {
+                    None
+                } else {
+                    Some(ImageModelEntry {
+                        routes,
+                        ..e.clone()
+                    })
+                }
+            })
+            .collect();
+        Self {
+            entries,
+            default_alias: self.default_alias.clone(),
+        }
     }
 
-    /// `true` iff any configured model id is in the seedream v5 family —
+    /// Move the default alias's first route owned by `provider` to the front
+    /// (and flag it default) — used when no manifest supplies a default route.
+    pub fn prefer_provider(&mut self, provider: &str) {
+        if let Some(entry) = self
+            .entries
+            .iter_mut()
+            .find(|e| e.alias == self.default_alias)
+            && let Some(idx) = entry
+                .routes
+                .iter()
+                .position(|r| r.provider_name == provider)
+        {
+            let mut route = entry.routes.remove(idx);
+            route.is_default = true;
+            for other in &mut entry.routes {
+                other.is_default = false;
+            }
+            entry.routes.insert(0, route);
+        }
+    }
+
+    /// `true` iff any route's model id is in the seedream v5 family —
     /// determines whether the tool advertises the `auto_1K`/`auto_2K`
     /// aspect strings to the LLM.
     pub fn supports_auto_aspect(&self) -> bool {
-        self.entries
-            .iter()
-            .any(|e| e.model_id.contains(SEEDREAM_V5_MARKER))
+        self.entries.iter().any(|e| {
+            e.routes
+                .iter()
+                .any(|r| r.generate_model_id.contains(SEEDREAM_V5_MARKER))
+        })
     }
 
     /// `"a, b, c"` or `"(none configured)"` — for parse-error messages.
@@ -722,9 +943,33 @@ mod tests {
     fn entry(alias: &str, model_id: &str, edit: Option<&str>, provider: &str) -> ImageModelEntry {
         ImageModelEntry {
             alias: alias.to_string(),
-            model_id: model_id.to_string(),
-            edit_model_id: edit.map(|s| s.to_string()),
+            label: alias.to_string(),
+            family: "test".to_string(),
+            version: "0".to_string(),
+            deprecated: false,
+            routes: vec![ImageRoute {
+                provider_name: provider.to_string(),
+                generate_model_id: model_id.to_string(),
+                edit_model_id: edit.map(|s| s.to_string()),
+                tier: ImageTier::Standard,
+                is_default: true,
+            }],
+        }
+    }
+
+    fn route(
+        provider: &str,
+        generate: &str,
+        edit: Option<&str>,
+        tier: ImageTier,
+        is_default: bool,
+    ) -> ImageRoute {
+        ImageRoute {
             provider_name: provider.to_string(),
+            generate_model_id: generate.to_string(),
+            edit_model_id: edit.map(|s| s.to_string()),
+            tier,
+            is_default,
         }
     }
 
@@ -794,7 +1039,7 @@ mod tests {
         );
         assert_eq!(catalog.allowed_aliases(), vec!["banana", "mai2pro", "seedream5"]);
         assert_eq!(catalog.valid_alias_list(), "banana, mai2pro, seedream5");
-        assert_eq!(catalog.provider_names(), vec!["openrouter", "fal", "fal"]);
+        assert_eq!(catalog.referenced_providers(), vec!["fal", "openrouter"]);
     }
 
     #[test]
@@ -830,8 +1075,8 @@ mod tests {
         );
         assert!(seedream.supports_auto_aspect(), "seedream/v5 id → auto aspect supported");
         assert_eq!(
-            seedream.model_ids(),
-            vec!["microsoft/mai-image-2.5-pro", "bytedance/seedream/v5/pro/text-to-image"]
+            seedream.resolve("seedream5"),
+            Some(("bytedance/seedream/v5/pro/text-to-image", "fal"))
         );
 
         let flux = ImageModelCatalog::new(
@@ -865,5 +1110,100 @@ mod tests {
         assert!(ming.traits().self_sized && ming.traits().text_to_image_only);
         let mai = entry("mai2pro", "microsoft/mai-image-2.5-pro", None, "openrouter");
         assert!(!mai.traits().self_sized && !mai.traits().text_to_image_only);
+    }
+
+    // ----- Provider routes (issue #112) -----
+
+    fn multi_route_entry() -> ImageModelEntry {
+        ImageModelEntry {
+            alias: "gptimage".to_string(),
+            label: "GPT Image 2.6 · Flare".to_string(),
+            family: "openai".to_string(),
+            version: "2.6".to_string(),
+            deprecated: false,
+            routes: vec![
+                route(
+                    "openrouter",
+                    "openai/gpt-image-2.6-flare",
+                    Some("openai/gpt-image-2.6-flare"),
+                    ImageTier::Standard,
+                    true,
+                ),
+                route(
+                    "fal",
+                    "openai/gpt-image-2.6/flare/text-to-image",
+                    Some("openai/gpt-image-2.6/flare/edit"),
+                    ImageTier::Standard,
+                    false,
+                ),
+            ],
+        }
+    }
+
+    #[test]
+    fn test_route_candidates_provider_pin() {
+        let entry = multi_route_entry();
+        let fal_only: Vec<&str> = entry
+            .route_candidates(Some("fal"), None, false)
+            .iter()
+            .map(|r| r.provider_name.as_str())
+            .collect();
+        assert_eq!(fal_only, vec!["fal"]);
+        assert!(entry.route_candidates(Some("replicate"), None, false).is_empty());
+    }
+
+    #[test]
+    fn test_route_candidates_tier_filter() {
+        let mut entry = multi_route_entry();
+        entry.routes.push(route(
+            "openrouter",
+            "qwen/qwen-image-2.1-turbo",
+            None,
+            ImageTier::Turbo,
+            false,
+        ));
+        let turbo = entry.route_candidates(None, Some(ImageTier::Turbo), false);
+        assert_eq!(turbo.len(), 1);
+        assert_eq!(turbo[0].generate_model_id, "qwen/qwen-image-2.1-turbo");
+        assert!(entry.route_candidates(None, Some(ImageTier::Flash), false).is_empty());
+    }
+
+    #[test]
+    fn test_edit_calls_prefer_routes_with_edit_endpoint() {
+        let mut entry = multi_route_entry();
+        entry.routes[0].edit_model_id = None; // openrouter generate-only
+        let edit_order: Vec<&str> = entry
+            .route_candidates(None, None, true)
+            .iter()
+            .map(|r| r.provider_name.as_str())
+            .collect();
+        assert_eq!(edit_order, vec!["fal", "openrouter"]);
+        let generate_order: Vec<&str> = entry
+            .route_candidates(None, None, false)
+            .iter()
+            .map(|r| r.provider_name.as_str())
+            .collect();
+        assert_eq!(generate_order, vec!["openrouter", "fal"]);
+    }
+
+    #[test]
+    fn test_prefer_provider_reorders_default_alias() {
+        let mut catalog = ImageModelCatalog::new(vec![multi_route_entry()], "gptimage");
+        catalog.prefer_provider("fal");
+        let entry = catalog.entry("gptimage").unwrap();
+        assert_eq!(entry.default_route().provider_name, "fal");
+        assert_eq!(entry.routes[0].provider_name, "fal");
+        assert!(entry.routes[0].is_default);
+        assert!(!entry.routes[1].is_default);
+    }
+
+    #[test]
+    fn test_restricted_to_providers_drops_missing_backends() {
+        let catalog = ImageModelCatalog::new(vec![multi_route_entry()], "gptimage");
+        let available: std::collections::HashSet<&str> = ["openrouter"].into_iter().collect();
+        let restricted = catalog.restricted_to_providers(&available);
+        let entry = restricted.entry("gptimage").unwrap();
+        assert_eq!(entry.providers(), vec!["openrouter"]);
+        assert_eq!(restricted.referenced_providers(), vec!["openrouter"]);
     }
 }

@@ -22,7 +22,6 @@ use rockbot::tools::{
     ForgetKnowledgeTool, ImageBackend, ImageGenTool, RecallKnowledgeTool, SaveKnowledgeTool,
     SearchProvider, VisionTool, WebDavTool, WebFetchTool, WebSearchTool,
 };
-use rockbot::types::{ImageModelCatalog, ImageModelEntry};
 use rockbot::utils::strip_markdown_image_id;
 
 fn setup_logging() {
@@ -257,15 +256,17 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
 
         {
             let im = &harness.config().image_model;
-            let default_provider = im.default_provider.as_str().to_string();
 
-            // Collect backends + catalog from EVERY configured image provider
-            // entry backed by a supported kind (fal / openrouter) — models from
-            // all of them are selectable per call (issue #96). Catalog entries
-            // carry the optional fal-only edit companion (issue #100); chat
-            // aliases can never appear — image defaults are role-scoped (#99).
+            // The manifest (models/image.toml, embedded at build time) is the
+            // alias roster; [[image_providers]] only supplies credentials and
+            // endpoints (issues #111/#112). A malformed manifest fails boot.
+            let catalog = rockbot::image_manifest::load_catalog(im.manifest_path.as_deref())?;
+
+            // Backends come from every configured provider entry backed by a
+            // supported kind (fal / openrouter) — routes can target any of
+            // them, and failover only crosses providers that exist here
+            // (issue #96).
             let mut backends: HashMap<String, ImageBackend> = HashMap::new();
-            let mut catalog_entries: Vec<ImageModelEntry> = Vec::new();
 
             for cfg in &harness.config().image_providers {
                 let kind = cfg.name.as_str();
@@ -276,15 +277,23 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                     );
                     continue;
                 }
-                let t2i_model = harness
-                    .config()
-                    .resolve_image_model(kind, &im.default_text_model)
+
+                // Seed the backend with the first manifest slug for its kind;
+                // every routed call overrides the model id explicitly.
+                let t2i_model = catalog
+                    .entries()
+                    .iter()
+                    .flat_map(|e| e.routes.iter())
+                    .find(|r| r.provider_name == kind)
+                    .map(|r| r.generate_model_id.clone())
                     .unwrap_or_else(|| im.default_text_model.clone());
-                let edit_alias_fallback = harness
-                    .config()
-                    .resolve_image_model(kind, &im.default_edit_model)
-                    .or_else(|| harness.config().resolve_image_model(kind, &im.default_text_model))
-                    .unwrap_or_else(|| im.default_edit_model.clone());
+                let edit_model = catalog
+                    .entries()
+                    .iter()
+                    .flat_map(|e| e.routes.iter())
+                    .find(|r| r.provider_name == kind && r.edit_model_id.is_some())
+                    .and_then(|r| r.edit_model_id.clone())
+                    .unwrap_or_else(|| t2i_model.clone());
 
                 let t2i: Option<Box<dyn ImageProvider>> = match kind {
                     "fal" => FalAiProvider::new(cfg, &t2i_model)
@@ -296,16 +305,16 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                 };
                 let Some(t2i) = t2i else {
                     warn!(
-                        "Failed to create '{}' text-to-image backend — its models will not be registered",
+                        "Failed to create '{}' text-to-image backend — its routes will be pruned",
                         kind
                     );
                     continue;
                 };
                 let edit: Option<Box<dyn ImageProvider>> = match kind {
-                    "fal" => FalAiProvider::new(cfg, &edit_alias_fallback)
+                    "fal" => FalAiProvider::new(cfg, &edit_model)
                         .ok()
                         .map(|p| Box::new(p) as Box<dyn ImageProvider>),
-                    _ => OpenRouterImageProvider::new(cfg, &edit_alias_fallback)
+                    _ => OpenRouterImageProvider::new(cfg, &edit_model)
                         .ok()
                         .map(|p| Box::new(p) as Box<dyn ImageProvider>),
                 };
@@ -319,64 +328,48 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                     warn!("Duplicate image provider entry '{}' — later entry wins", kind);
                 }
                 backends.insert(kind.to_string(), ImageBackend::new(t2i, edit));
-
-                for (alias, model_id) in &cfg.models {
-                    if catalog_entries.iter().any(|e| e.alias == *alias) {
-                        warn!(
-                            "Duplicate image model alias '{}' across providers — keeping first",
-                            alias
-                        );
-                        continue;
-                    }
-                    if kind != "fal" && cfg.edit_models.contains_key(alias) {
-                        warn!(
-                            "Image provider '{}' declares an edit companion for '{}' but only fal \
-                             uses separate edit endpoints — ignoring the companion",
-                            kind, alias
-                        );
-                    }
-                    catalog_entries.push(ImageModelEntry {
-                        alias: alias.clone(),
-                        model_id: model_id.clone(),
-                        edit_model_id: if kind == "fal" {
-                            cfg.edit_models.get(alias).cloned()
-                        } else {
-                            None
-                        },
-                        provider_name: kind.to_string(),
-                    });
-                }
             }
+
+            // Prune routes whose provider has no usable backend so the schema
+            // never advertises an unreachable provider.
+            let available: std::collections::HashSet<&str> =
+                backends.keys().map(String::as_str).collect();
+            let catalog = catalog.restricted_to_providers(&available);
+
+            let default_provider = catalog
+                .entry(catalog.default_alias())
+                .map(|e| e.default_route().provider_name.clone());
 
             if backends.is_empty() {
                 info!("No supported image providers (fal/openrouter) — image_gen tool not registered");
-            } else if !backends.contains_key(&default_provider) {
-                warn!(
-                    "Default image provider '{}' has no available backend — image_gen tool not registered",
-                    default_provider
-                );
-            } else {
-                let model_catalog = ImageModelCatalog::new(
-                    catalog_entries,
-                    im.default_text_model.clone(),
-                );
+            } else if let Some(default_provider) = default_provider
+                .filter(|provider| backends.contains_key(provider))
+            {
                 info!(
-                    "Registered image_gen with provider backends: {} (model aliases: {})",
+                    "Registered image_gen with provider backends: {} (default alias '{}' via {}; model aliases: {})",
                     backends.keys().cloned().collect::<Vec<_>>().join(", "),
-                    model_catalog.valid_alias_list()
+                    catalog.default_alias(),
+                    default_provider,
+                    catalog.valid_alias_list()
                 );
                 tool_registry.register(Box::new(ImageGenTool::new(
                     backends,
                     default_provider,
-                    model_catalog,
+                    catalog,
                     im.default_quality.clone(),
                     im.default_output_format.clone(),
                     im.default_num_images,
                     im.default_image_size_tier.clone(),
                     im.default_enable_safety_checker,
+                    im.pro_daily_cap,
                     webdav_client.clone(),
                     image_cache.clone(),
                 )));
+            } else {
+                warn!(
+                    "Default image alias '{}' has no route backed by a configured provider — image_gen tool not registered",
+                    catalog.default_alias()
+                );
             }
         }
     } else {

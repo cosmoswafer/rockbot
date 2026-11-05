@@ -1285,6 +1285,8 @@ fn make_test_config(webdav_url: &str) -> rockbot::config::AppConfig {
     };
 
     let image_config = ImageModelConfig {
+        manifest_path: None,
+        pro_daily_cap: 20,
         default_provider: ProviderName::try_new("mock".to_string()).unwrap(),
         default_text_model: "mock-img".into(),
         default_edit_model: "mock-img-edit".into(),

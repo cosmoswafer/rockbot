@@ -239,6 +239,13 @@ fn default_summarization_target_tokens() -> usize {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ImageModelConfig {
+    /// Override for the embedded `models/image.toml` manifest (issue #111).
+    /// Empty/unset ⇒ the manifest compiled into the binary is used.
+    #[serde(default)]
+    pub manifest_path: Option<String>,
+    /// Per-room daily cap on pro-tier generations (issue #112); `0` disables.
+    #[serde(default = "default_image_pro_daily_cap")]
+    pub pro_daily_cap: u32,
     #[serde(default = "default_image_provider")]
     pub default_provider: ProviderName,
     #[serde(default = "default_image_text_model")]
@@ -257,6 +264,10 @@ pub struct ImageModelConfig {
     pub default_image_size_tier: String,
     #[serde(default = "default_enable_safety_checker")]
     pub default_enable_safety_checker: bool,
+}
+
+fn default_image_pro_daily_cap() -> u32 {
+    20
 }
 
 fn default_image_provider() -> ProviderName {
@@ -295,6 +306,8 @@ fn default_enable_safety_checker() -> bool {
 impl Default for ImageModelConfig {
     fn default() -> Self {
         Self {
+            manifest_path: None,
+            pro_daily_cap: default_image_pro_daily_cap(),
             default_provider: default_image_provider(),
             default_text_model: default_image_text_model(),
             default_edit_model: default_image_edit_model(),

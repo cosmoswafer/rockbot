@@ -2,87 +2,152 @@
 
 ## 1. Purpose
 
-Level 2 detail for the happy-path diagram in [main-path](../main-path.md): how the tool resolves the LLM's optional `model` alias against the global image model catalog (spans every supported `[[image_providers]]` entry), routes the call to the corresponding provider backend, and selects the t2i or edit backend based on `image_urls` presence (issue #96). The default catalog includes the two GPT Image 2.5 variants (issue #102): `gptimage` → **Flare** (the `[image_model]` default) and `sunburst` → Sunburst.
+Level 2 detail for the happy-path diagram in [main-path](../main-path.md): how
+the tool resolves the LLM's optional `model` alias against the manifest catalog
+(`models/image.toml`, issues #111/#112), orders the alias's provider routes, and
+picks the t2i or edit slug per route (issue #100). The manifest is the single
+source of truth for aliases — `[[image_providers]]` only supplies credentials
+and endpoints, and code never re-declares model ids.
 
 ## 2. Diagram
 
 ```mermaid
 flowchart TD
     PARSE(ParseArgs)
-    RESOLVE(ResolveModelAlias<br/>ImageModelCatalog lookup)
-    ROUTE{Select backend<br/>by provider name}
-    CHECK{Has image_urls?}
-    UPLOAD_URI[Upload DataURIs<br/>via backend.upload_file]
-    BF[fal backend]
-    BOR[openrouter backend]
+    LOOKUP(ResolveAlias<br/>ImageModelCatalog lookup)
+    ORDER(Order routes<br/>provider pin → tier filter → edit-capable first → default)
+    PRUNE{Provider backend<br/>available?}
+    GUARD{CostGuard<br/>pro-tier cap}
     GEN(GenerateImage)
+    FAIL{Failed and<br/>failover route left?}
+    RESULT(Return serving route)
 
-    PARSE --> RESOLVE
-    RESOLVE -->|"(model_id, provider_name) or None"| ROUTE
-    ROUTE -->|"provider_name = fal"| BF
-    ROUTE -->|"provider_name = openrouter"| BOR
-    ROUTE -->|"None → default_provider"| BF
-    BF --> CHECK
-    BOR --> CHECK
-    CHECK -->|"yes (user attachments or LLM-provided URLs)"| UPLOAD_URI
-    CHECK -->|"no"| GEN
-    UPLOAD_URI --> GEN
+    PARSE --> LOOKUP
+    LOOKUP -->|"alias → ImageModelEntry or unknown-alias error"| ORDER
+    ORDER -->|"ordered Vec<ImageRoute>"| PRUNE
+    PRUNE -->|"yes"| GUARD
+    PRUNE -->|"no route left"| ERROR
+    GUARD -->|"allowed / non-pro"| GEN
+    GUARD -->|"cap reached: skip route with warning"| FAIL
+    GEN -->|"ok"| RESULT
+    GEN -->|"error"| FAIL
+    FAIL -->|"next route (max one failover)"| GUARD
+    FAIL -->|"none"| ERROR
 ```
 
-The catalog is built once at registry time from **every** `[[image_providers]]`
-entry backed by a supported provider kind (`fal` / `openrouter`) — entries with
-other names are skipped with a warning, and their models are not advertised.
-Default model tables are role-scoped: image providers inherit only
-image-capable models; chat aliases never enter the image catalog (issue #99).
-Each catalog entry is `(alias, model_id, edit_model_id?, provider_name)` — one
-alias per model family, with an optional edit companion id for providers that
-genuinely use separate edit endpoints (currently only fal; issue #100):
+## 3. Catalog and routes
 
-| alias        | t2i id                                  | edit companion                  | provider |
-| ------------ | --------------------------------------- | ------------------------------- | -------- |
-| `seedream5`  | `bytedance/seedream/v5/pro/text-to-image` | `bytedance/seedream/v5/pro/edit` | fal |
-| `gptimage`   | `openai/gpt-image-2.5/flare/text-to-image` | `openai/gpt-image-2.5/flare/edit` | fal    |
-| `sunburst`   | `openai/gpt-image-2.5/sunburst/text-to-image` | `openai/gpt-image-2.5/sunburst/edit` | fal |
-| `grok`       | `xai/grok-imagine-image/quality/text-to-image` | `xai/grok-imagine-image/quality/edit` | fal |
-| `ming`       | `inclusionai/ming-image-0.1-design`     | *(none — text-to-image only, #104)* | openrouter |
-| others       | single id                                | *(none — same id both modes)*   | fal/openrouter |
+`ImageModelCatalog` is built once at registry time:
 
-`gptimage` and `sunburst` are the GPT Image 2.5 pair (issue #102): two tunings
-of the same model with identical APIs — **Flare** is the everyday, lower-latency
-default, **Sunburst** the precision-focused variant. Both expose separate
-text-to-image and edit endpoints, so each alias carries an edit companion and
-mode switching stays data-driven (issue #100).
+1. `image_manifest::load_catalog()` parses the embedded `models/image.toml`
+   (or `[image_model] manifest_path` when set) and validates it: non-empty
+   roster, ≥1 route per alias, unique aliases, exactly one `default = true`
+   alias, ≤1 default route per alias, deprecated ≠ default. A malformed
+   manifest aborts boot (`RockBotError::Config`) — a typo must not become a
+   silent 404 at call time.
+2. `main.rs` builds one backend per supported `[[image_providers]]` entry
+   (`fal` / `openrouter`) and prunes routes whose provider has no usable
+   backend, so the schema never advertises an unreachable provider.
+3. The tool's `default_backend` is the manifest default alias's default route
+   provider.
 
-`ming` (issue #104) is registered in an openrouter entry's `models` map only —
-never in `edit_models`. It is **text-to-image only** (the model accepts `0–0`
-input references; the async sibling `inclusionai/ming-image-0.1-design-layer`
-is not registered as an `image_gen` alias) and **self-sized** (it rejects
-explicit sizes and aspect ratios; see [aspect-ratio.md](aspect-ratio.md)). When
-an edit call resolves to a text-to-image-only model id, the tool fails at the
-parse boundary with `ToolCallParse` before selecting a backend: the entry's
-`ImageModelTraits.text_to_image_only` flag (`types.rs`) is checked against the
-mode-resolved model id. `ming` is excluded from any fast/low-latency preset by
-convention: ~38 s end-to-end, NovitaAI is the only route, and pricing is promo
-`$0.00` — treat the free price as promotional, not a cost basis.
+`ImageModelEntry` = one alias with an ordered `Vec<ImageRoute>`:
 
-A per-call LLM `model` alias resolves to `(model_id, edit_model_id?,
-provider_name)`:
+| Field        | Type              | Description                                              |
+| ------------ | ----------------- | -------------------------------------------------------- |
+| `alias`      | `string`          | LLM-facing selection name (`gptimage`, `qwenimage`, …).  |
+| `label`      | `string`          | Human-facing name (`GPT Image 2.6 · Flare`).             |
+| `family`     | `string`          | Model family (`openai`, `google`, `qwen`, …).            |
+| `version`    | `string`          | Family version (`2.6`, `2.1`, …).                        |
+| `deprecated` | `bool`            | Kept one release cycle; still selectable, marked in the description. |
+| `routes`     | `[ImageRoute]`    | Ordered provider routes; preferred (`is_default`) first. |
 
-- The owning entry's `provider_name` selects the backend from the tool's
-  `backends` map.
-- The tool picks t2i vs edit by `image_urls` presence and sets
-  `params.model_id` to the **mode-appropriate id**: the edit companion when
-  editing and one exists, otherwise the plain `model_id`. Unknown explicit
-  alias or a backend missing for the resolved provider → `ToolCallParse`
-  error naming the valid aliases. No `*_edit` selectable aliases exist
-  anymore — mode switching is data-driven from the entry pair.
+`ImageRoute`:
 
-Omitted `model` ⇒ the `[image_model] default_text_model` alias of the default
-provider backend is used (with its edit companion when editing);
-`params.model_id = None` only if that alias is unresolvable (config leniency),
-in which case the baked backend default applies.
+| Field               | Type          | Description                                                     |
+| ------------------- | ------------- | --------------------------------------------------------------- |
+| `provider_name`     | `string`      | Owning `[[image_providers]]` entry name — selects the backend.   |
+| `generate_model_id` | `string`      | Text-to-image slug.                                             |
+| `edit_model_id`     | `Option<string>` | Dedicated edit slug; `None` ⇒ generate-only route (never a broken reference). |
+| `tier`              | `ImageTier`   | `standard` / `pro` / `turbo` / `flash`.                          |
+| `is_default`        | `bool`        | Preferred route of the alias (first when none is flagged).       |
 
-**Provider differences:**
+Route selection (`ImageModelEntry::route_candidates`):
+
+1. Filter by `provider` when the LLM pinned one.
+2. Filter by `tier` when the LLM requested one.
+3. Sort the preferred (`is_default`) route first.
+4. For edit calls, stable-sort routes with an `edit_model_id` ahead of
+   generate-only routes. An alias that only has generate-only routes still
+   edits via its generate slug (same-model editing, #100).
+
+An empty candidate list is a `ToolCallParse` error naming the alias's routed
+providers and tiers — never a generic failure.
+
+## 4. Execution and failover
+
+- The tool uploads data URIs through the **primary** candidate's backend before
+  the attempts (fal needs CDN URLs, OpenRouter accepts data URIs).
+- Each attempt sets `params.model_id` to the route's mode-appropriate slug.
+- A failed attempt logs `route <provider>:<model> failed (…) — failing over to
+  <provider>:<model>` and advances to the next candidate **once** (at most two
+  attempts, issue #112). Silent failover is forbidden: the result carries
+  `provider`, `model`, and `tier` of the route that actually served the image.
+- Text-to-image-only models (`ImageModelTraits`, #104) fail at the parse
+  boundary before any provider request; the failover loop also skips such a
+  route if another candidate could serve the edit.
+
+## 5. Cost guardrail
+
+Pro-tier routes are charged to the room's daily budget before the call
+(`ProTierUsage`, UTC day rollover):
+
+- `[image_model] pro_daily_cap` (default `20`, `0` disables) caps pro-tier
+  generations per room per day. Reaching the cap skips the pro route with a
+  warning (a non-pro route can still serve the call); when no candidate
+  remains the tool returns a `ToolCallParse` error naming the cap.
+- Every successful call writes a ledger line:
+  `image_gen ledger room=… provider=… model=… tier=… img2img=… elapsed_ms=…`.
+  There is no per-model pricing table in this repo — `tier` is the cost proxy.
+
+## 6. Manifest roster (2026-11-05)
+
+All slugs were verified against `GET https://openrouter.ai/api/v1/images/models`
+and the fal model registry. Selected entries:
+
+| alias            | routes (provider: generate / edit)                                            | tier |
+| ---------------- | ----------------------------------------------------------------------------- | ---- |
+| `gptimage` (default) | openrouter: `openai/gpt-image-2.6-flare` · fal: `openai/gpt-image-2.6/flare/{text-to-image,edit}` | standard |
+| `sunburst`       | openrouter: `openai/gpt-image-2.6-sunburst` · fal: `openai/gpt-image-2.6/sunburst/{text-to-image,edit}` | standard |
+| `banana`         | fal: `google/nano-banana-2.1{/edit}` · openrouter: `google/gemini-nano-banana-2.1` | standard |
+| `qwenimage`      | openrouter: `qwen/qwen-image-2.1-pro` (default) / `qwen/qwen-image-2.1-turbo` | pro / turbo |
+| `qwen3`          | openrouter: `qwen/qwen-image-3-pro`                                            | pro |
+| `mai2pro`        | openrouter: `microsoft/mai-image-2.6`                                          | pro |
+| `mai2flash`      | openrouter: `microsoft/mai-image-2.6-flash`                                    | flash |
+| `grok2`          | openrouter: `x-ai/grok-imagine-image-2.0` · fal: `xai/grok-imagine-image/v2.0/{text-to-image,edit}` | standard |
+| `seedream`       | fal: `fal-ai/bytedance/seedream/v4.5/text-to-image` · openrouter: `bytedance-seed/seedream-4.5` | standard |
+| `seedream5`      | fal: `bytedance/seedream/v5/pro/{text-to-image,edit}`                          | standard |
+| `seedream5pro`   | openrouter: `bytedance-seed/seedream-5-0-pro`                                  | standard |
+| `seedream5flash` | fal: `bytedance/seedream/v5/flash/{text-to-image,edit}`                        | flash |
+| `fibo`           | fal: `bria/fibo-2/{generate,edit}`                                             | standard |
+| `moss`           | fal: `fal-ai/moss-image` (generate-only)                                       | standard |
+| `muse`           | openrouter: `meta/muse-image` · fal: `meta/muse-image/{text-to-image,edit}`    | standard |
+| `ming`           | openrouter: `inclusionai/ming-image-0.1-design` (generate-only)                | standard |
+| `gptimage25`, `sunburst25` | deprecated 2.5 routes (kept one release, `#111`)                     | standard |
+
+`gptimage`/`sunburst` moved 2.5 → 2.6; the old aliases remain as `gptimage25` /
+`sunburst25` with `deprecated = true` so rooms pinned to 2.5 keep working.
+`qwenimage` now defaults to 2.1 Pro with an opt-in turbo route; the former
+`qwen-image-3-pro` default stays selectable as `qwen3`. `mai2flash` and
+`seedream5flash` are the flash-tier aliases; `qwenimage` is the only alias with
+an in-alias tier split (`tier="turbo"`).
+
+`ming` (issue #104) remains text-to-image only and self-sized (see
+[aspect-ratio.md](aspect-ratio.md)). Its route is generate-only; an edit call
+fails at the parse boundary with a `ToolCallParse` error before selecting a
+backend.
+
+## 7. Provider differences
 
 | Aspect | fal.ai | OpenRouter |
 |--------|--------|------------|
@@ -90,6 +155,7 @@ in which case the baked backend default applies.
 | `generate_image()` | Submit → Poll → Fetch CDN → Download | Catalog-aware routing → single POST → parse base64 response |
 | Image delivery | CDN URL → separate HTTP GET | Base64 inline in response JSON |
 | Protocol | 3-phase async (submit/poll/fetch) | Single synchronous POST |
+| Size param | `image_size` object; fibo `aspect_ratio`; nano-banana `aspect_ratio` + `resolution` (`FalSizeParam`) | catalog `aspect_ratio` + `resolution` caps |
 
 fal requires CDN-hosted URLs (data URIs uploaded first), OpenRouter accepts
 inline base64. The harness is unaware of this difference — both implement
@@ -99,7 +165,3 @@ OpenRouter routing detail: pure image models (present in the OpenRouter image
 catalog) go to the dedicated Image API `POST /images`; models absent from the
 catalog fall back to `chat/completions`. See
 [AI Provider §2d](../../../ai/ai-provider/level-2/openrouter-image-routing.md).
-Because `openai/gpt-image-2.5/flare` and `xai/grok-imagine-image` model ids are
-served through OpenRouter, their aliases under an `openrouter` entry
-automatically use that backend — there is no separate openai/xai backend in
-rockbot.

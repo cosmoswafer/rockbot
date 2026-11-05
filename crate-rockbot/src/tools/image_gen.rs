@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use base64::Engine;
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tracing::{debug, info, warn};
 use webdav::{WebDavClient, WebDavPath};
 
@@ -11,9 +11,10 @@ use crate::image_cache::{GeneratedImage, ImageCache};
 use crate::provider::ImageProvider;
 use crate::tool::Tool;
 use crate::types::{
-    ImageGenParams, ImageModelCatalog, ImageModelEntry, ImageModelTraits, ImageSizeValue,
+    ImageGenParams, ImageModelCatalog, ImageModelEntry, ImageModelTraits, ImageRoute,
+    ImageSizeValue, ImageTier,
 };
-use crate::validated::{ModelAlias, NonEmptyString};
+use crate::validated::{ModelAlias, NonEmptyString, ProviderName};
 
 #[derive(Debug, Deserialize)]
 struct ImageGenArgs {
@@ -21,6 +22,12 @@ struct ImageGenArgs {
     aspect_ratio: NonEmptyString,
     #[serde(default)]
     model: Option<ModelAlias>,
+    /// Pin the provider route (issue #112); omitted ⇒ the alias default route.
+    #[serde(default)]
+    provider: Option<ProviderName>,
+    /// Pick a route tier (`standard`/`pro`/`turbo`/`flash`).
+    #[serde(default)]
+    tier: Option<ImageTier>,
     #[serde(default)]
     image_urls: Option<Vec<String>>,
     #[serde(default)]
@@ -31,6 +38,50 @@ struct ImageGenArgs {
     image_cache_key: Option<String>,
     #[serde(default)]
     reference_image_key: Option<String>,
+}
+
+/// Per-room pro-tier accounting for the daily cap (issue #112). Day index is
+/// UTC days since the Unix epoch; the map resets when the day rolls over.
+struct ProTierUsage {
+    day: u64,
+    per_room: HashMap<String, u32>,
+}
+
+impl ProTierUsage {
+    fn new() -> Self {
+        Self {
+            day: utc_day_index(),
+            per_room: HashMap::new(),
+        }
+    }
+
+    fn roll_over(&mut self) {
+        let today = utc_day_index();
+        if self.day != today {
+            self.day = today;
+            self.per_room.clear();
+        }
+    }
+
+    /// Charge one pro-tier attempt to the room. `Err(used)` when the cap is
+    /// already reached (the attempt is not counted).
+    fn try_charge(&mut self, room: &str, cap: u32) -> std::result::Result<u32, u32> {
+        self.roll_over();
+        let used = self.per_room.get(room).copied().unwrap_or(0);
+        if cap != 0 && used >= cap {
+            return Err(used);
+        }
+        let used = used + 1;
+        self.per_room.insert(room.to_string(), used);
+        Ok(used)
+    }
+}
+
+fn utc_day_index() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() / 86_400)
+        .unwrap_or(0)
 }
 
 /// Provider backends (t2i + optional edit) of one `[[image_providers]]`
@@ -67,6 +118,8 @@ pub struct ImageGenTool {
     #[allow(dead_code)]
     default_image_size: Option<String>,
     default_enable_safety_checker: bool,
+    pro_daily_cap: u32,
+    pro_usage: Mutex<ProTierUsage>,
     webdav: WebDavClient,
     image_cache: Arc<ImageCache>,
 }
@@ -82,6 +135,7 @@ impl ImageGenTool {
         default_num_images: u32,
         default_image_size_tier: String,
         default_enable_safety_checker: bool,
+        pro_daily_cap: u32,
         webdav: WebDavClient,
         image_cache: Arc<ImageCache>,
     ) -> Self {
@@ -97,6 +151,8 @@ impl ImageGenTool {
             default_image_size_tier,
             default_image_size: None,
             default_enable_safety_checker,
+            pro_daily_cap,
+            pro_usage: Mutex::new(ProTierUsage::new()),
             webdav,
             image_cache,
         }
@@ -141,40 +197,70 @@ impl ImageGenTool {
 }
 
 /// Derives the LLM-facing tool description from the catalog at registry time
-/// (issue #95). Config is the single source of truth — model names, defaults,
-/// and the auto-dimensional aspect hint all come from `ImageModelCatalog`, so
-/// the text can never drift from `[image_providers]` / `[image_model]`.
+/// (issue #95). The manifest is the single source of truth — alias names,
+/// labels, route providers/tiers, and deprecated markers all come from
+/// `ImageModelCatalog`, so the text can never drift from `models/image.toml`.
 fn build_description(catalog: &ImageModelCatalog) -> String {
     let models = if catalog.is_empty() {
         "(no image models configured)".to_string()
     } else {
         catalog
-            .allowed_aliases()
+            .entries()
             .iter()
-            .filter_map(|alias| {
-                catalog.entry(alias).map(|e| {
-                    let base = format!("{} ({}, {}", alias, e.model_id, e.provider_name);
-                    match &e.edit_model_id {
-                        Some(id) => format!("{base}, edit:{id})"),
-                        None => format!("{base})"),
-                    }
-                })
+            .map(|e| {
+                let routes = e
+                    .routes
+                    .iter()
+                    .map(|r| {
+                        let mut route = format!("{}:{}", r.provider_name, r.generate_model_id);
+                        if let Some(edit) = &r.edit_model_id {
+                            route.push_str(&format!(" (edit:{edit})"));
+                        }
+                        if r.tier != ImageTier::Standard {
+                            route.push_str(&format!(" [{}]", r.tier));
+                        }
+                        route
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" | ");
+                let deprecated = if e.deprecated { ", DEPRECATED" } else { "" };
+                format!("{} ({}, {}{})", e.alias, e.label, routes, deprecated)
             })
             .collect::<Vec<_>>()
-            .join(", ")
+            .join("; ")
     };
+
+    let deprecated: Vec<&str> = catalog
+        .entries()
+        .iter()
+        .filter(|e| e.deprecated)
+        .map(|e| e.alias.as_str())
+        .collect();
+
     let mut desc = format!(
         "Generate or edit an image. Provide a prompt and required aspect_ratio. \
          Available image models: {models}. \
-         Default: '{}'. Editing passes the input images to the same alias — \
-         dedicated edit endpoints are selected automatically when available. \
+         Default: '{}'. \
+         Tiers: pick tier='turbo' or tier='flash' for cheap drafts and iteration; \
+         tier='pro' spends more for final output — do not use pro for sketches. \
+         Editing passes the input images to the same alias — a route with a dedicated \
+         edit endpoint is preferred when one exists. \
+         On a provider error the tool fails over to the next route once and reports \
+         which provider/model served the image. \
          Standard ratios: '16:9', '2:3', '1:1', '4:3', '3:4', '3:2'. \
          User attachments are auto-provided as image_urls for editing. \
-         Returns {{\"ok\": true, \"image_key\": \"...\"}} — share result as `![desc]({{image_key}})`.",
+         Returns {{\"ok\": true, \"image_key\": \"...\", \"provider\": \"...\", \"model\": \"...\"}} — \
+         share result as `![desc]({{image_key}})`.",
         catalog.default_alias(),
     );
+    if !deprecated.is_empty() {
+        desc.push_str(&format!(
+            " Deprecated aliases (still accepted; prefer the replacement): {}.",
+            deprecated.join(", ")
+        ));
+    }
     if catalog.supports_auto_aspect() {
-        desc.push_str(" Seedream5 models also accept 'auto_2K' or 'auto_1K' to auto-select dimensions.");
+        desc.push_str(" Seedream models also accept 'auto_2K' or 'auto_1K' to auto-select dimensions.");
     }
     desc
 }
@@ -229,10 +315,19 @@ impl Tool for ImageGenTool {
                 "model": {
                     "type": "string",
                     "description": format!(
-                        "Image model alias (from [image_providers] models). Default: '{}'. Editing reuses the same alias. Available: {}",
+                        "Image model alias (from models/image.toml). Default: '{}'. Editing reuses the same alias. Available: {}",
                         self.model_catalog.default_alias(),
                         available
                     )
+                },
+                "provider": {
+                    "type": "string",
+                    "description": "Optional provider pin for the alias route (e.g. 'fal', 'openrouter'). Omit to use the alias default route and its failover order."
+                },
+                "tier": {
+                    "type": "string",
+                    "enum": ["standard", "pro", "turbo", "flash"],
+                    "description": "Optional route tier: 'turbo'/'flash' for cheap drafts and iteration, 'pro' for final output. Omit to use the alias default tier."
                 },
                 "room_id": {
                     "type": "string",
@@ -277,62 +372,93 @@ impl Tool for ImageGenTool {
         params.output_format = Some(self.default_output_format.clone());
         params.num_images = Some(self.default_num_images);
 
-        // Model alias → owning provider entry via the catalog (default alias
-        // when omitted). The backend is picked first; the exact model id is
-        // resolved mode-aware AFTER input images are collected — edit-mode
-        // calls swap to the entry's dedicated edit endpoint when one exists
-        // (issue #100).
-        let backend_for =
-            |provider: &str| -> Option<&ImageBackend> { self.backends.get(provider) };
+        // Resolve the alias to its catalog entry (explicit alias, else the
+        // manifest's default alias). Routes are selected after input images
+        // are known because edit calls prefer edit-capable routes (#100/#112).
+        let entry: Option<&ImageModelEntry> = match &args.model {
+            Some(alias) => Some(self.model_catalog.entry(alias.as_str()).ok_or_else(|| {
+                RockBotError::ToolCallParse(format!(
+                    "image_gen: model alias '{}' not in image model catalog — valid aliases: {}",
+                    alias.as_str(),
+                    self.model_catalog.valid_alias_list()
+                ))
+            })?),
+            None => self.model_catalog.entry(self.model_catalog.default_alias()),
+        };
 
-        let (backend, effective): (&ImageBackend, Option<ImageModelEntry>) = match &args.model {
-            Some(alias) => {
-                let e = self.model_catalog.entry(alias.as_str()).ok_or_else(|| {
-                    RockBotError::ToolCallParse(format!(
-                        "image_gen: model alias '{}' not in image model catalog — valid aliases: {}",
-                        alias.as_str(),
-                        self.model_catalog.valid_alias_list()
-                    ))
-                })?;
-                let b = backend_for(&e.provider_name).ok_or_else(|| {
-                    RockBotError::ToolCallParse(format!(
-                        "image_gen: model alias '{}' routes to provider '{}' which has no available backend",
-                        alias.as_str(),
-                        e.provider_name
-                    ))
-                })?;
-                (b, Some(e.clone()))
+        let will_edit = args.reference_image_key.is_some()
+            || args
+                .image_urls
+                .as_ref()
+                .is_some_and(|urls| !urls.is_empty());
+
+        // Candidate routes: provider pin / tier filter first, then drop routes
+        // whose provider has no backend in this process (issue #112).
+        let candidates: Vec<&ImageRoute> = match entry {
+            Some(e) => {
+                let provider_pin = args.provider.as_ref().map(|p| p.as_str());
+                let routes = e.route_candidates(provider_pin, args.tier, will_edit);
+                if routes.is_empty() {
+                    return Err(RockBotError::ToolCallParse(format!(
+                        "image_gen: alias '{}' has no route for provider={} tier={} — \
+                         routed providers: [{}]; tiers: [{}]",
+                        e.alias,
+                        provider_pin.unwrap_or("any"),
+                        args.tier.map(|t| t.as_str()).unwrap_or("any"),
+                        e.providers().join(", "),
+                        e.tiers()
+                            .iter()
+                            .map(|t| t.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    )));
+                }
+                let route_providers: Vec<&str> =
+                    routes.iter().map(|r| r.provider_name.as_str()).collect();
+                let available: Vec<&ImageRoute> = routes
+                    .into_iter()
+                    .filter(|r| self.backends.contains_key(&r.provider_name))
+                    .collect();
+                if available.is_empty() {
+                    return Err(RockBotError::ToolCallParse(format!(
+                        "image_gen: alias '{}' routes only to providers with no available backend \
+                         (routes: [{}]; configured backends: [{}])",
+                        e.alias,
+                        route_providers.join(", "),
+                        self.backends.keys().cloned().collect::<Vec<_>>().join(", ")
+                    )));
+                }
+                available
             }
-            None => {
-                let b = backend_for(&self.default_backend).ok_or_else(|| {
-                    RockBotError::Provider(format!(
-                        "image_gen: default image provider '{}' has no available backend",
-                        self.default_backend
-                    ))
-                })?;
-                // Lenient default: adopt the default alias's entry only when
-                // it belongs to the default provider (config leniency — an
-                // unresolvable/mismatched default keeps the baked backend
-                // model and never blocks tool use).
-                let e = self
-                    .model_catalog
-                    .entry(self.model_catalog.default_alias())
-                    .filter(|e| e.provider_name == self.default_backend)
-                    .cloned();
-                (b, e)
-            }
+            None => Vec::new(),
         };
 
         params.image_size = Some(ImageSizeValue::Preset(args.aspect_ratio.as_str().to_string()));
         params.size_tier = Some(self.default_image_size_tier.clone());
         params.enable_safety_checker = Some(self.default_enable_safety_checker);
 
+        // Data URIs are uploaded with the primary route's backend: fal needs
+        // CDN URLs, OpenRouter returns data URIs, and the primary route is the
+        // one the call will almost always use.
+        let primary_backend: &ImageBackend = match candidates.first() {
+            Some(route) => self
+                .backends
+                .get(&route.provider_name)
+                .expect("candidate routes are filtered to available backends"),
+            None => self.backends.get(&self.default_backend).ok_or_else(|| {
+                RockBotError::Provider(format!(
+                    "image_gen: default image provider '{}' has no available backend",
+                    self.default_backend
+                ))
+            })?,
+        };
+
         let mut collected_urls: Vec<String> = Vec::new();
 
         if let Some(ref key) = args.reference_image_key {
             if let Some(cached) = self.image_cache.get(key) {
                 let data_uri = cached.data_uri();
-                match self.upload_data_uri(backend.t2i.as_ref(), &data_uri).await {
+                match self.upload_data_uri(primary_backend.t2i.as_ref(), &data_uri).await {
                     Ok(uploaded_url) => {
                         debug!("Injected reference_image_key '{}' for editing via uploaded URL: {}", key, uploaded_url);
                         collected_urls.push(uploaded_url);
@@ -350,7 +476,7 @@ impl Tool for ImageGenTool {
             for raw in image_urls {
                 match raw.as_str() {
                     uri if uri.starts_with("data:") => {
-                        if let Ok(uploaded_url) = self.upload_data_uri(backend.t2i.as_ref(), uri).await {
+                        if let Ok(uploaded_url) = self.upload_data_uri(primary_backend.t2i.as_ref(), uri).await {
                             debug!("Uploaded image to provider storage: {}", uploaded_url);
                             collected_urls.push(uploaded_url);
                         } else {
@@ -371,57 +497,148 @@ impl Tool for ImageGenTool {
         }
 
         let ext = ext_from_output_format(params.output_format.as_deref());
-
         let is_img2img = params.image_urls.is_some();
 
-        // Mode-aware model id (issue #100): dedicated edit endpoint when the
-        // call edits images and the alias carries an edit companion; the plain
-        // model id otherwise (same-model providers).
-        if let Some(e) = &effective {
-            params.model_id = Some(e.model_id_for_mode(is_img2img).to_string());
+        // Try the preferred route, then advance to the next one once on a
+        // provider error (issue #112). Every attempt is logged; the serving
+        // route is returned to the caller.
+        let attempts = if candidates.is_empty() {
+            1
+        } else {
+            candidates.len().min(2)
+        };
+        let mut last_error: Option<RockBotError> = None;
+        let mut generated: Option<(Vec<u8>, String, String, ImageTier, ImageModelTraits)> = None;
+
+        for attempt in 0..attempts {
+            let route = candidates.get(attempt).copied();
+            let (provider, route_model, tier) = match route {
+                Some(route) => {
+                    let backend = self
+                        .backends
+                        .get(&route.provider_name)
+                        .expect("candidate routes are filtered to available backends");
+                    let provider = backend.select(is_img2img);
+                    (
+                        provider,
+                        route.model_id_for_mode(is_img2img).to_string(),
+                        route.tier,
+                    )
+                }
+                None => {
+                    let backend = self
+                        .backends
+                        .get(&self.default_backend)
+                        .expect("default backend is validated before route selection");
+                    let provider = backend.select(is_img2img);
+                    (provider, provider.model_id().to_string(), ImageTier::Standard)
+                }
+            };
+
+            // Text-to-image-only models reject input references (issue #104):
+            // fail at the parse boundary with a clear error instead of sending
+            // a body the provider refuses.
+            let traits = ImageModelTraits::for_model_id(&route_model);
+            if is_img2img && traits.text_to_image_only {
+                let err = RockBotError::ToolCallParse(format!(
+                    "image_gen: model '{}' is text-to-image only and cannot edit images — \
+                     omit image_urls/reference_image_key or choose another alias: {}",
+                    route_model,
+                    self.model_catalog.valid_alias_list()
+                ));
+                warn!("{err}");
+                last_error = Some(err);
+                continue;
+            }
+
+            // Pro-tier cost guardrail (issue #112): charge the room before the
+            // call so a provider failure cannot be used to bypass the cap.
+            if tier == ImageTier::Pro {
+                let mut usage = self
+                    .pro_usage
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                match usage.try_charge(room_id, self.pro_daily_cap) {
+                    Ok(used) => debug!(
+                        "image_gen pro-tier charge: room={} used={}/{}",
+                        room_id, used, self.pro_daily_cap
+                    ),
+                    Err(used) => {
+                        let err = RockBotError::ToolCallParse(format!(
+                            "image_gen: per-room daily cap of {} pro-tier generations reached \
+                             for room '{}' (used {}) — retry tomorrow or choose a non-pro \
+                             alias/tier",
+                            self.pro_daily_cap, room_id, used
+                        ));
+                        warn!("{err}; skipping route {}:{}", provider.provider_name(), route_model);
+                        last_error = Some(err);
+                        continue;
+                    }
+                }
+            }
+
+            params.model_id = route.map(|_| route_model.clone());
+
+            debug!(
+                "image_gen params: provider={} model={} img2img={} num_images={} quality={:?} output_format={:?} image_size={:?} image_urls_count={} prompt_len={} room={}",
+                provider.provider_name(),
+                route_model,
+                is_img2img,
+                params.num_images.unwrap_or(1),
+                params.quality,
+                params.output_format,
+                params.image_size,
+                params.image_urls.as_ref().map(|u| u.len()).unwrap_or(0),
+                prompt.len(),
+                room_id,
+            );
+
+            match provider.generate_image(&params).await {
+                Ok(bytes) => {
+                    info!(
+                        "Image generated ({} / {}, tier={}): {} bytes elapsed_ms={}",
+                        provider.provider_name(),
+                        route_model,
+                        tier,
+                        bytes.len(),
+                        t_start.elapsed().as_millis(),
+                    );
+                    generated = Some((
+                        bytes,
+                        provider.provider_name().to_string(),
+                        route_model,
+                        tier,
+                        traits,
+                    ));
+                    break;
+                }
+                Err(e) => {
+                    let next = candidates.get(attempt + 1);
+                    match next {
+                        Some(next) => warn!(
+                            "image_gen: route {}:{} failed ({e}) — failing over to {}:{}",
+                            provider.provider_name(),
+                            route_model,
+                            next.provider_name,
+                            next.model_id_for_mode(is_img2img),
+                        ),
+                        None => warn!(
+                            "image_gen: route {}:{} failed ({e}) — no failover route left",
+                            provider.provider_name(),
+                            route_model,
+                        ),
+                    }
+                    last_error = Some(e);
+                }
+            }
         }
 
-        let provider: &dyn ImageProvider = backend.select(is_img2img);
-
-        // Text-to-image-only models reject input references (issue #104): fail
-        // at the parse boundary with a clear error instead of sending a body
-        // the provider refuses. Checked against the wire model id so an
-        // omitted alias backed by such a model is caught too.
-        let wire_model = params.model_id.as_deref().unwrap_or_else(|| provider.model_id());
-        let traits = ImageModelTraits::for_model_id(wire_model);
-        if is_img2img && traits.text_to_image_only {
-            return Err(RockBotError::ToolCallParse(format!(
-                "image_gen: model '{}' is text-to-image only and cannot edit images — \
-                 omit image_urls/reference_image_key or choose another alias: {}",
-                wire_model,
-                self.model_catalog.valid_alias_list()
-            )));
-        }
-
-        debug!(
-            "image_gen params: provider={} model={} img2img={} num_images={} quality={:?} output_format={:?} image_size={:?} image_urls_count={} prompt_len={} room={}",
-            provider.provider_name(),
-            provider.model_id(),
-            is_img2img,
-            params.num_images.unwrap_or(1),
-            params.quality,
-            params.output_format,
-            params.image_size,
-            params.image_urls.as_ref().map(|u| u.len()).unwrap_or(0),
-            prompt.len(),
-            room_id,
-        );
-
-        let image_bytes = provider.generate_image(&params).await.map_err(|e| {
-            warn!("image_gen: generate_image failed: {e}");
-            e
-        })?;
-        info!(
-            "Image generated ({}): {} bytes elapsed_ms={}",
-            provider.provider_name(),
-            image_bytes.len(),
-            t_start.elapsed().as_millis(),
-        );
+        let (image_bytes, served_provider, served_model, served_tier, traits) =
+            generated.ok_or_else(|| {
+                last_error.unwrap_or_else(|| {
+                    RockBotError::Provider("image_gen: no route was attempted".into())
+                })
+            })?;
 
         let webdav_path = self.upload_to_webdav(webdav_dir, ext, image_bytes.clone()).await.map_err(|e| {
             warn!("image_gen: upload_to_webdav failed: {e}");
@@ -457,10 +674,23 @@ impl Tool for ImageGenTool {
             t_start.elapsed().as_millis(),
         );
 
+        info!(
+            "image_gen ledger room={} provider={} model={} tier={} img2img={} elapsed_ms={}",
+            room_id,
+            served_provider,
+            served_model,
+            served_tier,
+            is_img2img,
+            t_start.elapsed().as_millis(),
+        );
+
         let mut result = serde_json::json!({
             "ok": true,
             "webdav_path": webdav_path,
             "image_key": image_key,
+            "provider": served_provider,
+            "model": served_model,
+            "tier": served_tier.as_str(),
         });
         if let Some(ref url) = share_url {
             result["share_url"] = serde_json::json!(url);
@@ -505,9 +735,17 @@ mod tests {
     fn entry(alias: &str, model_id: &str, edit: Option<&str>, provider: &str) -> ImageModelEntry {
         ImageModelEntry {
             alias: alias.to_string(),
-            model_id: model_id.to_string(),
-            edit_model_id: edit.map(|s| s.to_string()),
-            provider_name: provider.to_string(),
+            label: alias.to_string(),
+            family: "test".to_string(),
+            version: "0".to_string(),
+            deprecated: false,
+            routes: vec![ImageRoute {
+                provider_name: provider.to_string(),
+                generate_model_id: model_id.to_string(),
+                edit_model_id: edit.map(|s| s.to_string()),
+                tier: ImageTier::Standard,
+                is_default: true,
+            }],
         }
     }
 
@@ -530,6 +768,7 @@ mod tests {
             1,
             "4K".into(),
             false,
+           20,
             make_webdav(),
             make_image_cache(),
         )
@@ -746,6 +985,8 @@ mod tests {
         generate_result: std::sync::Mutex<Option<std::result::Result<Vec<u8>, RockBotError>>>,
         upload_result: std::sync::Mutex<Option<std::result::Result<String, RockBotError>>>,
         params_sink: std::sync::Arc<std::sync::Mutex<Option<ImageGenParams>>>,
+        provider_name: &'static str,
+        model_id: &'static str,
     }
 
     impl MockImageProvider {
@@ -754,6 +995,8 @@ mod tests {
                 generate_result: std::sync::Mutex::new(Some(Ok(vec![1, 2, 3]))),
                 upload_result: std::sync::Mutex::new(Some(Ok("https://cdn.example.com/uploaded.png".into()))),
                 params_sink: std::sync::Arc::new(std::sync::Mutex::new(None)),
+                provider_name: "mock",
+                model_id: "mock-model",
             }
         }
 
@@ -762,6 +1005,26 @@ mod tests {
                 generate_result: std::sync::Mutex::new(Some(Err(e))),
                 upload_result: std::sync::Mutex::new(Some(Ok("https://cdn.example.com/uploaded.png".into()))),
                 params_sink: std::sync::Arc::new(std::sync::Mutex::new(None)),
+                provider_name: "mock",
+                model_id: "mock-model",
+            }
+        }
+
+        /// Named provider instance for multi-backend routing tests.
+        fn named(provider_name: &'static str, model_id: &'static str) -> Self {
+            Self {
+                provider_name,
+                model_id,
+                ..Self::new()
+            }
+        }
+
+        /// Named provider that always fails — failover tests.
+        fn named_failing(provider_name: &'static str, model_id: &'static str) -> Self {
+            Self {
+                provider_name,
+                model_id,
+                ..Self::with_generate_error(RockBotError::Provider("provider down".into()))
             }
         }
     }
@@ -786,11 +1049,11 @@ mod tests {
         }
 
         fn provider_name(&self) -> &str {
-            "mock"
+            self.provider_name
         }
 
         fn model_id(&self) -> &str {
-            "mock-model"
+            self.model_id
         }
     }
 
@@ -799,11 +1062,10 @@ mod tests {
     fn make_recording_provider() -> (Box<dyn ImageProvider>, std::sync::Arc<std::sync::Mutex<Option<ImageGenParams>>>) {
         let sink = std::sync::Arc::new(std::sync::Mutex::new(None));
         let provider = MockImageProvider {
-            generate_result: std::sync::Mutex::new(Some(Err(RockBotError::Provider(
-                "capture-only".into(),
-            )))),
-            upload_result: std::sync::Mutex::new(Some(Ok("https://cdn.example.com/uploaded.png".into()))),
             params_sink: sink.clone(),
+            ..MockImageProvider::with_generate_error(RockBotError::Provider(
+                "capture-only".into(),
+            ))
         };
         (Box::new(provider), sink)
     }
@@ -827,6 +1089,7 @@ mod tests {
             1,
             "2K".into(),
             false,
+           20,
             make_webdav(),
             make_image_cache(),
         );
@@ -965,9 +1228,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_execute_model_alias_omitted_leaves_params_model_id_none() {
+    async fn test_execute_model_alias_omitted_uses_default_alias_route() {
         let (provider, sink) = make_recording_provider();
-        let tool = make_tool(provider, make_multi_model_catalog());
+        let catalog = ImageModelCatalog::new(
+            vec![
+                entry(
+                    "seedream5",
+                    "bytedance/seedream/v5/pro/text-to-image",
+                    Some("bytedance/seedream/v5/pro/edit"),
+                    "fal",
+                ),
+                entry("mai2pro", "microsoft/mai-image-2.5-pro", None, "openrouter"),
+            ],
+            "seedream5",
+        );
+        let tool = make_tool(provider, catalog);
         let args = serde_json::json!({
             "prompt": "a cat",
             "aspect_ratio": "1:1",
@@ -975,7 +1250,11 @@ mod tests {
         let _ = tool.execute(&args.to_string()).await;
         let guard = sink.lock().unwrap();
         let captured = guard.as_ref().expect("provider received params");
-        assert!(captured.model_id.is_none(), "omitted model alias must keep provider's configured default");
+        assert_eq!(
+            captured.model_id.as_deref(),
+            Some("bytedance/seedream/v5/pro/text-to-image"),
+            "omitted alias adopts the default alias's preferred route (#112)"
+        );
     }
 
     /// Single-openrouter-backend tool whose catalog carries the issue #104
@@ -1001,6 +1280,7 @@ mod tests {
             1,
             "4K".into(),
             false,
+           20,
             make_webdav(),
             make_image_cache(),
         )
@@ -1087,6 +1367,7 @@ mod tests {
             1,
             "4K".into(),
             false,
+           20,
             make_webdav(),
             make_image_cache(),
         );
@@ -1151,6 +1432,7 @@ mod tests {
             1,
             "4K".into(),
             false,
+           20,
             make_webdav(),
             make_image_cache(),
         );
@@ -1187,6 +1469,7 @@ mod tests {
             1,
             "4K".into(),
             false,
+           20,
             make_webdav(),
             make_image_cache(),
         );
@@ -1225,7 +1508,14 @@ mod tests {
     fn test_tool_description_lists_models_and_defaults() {
         let tool = make_tool(Box::new(MockImageProvider::new()), make_multi_model_catalog());
         let desc = tool.description();
-        assert!(desc.contains("Available image models: mai2pro (microsoft/mai-image-2.5-pro, openrouter), seedream5 (bytedance/seedream/v5/pro/text-to-image, fal, edit:bytedance/seedream/v5/pro/edit)"), "desc: {desc}");
+        assert!(desc.contains("mai2pro (mai2pro, openrouter:microsoft/mai-image-2.5-pro)"), "desc: {desc}");
+        assert!(
+            desc.contains(
+                "seedream5 (seedream5, fal:bytedance/seedream/v5/pro/text-to-image \
+                 (edit:bytedance/seedream/v5/pro/edit))"
+            ),
+            "desc: {desc}"
+        );
         assert!(desc.contains("Default: 'mai2pro'"), "desc: {desc}");
         assert!(desc.contains("auto_2K") && desc.contains("auto_1K"), "seedream5 in catalog → auto hint: {desc}");
     }
@@ -1234,7 +1524,7 @@ mod tests {
     fn test_tool_description_omits_auto_hint_without_seedream() {
         let tool = make_tool(Box::new(MockImageProvider::new()), make_model_catalog());
         let desc = tool.description();
-        assert!(desc.contains("flux (fal-ai/flux/schnell, fal)"), "desc: {desc}");
+        assert!(desc.contains("flux (flux, fal:fal-ai/flux/schnell)"), "desc: {desc}");
         assert!(!desc.contains("auto_2K") && !desc.contains("auto_1K"), "no seedream → no auto hint: {desc}");
         assert!(desc.contains("Default: 'flux'"), "desc: {desc}");
     }
@@ -1288,5 +1578,266 @@ mod tests {
         });
         let parsed: ImageGenArgs = serde_json::from_value(args).unwrap();
         assert!(parsed.model.is_none());
+        assert!(parsed.provider.is_none());
+        assert!(parsed.tier.is_none());
+    }
+
+    // ----- Provider routes: pin, tier, failover, cost cap (issue #112) -----
+
+    fn route_entry(
+        alias: &str,
+        routes: Vec<(&str, &str, Option<&str>, ImageTier, bool)>,
+    ) -> ImageModelEntry {
+        ImageModelEntry {
+            alias: alias.to_string(),
+            label: alias.to_string(),
+            family: "test".to_string(),
+            version: "0".to_string(),
+            deprecated: false,
+            routes: routes
+                .into_iter()
+                .map(|(provider, generate, edit, tier, is_default)| ImageRoute {
+                    provider_name: provider.to_string(),
+                    generate_model_id: generate.to_string(),
+                    edit_model_id: edit.map(|s| s.to_string()),
+                    tier,
+                    is_default,
+                })
+                .collect(),
+        }
+    }
+
+    fn gptimage_routes() -> ImageModelEntry {
+        route_entry(
+            "gptimage",
+            vec![
+                (
+                    "openrouter",
+                    "openai/gpt-image-2.6-flare",
+                    Some("openai/gpt-image-2.6-flare"),
+                    ImageTier::Standard,
+                    true,
+                ),
+                (
+                    "fal",
+                    "openai/gpt-image-2.6/flare/text-to-image",
+                    Some("openai/gpt-image-2.6/flare/edit"),
+                    ImageTier::Standard,
+                    false,
+                ),
+            ],
+        )
+    }
+
+    fn make_multi_backend_tool(
+        catalog: ImageModelCatalog,
+        fal: Box<dyn ImageProvider>,
+        or: Box<dyn ImageProvider>,
+        pro_daily_cap: u32,
+    ) -> ImageGenTool {
+        ImageGenTool::new(
+            HashMap::from([
+                ("fal".to_string(), ImageBackend::new(fal, None)),
+                ("openrouter".to_string(), ImageBackend::new(or, None)),
+            ]),
+            "openrouter".to_string(),
+            catalog,
+            "medium".into(),
+            "png".into(),
+            1,
+            "4K".into(),
+            false,
+            pro_daily_cap,
+            make_webdav(),
+            make_image_cache(),
+        )
+    }
+
+    #[tokio::test]
+    async fn test_execute_provider_arg_pins_route() {
+        let (fal, fal_sink) = make_recording_provider();
+        let (or, or_sink) = make_recording_provider();
+        let tool = make_multi_backend_tool(
+            ImageModelCatalog::new(vec![gptimage_routes()], "gptimage"),
+            fal,
+            or,
+            0,
+        );
+
+        let _ = tool
+            .execute(
+                r#"{"prompt":"a cat","aspect_ratio":"1:1","model":"gptimage","provider":"fal"}"#,
+            )
+            .await;
+
+        assert_eq!(
+            fal_sink
+                .lock()
+                .unwrap()
+                .as_ref()
+                .expect("pinned fal backend received the call")
+                .model_id
+                .as_deref(),
+            Some("openai/gpt-image-2.6/flare/text-to-image")
+        );
+        assert!(
+            or_sink.lock().unwrap().is_none(),
+            "provider pin must not call the openrouter backend"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_execute_unknown_provider_pin_is_parse_error() {
+        let tool = make_multi_backend_tool(
+            ImageModelCatalog::new(vec![gptimage_routes()], "gptimage"),
+            Box::new(MockImageProvider::named("fal", "fal-default")),
+            Box::new(MockImageProvider::named("openrouter", "or-default")),
+            0,
+        );
+        let err = tool
+            .execute(
+                r#"{"prompt":"a cat","aspect_ratio":"1:1","model":"gptimage","provider":"replicate"}"#,
+            )
+            .await
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("no route for provider=replicate"), "err: {msg}");
+        assert!(msg.contains("openrouter, fal"), "err should list routed providers: {msg}");
+    }
+
+    #[tokio::test]
+    async fn test_execute_tier_selects_route_over_default() {
+        let entry = route_entry(
+            "qwenimage",
+            vec![
+                (
+                    "openrouter",
+                    "qwen/qwen-image-2.1-pro",
+                    Some("qwen/qwen-image-2.1-pro"),
+                    ImageTier::Pro,
+                    true,
+                ),
+                (
+                    "openrouter",
+                    "qwen/qwen-image-2.1-turbo",
+                    Some("qwen/qwen-image-2.1-turbo"),
+                    ImageTier::Turbo,
+                    false,
+                ),
+            ],
+        );
+        let (provider, sink) = make_recording_provider();
+        let tool = make_multi_backend_tool(
+            ImageModelCatalog::new(vec![entry], "qwenimage"),
+            Box::new(MockImageProvider::named("fal", "fal-default")),
+            provider,
+            0,
+        );
+
+        let _ = tool
+            .execute(
+                r#"{"prompt":"a sketch","aspect_ratio":"1:1","model":"qwenimage","tier":"turbo"}"#,
+            )
+            .await;
+
+        assert_eq!(
+            sink.lock().unwrap().as_ref().unwrap().model_id.as_deref(),
+            Some("qwen/qwen-image-2.1-turbo"),
+            "tier=turbo must pick the turbo route, not the pro default"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_execute_unknown_tier_is_parse_error() {
+        let tool = make_multi_backend_tool(
+            ImageModelCatalog::new(vec![gptimage_routes()], "gptimage"),
+            Box::new(MockImageProvider::named("fal", "fal-default")),
+            Box::new(MockImageProvider::named("openrouter", "or-default")),
+            0,
+        );
+        let err = tool
+            .execute(
+                r#"{"prompt":"a cat","aspect_ratio":"1:1","model":"gptimage","tier":"flash"}"#,
+            )
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("no route for provider=any tier=flash"), "err: {err}");
+    }
+
+    #[tokio::test]
+    async fn test_execute_fails_over_to_next_route() {
+        let (fal, fal_sink) = make_recording_provider();
+        let tool = make_multi_backend_tool(
+            ImageModelCatalog::new(vec![gptimage_routes()], "gptimage"),
+            fal,
+            Box::new(MockImageProvider::named_failing("openrouter", "or-default")),
+            0,
+        );
+
+        // The first (openrouter) route fails; the fal fallback is attempted and
+        // reaches the provider. WebDAV upload then fails in this unit harness,
+        // so the overall call still errors — the failover is proven by the
+        // second backend receiving the request.
+        let _ = tool
+            .execute(r#"{"prompt":"a cat","aspect_ratio":"1:1","model":"gptimage"}"#)
+            .await;
+
+        assert_eq!(
+            fal_sink
+                .lock()
+                .unwrap()
+                .as_ref()
+                .expect("failover route received the call")
+                .model_id
+                .as_deref(),
+            Some("openai/gpt-image-2.6/flare/text-to-image")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_execute_pro_tier_daily_cap() {
+        let entry = route_entry(
+            "mai2pro",
+            vec![(
+                "openrouter",
+                "microsoft/mai-image-2.6",
+                Some("microsoft/mai-image-2.6"),
+                ImageTier::Pro,
+                true,
+            )],
+        );
+        let tool = make_multi_backend_tool(
+            ImageModelCatalog::new(vec![entry], "mai2pro"),
+            Box::new(MockImageProvider::named("fal", "fal-default")),
+            Box::new(MockImageProvider::named("openrouter", "or-default")),
+            1,
+        );
+
+        // First call is charged (and then fails at the WebDAV upload).
+        let _ = tool
+            .execute(r#"{"prompt":"final art","aspect_ratio":"1:1","model":"mai2pro","room_id":"room-a"}"#)
+            .await;
+
+        let err = tool
+            .execute(r#"{"prompt":"final art again","aspect_ratio":"1:1","model":"mai2pro","room_id":"room-a"}"#)
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("daily cap of 1 pro-tier generations"),
+            "err: {err}"
+        );
+
+        // A different room has its own budget.
+        let other = tool
+            .execute(r#"{"prompt":"final art","aspect_ratio":"1:1","model":"mai2pro","room_id":"room-b"}"#)
+            .await;
+        assert!(
+            !other
+                .as_ref()
+                .err()
+                .map(|e| e.to_string().contains("daily cap"))
+                .unwrap_or(false),
+            "cap is per-room: {other:?}"
+        );
     }
 }

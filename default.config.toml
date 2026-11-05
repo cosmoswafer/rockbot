@@ -36,6 +36,11 @@ chat_path = "/chat/completions"
 [chat_providers.models]
 local = "local-model"
 
+# Image providers supply credentials + endpoints only. The alias roster lives in
+# the canonical manifest `models/image.toml` (checked in, embedded at build time,
+# issues #111/#112) — do not re-declare aliases here. The legacy `models` /
+# `edit_models` maps are still parsed for backwards compatibility but image_gen
+# no longer reads them.
 [[image_providers]]
 name = "openrouter"
 api_key = ""
@@ -43,48 +48,22 @@ base_url = "https://openrouter.ai/api/v1"
 basecf_url = ""
 draw_path = "/images"
 
-[image_providers.models]
-seedream = "bytedance-seed/seedream-4.5"
-banana = "google/gemini-3.1-flash-image-preview"
-qwenimage = "qwen/qwen-image-3-pro"
-# Issue #101 — new OpenRouter image models (non-pro `mai` alias removed):
-mai2pro = "microsoft/mai-image-2.5-pro"
-seedream5pro = "bytedance-seed/seedream-5-0-pro"
-grok2 = "x-ai/grok-imagine-image-2.0"
-muse = "meta/muse-image"
-# Issue #104 — Ming Image 0.1 Design: strong text rendering inside the image
-# (UI mockups/posters), native RGBA. Text-to-image ONLY (never add it to
-# [image_providers.edit_models]) and self-sized: the model chooses its own
-# dimensions, so resolution/aspect_ratio are dropped on the wire. ~38s per
-# image, NovitaAI is the only route, and $0.00 pricing is promotional — do not
-# rely on it for cost models or fast presets.
-ming = "inclusionai/ming-image-0.1-design"
-
 [[image_providers]]
 name = "fal"
 api_key = ""
 base_url = "https://queue.fal.run"
 
-# Unified aliases (#100): one entry per model family; providers that host
-# genuinely separate edit endpoints map them in [image_providers.edit_models].
-# GPT Image 2.5 (#102): `gptimage` = Flare (default), `sunburst` = Sunburst.
-[image_providers.models]
-seedream = "fal-ai/bytedance/seedream/v4.5/text-to-image"
-seedream5 = "bytedance/seedream/v5/pro/text-to-image"
-gptimage = "openai/gpt-image-2.5/flare/text-to-image"
-sunburst = "openai/gpt-image-2.5/sunburst/text-to-image"
-grok = "xai/grok-imagine-image/quality/text-to-image"
-
-[image_providers.edit_models]
-seedream5 = "bytedance/seedream/v5/pro/edit"
-gptimage = "openai/gpt-image-2.5/flare/edit"
-sunburst = "openai/gpt-image-2.5/sunburst/edit"
-grok = "xai/grok-imagine-image/quality/edit"
-
 [image_model]
+# Manifest is the source of truth; `default_provider`/`default_text_model` are
+# fallbacks used only when the manifest cannot supply a default route.
 default_provider = "fal"
 default_text_model = "gptimage"
 default_edit_model = "gptimage"
+# Per-room daily cap on pro-tier generations (0 = unlimited) — issue #112.
+pro_daily_cap = 20
+# Optional override for the embedded manifest (`models/image.toml`). A path that
+# cannot be read aborts boot instead of silently falling back.
+# manifest_path = "./models/image.toml"
 default_quality = "medium"
 default_output_format = "png"
 default_num_images = 1

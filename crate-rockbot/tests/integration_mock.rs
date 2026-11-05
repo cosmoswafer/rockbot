@@ -19,6 +19,30 @@ impl Match for NoAuthHeader {
     }
 }
 
+/// Single-route catalog entry built from a flat slug pair (issues #111/#112
+/// replaced the flat `model_id`/`provider_name` fields with route lists).
+fn test_entry(
+    alias: &str,
+    model_id: &str,
+    edit_model_id: Option<&str>,
+    provider: &str,
+) -> ImageModelEntry {
+    ImageModelEntry {
+        alias: alias.to_string(),
+        label: alias.to_string(),
+        family: "test".to_string(),
+        version: "0".to_string(),
+        deprecated: false,
+        routes: vec![rockbot::types::ImageRoute {
+            provider_name: provider.to_string(),
+            generate_model_id: model_id.to_string(),
+            edit_model_id: edit_model_id.map(|s| s.to_string()),
+            tier: rockbot::types::ImageTier::Standard,
+            is_default: true,
+        }],
+    }
+}
+
 // ─── Mock HTTP Tests: DeepSeekProvider.complete() ────────────────────────────
 
 #[tokio::test]
@@ -2799,6 +2823,8 @@ mod summarization_tests {
             }],
             image_providers: vec![],
             image_model: ImageModelConfig {
+                manifest_path: None,
+                pro_daily_cap: 20,
                 default_provider: ProviderName::try_new("mock".to_string()).unwrap(),
                 default_text_model: "mock-img".into(),
                 default_edit_model: "mock-img-edit".into(),
@@ -3093,6 +3119,8 @@ dav_path = "remote.php/dav"
             }],
             image_providers: vec![],
             image_model: ImageModelConfig {
+                manifest_path: None,
+                pro_daily_cap: 20,
                 default_provider: ProviderName::try_new("mock".to_string()).unwrap(),
                 default_text_model: "mock-img".into(),
                 default_edit_model: "mock-img-edit".into(),
@@ -3429,6 +3457,8 @@ mod tool_call_parse_recovery_tests {
             }],
             image_providers: vec![],
             image_model: ImageModelConfig {
+                manifest_path: None,
+                pro_daily_cap: 20,
                 default_provider: ProviderName::try_new("mock".to_string()).unwrap(),
                 default_text_model: "mock-img".into(),
                 default_edit_model: "mock-img-edit".into(),
@@ -3896,18 +3926,8 @@ async fn test_openrouter_image_gen_ming_omits_size_params() {
 #[test]
 fn test_image_gen_description_and_schema_derived_from_config() {
     let models = vec![
-        ImageModelEntry {
-            alias: "seedream5".to_string(),
-            model_id: "bytedance/seedream/v5/pro/text-to-image".to_string(),
-            edit_model_id: None,
-            provider_name: "fal".to_string(),
-        },
-        ImageModelEntry {
-            alias: "mai".to_string(),
-            model_id: "microsoft/mai-image-2.5".to_string(),
-            edit_model_id: None,
-            provider_name: "openrouter".to_string(),
-        },
+        test_entry("seedream5", "bytedance/seedream/v5/pro/text-to-image", None, "fal"),
+        test_entry("mai", "microsoft/mai-image-2.5", None, "openrouter"),
     ];
     let catalog = ImageModelCatalog::new(models, "mai");
     let provider = rockbot::provider::fal::FalAiProvider::new(
@@ -3927,7 +3947,8 @@ fn test_image_gen_description_and_schema_derived_from_config() {
     let tool = make_single_fal_tool(Box::new(provider), catalog, "https://example.com");
 
     let desc = tool.description();
-    assert!(desc.contains("Available image models: mai (microsoft/mai-image-2.5, openrouter), seedream5 (bytedance/seedream/v5/pro/text-to-image, fal)"), "desc: {desc}");
+    assert!(desc.contains("mai (mai, openrouter:microsoft/mai-image-2.5)"), "desc: {desc}");
+    assert!(desc.contains("seedream5 (seedream5, fal:bytedance/seedream/v5/pro/text-to-image)"), "desc: {desc}");
     assert!(desc.contains("Default: 'mai'"), "desc: {desc}");
     assert!(desc.contains("'auto_2K'"), "seedream configured → auto hint in tool description: {desc}");
 
@@ -3949,12 +3970,10 @@ fn test_image_gen_description_and_schema_derived_from_config() {
 
 #[test]
 fn test_image_gen_description_no_auto_hint_without_seedream() {
-    let catalog = ImageModelCatalog::new(vec![ImageModelEntry {
-        alias: "flux".to_string(),
-        model_id: "fal-ai/flux/schnell".to_string(),
-        edit_model_id: None,
-        provider_name: "fal".to_string(),
-    }], "flux");
+    let catalog = ImageModelCatalog::new(
+        vec![test_entry("flux", "fal-ai/flux/schnell", None, "fal")],
+        "flux",
+    );
     let tool = make_single_fal_tool(Box::new(MockImageProviderStub), catalog, "https://example.com");
 
     let desc = tool.description();
@@ -4000,12 +4019,7 @@ fn tag_provider_models(
 ) -> Vec<ImageModelEntry> {
     models
         .into_iter()
-        .map(|(alias, model_id)| ImageModelEntry {
-            alias,
-            model_id,
-            edit_model_id: None,
-            provider_name: provider.to_string(),
-        })
+        .map(|(alias, model_id)| test_entry(&alias, &model_id, None, provider))
         .collect()
 }
 
@@ -4025,6 +4039,7 @@ fn make_single_fal_tool(
         1,
         "4K".into(),
         false,
+        20,
         webdav::WebDavClient::new(base, "user", "pass").unwrap(),
         Arc::new(rockbot::image_cache::ImageCache::new()),
     )
@@ -4068,18 +4083,8 @@ async fn test_image_gen_routes_alias_to_its_own_provider_backend() {
 
     let catalog = ImageModelCatalog::new(
         vec![
-            ImageModelEntry {
-                alias: "seedream5".to_string(),
-                model_id: seedream_model.to_string(),
-                edit_model_id: None,
-                provider_name: "fal".to_string(),
-            },
-            ImageModelEntry {
-                alias: "mai".to_string(),
-                model_id: mai_model.to_string(),
-                edit_model_id: None,
-                provider_name: "openrouter".to_string(),
-            },
+            test_entry("seedream5", seedream_model, None, "fal"),
+            test_entry("mai", mai_model, None, "openrouter"),
         ],
         "mai",
     );
@@ -4107,6 +4112,7 @@ async fn test_image_gen_routes_alias_to_its_own_provider_backend() {
         1,
         "4K".into(),
         false,
+        20,
         webdav::WebDavClient::new(&base, "user", "pass").unwrap(),
         Arc::new(rockbot::image_cache::ImageCache::new()),
     );
@@ -4147,20 +4153,10 @@ async fn test_image_gen_catalog_spans_multiple_provider_entries() {
     // tagging each with its provider name.
     let mut merged: Vec<ImageModelEntry> = Vec::new();
     for (alias, id) in &fal_cfg.models {
-        merged.push(ImageModelEntry {
-            alias: alias.clone(),
-            model_id: id.clone(),
-            edit_model_id: None,
-            provider_name: "fal".to_string(),
-        });
+        merged.push(test_entry(alias, id, None, "fal"));
     }
     for (alias, id) in &or_cfg.models {
-        merged.push(ImageModelEntry {
-            alias: alias.clone(),
-            model_id: id.clone(),
-            edit_model_id: None,
-            provider_name: "openrouter".to_string(),
-        });
+        merged.push(test_entry(alias, id, None, "openrouter"));
     }
     let catalog = ImageModelCatalog::new(merged, "seedream5");
 
@@ -4188,9 +4184,9 @@ async fn test_image_gen_catalog_spans_multiple_provider_entries() {
     );
     let desc = tool.description();
     assert!(
-        desc.contains("flux (fal-ai/flux/schnell, fal)")
-            && desc.contains("seedream5 (bytedance/seedream/v5/pro/text-to-image, fal)")
-            && desc.contains("mai (microsoft/mai-image-2.5, openrouter)"),
+        desc.contains("flux (flux, fal:fal-ai/flux/schnell)")
+            && desc.contains("seedream5 (seedream5, fal:bytedance/seedream/v5/pro/text-to-image)")
+            && desc.contains("mai (mai, openrouter:microsoft/mai-image-2.5)"),
         "description must enumerate all providers' models: {desc}"
     );
 }
@@ -4244,12 +4240,7 @@ async fn test_image_gen_gpt_image_2_5_flare_edit_uses_dedicated_endpoint() {
     let t2i = FalAiProvider::new(&cfg, flare_t2i).unwrap();
     let edit = FalAiProvider::new(&cfg, flare_edit).unwrap();
     let catalog = ImageModelCatalog::new(
-        vec![ImageModelEntry {
-            alias: "gptimage".to_string(),
-            model_id: flare_t2i.to_string(),
-            edit_model_id: Some(flare_edit.to_string()),
-            provider_name: "fal".to_string(),
-        }],
+        vec![test_entry("gptimage", flare_t2i, Some(flare_edit), "fal")],
         "gptimage",
     );
     let tool = ImageGenTool::new(
@@ -4264,6 +4255,7 @@ async fn test_image_gen_gpt_image_2_5_flare_edit_uses_dedicated_endpoint() {
         1,
         "4K".into(),
         false,
+        20,
         webdav::WebDavClient::new(&base, "user", "pass").unwrap(),
         Arc::new(rockbot::image_cache::ImageCache::new()),
     );
@@ -4296,12 +4288,7 @@ async fn test_image_gen_gpt_image_2_5_sunburst_t2i_uses_plain_endpoint() {
     let t2i = FalAiProvider::new(&cfg, sunburst_t2i).unwrap();
     let edit = FalAiProvider::new(&cfg, sunburst_edit).unwrap();
     let catalog = ImageModelCatalog::new(
-        vec![ImageModelEntry {
-            alias: "sunburst".to_string(),
-            model_id: sunburst_t2i.to_string(),
-            edit_model_id: Some(sunburst_edit.to_string()),
-            provider_name: "fal".to_string(),
-        }],
+        vec![test_entry("sunburst", sunburst_t2i, Some(sunburst_edit), "fal")],
         "gptimage",
     );
     let tool = ImageGenTool::new(
@@ -4316,6 +4303,7 @@ async fn test_image_gen_gpt_image_2_5_sunburst_t2i_uses_plain_endpoint() {
         1,
         "4K".into(),
         false,
+        20,
         webdav::WebDavClient::new(&base, "user", "pass").unwrap(),
         Arc::new(rockbot::image_cache::ImageCache::new()),
     );
@@ -4330,3 +4318,175 @@ async fn test_image_gen_gpt_image_2_5_sunburst_t2i_uses_plain_endpoint() {
     assert_eq!(v["ok"], true, "Sunburst t2i must succeed: {result}");
 }
 
+
+// ─── Provider routes: failover + serving route in the result (issue #112) ────
+
+/// The preferred route (OpenRouter) fails, so the tool advances to the fal
+/// route once and reports the provider/model/tier that actually served the
+/// image — silent failover is forbidden (issue #112).
+#[tokio::test]
+async fn test_image_gen_fails_over_and_reports_serving_route() {
+    let mock_server = MockServer::start().await;
+    let base = mock_server.uri();
+
+    let or_model = "openai/gpt-image-2.6-flare";
+    let fal_model = "openai/gpt-image-2.6/flare/text-to-image";
+    let fal_edit = "openai/gpt-image-2.6/flare/edit";
+
+    mount_fal_queue_pipeline(&mock_server, &base, fal_model).await;
+    mount_result_image_and_webdav(&mock_server, &base).await;
+
+    // OpenRouter is the preferred route but is down: the image catalog 404s
+    // (chat fallback) and the chat call returns 500.
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(500).set_body_string("provider down"))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let fal_cfg = make_fal_config(&base);
+    let or_cfg = make_openrouter_image_config(&base);
+
+    let catalog = ImageModelCatalog::new(
+        vec![ImageModelEntry {
+            alias: "gptimage".to_string(),
+            label: "GPT Image 2.6 · Flare".to_string(),
+            family: "openai".to_string(),
+            version: "2.6".to_string(),
+            deprecated: false,
+            routes: vec![
+                rockbot::types::ImageRoute {
+                    provider_name: "openrouter".to_string(),
+                    generate_model_id: or_model.to_string(),
+                    edit_model_id: Some(or_model.to_string()),
+                    tier: rockbot::types::ImageTier::Standard,
+                    is_default: true,
+                },
+                rockbot::types::ImageRoute {
+                    provider_name: "fal".to_string(),
+                    generate_model_id: fal_model.to_string(),
+                    edit_model_id: Some(fal_edit.to_string()),
+                    tier: rockbot::types::ImageTier::Standard,
+                    is_default: false,
+                },
+            ],
+        }],
+        "gptimage",
+    );
+
+    let tool = ImageGenTool::new(
+        HashMap::from([
+            (
+                "fal".to_string(),
+                ImageBackend::new(
+                    Box::new(FalAiProvider::new(&fal_cfg, fal_model).unwrap()),
+                    Some(Box::new(FalAiProvider::new(&fal_cfg, fal_edit).unwrap())),
+                ),
+            ),
+            (
+                "openrouter".to_string(),
+                ImageBackend::new(
+                    Box::new(OpenRouterImageProvider::new(&or_cfg, or_model).unwrap()),
+                    None,
+                ),
+            ),
+        ]),
+        "openrouter".to_string(),
+        catalog,
+        "medium".into(),
+        "png".into(),
+        1,
+        "4K".into(),
+        false,
+        20,
+        webdav::WebDavClient::new(&base, "user", "pass").unwrap(),
+        Arc::new(rockbot::image_cache::ImageCache::new()),
+    );
+
+    let result = tool
+        .execute(r#"{"prompt":"a sunrise over waves","aspect_ratio":"16:9","model":"gptimage","room_id":"d-abc"}"#)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_str(&result).unwrap();
+    assert_eq!(v["ok"], true, "failover route must succeed: {result}");
+    assert_eq!(v["provider"], "fal", "result must name the serving provider: {result}");
+    assert_eq!(v["model"], fal_model, "result must name the serving model: {result}");
+    assert_eq!(v["tier"], "standard", "result must name the route tier: {result}");
+}
+
+/// `provider` pins one route and suppresses failover to the other provider.
+#[tokio::test]
+async fn test_image_gen_provider_arg_pins_route_end_to_end() {
+    let mock_server = MockServer::start().await;
+    let base = mock_server.uri();
+
+    let fal_model = "openai/gpt-image-2.6/flare/text-to-image";
+    mount_fal_queue_pipeline(&mock_server, &base, fal_model).await;
+    mount_result_image_and_webdav(&mock_server, &base).await;
+
+    // The openrouter route would fail if it were called; the pin must prevent
+    // that call entirely (no mock mounted for it).
+    let fal_cfg = make_fal_config(&base);
+    let or_cfg = make_openrouter_image_config(&base);
+
+    let catalog = ImageModelCatalog::new(
+        vec![ImageModelEntry {
+            alias: "gptimage".to_string(),
+            label: "GPT Image 2.6 · Flare".to_string(),
+            family: "openai".to_string(),
+            version: "2.6".to_string(),
+            deprecated: false,
+            routes: vec![
+                rockbot::types::ImageRoute {
+                    provider_name: "openrouter".to_string(),
+                    generate_model_id: "openai/gpt-image-2.6-flare".to_string(),
+                    edit_model_id: Some("openai/gpt-image-2.6-flare".to_string()),
+                    tier: rockbot::types::ImageTier::Standard,
+                    is_default: true,
+                },
+                rockbot::types::ImageRoute {
+                    provider_name: "fal".to_string(),
+                    generate_model_id: fal_model.to_string(),
+                    edit_model_id: Some("openai/gpt-image-2.6/flare/edit".to_string()),
+                    tier: rockbot::types::ImageTier::Standard,
+                    is_default: false,
+                },
+            ],
+        }],
+        "gptimage",
+    );
+
+    let tool = ImageGenTool::new(
+        HashMap::from([
+            (
+                "fal".to_string(),
+                ImageBackend::new(Box::new(FalAiProvider::new(&fal_cfg, fal_model).unwrap()), None),
+            ),
+            (
+                "openrouter".to_string(),
+                ImageBackend::new(
+                    Box::new(OpenRouterImageProvider::new(&or_cfg, "openai/gpt-image-2.6-flare").unwrap()),
+                    None,
+                ),
+            ),
+        ]),
+        "openrouter".to_string(),
+        catalog,
+        "medium".into(),
+        "png".into(),
+        1,
+        "4K".into(),
+        false,
+        20,
+        webdav::WebDavClient::new(&base, "user", "pass").unwrap(),
+        Arc::new(rockbot::image_cache::ImageCache::new()),
+    );
+
+    let result = tool
+        .execute(r#"{"prompt":"a sunrise","aspect_ratio":"16:9","model":"gptimage","provider":"fal","room_id":"d-abc"}"#)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_str(&result).unwrap();
+    assert_eq!(v["provider"], "fal", "provider pin must serve from fal: {result}");
+}

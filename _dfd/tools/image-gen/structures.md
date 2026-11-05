@@ -9,34 +9,32 @@ with a prompt and optional parameters; the tool delegates to the provider,
 writes to WebDAV, stores to the cache, and returns a minimal result
 (`{ok, webdav_path, image_key}`) so the LLM context stays lightweight.
 
-The LLM can select any model from **all configured `[[image_providers]]`**
-per call via an optional `model` alias arg; omitting it falls back to
-`[image_model] default_text_model` of the default provider. The catalog
-(alias → model ids + provider name) is a shared type (`ImageModelCatalog`)
-produced from config at startup and consumed by the tool — every model is
-routed to its own provider's backend (issue #96), so the concatenated catalog
-spans the fal and openrouter entries (the only supported backend kinds; other
-provider names are skipped at registry with a warning). Default model tables
-are **role-scoped** (issue #99): image providers inherit only image-capable
-models — chat aliases (`gpt`, `qwen`, `minimax`, …) exist solely in the chat
-role's table and can never leak into the image catalog.
-Editing is **unified per alias** (issue #100): an alias may carry an optional
-edit companion id for providers that genuinely use separate endpoints
-(currently only fal); otherwise the same model id serves both modes and no
-`*_edit` alias is exposed.
+The LLM can select any model from the manifest (`models/image.toml`, issues
+#111/#112) per call via an optional `model` alias arg; omitting it falls back to
+the manifest's `default = true` alias. The catalog (alias → ordered provider
+routes) is a shared type (`ImageModelCatalog`) produced from the manifest at
+startup and consumed by the tool — every route names its provider backend
+(fal / openrouter, #96). `[[image_providers]]` only supplies credentials and
+endpoints; aliases are never declared in config. Routes also carry a tier
+(`standard`/`pro`/`turbo`/`flash`), selectable via the optional `tier` arg, and
+an optional `provider` arg pins one route. Default model tables in `config.rs`
+remain only as a fallback for code paths that predate the manifest; the
+manifest always wins.
+Editing is **mode-aware per route** (issue #100/#112): a route may carry an
+optional edit companion id for providers that genuinely use separate endpoints
+(fal); when no candidate route declares one, the generate slug serves edits.
 
 Per-model **wire-level traits** (issue #104, `ImageModelTraits`) cover quirks
 the OpenRouter image catalog does not advertise: *self-sized* models
 (`ming` → `inclusionai/ming-image-0.1-design`, Ming Image 0.1 Design) choose
 their own output dimensions, so the request builder drops `resolution` /
 `aspect_ratio`, and *text-to-image-only* models reject edit calls at the tool
-parse boundary with a clear error. Neither trait affects catalog routing — the
-alias is registered once in `models` (never in `edit_models`) and every call
-still resolves through `ImageModelCatalog`.
+parse boundary with a clear error. `FalSizeParam` covers the fal request-shape
+split (image_size object vs `aspect_ratio` ± `resolution`).
 
 The tool's description and `parameters()` schema are **generated from the
 catalog at registry time** (issue #95, see
-[level-2/tool-description.md](level-2/tool-description.md)) — config is the
+[level-2/tool-description.md](level-2/tool-description.md)) — the manifest is the
 single source of truth; no model names are hardcoded anywhere in the schema.
 
 - Upstream: [Agent Harness](../../agent/agent-harness/image-interception.md) injects `room_id`, `webdav_dir`,
@@ -65,8 +63,10 @@ LLM provides `prompt` and `aspect_ratio` (both required); all other fields come 
 | `image_cache_key`| Harness          | `string`                                       | Tool call_id — used as ImageCache lookup key. **Note:** injected at execute time, not in LLM-facing schema. |
 | `image_urls`    | Harness (auto)    | `[]string`                                     | Injected from 5 converging sources (see §2e): user attachments, vision/WebDAV pool, agent-provided URLs, message image URLs (auto-injected unconditionally), and `reference_image_key` (ImageCache lookup) |
 | `reference_image_key` | LLM | `string` | Alternative to `image_urls` — the `image_key` from a prior `image_gen` result. Looked up in ImageCache; data URI uploaded to provider CDN. Tool-level arg — not a field on the Rust struct; resolved before `ImageGenParams` construction. |
-| `model`       | LLM              | `string` (alias)                              | **Optional.** Config alias for the active image provider's `models` catalog. Exposed in the tool schema as an `enum` of valid aliases (omitted when catalog empty). Resolved via `ImageModelCatalog`; unknown alias → `ToolCallParse` error at the parse boundary. |
-| `model_id`    | Tool (resolved)  | `string`                                       | Mode-aware id from the resolved alias's entry (`resolve_for_mode`): edit companion when editing and paired (#100), else the plain id. Stays `None` only when no alias was given and the default alias is unresolvable — the provider instance then uses its configured default (`provider.model_id()`). |
+| `model`       | LLM              | `string` (alias)                              | **Optional.** Manifest alias (`models/image.toml`). Exposed in the tool schema as an `enum` of valid aliases, deprecated ones included (omitted when catalog empty). Resolved via `ImageModelCatalog`; unknown alias → `ToolCallParse` error at the parse boundary. |
+| `provider`    | LLM              | `string`                                       | **Optional.** Pins one route provider for the alias (`fal`, `openrouter`). Omitted ⇒ the alias's route order (preferred first) is used, with one failover step. A pin suppresses failover to other providers. |
+| `tier`        | LLM              | `ImageTier` (`standard`/`pro`/`turbo`/`flash`) | **Optional.** Selects a route by tier (e.g. `qwenimage` + `turbo`). Omitted ⇒ the alias default route. No matching route → `ToolCallParse` error listing the alias's tiers. |
+| `model_id`    | Tool (resolved)  | `string`                                       | Mode-aware slug of the attempt's route (`generate_model_id` or its `edit_model_id`). Set per attempt; failover updates it. `None` only when the catalog has no entry for the default alias (config leniency) — the provider instance then uses its configured default (`provider.model_id()`). |
 | `quality`       | Config            | `string`                                       | From `default_quality`                           |
 | `output_format` | Config            | `string`                                       | From `default_output_format`                     |
 | `num_images`    | Config            | `integer`                                      | From `default_num_images`                        |
@@ -74,52 +74,56 @@ LLM provides `prompt` and `aspect_ratio` (both required); all other fields come 
 
 #### `ImageModelCatalog`
 
-Shared type produced at startup by joining the `models` map of **every**
-configured `[[image_providers]]` entry backed by a supported provider kind
-(fal / openrouter), tagging each alias with its provider name and optional
-edit companion, plus the `[image_model]` default alias. Defined in `types.rs`
-— produced by `main.rs` and consumed by the tool, so mismatches are
-compile-time errors.
+Shared type produced at startup from the canonical manifest
+(`models/image.toml`, embedded via `include_str!`; issues #111/#112), validated
+and converted by `image_manifest.rs`, pruned to providers with usable backends
+by `main.rs`, and consumed by the tool — mismatches are compile-time errors.
 
 | Field                | Type                    | Description                                      |
 | -------------------- | ----------------------- | ------------------------------------------------ |
-| `entries`            | `[ImageModelEntry]`     | One per model family, sorted by alias — stable schema `enum`. See below. |
-| `default_alias`      | `string`                | `[image_model] default_text_model` (fallback alias) |
+| `entries`            | `[ImageModelEntry]`     | One per alias, sorted by alias — stable schema `enum`. See below. |
+| `default_alias`      | `string`                | Manifest alias marked `default = true`.          |
 
 `ImageModelEntry` fields:
 
 | Field             | Type             | Description                                                                 |
 | ----------------- | ---------------- | --------------------------------------------------------------------------- |
 | `alias`           | `string`         | LLM-facing selection name (e.g. `seedream5`).                                |
-| `model_id`        | `string`         | Text-to-image model id sent to the provider.                                 |
-| `edit_model_id`   | `Option<string>` | Dedicated edit-endpoint id. `None` ⇒ edits reuse `model_id` (issue #100).    |
-| `provider_name`   | `string`         | Owning `[[image_providers]]` entry name — selects the backend.               |
+| `label`           | `string`         | Human-facing model name (`GPT Image 2.6 · Flare`) — description text.        |
+| `family`          | `string`         | Model family (`openai`, `google`, `qwen`, …).                                |
+| `version`         | `string`         | Family version (`2.6`, `2.1`, …).                                            |
+| `deprecated`      | `bool`           | Still selectable for one release; marked in the description.                 |
+| `routes`          | `[ImageRoute]`   | Ordered provider routes, preferred (`is_default`) first.                     |
 
-Config shape: `models` maps alias → t2i id; the sibling `edit_models` map
-(serde default: empty) maps alias → edit companion id for providers with
-genuinely separate endpoints (fal only). Role-scoped default tables in
-`config.rs` guarantee chat-only aliases never enter image-provider defaults
-(#99); they are probed against the fal model registry when the fal map changes.
-The fal defaults carry the GPT Image 2.5 pair (issue #102): `gptimage` →
-`openai/gpt-image-2.5/flare/{text-to-image,edit}` (**Flare**, the
-`[image_model]` default) and `sunburst` →
-`openai/gpt-image-2.5/sunburst/{text-to-image,edit}` (Sunburst).
+`ImageRoute` fields (issues #100/#112):
 
-`resolve(alias)` returns `(model_id, provider_name)` or `None` — the tool
-rejects unknown aliases with a `ToolCallParse` error listing the valid aliases;
-each resolved pair selects that provider's backend.
-`resolve_for_mode(alias, is_edit)` swaps in the edit companion id when the
-call carries input images (`Option::unwrap_or(model_id)`), so edit requests
-always hit the correct endpoint id without the LLM choosing a separate alias.
-`allowed_aliases()` feeds the tool schema `enum`; `model_ids()` /
-`provider_names()` expose the resolved ids and provider tags (index-aligned
-with `allowed_aliases()`) for the derived tool description. Duplicate aliases
-across provider entries are dropped with a warning (first defined wins).
-`supports_auto_aspect()` is a derived capability flag — `true` iff any entry's
-model id contains the `seedream/v5` marker (same constant used by
-`FalAiProvider`). It drives the `auto_1K`/`auto_2K` hint in the tool and
-`aspect_ratio` parameter descriptions; when `false`, no auto-dimensional
-strings are advertised.
+| Field               | Type             | Description                                                              |
+| ------------------- | ---------------- | ------------------------------------------------------------------------ |
+| `provider_name`     | `string`         | Owning `[[image_providers]]` entry name — selects the backend.            |
+| `generate_model_id` | `string`         | Text-to-image slug sent to the provider.                                  |
+| `edit_model_id`     | `Option<string>` | Dedicated edit slug. `None` ⇒ generate-only route (edits reuse the generate slug when no route declares one). |
+| `tier`              | `ImageTier`      | `standard` / `pro` / `turbo` / `flash`.                                   |
+| `is_default`        | `bool`           | Preferred route of the alias (first route when none is flagged).          |
+
+Manifest lints (hard boot errors, `RockBotError::Config`): non-empty roster,
+≥1 route per alias, unique aliases, exactly one default alias, ≤1 default route
+per alias, deprecated ≠ default, non-empty labels. Empty `edit = ""` means a
+generate-only route and is explicitly allowed — not a broken reference.
+
+`route_candidates(provider?, tier?, is_edit)` filters by the optional LLM pin
+and tier, orders the preferred route first, and — for edit calls — stable-sorts
+edit-capable routes ahead of generate-only ones. An empty list is a
+`ToolCallParse` error naming the alias's providers/tiers.
+`resolve(alias)` / `resolve_for_mode(alias, is_edit)` return the preferred
+route's `(slug, provider_name)`; `allowed_aliases()` feeds the schema `enum`
+(deprecated aliases included); `supports_auto_aspect()` is `true` iff any
+route's generate slug contains the `seedream/v5` marker (same constant used by
+`FalAiProvider`) and drives the `auto_1K`/`auto_2K` hints.
+
+Execution fails over once (issue #112): a failed route logs the failure and the
+next candidate is attempted; the result reports the serving provider/model/tier.
+Pro-tier routes are charged to `ProTierUsage` (per-room, UTC day) before the
+call and capped by `[image_model] pro_daily_cap` (default 20, `0` disables).
 
 #### `ImageModelTraits`
 
@@ -136,18 +140,33 @@ Ming Image 0.1 Design — text-to-image only, model-chosen dimensions, promo
 | `self_sized`          | `bool` | Model picks its own dimensions — the request builder omits `resolution` / `aspect_ratio`; the tool appends a one-line `note` to the result instead of the params. |
 | `text_to_image_only`  | `bool` | Model accepts no input references — `image_gen` rejects edit calls at the parse boundary with a `ToolCallParse` text-to-image-only error naming the model id. |
 
-`ImageModelEntry::traits()` exposes the flags for an entry; the provider
-derives them from the effective model id it is about to send
+`ImageModelEntry::traits()` exposes the flags for the preferred route; the
+provider derives them from the effective model id it is about to send
 (`params.model_id` or its configured default), so a direct provider call
 without the tool is guarded too.
+
+#### `FalSizeParam`
+
+fal endpoints disagree on how output size is expressed; `FalSizeParam::for_model_id`
+in `types.rs` selects the request shape from the wire slug (verified against the
+fal OpenAPI schemas, 2026-11-05):
+
+| Variant                       | Models                                                  | Wire fields                        |
+| ----------------------------- | ------------------------------------------------------- | ---------------------------------- |
+| `ImageSizeObject` (default)   | gpt-image, seedream, moss, …                            | `image_size: {width, height}`      |
+| `AspectRatio`                 | `bria/fibo-2/*`                                          | `aspect_ratio: "2:3"`              |
+| `AspectRatioWithResolution`   | `google/nano-banana-2.1*`                                 | `aspect_ratio` + `resolution` tier |
 
 #### `ImageGenResult`
 
 The tool returns minimal JSON — no base64. The actual image bytes are in `ImageCache` keyed by `image_key`.
 
 ```json
-{"ok": true, "webdav_path": "...", "image_key": "call_abc123def4567890", "share_url": "https://..."}
+{"ok": true, "webdav_path": "...", "image_key": "call_abc123def4567890", "provider": "fal", "model": "openai/gpt-image-2.6/flare/text-to-image", "tier": "standard", "share_url": "https://..."}
 ```
+
+`provider`, `model`, and `tier` name the route that actually served the image —
+failover is never silent (issue #112).
 
 The `share_url` field is conditionally present — included only when a NextCloud share link was successfully created for the generated image. It is absent when share generation failed (fallback to DDP attachment path).
 

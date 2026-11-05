@@ -159,9 +159,17 @@ async fn test_image_gen_real_text_to_image() {
             .iter()
             .map(|(alias, model_id)| rockbot::types::ImageModelEntry {
                 alias: alias.clone(),
-                model_id: model_id.clone(),
-                edit_model_id: None,
-                provider_name: provider_name.clone(),
+                label: alias.clone(),
+                family: "test".to_string(),
+                version: "0".to_string(),
+                deprecated: false,
+                routes: vec![rockbot::types::ImageRoute {
+                    provider_name: provider_name.clone(),
+                    generate_model_id: model_id.clone(),
+                    edit_model_id: None,
+                    tier: rockbot::types::ImageTier::Standard,
+                    is_default: true,
+                }],
             })
             .collect(),
         "gptimage",
@@ -178,6 +186,7 @@ async fn test_image_gen_real_text_to_image() {
         1,                 // default_num_images
         "2K".into(),       // default_image_size_tier
         false,             // default_enable_safety_checker
+        20,                // pro_daily_cap
         webdav.clone(),
         image_cache.clone(),
     );
@@ -334,9 +343,17 @@ async fn test_image_gen_real_data_uri_handling() {
             .iter()
             .map(|(alias, model_id)| rockbot::types::ImageModelEntry {
                 alias: alias.clone(),
-                model_id: model_id.clone(),
-                edit_model_id: None,
-                provider_name: provider_name.clone(),
+                label: alias.clone(),
+                family: "test".to_string(),
+                version: "0".to_string(),
+                deprecated: false,
+                routes: vec![rockbot::types::ImageRoute {
+                    provider_name: provider_name.clone(),
+                    generate_model_id: model_id.clone(),
+                    edit_model_id: None,
+                    tier: rockbot::types::ImageTier::Standard,
+                    is_default: true,
+                }],
             })
             .collect(),
         "gptimage",
@@ -353,6 +370,7 @@ async fn test_image_gen_real_data_uri_handling() {
         1,
         "2K".into(),
         false,
+        20,
         webdav.clone(),
         image_cache.clone(),
     );

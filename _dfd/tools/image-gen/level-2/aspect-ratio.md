@@ -39,10 +39,18 @@ each provider resolves it to its required format:
 | `"auto_2K"` | `"auto_2K"` (passthrough) | `"auto_2K"` (passthrough) |
 | `"auto_1K"` | `"auto_1K"` (passthrough) | `"auto_1K"` (passthrough) |
 
-Fal requires pixel dimensions in the `image_size` body field; OpenRouter accepts
-the ratio string directly in the `image_config.aspect_ratio` field. Unknown
-strings (e.g. `"auto"`, `"auto_2K"`, `"auto_1K"`) pass through unchanged to both providers.
+Fal requires pixel dimensions in the `image_size` body field for most endpoints;
+OpenRouter accepts the ratio string directly in the `image_config.aspect_ratio`
+field. Unknown strings (e.g. `"auto"`, `"auto_2K"`, `"auto_1K"`) pass through
+unchanged to both providers.
 Seedream5 (Fal) supports `auto_2K` and `auto_1K` as auto-dimensional mode strings.
+
+**Fal shape split (`FalSizeParam`, issues #111/#112):** not every fal endpoint
+takes `image_size`. `bria/fibo-2/*` takes an `aspect_ratio` W:H string, and
+`google/nano-banana-2.1*` takes `aspect_ratio` plus a `resolution` tier
+(`1K`/`2K`/`4K`, from `size_tier`). `build_request_body` selects the shape from
+the wire model id; auto-dimensional presets (`auto_*`) are omitted from the
+`aspect_ratio` field because they are not W:H ratios.
 
 **Self-sized exception (issue #104):** the OpenRouter request builder checks
 `ImageModelTraits.self_sized` on the effective model id and omits `resolution`,

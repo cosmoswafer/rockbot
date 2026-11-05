@@ -2,13 +2,30 @@ use tracing::{debug, info, warn};
 use crate::config::ProviderConfig;
 use crate::error::{Result, RockBotError};
 #[allow(unused_imports)]
-use crate::types::{ImageGenParams, ImageSizeValue, SEEDREAM_V5_MARKER};
+use crate::types::{FalSizeParam, ImageGenParams, ImageSizeValue, SEEDREAM_V5_MARKER};
 use crate::validated::NonEmptyString;
 
 struct SubmittedRequest {
     request_id: NonEmptyString,
     status_url: NonEmptyString,
     response_url: NonEmptyString,
+}
+
+/// Normalize an aspect preset to the `W:H` string fal endpoints expect.
+/// Returns `None` for auto-dimensional presets (`auto_2K`/`auto_1K`) and
+/// unknown non-ratio strings, which are simply omitted from the body.
+fn preset_to_aspect_ratio(preset: &str) -> Option<&str> {
+    match preset {
+        "landscape_16_9" => Some("16:9"),
+        "portrait_16_9" | "9:16" => Some("9:16"),
+        "landscape_4_3" => Some("4:3"),
+        "portrait_4_3" => Some("3:4"),
+        "landscape_3_2" => Some("3:2"),
+        "portrait_2_3" => Some("2:3"),
+        "square" | "square_hd" => Some("1:1"),
+        ratio if ratio.contains(':') => Some(ratio),
+        _ => None,
+    }
 }
 
 fn build_request_body(params: &ImageGenParams, model_id: &str) -> serde_json::Value {
@@ -24,9 +41,30 @@ fn build_request_body(params: &ImageGenParams, model_id: &str) -> serde_json::Va
     if let Some(num_images) = params.num_images {
         body.insert("num_images".into(), serde_json::json!(num_images));
     }
-    if let Some(image_size_val) = params.resolve_image_size() {
-        body.insert("image_size".into(), image_size_val);
+
+    // Model-specific size param shape (verified against fal OpenAPI): most
+    // endpoints take an `image_size` object, bria/fibo-2 takes `aspect_ratio`,
+    // and nano-banana 2.1 takes `aspect_ratio` + `resolution`.
+    match FalSizeParam::for_model_id(model_id) {
+        FalSizeParam::ImageSizeObject => {
+            if let Some(image_size_val) = params.resolve_image_size() {
+                body.insert("image_size".into(), image_size_val);
+            }
+        }
+        FalSizeParam::AspectRatio | FalSizeParam::AspectRatioWithResolution => {
+            if let Some(ImageSizeValue::Preset(preset)) = &params.image_size
+                && let Some(ratio) = preset_to_aspect_ratio(preset)
+            {
+                body.insert("aspect_ratio".into(), serde_json::json!(ratio));
+            }
+            if FalSizeParam::for_model_id(model_id) == FalSizeParam::AspectRatioWithResolution
+                && let Some(tier) = &params.size_tier
+            {
+                body.insert("resolution".into(), serde_json::json!(tier));
+            }
+        }
     }
+
     if let Some(ref image_urls) = params.image_urls {
         if !image_urls.is_empty() {
             body.insert("image_urls".into(), serde_json::json!(image_urls));
@@ -36,6 +74,8 @@ fn build_request_body(params: &ImageGenParams, model_id: &str) -> serde_json::Va
     let is_seedream5 = model_id.contains(SEEDREAM_V5_MARKER);
 
     if let Some(enable_safety) = params.enable_safety_checker {
+        // Only seedream v5 declares this parameter; moss + others would 422 on
+        // an unknown field.
         if is_seedream5 {
             body.insert("enable_safety_checker".into(), serde_json::json!(enable_safety));
         }
@@ -756,5 +796,54 @@ mod tests {
         let body = build_request_body(&params, "fal-ai/bytedance/seedream/v5/pro/text-to-image");
         assert!(body.get("enable_safety_checker").is_none(),
             "enable_safety_checker should not be present when ImageGenParams has None");
+    }
+
+    // ----- Model-specific size param shape (issues #111/#112) -----
+
+    #[test]
+    fn test_build_request_body_default_uses_image_size_object() {
+        let mut params = ImageGenParams::new("a cat");
+        params.image_size = Some(ImageSizeValue::Preset("16:9".into()));
+
+        let body = build_request_body(&params, "openai/gpt-image-2.6/flare/text-to-image");
+        assert_eq!(body["image_size"]["width"], 3840);
+        assert_eq!(body["image_size"]["height"], 2160);
+        assert!(body.get("aspect_ratio").is_none());
+    }
+
+    #[test]
+    fn test_build_request_body_fibo_uses_aspect_ratio_string() {
+        let mut params = ImageGenParams::new("a product shot");
+        params.image_size = Some(ImageSizeValue::Preset("2:3".into()));
+        params.size_tier = Some("4K".into());
+
+        let body = build_request_body(&params, "bria/fibo-2/generate");
+        assert_eq!(body["aspect_ratio"], "2:3");
+        assert!(body.get("image_size").is_none(), "fibo-2 rejects image_size: {body}");
+        assert!(body.get("resolution").is_none(), "fibo-2 has no resolution field: {body}");
+    }
+
+    #[test]
+    fn test_build_request_body_nano_banana_uses_ratio_and_resolution() {
+        let mut params = ImageGenParams::new("a cat");
+        params.image_size = Some(ImageSizeValue::Preset("landscape_16_9".into()));
+        params.size_tier = Some("2K".into());
+
+        let body = build_request_body(&params, "google/nano-banana-2.1");
+        assert_eq!(body["aspect_ratio"], "16:9");
+        assert_eq!(body["resolution"], "2K");
+        assert!(body.get("image_size").is_none(), "nano-banana rejects image_size: {body}");
+    }
+
+    #[test]
+    fn test_build_request_body_auto_preset_omits_aspect_ratio() {
+        let mut params = ImageGenParams::new("a cat");
+        params.image_size = Some(ImageSizeValue::Preset("auto_2K".into()));
+
+        let body = build_request_body(&params, "google/nano-banana-2.1");
+        assert!(
+            body.get("aspect_ratio").is_none(),
+            "auto-dimensional presets are not W:H ratios: {body}"
+        );
     }
 }

@@ -14,11 +14,15 @@ api_key = "sk-or-v1-EDITME"
 name = "fal"
 api_key = "EDITME"
 
-# Global image defaults (GPT Image 2.5 Flare is the shipped default; #102):
+# Global image defaults. The alias roster comes from the canonical manifest
+# `models/image.toml` (issues #111/#112) — `default_text_model` is only a
+# fallback. `gptimage` is the manifest default (GPT Image 2.6 Flare).
 # [image_model]
 # default_provider = "fal"
 # default_text_model = "gptimage"
 # default_edit_model = "gptimage"
+# pro_daily_cap = 20
+# manifest_path = "./models/image.toml"
 
 [rocketchat.server]
 url = "your-server.example.com"

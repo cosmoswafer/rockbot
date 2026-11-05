@@ -8,6 +8,7 @@ crate-rockbot/        # lib + application binary — config, AiProvider trait, M
 crate-webdav/         # lib only — WebDAV client for NextCloud storage operations
 _dfd/                # data flow diagrams (design spec): context diagram at root, subdirs by component (agent, infra, ai, memory, knowledge, tools, interception)
 _doc/                # constraints, test suite inventory
+models/image.toml     # canonical image_gen alias manifest (embedded at build time)
 .agents/skills/       # OpenCode skills (dfd-md, gitea-issues, mermaid-cli)
 default.config.toml   # full config spec with defaults (empty credentials)
 example.config.toml   # minimal overrides with EDITME placeholders
@@ -101,7 +102,7 @@ Every DFD section-3 structure becomes a Rust type; make violations compile-time 
 | `_dfd/tools/calendar/main-path.md` | `tools/calendar.rs` | webdav crate, `utils.rs` |
 | `_dfd/tools/search-web/main-path.md` | `tools/web_search.rs` | `tools/web_fetch.rs` |
 | `_dfd/tools/web-fetch/main-path.md` | `tools/web_fetch.rs` | `tools/web_search.rs`, `harness.rs` (secret interception) |
-| `_dfd/tools/image-gen/main-path.md` | `tools/image_gen.rs` | `provider/fal.rs`, webdav crate |
+| `_dfd/tools/image-gen/main-path.md` | `tools/image_gen.rs` | `image_manifest.rs`, `models/image.toml`, `types.rs`, `provider/fal.rs`, webdav crate |
 | `_dfd/tools/vision/main-path.md` | `tools/vision.rs` | — |
 | `_dfd/tools/edit-soul/main-path.md` | `tools/edit_soul.rs` | `memory.rs`, webdav crate |
 | `_dfd/tools/acp-delegate/main-path.md` | `tools/acp.rs` | `acp.rs`, `config.rs` |
