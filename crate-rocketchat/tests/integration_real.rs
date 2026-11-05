@@ -508,16 +508,48 @@ async fn fetch_soul_display_name(
     let content = resp.text().await.ok()?;
     eprintln!("[WebDAV] soul.md loaded ({} bytes)", content.len());
 
-    // Same regex as extract_identity_name in rockbot::memory:
-    //   My name is (.+)
-    let re = regex::Regex::new(r"My name is (.+)").unwrap();
-    let caps = re.captures(&content)?;
-    let name = caps.get(1)?.as_str().trim().to_string();
-    if !name.is_empty() && name.len() <= 32 {
-        eprintln!("[Regex] Extracted display name: {:?}", name);
+    // Prefer the front-matter `name:` (soul schema 2), then fall back to the
+    // legacy `My name is ...` bullet for unmigrated souls.
+    let front_name = {
+        let normalized = content
+            .strip_prefix('\u{feff}')
+            .unwrap_or(&content)
+            .replace("\r\n", "\n");
+        let mut lines = normalized.lines();
+        let mut found = None;
+        if lines.next().map(|l| l.trim()) == Some("---") {
+            for line in lines {
+                let line = line.trim();
+                if line == "---" {
+                    break;
+                }
+                if let Some(value) = line.strip_prefix("name:") {
+                    let value = value.trim().trim_matches(['"', '\'']).trim();
+                    if !value.is_empty() {
+                        found = Some(value.to_string());
+                    }
+                    break;
+                }
+            }
+        }
+        found
+    };
+
+    let legacy_name = || {
+        // Same regex as extract_identity_name in rockbot::memory:
+        //   My name is (.+)
+        let re = regex::Regex::new(r"My name is (.+)").unwrap();
+        re.captures(&content)
+            .and_then(|caps| caps.get(1))
+            .map(|m| m.as_str().trim().to_string())
+    };
+
+    let name = front_name.or_else(legacy_name)?;
+    if !name.is_empty() && name.chars().count() <= 32 {
+        eprintln!("[Soul] Extracted display name: {:?}", name);
         Some(name)
     } else {
-        eprintln!("[Regex] Name too long or empty");
+        eprintln!("[Soul] Name too long or empty");
         None
     }
 }

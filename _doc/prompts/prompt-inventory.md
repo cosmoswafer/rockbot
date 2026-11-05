@@ -130,18 +130,20 @@ Returns {"ok": true, "image_key": "..."} — share result as `![desc]({image_key
 Note: `image_size` is NOT exposed to the LLM as a tool parameter — it is derived from the `aspect_ratio` parameter at runtime (mapped to a preset like `"16:9"` → `{3840, 2160}`). `size_tier` is set from `[image_model]` config `default_image_size_tier`. The harness injects `room_id`, `webdav_dir`, and `image_cache_key` automatically. `image_urls` are auto-injected from message attachments.
 
 ### 3g. `edit_soul`
-**File:** `crate-rockbot/src/tools/edit_soul.rs:48-59`
+**File:** `crate-rockbot/src/tools/edit_soul.rs:74-92`
 ```
-Overwrite the bot's permanent soul memory for this room.
-The soul is a flat enumeration list — each line is a "- " bullet item.
-Provide the full soul.md content using this template:
+Overwrite the bot's permanent soul memory for this room. Provide the full soul.md content: an optional YAML front matter block with identity metadata, then a flat "- " bullet list of preferences and facts. Template:
+---
+name: YourName ✨
+address_user_as: Master 🐵
+language: en
+---
+
 # Soul Memory
 
-- My name is YourName ✨
 - (optional preference)
 - (optional fact)
-- (optional preference)
-- (optional fact)
+`name` is a single line, max 32 characters, no markdown. Front matter is OPTIONAL — omit it entirely for a plain list. Keep the body a flat list. Do not add `schema` or `updated` — the bot stamps them automatically.
 ```
 
 ### 3h. `save_knowledge`
@@ -220,8 +222,8 @@ Note: The `reset_memory` tool's `execute()` (line 47-52) always returns an error
 | `image_gen.rs` | 157-160 | `image_gen` | `room_id` | Room ID for image storage (injected automatically if omitted) |
 | `image_gen.rs` | 161-165 | `image_gen` | `image_urls` | URLs of images to edit (e.g., share_url from a previous image_gen result). Omit to generate a new image. Auto-injected from user attachments and message images. |
 | `image_gen.rs` | 166-170 | `image_gen` | `reference_image_key` | The image_key of a previously generated image to edit. Alternative to providing explicit image_urls. |
-| `edit_soul.rs` | 67 | `edit_soul` | `content` | Full soul.md content following the template: # Soul Memory\\n\\n- My name is Name ✨\\n- ...\\n- ... |
-| `edit_soul.rs` | 71 | `edit_soul` | `webdav_dir` | Room WebDAV directory key (injected automatically) |
+| `edit_soul.rs` | 92 | `edit_soul` | `content` | Full soul.md content following the template: optional `---` front matter with name/address_user_as/language, then `# Soul Memory` and a flat `- ` bullet list. |
+| `edit_soul.rs` | 96 | `edit_soul` | `webdav_dir` | Room WebDAV directory key (injected automatically) |
 | `save_knowledge.rs` | 42-45 | `save_knowledge` | `topic` | Short title or topic for the entry (e.g. 'DB API', 'Build Commands') |
 | `save_knowledge.rs` | 46-49 | `save_knowledge` | `content` | Markdown body of the knowledge entry |
 | `save_knowledge.rs` | 50-54 | `save_knowledge` | `when_useful` | Describe the situation that makes this knowledge relevant, used for automatic retrieval (e.g. 'when calling the database API') |
@@ -343,13 +345,14 @@ The LLM includes `image_key` in its reply markdown. The agent loop (main.rs:483)
 ## 9. Memory / Context Prompts (sent to AI provider as system messages)
 
 ### 9a. Soul memory prefix
-**File:** `crate-rockbot/src/memory.rs:268-271`
+**File:** `crate-rockbot/src/memory.rs` (`build_context`)
 **Type:** Dynamic — loaded from WebDAV `memory/soul.md`
 ```
 [Core memory — permanent preferences, identity, and facts]
-{content from soul.md}
+{identity line, only when front matter exists}
+{body from soul.md (front matter stripped)}
 ```
-Injected as a second system message when soul content is non-empty. Truncated at `max_soul_chars` with a `\n\n[truncated]` marker appended (line 263).
+Injected into the single leading system message when the body or identity line is non-empty. Truncation counts `max_soul_chars` against the body only; the `[Identity — …]` line is uncounted. Legacy souls (no front matter) keep their raw prompt (bullet included).
 
 ### 9b. Knowledge context (from WebDAV knowledge index)
 **File:** `crate-rockbot/src/memory.rs:275-280`
@@ -372,17 +375,24 @@ Injected as a system message when relevant knowledge entries exist for the room.
 ## 10. WebDAV Storage Templates (not AI prompts)
 
 ### 10a. Soul memory file
-**File:** `crate-rockbot/src/tools/edit_soul.rs:48-59` (description), `:39` (path)
+**File:** `crate-rockbot/src/tools/edit_soul.rs` (description), `soul_path` (path)
 **Stored at:** `{room_dir}memory/soul.md`
 ```
+---
+name: YourName ✨
+address_user_as: Master 🐵
+language: en
+schema: 2
+updated: 2026-11-05
+---
+
 # Soul Memory
 
-- My name is YourName ✨
 - (optional preference)
 - (optional fact)
 ...
 ```
-edit_soul performs a full replace — it overwrites the entire soul.md with the content provided by the LLM.
+edit_soul performs a full replace — it parses, normalizes (deriving a missing name from `previous_name` or the legacy bullet), stamps `schema`/`updated`, renders, and overwrites soul.md. Legacy souls are also migrated on first load.
 
 ### 10b. Knowledge entry .md file
 **File:** `crate-rockbot/src/knowledge.rs:227-230`

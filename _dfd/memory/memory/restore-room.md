@@ -38,6 +38,7 @@ Key properties:
 - **History-only snapshot**: snapshot stores only Layer 1 (chat history) — soul is always fetched from its dedicated file
 - **Bot-internal isolation**: snapshot is written under `{snapshot_prefix}/{bot_id}/{wd}/`, separate from the shared room folder — two bot instances sharing the same room never clobber each other's snapshot
 - **No staleness**: every message re-reads soul.md from WebDAV, ensuring multi-instance consistency
+- **Legacy migration**: a soul without front matter is migrated once during this load (see [Legacy Soul Migration](level-2/legacy-soul-migration.md)); failure keeps the legacy view
 - **No snapshot blocking**: if snapshot write fails, the system continues operating — next timer tick retries
 
 ## 3. Data Structures

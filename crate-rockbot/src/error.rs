@@ -56,6 +56,9 @@ pub enum RockBotError {
     #[error("Tool call parse error: {0}")]
     ToolCallParse(String),
 
+    #[error("Soul format error: {0}")]
+    SoulFormat(String),
+
     #[error("WebDAV error: {0}")]
     WebDav(#[from] webdav::WebDavError),
 

@@ -255,8 +255,11 @@ impl AgentHarness {
         }
 
         // Always refresh soul and summary from WebDAV (multi-instance sync)
-        if let Some(ref webdav_client) = self.webdav {
-            if let Ok(soul) = self.load_soul(webdav_client, &wd).await {
+        if let Some(webdav_client) = self.webdav.clone() {
+            if let Ok(soul) = self.load_soul(&webdav_client, &wd).await {
+                let soul = self
+                    .migrate_legacy_soul(&webdav_client, &wd, soul)
+                    .await;
                 let len = soul.content.chars().count();
                 let head: String = soul.content.chars().take(80).collect();
                 let tail: String = soul.content.chars().rev().take(200).collect::<Vec<_>>().into_iter().rev().collect();
@@ -454,8 +457,18 @@ impl AgentHarness {
                                         tool_call.function.arguments.clone()
                                     }
                                 }
+                            } else if tool_call.function.name == "edit_soul" {
+                                let wd = compute_webdav_dir(room_name, room_fname, is_dm);
+                                let args = inject_room_context(
+                                    &tool_call.function.arguments,
+                                    room_id,
+                                    &wd,
+                                );
+                                inject_previous_soul_name(
+                                    &args,
+                                    self.memory.soul_name(room_id),
+                                )
                             } else if tool_call.function.name == "webdav"
-                                || tool_call.function.name == "edit_soul"
                                 || tool_call.function.name == "save_knowledge"
                                 || tool_call.function.name == "forget_knowledge"
                                 || tool_call.function.name == "recall_knowledge"
@@ -569,9 +582,12 @@ impl AgentHarness {
                         }
 
                         if altered_soul {
-                            if let Some(ref webdav_client) = self.webdav {
+                            if let Some(webdav_client) = self.webdav.clone() {
                                 let wd = compute_webdav_dir(room_name, room_fname, is_dm);
-                                if let Ok(soul) = self.load_soul(webdav_client, &wd).await {
+                                if let Ok(soul) = self.load_soul(&webdav_client, &wd).await {
+                                    let soul = self
+                                        .migrate_legacy_soul(&webdav_client, &wd, soul)
+                                        .await;
                                     self.memory.set_soul(room_id, soul);
                                 }
                             }
@@ -1127,7 +1143,7 @@ impl AgentHarness {
         let wd = compute_webdav_dir(room_name, room_fname, is_dm);
 
         let webdav_client = match &self.webdav {
-            Some(c) => c,
+            Some(c) => c.clone(),
             None => return,
         };
 
@@ -1154,8 +1170,11 @@ impl AgentHarness {
         }
 
         // Always read soul from individual files
-        match self.load_soul(webdav_client, &wd).await {
+        match self.load_soul(&webdav_client, &wd).await {
             Ok(soul) => {
+                let soul = self
+                    .migrate_legacy_soul(&webdav_client, &wd, soul)
+                    .await;
                 if !soul.content.is_empty() {
                     debug!("Loaded soul.md for room {}", room_name);
                 }
@@ -1170,7 +1189,7 @@ impl AgentHarness {
         }
 
         // Knowledge: load index summary for context injection
-        match self.load_knowledge_for_room(webdav_client, &wd).await {
+        match self.load_knowledge_for_room(&webdav_client, &wd).await {
             Ok(text) => {
                 self.memory.set_knowledge(room_id, text);
                 debug!("Loaded knowledge context for room {}", room_name);
@@ -1194,21 +1213,58 @@ impl AgentHarness {
             Ok(c) => c,
             Err(e) => {
                 warn!("Failed to load soul.md from {}: {} — returning empty soul", path, e);
-                return Ok(SoulMemory {
-                    room_id: crate::validated::NonEmptyString::try_new(webdav_dir.to_string()).expect("webdav_dir must be non-empty"),
-                    content: String::new(),
-                    updated_at: String::new(),
-                });
+                return Ok(SoulMemory::from_raw(
+                    crate::validated::NonEmptyString::try_new(webdav_dir.to_string())
+                        .expect("webdav_dir must be non-empty"),
+                    String::new(),
+                    String::new(),
+                ));
             }
         };
 
-        let updated_at = now_iso_string();
-
-        Ok(SoulMemory {
-            room_id: crate::validated::NonEmptyString::try_new(webdav_dir.to_string()).expect("webdav_dir must be non-empty"),
+        Ok(SoulMemory::from_raw(
+            crate::validated::NonEmptyString::try_new(webdav_dir.to_string())
+                .expect("webdav_dir must be non-empty"),
             content,
-            updated_at,
-        })
+            now_iso_string(),
+        ))
+    }
+
+    /// One-shot, best-effort physical migration: legacy `- My name is X` bullet
+    /// → `name:` front matter, bullet removed from the body. Runs at most once
+    /// per room per process; a failed PUT keeps the legacy in-memory view.
+    async fn migrate_legacy_soul(
+        &mut self,
+        webdav: &WebDavClient,
+        webdav_dir: &str,
+        soul: SoulMemory,
+    ) -> SoulMemory {
+        if !soul.needs_migration() || !self.memory.claim_soul_migration(webdav_dir) {
+            return soul;
+        }
+        let doc = soul.clone().migrated();
+        let rendered = doc.render();
+        let path = format!("{}memory/soul.md", WebDavPath::new("").room_dir(webdav_dir));
+        match webdav
+            .write_file_with_fallback(&path, rendered.clone().into_bytes())
+            .await
+        {
+            Ok(()) => {
+                info!(
+                    "Migrated legacy soul.md for dir {} to schema {}",
+                    webdav_dir,
+                    crate::memory::SOUL_SCHEMA_VERSION
+                );
+                SoulMemory::from_raw(soul.room_id.clone(), rendered, now_iso_string())
+            }
+            Err(e) => {
+                warn!(
+                    "Legacy soul migration failed for dir {}: {} — keeping legacy view",
+                    webdav_dir, e
+                );
+                soul
+            }
+        }
     }
 
     async fn load_knowledge_for_room(
@@ -1425,6 +1481,25 @@ fn inject_room_context(arguments: &str, room_id: &str, webdav_dir: &str) -> Stri
         serde_json::from_str(arguments).unwrap_or(serde_json::json!({}));
     args["room_id"] = serde_json::Value::String(room_id.to_string());
     args["webdav_dir"] = serde_json::Value::String(webdav_dir.to_string());
+    serde_json::to_string(&args).unwrap_or_else(|_| arguments.to_string())
+}
+
+/// Harness-only argument: the name the soul had before this edit, so an LLM
+/// rewrite that drops the front matter cannot erase the identity.
+fn inject_previous_soul_name(arguments: &str, previous: Option<&str>) -> String {
+    let Some(previous) = previous else {
+        return arguments.to_string();
+    };
+    let Ok(mut args) = serde_json::from_str::<serde_json::Value>(arguments) else {
+        return arguments.to_string();
+    };
+    let Some(obj) = args.as_object_mut() else {
+        return arguments.to_string();
+    };
+    obj.insert(
+        "previous_name".to_string(),
+        serde_json::Value::String(previous.to_string()),
+    );
     serde_json::to_string(&args).unwrap_or_else(|_| arguments.to_string())
 }
 
@@ -2033,6 +2108,27 @@ chat = "mock-model"
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["room_id"], "general");
         assert_eq!(parsed["webdav_dir"], "r-general");
+    }
+
+    #[test]
+    fn test_inject_previous_soul_name() {
+        let args = r#"{"content":"body"}"#;
+        let result = inject_previous_soul_name(args, Some("零夢 ✨"));
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["previous_name"], "零夢 ✨");
+        assert_eq!(parsed["content"], "body");
+    }
+
+    #[test]
+    fn test_inject_previous_soul_name_absent() {
+        let args = r#"{"content":"body"}"#;
+        assert_eq!(inject_previous_soul_name(args, None), args);
+    }
+
+    #[test]
+    fn test_inject_previous_soul_name_malformed_args() {
+        let args = "not json";
+        assert_eq!(inject_previous_soul_name(args, Some("Zero")), args);
     }
 
     #[test]

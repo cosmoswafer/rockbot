@@ -17,7 +17,7 @@ flowchart TD
     BUILD[BuildContext]
 
     subgraph "Load from stores"
-        L2 -->|"truncated to max_soul_chars"| SOUL_OUT[Soul Content]
+        L2 -->|"body truncated to max_soul_chars<br/>(identity line uncounted)"| SOUL_OUT[Soul Content]
         WEBDAV -->|"GET soul.md"| L2
         L1 -->|"last max_history_size"| HIST_OUT[History Messages]
     end
@@ -39,7 +39,9 @@ templates (e.g. Qwen3.5/3.6-derived, used by Bonsai-27B) that reject any
 system message not at index 0 with a 400 error — see Gitea issue #77.
 
 Layer 1 is populated by incoming messages. Layer 2 is populated by the
-[Soul Editing](soul-editing.md) tool. The [Persist & Evict
+[Soul Editing](soul-editing.md) tool. Legacy souls are upgraded to the
+front-matter format on first load by
+[Legacy Soul Migration](level-2/legacy-soul-migration.md). The [Persist & Evict
 Flow](persist-evict.md) provides crash recovery for Layer 1 and TTL-based room
 eviction.
 

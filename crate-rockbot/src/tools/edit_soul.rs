@@ -4,6 +4,7 @@ use tracing::debug;
 use webdav::{WebDavClient, WebDavPath};
 
 use crate::error::{Result, RockBotError};
+use crate::memory::{SoulDocument, SoulName};
 use crate::tool::Tool;
 use crate::validated::NonEmptyString;
 
@@ -14,6 +15,9 @@ pub struct EditSoulParams {
     pub webdav_dir: Option<String>,
     #[serde(default)]
     pub room_id: Option<String>,
+    /// Injected by the harness — last known identity name for this room.
+    #[serde(default)]
+    pub previous_name: Option<String>,
 }
 
 pub struct EditSoulTool {
@@ -25,12 +29,34 @@ impl EditSoulTool {
         Self { webdav }
     }
 
-    async fn do_replace(&self, dir_key: &str, content: &str) -> Result<String> {
+    async fn do_replace(
+        &self,
+        dir_key: &str,
+        raw: &str,
+        previous_name: Option<&SoulName>,
+    ) -> Result<String> {
+        let doc = SoulDocument::parse(raw);
+        if let Some(reason) = &doc.broken_front_matter {
+            // Write path is stricter than the read path: refuse to persist a
+            // mangled block instead of silently dropping it, so the LLM retries.
+            return Err(RockBotError::SoulFormat(format!(
+                "soul.md front matter is not valid flat YAML ({reason}); \
+                 rewrite the `---` block as `key: value` lines"
+            )));
+        }
+        let doc = doc.normalized_for_write(previous_name);
+        let rendered = doc.render();
         let path = soul_path(dir_key);
         self.webdav
-            .write_file_with_fallback(&path, content.as_bytes().to_vec())
+            .write_file_with_fallback(&path, rendered.clone().into_bytes())
             .await
             .map_err(|e| RockBotError::Provider(format!("Soul write failed: {e}")))?;
+        debug!(
+            "edit_soul wrote {} chars (front_matter={}, name={:?})",
+            rendered.chars().count(),
+            doc.front.name.is_some(),
+            doc.front.name.as_ref().map(SoulName::as_str),
+        );
         Ok("Soul memory updated.".to_string())
     }
 }
@@ -47,15 +73,21 @@ impl Tool for EditSoulTool {
 
     fn description(&self) -> &str {
         "Overwrite the bot's permanent soul memory for this room. \
-         The soul is a flat enumeration list — each line is a \"- \" bullet item. \
-         Provide the full soul.md content using this template: \
+         Provide the full soul.md content: an optional YAML front matter block with identity metadata, \
+         then a flat \"- \" bullet list of preferences and facts. Template:\n\
+         ---\n\
+         name: YourName ✨\n\
+         address_user_as: Master 🐵\n\
+         language: en\n\
+         ---\n\
+         \n\
          # Soul Memory\n\
          \n\
-         - My name is YourName ✨\n\
          - (optional preference)\n\
          - (optional fact)\n\
-         - (optional preference)\n\
-         - (optional fact)"
+         `name` is a single line, max 32 characters, no markdown. Front matter is OPTIONAL — \
+         omit it entirely for a plain list. Keep the body a flat list. \
+         Do not add `schema` or `updated` — the bot stamps them automatically."
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -64,7 +96,7 @@ impl Tool for EditSoulTool {
             "properties": {
                 "content": {
                     "type": "string",
-                    "description": "Full soul.md content following the template: # Soul Memory\\n\\n- My name is Name ✨\\n- ...\\n- ...\""
+                    "description": "Full soul.md content following the template: optional `---` front matter with name/address_user_as/language, then `# Soul Memory` and a flat `- ` bullet list."
                 },
                 "webdav_dir": {
                     "type": "string",
@@ -87,7 +119,12 @@ impl Tool for EditSoulTool {
             .or(params.room_id.as_deref())
             .unwrap_or("unknown");
 
-        self.do_replace(webdav_dir, &params.content).await
+        let previous_name = params
+            .previous_name
+            .as_deref()
+            .and_then(|value| SoulName::try_new(value).ok());
+
+        self.do_replace(webdav_dir, &params.content, previous_name.as_ref()).await
     }
 }
 
@@ -102,14 +139,20 @@ mod tests {
         assert_eq!(tool.name(), "edit_soul");
         let desc = tool.description();
         assert!(desc.contains("soul memory"));
-        assert!(desc.contains("flat enumeration list"));
-        assert!(desc.contains("- My name is"));
+        assert!(desc.contains("name: YourName ✨"));
+        assert!(desc.contains("---"));
+        assert!(desc.contains("Front matter is OPTIONAL"));
+        assert!(desc.contains("Do not add `schema` or `updated`"));
         assert!(!desc.contains("## Identity"), "Description must not reference old format");
 
         let params = tool.parameters();
         assert_eq!(params["type"], "object");
         assert!(params["properties"].get("content").is_some());
         assert!(params["properties"].get("webdav_dir").is_some());
+        assert!(
+            params["properties"].get("previous_name").is_none(),
+            "previous_name is harness-injected, not LLM-facing"
+        );
         let required = params["required"].as_array().unwrap();
         assert!(required.contains(&serde_json::json!("content")));
     }

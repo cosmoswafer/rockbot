@@ -2389,11 +2389,11 @@ fn test_memory_load_snapshot_with_soul_no_conflict() {
     let room_id = "snapshot-test";
 
     // Pre-populate soul
-    let soul = rockbot::memory::SoulMemory {
-        room_id: NonEmptyString::try_new(room_id.to_string()).unwrap(),
-        content: "# Soul Memory\n\n- My name is TestBot\n- likes Rust".to_string(),
-        updated_at: "2026-06-10T00:00:00Z".to_string(),
-    };
+    let soul = rockbot::memory::SoulMemory::from_raw(
+        NonEmptyString::try_new(room_id.to_string()).unwrap(),
+        "# Soul Memory\n\n- My name is TestBot\n- likes Rust".to_string(),
+        "2026-06-10T00:00:00Z".to_string(),
+    );
     mm.set_soul(room_id, soul);
 
     // Add messages to history
@@ -2492,11 +2492,11 @@ fn test_memory_multi_room_no_cross_contamination() {
     room2.history.append(ChatMessage::user("bob: room2 msg1"));
 
     // Set soul in room1
-    mm.set_soul("r1", rockbot::memory::SoulMemory {
-        room_id: NonEmptyString::try_new("r1".to_string()).unwrap(),
-        content: "# Soul Memory\n\n- My name is Room1Bot".to_string(),
-        updated_at: String::new(),
-    });
+    mm.set_soul("r1", rockbot::memory::SoulMemory::from_raw(
+        NonEmptyString::try_new("r1".to_string()).unwrap(),
+        "# Soul Memory\n\n- My name is Room1Bot".to_string(),
+        String::new(),
+    ));
 
     // Set knowledge in room2
     mm.set_knowledge("r2", "[Knowledge]\n- Room2 daily notes".to_string());
@@ -3257,6 +3257,89 @@ dav_path = "remote.php/dav"
         let knowledge = harness.memory().get_knowledge("room1");
         assert!(knowledge.is_some());
         assert!(knowledge.unwrap().is_empty(), "knowledge should be cleared after refresh with empty index");
+    }
+
+    // ─── Soul front-matter migration (issue #105) ───────────────────────────
+
+    #[tokio::test]
+    async fn test_load_soul_migrates_legacy_file() {
+        let mock_server = MockServer::start().await;
+        let base_url = mock_server.uri();
+        let legacy = "# Soul Memory\n\n- My name is 零夢 ✨\n- likes tea";
+
+        Mock::given(method("GET"))
+            .and(path("/r-mig/memory/soul.md"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(legacy))
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("PUT"))
+            .and(path("/r-mig/memory/soul.md"))
+            .and(body_string_contains("name: 零夢 ✨"))
+            .and(body_string_contains("schema: 2"))
+            .and(body_string_contains("- likes tea"))
+            .respond_with(ResponseTemplate::new(201))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let config = make_knowledge_test_config(&base_url);
+        let provider = Box::new(MockMinProvider);
+        let webdav = webdav::WebDavClient::new(&base_url, "testuser", "testpass").unwrap();
+        let image_cache = Arc::new(rockbot::image_cache::ImageCache::new());
+        let mut harness =
+            AgentHarness::new(config, provider, Some(webdav), image_cache, "@testbot");
+
+        harness.restore_history("room1", "mig", "mig", false).await;
+
+        let soul = harness.memory().get_soul("room1").expect("soul loaded");
+        assert!(soul.had_front_matter, "legacy file must migrate on load");
+        assert!(soul.broken_front_matter.is_none());
+        assert!(!soul.body.contains("My name is"), "bullet moved to front matter: {}", soul.body);
+        assert_eq!(harness.memory().soul_name("room1"), Some("零夢 ✨"));
+
+        // Second load attempts no second PUT (claim-once guard).
+        harness.restore_history("room1", "mig", "mig", false).await;
+    }
+
+    #[tokio::test]
+    async fn test_load_soul_migration_failure_keeps_legacy_view() {
+        let mock_server = MockServer::start().await;
+        let base_url = mock_server.uri();
+        let legacy = "# Soul Memory\n\n- My name is 零夢 ✨\n- likes tea";
+
+        Mock::given(method("GET"))
+            .and(path("/r-mig/memory/soul.md"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(legacy))
+            .mount(&mock_server)
+            .await;
+        Mock::given(method("PUT"))
+            .and(path("/r-mig/memory/soul.md"))
+            .respond_with(ResponseTemplate::new(500))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let config = make_knowledge_test_config(&base_url);
+        let provider = Box::new(MockMinProvider);
+        let webdav = webdav::WebDavClient::new(&base_url, "testuser", "testpass").unwrap();
+        let image_cache = Arc::new(rockbot::image_cache::ImageCache::new());
+        let mut harness =
+            AgentHarness::new(config, provider, Some(webdav), image_cache, "@testbot");
+
+        harness.restore_history("room1", "mig", "mig", false).await;
+
+        let soul = harness.memory().get_soul("room1").expect("soul loaded");
+        assert!(!soul.had_front_matter, "failed migration keeps legacy view");
+        assert!(soul.body.contains("- My name is 零夢 ✨"));
+
+        let ctx = harness.memory().build_context("room1", "prompt", None, None);
+        let text = ctx[0].text_content().unwrap();
+        assert!(text.contains("- My name is 零夢 ✨"), "legacy prompt preserved: {text}");
+        assert!(!text.contains("[Identity"), "no derived identity line on failure: {text}");
+
+        // Attempted once only — a second load must not retry the PUT.
+        harness.restore_history("room1", "mig", "mig", false).await;
     }
 }
 

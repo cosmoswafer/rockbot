@@ -580,6 +580,102 @@ async fn test_edit_soul_replaces_soul_file() {
     let result = tool.execute(&args).await.unwrap();
 
     assert_eq!(result, "Soul memory updated.");
+
+    // Legacy content is migrated forward on write.
+    let requests = mock_server.received_requests().await.unwrap();
+    let body = String::from_utf8(requests[0].body.clone()).unwrap();
+    assert!(body.starts_with("---\n"), "front matter expected: {body}");
+    assert!(body.contains("name: RockBot ✨"), "body: {body}");
+    assert!(body.contains("schema: 2"), "body: {body}");
+    assert!(!body.contains("My name is"), "identity bullet moved: {body}");
+    assert!(body.contains("- I like Rust"), "body: {body}");
+}
+
+#[tokio::test]
+async fn test_edit_soul_preserves_canonical_front_matter_and_extra_keys() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("PUT"))
+        .and(path("/r-test/memory/soul.md"))
+        .respond_with(ResponseTemplate::new(201))
+        .mount(&mock_server)
+        .await;
+
+    let webdav_url = format!("{}/", mock_server.uri());
+    let webdav = webdav::WebDavClient::new(&webdav_url, "test", "pass").unwrap();
+    let tool = EditSoulTool::new(webdav);
+
+    let soul_content = "---\nname: \"零夢 ✨\"\nlanguage: en\npersona_version: 3\n---\n\n# Soul Memory\n\n- likes tea";
+    let args = serde_json::json!({
+        "content": soul_content,
+        "webdav_dir": "r-test"
+    })
+    .to_string();
+    tool.execute(&args).await.unwrap();
+
+    let requests = mock_server.received_requests().await.unwrap();
+    let body = String::from_utf8(requests[0].body.clone()).unwrap();
+    assert!(body.contains("name: 零夢 ✨"), "body: {body}");
+    assert!(body.contains("language: en"), "body: {body}");
+    assert!(body.contains("persona_version: 3"), "unknown key preserved: {body}");
+    assert!(body.contains("schema: 2"), "body: {body}");
+    assert_eq!(body.matches("schema:").count(), 1, "schema stamped once: {body}");
+}
+
+#[tokio::test]
+async fn test_edit_soul_broken_front_matter_is_rejected_without_put() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("PUT"))
+        .and(path("/r-test/memory/soul.md"))
+        .respond_with(ResponseTemplate::new(201))
+        .expect(0)
+        .mount(&mock_server)
+        .await;
+
+    let webdav_url = format!("{}/", mock_server.uri());
+    let webdav = webdav::WebDavClient::new(&webdav_url, "test", "pass").unwrap();
+    let tool = EditSoulTool::new(webdav);
+
+    let args = serde_json::json!({
+        "content": "---\nnot a pair\n---\n\n- item",
+        "webdav_dir": "r-test"
+    })
+    .to_string();
+    let result = tool.execute(&args).await;
+    assert!(result.is_err());
+    assert!(
+        result.unwrap_err().to_string().contains("front matter"),
+        "error should mention front matter"
+    );
+}
+
+#[tokio::test]
+async fn test_edit_soul_previous_name_survives_rewrite() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("PUT"))
+        .and(path("/r-test/memory/soul.md"))
+        .respond_with(ResponseTemplate::new(201))
+        .mount(&mock_server)
+        .await;
+
+    let webdav_url = format!("{}/", mock_server.uri());
+    let webdav = webdav::WebDavClient::new(&webdav_url, "test", "pass").unwrap();
+    let tool = EditSoulTool::new(webdav);
+
+    let args = serde_json::json!({
+        "content": "# Soul Memory\n\n- I like Rust\n",
+        "webdav_dir": "r-test",
+        "previous_name": "RockBot ✨"
+    })
+    .to_string();
+    tool.execute(&args).await.unwrap();
+
+    let requests = mock_server.received_requests().await.unwrap();
+    let body = String::from_utf8(requests[0].body.clone()).unwrap();
+    assert!(body.contains("name: RockBot ✨"), "previous name retained: {body}");
+    assert!(body.contains("schema: 2"), "body: {body}");
 }
 
 #[tokio::test]

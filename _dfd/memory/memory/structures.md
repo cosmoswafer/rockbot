@@ -79,9 +79,10 @@ periodic persist timer (coalesced — not on every individual change). The
 | `rooms`                | `HashMap<String, RoomState>` | Per-room state map                       |
 | `max_chars`            | `usize`                      | Reset threshold (max_text_length)        |
 | `max_history_messages` | `usize`                      | Layer 1 message count limit for context  |
-| `max_soul_chars`       | `usize`                      | Layer 2 max chars for soul.md content    |
+| `max_soul_chars`       | `usize`                      | Layer 2 body budget (front matter is not counted) |
 | `souls`                | `HashMap<String, SoulMemory>`| Layer 2 in-memory holder (refreshed from WebDAV before each message — never stale) |
 | `dirty_snapshots`      | `HashSet<String>`            | Room IDs needing snapshot rebuild        |
+| `soul_migration_attempted` | `HashSet<String>`        | Rooms whose legacy soul migration was already attempted (once per process) |
 | `knowledge`            | `HashMap<String, String>`    | Knowledge index summary per room          |
 | `persist_interval_secs`| `u64`                        | Timer interval for writing snapshots (default 60) |
 | `max_context_bytes`    | `usize`                      | Byte limit that triggers inline trim and post-reply reset (default 4MB ≈ 1M tokens) |
@@ -112,15 +113,67 @@ A single file stored at `{root}/{webdav_dir}/memory/soul.md`.
 ```rust
 struct SoulMemory {
     room_id: NonEmptyString,
-    content: String,      // Full markdown content of soul.md
-    updated_at: String,   // ISO 8601
+    content: String,                       // raw file text (snapshots, logging)
+    front: SoulFrontMatter,                // identity metadata
+    body: String,                          // prompt-facing markdown (front matter stripped)
+    had_front_matter: bool,                // genuine `---` block found
+    broken_front_matter: Option<String>,   // block opened but did not parse
+    updated_at: String,                    // ISO 8601 load timestamp
+}
+
+struct SoulFrontMatter {
+    name: Option<SoulName>,        // invariant: single line, <= 32 chars
+    pronouns: Option<String>,
+    address_user_as: Option<String>,
+    language: Option<String>,
+    schema: Option<u32>,           // bot-stamped, current = 2
+    updated: Option<String>,       // bot-stamped YYYY-MM-DD
+    extra: Vec<(String, String)>,  // unknown keys preserved verbatim
+}
+
+struct SoulDocument {              // parser/renderer boundary
+    front: SoulFrontMatter,
+    body: String,
+    had_front_matter: bool,
+    broken_front_matter: Option<String>,
 }
 ```
 
-The `content` is a flat enumeration list — each line is a `-` bullet item.
-The first item always starts with `My name is ...`, used for display name
-extraction via regex `My name is (.+)`. The `edit_soul` tool overwrites the
-entire file.
+`soul.md` starts with an **optional** flat YAML front matter block:
+
+```markdown
+---
+name: 零夢 ✨
+address_user_as: Master 🐵
+language: en
+schema: 2
+updated: 2026-11-05
+---
+
+# Soul Memory
+
+- (preference)
+- (fact)
+```
+
+Rules:
+
+- No leading `---` line at byte 0 (after BOM strip / CRLF normalize) → legacy
+  soul: `body == raw`, `front.name` derived once from the first
+  `My name is ...` bullet (chars counted, max 32).
+- A `---` block with at least one `key: value` line → front matter; `body` is
+  everything after the closing fence.
+- A block that fails to parse (`broken_front_matter`) keeps the **entire raw
+  text as `body`** on read, so nothing is lost from the prompt.
+- `schema` and `updated` are always stamped by the writer — never authored by
+  the LLM (otherwise a template date goes stale forever).
+- `max_soul_chars` is applied to `body` only. The derived
+  `[Identity — name: …, language: …]` line is uncounted.
+- Legacy souls are **migrated physically on load** (see
+  [Legacy Soul Migration](level-2/legacy-soul-migration.md)): the identity
+  bullet moves into `name:` and is removed from the body.
+- The `edit_soul` tool performs a full replace; it parses, normalizes, renders
+  and PUTs the canonical form.
 
 ### File Layout
 
@@ -173,16 +226,17 @@ Field from `WebDavConfig` in [Configuration Management](../../infra/config/main-
 | **Timer evict**     | `maintenance_tick()` (Phase 2) | Every `persist_interval_secs`  | Room has ≥ 1 message AND `last_activity > 0` AND `now - last_activity > memory_ttl_secs` | Persist snapshot if dirty, then remove room from `HashMap` |
 | **Reset**           | `reset_room_if_needed()`       | After reply delivered (background)  | Checks flags (token pressure, byte pressure, explicit) | See [Memory Reset](../memory-reset/post-reply-decision.md) |
 | **Safety net**      | `trim_context()`               | Before each LLM call           | `context_bytes > max_context_bytes`                              | Inline trim only; sets byte_pressure_flag. See [Memory Reset](../memory-reset/post-reply-decision.md) |
-| **Soul refresh**    | `process_message()`            | On every incoming message      | WebDAV configured (always)                                  | Re-read `soul.md` from WebDAV, update in-memory holder |
-| **Room init**       | `restore_history()`            | Once per room, on first message| Room not in memory (fresh or evicted)                        | Load snapshot from `{snapshot_prefix}/{bot_id}/{wd}/snapshot.json` for history, always read soul from individual file |
-| **Soul edit**       | `edit_soul()` tool             | On user request                | LLM invokes `edit_soul` tool                                 | Write `soul.md`, update in-memory soul, mark snapshot dirty |
+| **Soul refresh**    | `process_message()`            | On every incoming message      | WebDAV configured (always)                                  | Re-read `soul.md` from WebDAV, migrate a legacy soul once, update in-memory holder |
+| **Room init**       | `restore_history()`            | Once per room, on first message| Room not in memory (fresh or evicted)                        | Load snapshot from `{snapshot_prefix}/{bot_id}/{wd}/snapshot.json` for history, always read soul from individual file (and migrate legacy) |
+| **Soul edit**       | `edit_soul()` tool             | On user request                | LLM invokes `edit_soul` tool                                 | Parse → normalize → render → write `soul.md`, update in-memory soul, mark snapshot dirty |
 | **Touch activity**  | `process_message()`            | On every incoming message      | Room exists in memory                                        | Update `last_activity` timestamp to prevent eviction |
 
 ### Tool: `edit_soul`
 
 | Parameter       | Type     | Description                                    |
 | --------------- | -------- | ---------------------------------------------- |
-| `content`       | `string` | Full soul.md content using the standard template (`# Soul Memory\n\n- My name is Name ✨\n- ...\n- ...`) |
+| `content`       | `string` | Full soul.md content: optional `---` front matter (name/pronouns/address_user_as/language), then `# Soul Memory` and a flat `- ` bullet list |
+| `previous_name` | `string` | Harness-injected last known name (not LLM-facing) |
 
 ### Context Injection Order
 
@@ -191,7 +245,7 @@ the agent context in this order (room init additionally restores history
 from snapshot):
 
 ```
-1. single system message  (merged: system prompt + soul.md content + knowledge index + leading conversation summary, joined by "\n\n")
+1. single system message  (merged: system prompt + soul block + knowledge index + leading conversation summary, joined by "\n\n")
 2. chat history           (Layer 1 — last max_history_size messages, minus any leading system summary absorbed into 1.)
 ```
 

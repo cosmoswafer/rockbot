@@ -8,7 +8,7 @@ use serde_valid::Validate;
 use tracing::debug;
 
 use crate::types::ChatMessage;
-use crate::utils::now_iso_string;
+use crate::utils::{now_iso_string, today_iso_date};
 use crate::validated::NonEmptyString;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Validate)]
@@ -26,12 +26,340 @@ pub struct PersistSnapshot {
     pub updated_at: String,
 }
 
+/// Max soul display-name length, counted in characters (not bytes).
+pub const MAX_SOUL_NAME_CHARS: usize = 32;
+
+/// Current soul schema version. Stamped by the writer, never authored by the
+/// LLM — otherwise the model would copy a stale value forever.
+pub const SOUL_SCHEMA_VERSION: u32 = 2;
+
+/// Invariant newtype: a valid identity name is non-empty, single-line,
+/// control-char free and <= `MAX_SOUL_NAME_CHARS` characters. Holding one
+/// proves the invariant, so callers never re-validate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SoulName(String);
+
+impl SoulName {
+    pub fn try_new(value: &str) -> std::result::Result<Self, String> {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return Err("name must not be empty".into());
+        }
+        if trimmed.contains(['\n', '\r']) {
+            return Err("name must be a single line".into());
+        }
+        if trimmed.chars().any(char::is_control) {
+            return Err("name must not contain control characters".into());
+        }
+        if trimmed.chars().count() > MAX_SOUL_NAME_CHARS {
+            return Err(format!("name must be <= {MAX_SOUL_NAME_CHARS} chars"));
+        }
+        Ok(Self(trimmed.to_string()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Flat YAML-subset identity block. `extra` preserves unknown keys so a
+/// hand-written `persona_version:` survives a bot rewrite.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SoulFrontMatter {
+    pub name: Option<SoulName>,
+    pub pronouns: Option<String>,
+    pub address_user_as: Option<String>,
+    pub language: Option<String>,
+    pub schema: Option<u32>,
+    pub updated: Option<String>,
+    pub extra: Vec<(String, String)>,
+}
+
+impl SoulFrontMatter {
+    pub fn is_empty(&self) -> bool {
+        self.name.is_none()
+            && self.pronouns.is_none()
+            && self.address_user_as.is_none()
+            && self.language.is_none()
+            && self.schema.is_none()
+            && self.updated.is_none()
+            && self.extra.is_empty()
+    }
+
+    /// Prompt-facing one-liner. Deliberately short; the body carries the prose.
+    pub fn identity_line(&self) -> Option<String> {
+        let mut parts = Vec::new();
+        if let Some(name) = &self.name {
+            parts.push(format!("name: {}", name.as_str()));
+        }
+        if let Some(lang) = &self.language {
+            parts.push(format!("language: {lang}"));
+        }
+        if let Some(address) = &self.address_user_as {
+            parts.push(format!("address user as: {address}"));
+        }
+        (!parts.is_empty()).then(|| format!("[Identity — {}]", parts.join(", ")))
+    }
+}
+
+/// Parsed soul document: identity metadata + prompt body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SoulDocument {
+    pub front: SoulFrontMatter,
+    pub body: String,
+    /// A well-formed `---` block was found.
+    pub had_front_matter: bool,
+    /// `---` opened the file but the block did not parse; `body` then holds
+    /// the entire raw document so nothing is lost.
+    pub broken_front_matter: Option<String>,
+}
+
+impl SoulDocument {
+    /// Total function: never fails. Broken front matter degrades to a legacy
+    /// document (raw text kept as body).
+    pub fn parse(raw: &str) -> Self {
+        let normalized = normalize_newlines(raw);
+        let text = normalized.as_ref();
+
+        let Some((block, rest)) = split_front_matter(text) else {
+            return Self::legacy(text);
+        };
+        match parse_front_matter_block(block) {
+            Ok(front) if !front.is_empty() => Self {
+                front,
+                body: rest.trim_start_matches('\n').to_string(),
+                had_front_matter: true,
+                broken_front_matter: None,
+            },
+            // `---` was a horizontal rule, or the block is empty: plain body.
+            Ok(_) => Self::legacy(text),
+            Err(reason) => Self {
+                front: SoulFrontMatter::default(),
+                body: text.to_string(),
+                had_front_matter: false,
+                broken_front_matter: Some(reason),
+            },
+        }
+    }
+
+    fn legacy(text: &str) -> Self {
+        Self {
+            front: SoulFrontMatter::default(),
+            body: text.to_string(),
+            had_front_matter: false,
+            broken_front_matter: None,
+        }
+    }
+
+    /// Fill in a name the LLM dropped and stamp schema/updated before a write.
+    pub fn normalized_for_write(mut self, previous: Option<&SoulName>) -> Self {
+        if self.broken_front_matter.is_some() {
+            return self;
+        }
+        if self.front.name.is_none() {
+            self.front.name = extract_identity_name(&self.body)
+                .and_then(|raw| SoulName::try_new(&raw).ok())
+                .or_else(|| previous.cloned());
+        }
+        // Legacy document: move the identity bullet into the front matter so a
+        // single edit round-trips to the new format in one step.
+        if !self.had_front_matter {
+            if let Some(name) = self.front.name.clone() {
+                self.body = strip_identity_bullet(&self.body, name.as_str());
+            }
+        }
+        if self.had_front_matter || self.front.name.is_some() {
+            self.front.schema = Some(SOUL_SCHEMA_VERSION);
+            self.front.updated = Some(today_iso_date());
+        }
+        self
+    }
+
+    /// Canonical serialization. Emits front matter only when one will exist,
+    /// so a legacy soul with no identity is written back verbatim.
+    pub fn render(&self) -> String {
+        if self.broken_front_matter.is_some() || self.front.is_empty() {
+            return self.body.clone();
+        }
+        let mut out = String::from("---\n");
+        if let Some(name) = &self.front.name {
+            out.push_str(&format!("name: {}\n", yaml_scalar(name.as_str())));
+        }
+        for (key, value) in [
+            ("pronouns", &self.front.pronouns),
+            ("address_user_as", &self.front.address_user_as),
+            ("language", &self.front.language),
+        ] {
+            if let Some(value) = value {
+                out.push_str(&format!("{key}: {}\n", yaml_scalar(value)));
+            }
+        }
+        if let Some(schema) = self.front.schema {
+            out.push_str(&format!("schema: {schema}\n"));
+        }
+        if let Some(updated) = &self.front.updated {
+            out.push_str(&format!("updated: {}\n", yaml_scalar(updated)));
+        }
+        for (key, value) in &self.front.extra {
+            out.push_str(&format!("{key}: {}\n", yaml_scalar(value)));
+        }
+        out.push_str("---\n\n");
+        out.push_str(&self.body);
+        out
+    }
+}
+
+fn normalize_newlines(raw: &str) -> std::borrow::Cow<'_, str> {
+    let body = raw.strip_prefix('\u{feff}').unwrap_or(raw);
+    if body.contains('\r') {
+        std::borrow::Cow::Owned(body.replace("\r\n", "\n").replace('\r', "\n"))
+    } else {
+        std::borrow::Cow::Borrowed(body)
+    }
+}
+
+/// Only a block at byte 0 counts; a `---` used as a horizontal rule later in
+/// the body is never front matter.
+fn split_front_matter(text: &str) -> Option<(&str, &str)> {
+    let first = text.split_inclusive('\n').next()?;
+    if first.trim_end() != "---" {
+        return None;
+    }
+    let block_start = first.len();
+    if block_start >= text.len() {
+        return None;
+    }
+    let mut offset = block_start;
+    for line in text[block_start..].split_inclusive('\n') {
+        let trimmed = line.trim_end();
+        if trimmed == "---" || trimmed == "..." {
+            return Some((&text[block_start..offset], &text[offset + line.len()..]));
+        }
+        offset += line.len();
+    }
+    None // unterminated block -> legacy body
+}
+
+fn parse_front_matter_block(block: &str) -> std::result::Result<SoulFrontMatter, String> {
+    let mut front = SoulFrontMatter::default();
+    for (idx, line) in block.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once(':') else {
+            return Err(format!("line {} is not `key: value`", idx + 1));
+        };
+        let key = key.trim();
+        if key.is_empty() || key.contains(char::is_whitespace) {
+            return Err(format!("invalid key on line {}", idx + 1));
+        }
+        let value = unquote_yaml(value.trim());
+        match key {
+            "name" => {
+                front.name = Some(SoulName::try_new(&value)?);
+            }
+            "pronouns" => front.pronouns = non_empty_string(value),
+            "address_user_as" => front.address_user_as = non_empty_string(value),
+            "language" => front.language = non_empty_string(value),
+            "schema" => {
+                front.schema =
+                    Some(value.parse::<u32>().map_err(|e| format!("schema: {e}"))?);
+            }
+            "updated" => front.updated = non_empty_string(value),
+            other => front.extra.push((other.to_string(), value)),
+        }
+    }
+    Ok(front)
+}
+
+fn non_empty_string(value: String) -> Option<String> {
+    (!value.trim().is_empty()).then(|| value.trim().to_string())
+}
+
+fn unquote_yaml(value: &str) -> String {
+    for quote in ['"', '\''] {
+        if value.len() >= 2 && value.starts_with(quote) && value.ends_with(quote) {
+            return value[1..value.len() - 1].to_string();
+        }
+    }
+    value.to_string()
+}
+
+/// Quote only when the value could be misread as YAML structure.
+fn yaml_scalar(value: &str) -> String {
+    let needs_quotes = value.is_empty()
+        || value.starts_with([
+            '-', '?', ':', ',', '[', ']', '{', '}', '#', '&', '*', '!', '|', '>', '\'', '"',
+            '%', '@', '`',
+        ])
+        || value.contains(": ")
+        || value.contains(" #")
+        || value.contains('\n');
+    if needs_quotes {
+        format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+    } else {
+        value.to_string()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SoulMemory {
     pub room_id: NonEmptyString,
+    /// Raw file contents — used for logging, snapshots, and round-trip writes.
     pub content: String,
+    pub front: SoulFrontMatter,
+    /// Prompt-facing markdown with the front matter removed.
+    pub body: String,
+    /// True only for genuine front matter (legacy derived names stay false).
+    pub had_front_matter: bool,
+    /// Set when the leading `---` block failed to parse (raw kept as `body`).
+    pub broken_front_matter: Option<String>,
     pub updated_at: String,
 }
+
+impl SoulMemory {
+    pub fn from_raw(room_id: NonEmptyString, raw: String, updated_at: String) -> Self {
+        let mut doc = SoulDocument::parse(&raw);
+        // Backward compat: derive the name from the legacy `- My name is X`
+        // bullet once, at load time, so every consumer sees the same value.
+        if doc.front.name.is_none() && doc.broken_front_matter.is_none() {
+            doc.front.name = extract_identity_name(&doc.body)
+                .and_then(|raw| SoulName::try_new(&raw).ok());
+        }
+        Self {
+            room_id,
+            content: raw,
+            front: doc.front,
+            body: doc.body,
+            had_front_matter: doc.had_front_matter,
+            broken_front_matter: doc.broken_front_matter,
+            updated_at,
+        }
+    }
+
+    /// Legacy file, parseable, and a name was derived from the body.
+    pub fn needs_migration(&self) -> bool {
+        !self.had_front_matter
+            && self.broken_front_matter.is_none()
+            && self.front.name.is_some()
+    }
+
+    /// Move identity out of the bullet list into front matter.
+    pub fn migrated(self) -> SoulDocument {
+        let mut doc = SoulDocument {
+            front: self.front,
+            body: self.body,
+            had_front_matter: true,
+            broken_front_matter: None,
+        };
+        if let Some(name) = doc.front.name.clone() {
+            doc.body = strip_identity_bullet(&doc.body, name.as_str());
+        }
+        doc.normalized_for_write(None)
+    }
+}
+
 
 #[derive(Debug, Clone)]
 pub struct ConversationHistory {
@@ -126,6 +454,9 @@ pub struct MemoryManager {
     souls: HashMap<String, SoulMemory>,
     knowledge: HashMap<String, String>,
     dirty_snapshots: HashSet<String>,
+    /// Rooms whose legacy soul migration has already been attempted (once per
+    /// process, so a read-only WebDAV deployment does not retry every message).
+    soul_migration_attempted: HashSet<String>,
     pub persist_interval_secs: u64,
     /// Per-room flag: token pressure detected (set during LLM call, checked after reply)
     token_pressure: HashSet<String>,
@@ -151,6 +482,7 @@ impl MemoryManager {
             souls: HashMap::new(),
             knowledge: HashMap::new(),
             dirty_snapshots: HashSet::new(),
+            soul_migration_attempted: HashSet::new(),
             persist_interval_secs,
             token_pressure: HashSet::new(),
             byte_pressure: HashSet::new(),
@@ -305,20 +637,26 @@ impl MemoryManager {
         let mut has_knowledge = false;
 
         if let Some(soul) = self.souls.get(room_id) {
-            if !soul.content.is_empty() {
+            let body = soul.body.trim();
+            // The derived identity line is only injected for real front matter;
+            // legacy souls already carry `- My name is ...` in the body.
+            // Suppress it when the body still states the same name (migration
+            // could not remove the bullet because it carried extra prose).
+            let identity = soul
+                .front
+                .identity_line()
+                .filter(|_| soul.had_front_matter)
+                .filter(|_| !body_declares_name(body, soul.front.name.as_ref()));
+            if !body.is_empty() || identity.is_some() {
                 has_soul = true;
-                let truncated = if soul.content.chars().count() > self.max_soul_chars {
-                    let mut chars: Vec<char> = soul.content.chars().collect();
-                    chars.truncate(self.max_soul_chars);
-                    let mut t: String = chars.into_iter().collect();
-                    t.push_str("\n\n[truncated]");
-                    t
-                } else {
-                    soul.content.clone()
+                let truncated = truncate_chars(body, self.max_soul_chars);
+                let block = match (identity, truncated.is_empty()) {
+                    (Some(identity), false) => format!("{identity}\n{truncated}"),
+                    (Some(identity), true) => identity,
+                    (None, _) => truncated,
                 };
                 system_parts.push(format!(
-                    "[Core memory — permanent preferences, identity, and facts]\n{}",
-                    truncated
+                    "[Core memory — permanent preferences, identity, and facts]\n{block}"
                 ));
             }
         }
@@ -443,28 +781,25 @@ impl MemoryManager {
         self.souls.get(room_id)
     }
 
+    /// Effective identity name for a room: front-matter `name`, or the legacy
+    /// `- My name is X` bullet derived at load time.
+    pub fn soul_name(&self, room_id: &str) -> Option<&str> {
+        self.souls.get(room_id)?.front.name.as_ref().map(SoulName::as_str)
+    }
+
     pub fn self_display_name(&self, room_id: &str) -> Option<String> {
-        let soul = match self.souls.get(room_id) {
-            Some(s) => s,
-            None => {
-                debug!("self_display_name: no soul found for room={}", room_id);
-                return None;
-            }
-        };
-        let content = soul.content.trim();
-        if content.is_empty() {
-            debug!("self_display_name: empty soul content for room={}", room_id);
-            return None;
+        let name = self.soul_name(room_id);
+        match name {
+            Some(name) => debug!("self_display_name: room={} name={:?}", room_id, name),
+            None => debug!("self_display_name: no display name found for room={}", room_id),
         }
+        name.map(str::to_string)
+    }
 
-        // Standard regex: `My name is (.+)` — captures from first item of flat list
-        if let Some(name) = extract_identity_name(content) {
-            debug!("self_display_name: regex match, room={} name={:?}", room_id, name);
-            return Some(name);
-        }
-
-        debug!("self_display_name: no display name found for room={}", room_id);
-        None
+    /// Returns true only the first time a room's legacy soul migration is
+    /// attempted in this process.
+    pub fn claim_soul_migration(&mut self, room_id: &str) -> bool {
+        self.soul_migration_attempted.insert(room_id.to_string())
     }
 
     /// Returns the first available self-display name from any room's soul memory.
@@ -534,11 +869,11 @@ impl MemoryManager {
         }
 
         if let Some(ref soul_content) = snapshot.soul {
-            let soul = SoulMemory {
-                room_id: snapshot.room_id.clone(),
-                content: soul_content.clone(),
-                updated_at: snapshot.updated_at.clone(),
-            };
+            let soul = SoulMemory::from_raw(
+                snapshot.room_id.clone(),
+                soul_content.clone(),
+                snapshot.updated_at.clone(),
+            );
             let slen = soul_content.chars().count();
             let stail: String = soul_content.chars().rev().take(200).collect::<Vec<_>>().into_iter().rev().collect();
             let room_key: String = snapshot.room_id.to_string();
@@ -558,6 +893,7 @@ impl MemoryManager {
         self.souls.remove(room_id);
         self.knowledge.remove(room_id);
         self.dirty_snapshots.remove(room_id);
+        self.soul_migration_attempted.remove(room_id);
         self.token_pressure.remove(room_id);
         self.byte_pressure.remove(room_id);
         self.explicit_reset.remove(room_id);
@@ -702,18 +1038,52 @@ pub(crate) fn strip_orphaned_tool_calls(messages: &mut Vec<ChatMessage>) {
 /// Extract display name from soul content using a standard regex.
 ///
 /// Regex: `My name is (.+)` — captures the display name from the
-/// first item of the flat enumeration list (always "My name is ...").
+/// legacy flat enumeration list (`- My name is ...`). This is only the
+/// backward-compatible fallback; front-matter `name` is authoritative.
 fn extract_identity_name(content: &str) -> Option<String> {
     static RE: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"My name is (.+)").expect("hardcoded regex")
     });
     let caps = RE.captures(content)?;
     let name = caps.get(1)?.as_str().trim().to_string();
-    if !name.is_empty() && name.len() <= 32 {
+    if !name.is_empty() && name.chars().count() <= MAX_SOUL_NAME_CHARS {
         Some(name)
     } else {
         None
     }
+}
+
+/// Drop only the exact `- My name is <name>` line. A bullet carrying extra
+/// prose is kept (nothing is silently deleted); the identity line is then
+/// suppressed by the dedupe rule in `build_context`.
+fn strip_identity_bullet(body: &str, name: &str) -> String {
+    let marker = format!("My name is {name}");
+    let mut removed = false;
+    body.split_inclusive('\n')
+        .filter(|line| {
+            let trimmed = line.trim();
+            let is_bullet = trimmed.starts_with("- ") || trimmed.starts_with("* ");
+            if !removed && is_bullet && trimmed[2..].trim() == marker {
+                removed = true;
+                return false;
+            }
+            true
+        })
+        .collect()
+}
+
+fn body_declares_name(body: &str, name: Option<&SoulName>) -> bool {
+    name.is_some_and(|name| body.contains(&format!("My name is {}", name.as_str())))
+}
+
+/// Truncate to `max` characters and append the marker.
+fn truncate_chars(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let mut truncated: String = text.chars().take(max).collect();
+    truncated.push_str("\n\n[truncated]");
+    truncated
 }
 
 struct ByteCounter(usize);
@@ -864,11 +1234,11 @@ mod tests {
         let room = mgr.get_or_create("room1", "general", "", false);
         room.history.append(make_msg(Role::User, "hello"));
 
-        let soul = SoulMemory {
-            room_id: NonEmptyString::try_new("room1".to_string()).unwrap(),
-            content: "- My name is TestBot".into(),
-            updated_at: String::new(),
-        };
+        let soul = SoulMemory::from_raw(
+            NonEmptyString::try_new("room1".to_string()).unwrap(),
+            "- My name is TestBot".into(),
+            String::new(),
+        );
         mgr.set_soul("room1", soul);
         mgr.set_knowledge("room1", "[Knowledge Index]\n[P1] note — stuff".to_string());
 
@@ -1108,11 +1478,11 @@ mod tests {
     #[test]
     fn test_self_display_name_regex_match() {
         let mut mm = MemoryManager::new(2000, 60, 30_000_000);
-        let soul = SoulMemory {
-            room_id: NonEmptyString::try_new("r-test".to_string()).unwrap(),
-            content: "# Soul Memory\n\n- My name is 香菜 🌿\n- foo".into(),
-            updated_at: String::new(),
-        };
+        let soul = SoulMemory::from_raw(
+            NonEmptyString::try_new("r-test".to_string()).unwrap(),
+            "# Soul Memory\n\n- My name is 香菜 🌿\n- foo".into(),
+            String::new(),
+        );
         mm.set_soul("r-test", soul);
         assert_eq!(mm.self_display_name("r-test"), Some("香菜 🌿".into()));
     }
@@ -1120,11 +1490,11 @@ mod tests {
     #[test]
     fn test_self_display_name_no_myname() {
         let mut mm = MemoryManager::new(2000, 60, 30_000_000);
-        let soul = SoulMemory {
-            room_id: NonEmptyString::try_new("r-test".to_string()).unwrap(),
-            content: "零夢\n\n- foo".into(),
-            updated_at: String::new(),
-        };
+        let soul = SoulMemory::from_raw(
+            NonEmptyString::try_new("r-test".to_string()).unwrap(),
+            "零夢\n\n- foo".into(),
+            String::new(),
+        );
         mm.set_soul("r-test", soul);
         // No "My name is" pattern — returns None
         assert_eq!(mm.self_display_name("r-test"), None);
@@ -1245,5 +1615,238 @@ mod tests {
     fn test_count_json_bytes_empty_message() {
         let msg = ChatMessage::user("");
         assert!(count_json_bytes(&msg) > 0, "even empty message has JSON structure bytes");
+    }
+
+    // ─── Soul front matter / migration ──────────────────────────────────────
+
+    fn soul(raw: &str) -> SoulMemory {
+        SoulMemory::from_raw(
+            NonEmptyString::try_new("r-test".to_string()).unwrap(),
+            raw.to_string(),
+            String::new(),
+        )
+    }
+
+    #[test]
+    fn test_soul_parse_legacy_has_no_front_matter() {
+        let doc = SoulDocument::parse("# Soul Memory\n\n- My name is 零夢 ✨\n");
+        assert!(!doc.had_front_matter);
+        assert!(doc.broken_front_matter.is_none());
+        assert_eq!(doc.body, "# Soul Memory\n\n- My name is 零夢 ✨\n");
+        assert!(doc.front.is_empty());
+    }
+
+    #[test]
+    fn test_soul_parse_front_matter() {
+        let raw = "---\nname: 零夢 ✨\npronouns: she/her\naddress_user_as: Master 🐵\nlanguage: en\nschema: 2\nupdated: 2026-11-05\n---\n\n# Soul Memory\n\n- likes tea\n";
+        let doc = SoulDocument::parse(raw);
+        assert!(doc.had_front_matter);
+        assert!(doc.broken_front_matter.is_none());
+        assert_eq!(doc.front.name.as_ref().map(SoulName::as_str), Some("零夢 ✨"));
+        assert_eq!(doc.front.pronouns.as_deref(), Some("she/her"));
+        assert_eq!(doc.front.address_user_as.as_deref(), Some("Master 🐵"));
+        assert_eq!(doc.front.language.as_deref(), Some("en"));
+        assert_eq!(doc.front.schema, Some(2));
+        assert_eq!(doc.front.updated.as_deref(), Some("2026-11-05"));
+        assert_eq!(doc.body, "# Soul Memory\n\n- likes tea\n");
+    }
+
+    #[test]
+    fn test_soul_parse_crlf_and_bom() {
+        let raw = "\u{feff}---\r\nname: Zero\r\n---\r\n\r\n- likes tea\r\n";
+        let doc = SoulDocument::parse(raw);
+        assert!(doc.had_front_matter);
+        assert_eq!(doc.front.name.as_ref().map(SoulName::as_str), Some("Zero"));
+        assert_eq!(doc.body, "- likes tea\n");
+    }
+
+    #[test]
+    fn test_soul_parse_quoted_values() {
+        let doc = SoulDocument::parse("---\nname: \"零夢 ✨\"\nlanguage: 'zh-HK'\n---\n\n- foo");
+        assert_eq!(doc.front.name.as_ref().map(SoulName::as_str), Some("零夢 ✨"));
+        assert_eq!(doc.front.language.as_deref(), Some("zh-HK"));
+    }
+
+    #[test]
+    fn test_soul_parse_unknown_keys_preserved_on_render() {
+        let raw = "---\nname: Zero\npersona_version: 3\n---\n\n- foo";
+        let doc = SoulDocument::parse(raw);
+        assert_eq!(doc.front.extra, vec![("persona_version".to_string(), "3".to_string())]);
+        let rendered = doc.render();
+        assert!(rendered.contains("persona_version: 3"), "rendered: {rendered}");
+    }
+
+    #[test]
+    fn test_soul_parse_unterminated_block_is_body() {
+        let raw = "---\nname: Zero\n\n- foo";
+        let doc = SoulDocument::parse(raw);
+        assert!(!doc.had_front_matter);
+        assert!(doc.broken_front_matter.is_none());
+        assert_eq!(doc.body, raw);
+    }
+
+    #[test]
+    fn test_soul_parse_horizontal_rule_is_body() {
+        let raw = "---\n\n- item\n";
+        let doc = SoulDocument::parse(raw);
+        assert!(!doc.had_front_matter);
+        assert_eq!(doc.body, raw);
+    }
+
+    #[test]
+    fn test_soul_parse_broken_block_sets_flag_and_keeps_raw() {
+        let raw = "---\nnot a pair\n---\n\n- item";
+        let doc = SoulDocument::parse(raw);
+        assert!(!doc.had_front_matter);
+        assert!(doc.broken_front_matter.is_some());
+        assert_eq!(doc.body, raw);
+    }
+
+    #[test]
+    fn test_soul_render_round_trip() {
+        let raw = "---\nname: 零夢 ✨\nlanguage: en\nschema: 2\nupdated: 2026-11-05\n---\n\n# Soul Memory\n\n- likes tea";
+        let first = SoulDocument::parse(raw);
+        let second = SoulDocument::parse(&first.render());
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn test_soul_needs_migration_only_for_legacy_with_name() {
+        assert!(soul("# Soul Memory\n\n- My name is 零夢 ✨").needs_migration());
+        assert!(!soul("---\nname: 零夢\n---\n\n- foo").needs_migration());
+        assert!(!soul("# Soul Memory\n\n- likes tea").needs_migration());
+        assert!(!soul("---\nnot a pair\n---\n- My name is Zero").needs_migration());
+    }
+
+    #[test]
+    fn test_soul_migrated_moves_bullet_into_front_name() {
+        let doc = soul("# Soul Memory\n\n- My name is 零夢 ✨\n- I like tea").migrated();
+        assert!(doc.had_front_matter);
+        assert_eq!(doc.front.name.as_ref().map(SoulName::as_str), Some("零夢 ✨"));
+        assert_eq!(doc.front.schema, Some(SOUL_SCHEMA_VERSION));
+        assert_eq!(doc.front.updated.as_deref(), Some(today_iso_date().as_str()));
+        assert!(!doc.body.contains("My name is"), "body: {}", doc.body);
+        assert!(doc.body.contains("- I like tea"));
+    }
+
+    #[test]
+    fn test_soul_migrated_removes_identity_bullet_even_with_prose() {
+        let doc = soul("- My name is Zero ✨ and I like tea\n- title: keep me").migrated();
+        // The whole tail of the bullet becomes the name, so nothing is lost.
+        assert_eq!(
+            doc.front.name.as_ref().map(SoulName::as_str),
+            Some("Zero ✨ and I like tea")
+        );
+        assert!(!doc.body.contains("My name is"));
+        assert!(doc.body.contains("- title: keep me"));
+    }
+
+    #[test]
+    fn test_soul_migrated_is_idempotent() {
+        let doc = soul("- My name is Zero ✨\n- other").migrated();
+        let migrated = soul(&doc.render());
+        assert!(!migrated.needs_migration());
+        assert_eq!(migrated.front.name, doc.front.name);
+        assert_eq!(migrated.body.trim(), "- other");
+    }
+
+    #[test]
+    fn test_strip_identity_bullet_handles_star_and_trailing_space() {
+        assert_eq!(
+            strip_identity_bullet("* My name is Zero ✨  \n- other", "Zero ✨"),
+            "- other"
+        );
+        assert_eq!(
+            strip_identity_bullet("- Keep me\n- My name is Zero\n- Keep too\n", "Zero"),
+            "- Keep me\n- Keep too\n"
+        );
+    }
+
+    #[test]
+    fn test_extract_identity_name_counts_chars_not_bytes() {
+        let name = "零".repeat(20); // 20 chars, 60 bytes
+        let content = format!("# Soul Memory\n\n- My name is {name}");
+        assert_eq!(extract_identity_name(&content), Some(name));
+    }
+
+    #[test]
+    fn test_soul_name_rejects_multiline_and_long() {
+        assert!(SoulName::try_new("").is_err());
+        assert!(SoulName::try_new("a\nb").is_err());
+        assert!(SoulName::try_new(&"x".repeat(33)).is_err());
+        assert!(SoulName::try_new(&"零".repeat(32)).is_ok());
+    }
+
+    #[test]
+    fn test_build_context_strips_front_matter() {
+        let mut mm = MemoryManager::new(2000, 60, 30_000_000);
+        let doc = soul("---\nname: 零夢 ✨\nlanguage: en\n---\n\n# Soul Memory\n\n- likes tea");
+        mm.set_soul("r-test", doc);
+        let ctx = mm.build_context("r-test", "prompt", None, None);
+        let text = ctx[0].text_content().unwrap();
+        assert!(text.contains("[Identity — name: 零夢 ✨, language: en]"), "text: {text}");
+        assert!(text.contains("# Soul Memory"), "text: {text}");
+        assert!(!text.contains("---"), "front matter must be stripped: {text}");
+    }
+
+    #[test]
+    fn test_build_context_legacy_prompt_unchanged() {
+        let mut mm = MemoryManager::new(2000, 60, 30_000_000);
+        mm.set_soul("r-test", soul("# Soul Memory\n\n- My name is 零夢 ✨\n- likes tea"));
+        let ctx = mm.build_context("r-test", "prompt", None, None);
+        let text = ctx[0].text_content().unwrap();
+        assert!(text.contains("- My name is 零夢 ✨"), "text: {text}");
+        assert!(!text.contains("[Identity"), "legacy souls keep their prompt: {text}");
+    }
+
+    #[test]
+    fn test_build_context_truncates_body_not_front_matter() {
+        let mut mm = MemoryManager::new(10, 60, 30_000_000);
+        let body = format!("---\nname: {}", "Zero".repeat(8))
+            + "\n---\n\n- 0123456789ABCDEFGHIJ";
+        mm.set_soul("r-test", soul(&body));
+        let ctx = mm.build_context("r-test", "prompt", None, None);
+        let text = ctx[0].text_content().unwrap();
+        // Identity line (derived from front matter) is not part of the budget.
+        assert!(text.contains(&format!("name: {}", "Zero".repeat(8))), "text: {text}");
+        assert!(text.contains("[truncated]"), "text: {text}");
+    }
+
+    #[test]
+    fn test_identity_line_deduped_when_body_keeps_bullet() {
+        let mut mm = MemoryManager::new(2000, 60, 30_000_000);
+        let raw = "---\nname: 零夢 ✨\n---\n\n- My name is 零夢 ✨ and I like tea";
+        mm.set_soul("r-test", soul(raw));
+        let ctx = mm.build_context("r-test", "prompt", None, None);
+        let text = ctx[0].text_content().unwrap();
+        assert!(!text.contains("[Identity"), "no duplicate identity line: {text}");
+        assert!(text.contains("My name is 零夢 ✨ and I like tea"));
+    }
+
+    #[test]
+    fn test_self_display_name_prefers_front_matter() {
+        let mm_soul = soul("---\nname: FrontName\n---\n\n- My name is BodyName");
+        assert_eq!(mm_soul.front.name.as_ref().map(SoulName::as_str), Some("FrontName"));
+        let mut mm = MemoryManager::new(2000, 60, 30_000_000);
+        mm.set_soul("r-test", mm_soul);
+        assert_eq!(mm.self_display_name("r-test"), Some("FrontName".into()));
+        assert_eq!(mm.soul_name("r-test"), Some("FrontName"));
+    }
+
+    #[test]
+    fn test_soul_normalized_for_write_uses_previous_name() {
+        let doc = SoulDocument::parse("- no name here\n- other")
+            .normalized_for_write(Some(&SoulName::try_new("OldName").unwrap()));
+        assert_eq!(doc.front.name.as_ref().map(SoulName::as_str), Some("OldName"));
+        assert_eq!(doc.front.schema, Some(SOUL_SCHEMA_VERSION));
+        assert!(doc.render().contains("name: OldName"));
+    }
+
+    #[test]
+    fn test_claim_soul_migration_once() {
+        let mut mm = MemoryManager::new(2000, 60, 30_000_000);
+        assert!(mm.claim_soul_migration("r-test"));
+        assert!(!mm.claim_soul_migration("r-test"));
+        assert!(mm.claim_soul_migration("r-other"));
     }
 }

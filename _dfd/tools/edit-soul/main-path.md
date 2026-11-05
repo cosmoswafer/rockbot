@@ -6,28 +6,32 @@ Manages the bot's permanent per-room "soul" memory — a single `soul.md` file
 stored on WebDAV under `{room}/memory/soul.md`. The tool performs a **full
 replace** of the entire file content using the standard soul template.
 
-The LLM MUST use this exact template when calling edit_soul:
+The LLM uses this template (front matter optional):
 
 ```markdown
+---
+name: YourName ✨
+address_user_as: Master 🐵
+language: en
+---
+
 # Soul Memory
 
-- My name is YourName ✨
-- (optional preference)
-- (optional fact)
 - (optional preference)
 - (optional fact)
 ```
 
-The soul is a **flat enumeration list** — each line is a `-` bullet item. The
-**first item always** starts with `My name is ...`. The display name is
-extracted by regex `My name is (.+)` from that first item. Keep it under 32
-characters. Additional items follow the same flat list format with no
-sub-headings.
+The body is a **flat enumeration list** — each line is a `-` bullet item, no
+sub-headings. `name` is single-line, max 32 characters, no markdown.
+`schema`/`updated` are bot-stamped, never authorable. Legacy souls (`- My name
+is X` with no front matter) are migrated on write: the identity bullet moves
+into `name:`. Broken front matter is rejected with `SoulFormat` and nothing is
+written.
 
 - Upstream: [Configuration Management](../../infra/config/main-path.md) provides WebDAV
   credentials for file access
 - Upstream: [Agent Harness](../../agent/agent-harness/agent-loop.md) invokes `EditSoulTool` with
-  the full soul content
+  the full soul content and injects `previous_name`
 - Downstream: [WebDAV Tool](../webdav/main-path.md) performs the PUT operation
 - Downstream: [Memory Management](../../memory/memory/soul-editing.md) — soul.md lives alongside
   other per-room memory archives under `{room}/memory/`
@@ -39,14 +43,16 @@ flowchart TD
     AGENT[Agent Harness]
     CFG[(WebDavConfig)]
     SOUL(EditSoulTool)
+    PARSE(Parse + Normalize)
     PUT(WriteSoulMd)
     HTTP(HttpClient)
     DAV[(NextCloud WebDAV)]
     AI[AiProvider]
 
-    AGENT -->|"full soul content (template)"| SOUL
+    AGENT -->|"content + previous_name"| SOUL
     CFG -->|"root + credentials"| SOUL
-    SOUL -->|"PUT memory/soul.md"| PUT
+    SOUL -->|"SoulDocument"| PARSE
+    PARSE -->|"canonical markdown"| PUT
     PUT -->|"PUT /{room}/memory/soul.md"| HTTP
     HTTP -->|"http request"| DAV
     DAV -->|"204 / 201"| PUT

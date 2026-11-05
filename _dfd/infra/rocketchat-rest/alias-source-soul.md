@@ -3,10 +3,11 @@
 ## 1. Purpose
 
 The alias is extracted from per-room soul memory (Layer 3) at send time. The
-`self_display_name()` function parses the `soul.md` content using a single
-standard regex (`My name is (.+)`) that captures the display name from the
-first item of the flat enumeration list (always "My name is ..."). The agent
-loop in `main.rs` orchestrates this flow inline.
+`self_display_name()` function resolves the name from `SoulMemory.front.name`,
+which is populated from the `name:` front-matter key, or — for unmigrated
+legacy souls — derived once at load from the `- My name is ...` bullet. Legacy
+souls are upgraded to front matter on first load, so `name:` becomes the normal
+source. The agent loop in `main.rs` orchestrates this flow inline.
 
 - Upstream: [Memory Management](../../memory/memory/soul-editing.md) Layer 3
   (soul) stores the bot's per-room self-display name, extracted via
@@ -27,7 +28,7 @@ flowchart TD
     RESULT_OK[Message sent ✓]
 
     HAR_RESP -->|"reply text"| PARSE
-    SOUL -->|"soul content"| PARSE
+    SOUL -->|"SoulMemory.front.name"| PARSE
     PARSE --> ALIAS
     ALIAS -->|"yes: alias string"| REST_SEND
     ALIAS -->|"no"| DDP_SEND

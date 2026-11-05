@@ -24,8 +24,8 @@ REST API client construction (host, TLS, user_id, auth_token), API URL building 
 
 ## rockbot crate (330 tests, 20 files)
 
-### `src/memory.rs` — 35 tests
-`ConversationHistory` lifecycle (append, char_count, needs_archive, oldest_messages, prune_first, archive_seq), `MemoryManager` room creation/deduplication, context building with message window trimming, `RoomState` construction (channel + DM with Chinese fname), orphaned tool call/message stripping (6 scenarios), identity name extraction from Soul Memory markdown (8 scenarios: standard, emoji, CJK, same-line, no-match, too-long, not-a-header, empty, plus 2 display-name self-detection regex tests).
+### `src/memory.rs` — 62 tests
+`ConversationHistory` lifecycle (append, char_count, needs_archive, oldest_messages, prune_first, archive_seq), `MemoryManager` room creation/deduplication, context building with message window trimming, `RoomState` construction (channel + DM with Chinese fname), orphaned tool call/message stripping (6 scenarios), identity name extraction from Soul Memory markdown (10 scenarios incl. chars-vs-bytes limit), soul front-matter parsing/rendering (legacy, CRLF+BOM, quoted values, unknown keys, horizontal rule, unterminated/broken blocks, round-trip), legacy soul migration (needs-migration gate, bullet move, idempotence, schema/date stamping), `build_context` front-matter stripping, body-only truncation, identity-line dedupe, display-name preference, and the once-per-room migration guard.
 - Helper: `make_msg()`
 
 ### `src/harness.rs` — 49 tests
@@ -56,7 +56,7 @@ Full `AgentHarness`: simple response, DM handling, provider error fallback, max_
 - Helper: `make_test_tool()`
 
 ### `src/tools/edit_soul.rs` — 3 tests
-`EditSoulTool` definition (required content field, webdav_dir parameter), missing content error, soul path construction.
+`EditSoulTool` definition (front-matter template, `previous_name` not LLM-facing, required content field, webdav_dir parameter), missing content error, soul path construction.
 
 ### `src/tools/save_knowledge.rs` — 4 tests
 `SaveKnowledgeTool` definition (category enum: skill/secret/note), error paths (missing category, invalid category), tag parsing with empty/missing edge cases.
