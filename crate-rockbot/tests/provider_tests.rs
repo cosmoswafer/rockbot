@@ -645,6 +645,7 @@ fn test_usage_info() {
         prompt_tokens: 100,
         completion_tokens: 50,
         total_tokens: 150,
+        reasoning_tokens: None,
     };
     assert_eq!(usage.total_tokens, 150);
 }

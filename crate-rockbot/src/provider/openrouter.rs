@@ -147,13 +147,7 @@ impl OpenRouterProvider {
             })
             .unwrap_or_default();
 
-        let usage = body.get("usage").and_then(|u| {
-            Some(UsageInfo {
-                prompt_tokens: u.get("prompt_tokens")?.as_u64()?,
-                completion_tokens: u.get("completion_tokens")?.as_u64()?,
-                total_tokens: u.get("total_tokens")?.as_u64()?,
-            })
-        });
+        let usage = body.get("usage").and_then(UsageInfo::from_json);
 
         Ok(CompletionResult {
             text,

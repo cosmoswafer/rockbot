@@ -31,6 +31,13 @@ pub trait AiProvider: Send + Sync {
     fn supports_vision(&self) -> bool {
         false
     }
+
+    /// Whether the provider accepts `thinking: {type: "disabled"}` on a chat
+    /// request. Only providers that advertise it receive the field on a
+    /// truncation retry (DeepSeek reasoning models).
+    fn supports_thinking_toggle(&self) -> bool {
+        false
+    }
 }
 
 #[async_trait]

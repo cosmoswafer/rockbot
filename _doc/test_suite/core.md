@@ -22,15 +22,15 @@ REST API client construction (host, TLS, user_id, auth_token), API URL building 
 
 ---
 
-## rockbot crate (330 tests, 20 files)
+## rockbot crate (558 tests, 20 files)
 
 ### `src/memory.rs` — 62 tests
 `ConversationHistory` lifecycle (append, char_count, needs_archive, oldest_messages, prune_first, archive_seq), `MemoryManager` room creation/deduplication, context building with message window trimming, `RoomState` construction (channel + DM with Chinese fname), orphaned tool call/message stripping (6 scenarios), identity name extraction from Soul Memory markdown (10 scenarios incl. chars-vs-bytes limit), soul front-matter parsing/rendering (legacy, CRLF+BOM, quoted values, unknown keys, horizontal rule, unterminated/broken blocks, round-trip), legacy soul migration (needs-migration gate, bullet move, idempotence, schema/date stamping), `build_context` front-matter stripping, body-only truncation, identity-line dedupe, display-name preference, and the once-per-room migration guard.
 - Helper: `make_msg()`
 
-### `src/harness.rs` — 49 tests
-Full `AgentHarness`: simple response, DM handling, provider error fallback, max_iterations loop-limit, construction, image ID tracking (take/consume), `ImageCache` store/retrieve/consume, model resolution, archive without WebDAV, `check_and_archive` sequencing, summarization, `inject_room_context` (generic + image_gen variants), attachment reference URL injection with prompt matching/merging, `compute_webdav_dir` (8 variants: r-/d- prefix, hyphens, dots, Unicode, empty, fname preference), vision image caching from markdown (5 scenarios), vision image injection (4 scenarios: multipart, pool drain, empty noop, numbered labels), truncate-and-summarize (4 scenarios: below/above limit, system-prompt preservation, last-message preservation), process_message end-to-end effects.
-- Helpers: `MockProvider` (implements `AiProvider` with `Mutex<Vec<CompletionResult>>` queue + `AtomicUsize` counter), `make_test_config()`
+### `src/harness.rs` — 82 tests
+Full `AgentHarness`: simple response, DM handling, provider error fallback, max_iterations loop-limit, construction, image ID tracking (take/consume), `ImageCache` store/retrieve/consume, model resolution, archive without WebDAV, `check_and_archive` sequencing, summarization, `inject_room_context` (generic + image_gen variants), attachment reference URL injection with prompt matching/merging, `compute_webdav_dir` (8 variants: r-/d- prefix, hyphens, dots, Unicode, empty, fname preference), vision image caching from markdown (5 scenarios), vision image injection (4 scenarios: multipart, pool drain, empty noop, numbered labels), truncate-and-summarize (4 scenarios: below/above limit, system-prompt preservation, last-message preservation), process_message end-to-end effects, finish-reason handling (issue #117: `length`/empty retry with `max_tokens_retry`, no bogus assistant turn after a failed retry, content-filter reply, truncated text accepted when retries are disabled, output-budget clamping to the context window).
+- Helpers: `MockProvider` (implements `AiProvider` with `Mutex<Vec<CompletionResult>>` queue + recorded `ChatRequest`s + `AtomicUsize` counter), `make_test_config()`
 
 ### `src/tools/web_search.rs` — 14 tests
 `WebSearchTool` definition, `to_def()`, error paths (missing query, invalid JSON), argument parsing with optionals/defaults/num_results bounds (1-20), Exa API request body construction (highlights, non-neural type, no deprecated params), highlight result parsing, text fallback truncation.

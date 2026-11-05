@@ -95,10 +95,14 @@ type consumed by the agent harness.
 | `persist_interval_secs`| `u64`          | Snapshot persist timer interval (default 60)                  |
 | `max_context_bytes`    | `BoundedUsize` | Max byte size for context (default 4MB ≈ 1M tokens). Triggers inline trim and image-stripping when exceeded. Validated 1..=100_000_000 |
 | `max_attachment_bytes` | `u64`          | Max size of a single attachment in bytes (default 25_000_000) |
-| `model_context_length` | `u32`          | Model's max context window in tokens (default 1_000_000). 85% threshold triggers LLM summarization after LLM calls when usage nears limit. |
+| `model_context_length` | `u32`          | Model's max context window in tokens (default 128_000). 85% threshold triggers LLM summarization after LLM calls when usage nears limit. |
+| `max_tokens`           | `Option<u32>`  | Output-token budget for chat completions. `None` (default) omits `max_tokens` so the model's own default budget applies; an explicit value is clamped to 3/4 of `model_context_length`. |
+| `max_tokens_retry`     | `u32`          | Explicit budget (default 32_768) for the single truncation retry (`finish_reason = length` / empty completion). |
+| `max_tokens_summary`   | `u32`          | Output-token budget for the summarization completion (default 4_096). |
+| `retry_on_truncation`  | `bool`         | Retry a truncated/empty completion once with `max_tokens_retry` (default true). |
 | `summarization_enabled` | `bool`        | If true, token/byte pressure triggers LLM summarization (default true). If false, falls back to strip-half. |
 | `summarization_ratio`  | `f64`          | Portion of oldest messages to summarize (default 0.6 = 60%). Remaining 40% are retained. |
-| `summarization_target_tokens` | `usize`  | Target max tokens for the summarization prompt instruction (default 1024). |
+| `summarization_target_tokens` | `usize`  | Target max tokens for the summarization prompt instruction (default 2048). |
 
 #### `ProviderConfig`
 

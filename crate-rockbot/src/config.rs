@@ -213,6 +213,24 @@ pub struct ModelConfig {
     pub max_attachment_bytes: u64,
     #[serde(default = "default_model_context_length")]
     pub model_context_length: u32,
+    /// Output-token budget for chat completions. `None` (default) omits
+    /// `max_tokens` from the request, so the provider/model's own output
+    /// budget applies (issue #117: the old hardcoded 4096 was too small for
+    /// reasoning models, which can spend the whole budget on hidden thinking).
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
+    /// Explicit budget for the single truncation retry (`finish_reason =
+    /// length`, or an empty completion). Clamped to 3/4 of
+    /// `model_context_length`.
+    #[serde(default = "default_max_tokens_retry")]
+    pub max_tokens_retry: u32,
+    /// Output-token budget for the summarization completion.
+    #[serde(default = "default_max_tokens_summary")]
+    pub max_tokens_summary: u32,
+    /// Retry once with `max_tokens_retry` when a completion is truncated
+    /// (`finish_reason = length`) or empty.
+    #[serde(default = "default_retry_on_truncation")]
+    pub retry_on_truncation: bool,
     #[serde(default = "default_summarization_enabled")]
     pub summarization_enabled: bool,
     #[serde(default = "default_summarization_ratio")]
@@ -225,6 +243,18 @@ fn default_model_context_length() -> u32 {
     128_000
 }
 
+fn default_max_tokens_retry() -> u32 {
+    32_768
+}
+
+fn default_max_tokens_summary() -> u32 {
+    4_096
+}
+
+fn default_retry_on_truncation() -> bool {
+    true
+}
+
 fn default_summarization_enabled() -> bool {
     true
 }
@@ -234,7 +264,7 @@ fn default_summarization_ratio() -> f64 {
 }
 
 fn default_summarization_target_tokens() -> usize {
-    1024
+    2_048
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -350,6 +380,10 @@ impl Default for ModelConfig {
             max_context_bytes: default_max_context_bytes(),
             max_attachment_bytes: default_max_attachment_bytes(),
             model_context_length: default_model_context_length(),
+            max_tokens: None,
+            max_tokens_retry: default_max_tokens_retry(),
+            max_tokens_summary: default_max_tokens_summary(),
+            retry_on_truncation: default_retry_on_truncation(),
             summarization_enabled: default_summarization_enabled(),
             summarization_ratio: default_summarization_ratio(),
             summarization_target_tokens: default_summarization_target_tokens(),
@@ -974,6 +1008,44 @@ name = "deepseek"
 api_key = "sk-test"
 base_url = "https://api.deepseek.com/v1"
 "#.to_string()
+    }
+
+    #[test]
+    fn test_output_budget_defaults_issue117() {
+        let config = AppConfig::from_toml(&(make_base_config() + r#"
+[model]
+default_provider = "openrouter"
+default_model = "gpt"
+"#)).unwrap();
+        let active = config.active_model();
+        assert_eq!(
+            active.max_tokens, None,
+            "the request must omit max_tokens and use the model default"
+        );
+        assert_eq!(active.max_tokens_retry, 32_768);
+        assert_eq!(active.max_tokens_summary, 4_096);
+        assert!(active.retry_on_truncation);
+        assert_eq!(active.summarization_target_tokens, 2_048);
+    }
+
+    #[test]
+    fn test_output_budget_overrides_issue117() {
+        let config = AppConfig::from_toml(&(make_base_config() + r#"
+[model]
+default_provider = "openrouter"
+default_model = "gpt"
+max_tokens = 8_192
+max_tokens_retry = 16_384
+max_tokens_summary = 2_048
+retry_on_truncation = false
+summarization_target_tokens = 1_024
+"#)).unwrap();
+        let active = config.active_model();
+        assert_eq!(active.max_tokens, Some(8_192));
+        assert_eq!(active.max_tokens_retry, 16_384);
+        assert_eq!(active.max_tokens_summary, 2_048);
+        assert!(!active.retry_on_truncation);
+        assert_eq!(active.summarization_target_tokens, 1_024);
     }
 
     #[test]

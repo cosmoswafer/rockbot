@@ -80,9 +80,18 @@ persist_interval_secs = 120
 max_context_bytes = 4_000_000
 max_attachment_bytes = 25_000_000
 model_context_length = 128_000
+# Output budget for chat completions. Left commented out ⇒ no `max_tokens`
+# field is sent and the model's own default budget applies (issue #117).
+# max_tokens = 16_384
+# Explicit budget for the single truncation retry (finish_reason = "length").
+max_tokens_retry = 32_768
+# Output budget for the summarization completion.
+max_tokens_summary = 4_096
+# Retry once with max_tokens_retry when a completion is truncated or empty.
+retry_on_truncation = true
 summarization_enabled = true
 summarization_ratio = 0.6
-summarization_target_tokens = 1024
+summarization_target_tokens = 2_048
 
 [rocketchat.server]
 url = "localhost"
@@ -99,9 +108,18 @@ persist_interval_secs = 120
 max_context_bytes = 4_000_000
 max_attachment_bytes = 25_000_000
 model_context_length = 128_000
+# Output budget for chat completions. Left commented out ⇒ no `max_tokens`
+# field is sent and the model's own default budget applies (issue #117).
+# max_tokens = 16_384
+# Explicit budget for the single truncation retry (finish_reason = "length").
+max_tokens_retry = 32_768
+# Output budget for the summarization completion.
+max_tokens_summary = 4_096
+# Retry once with max_tokens_retry when a completion is truncated or empty.
+retry_on_truncation = true
 summarization_enabled = true
 summarization_ratio = 0.6
-summarization_target_tokens = 1024
+summarization_target_tokens = 2_048
 
 [matrix.server]
 homeserver = ""
@@ -120,9 +138,18 @@ persist_interval_secs = 120
 max_context_bytes = 4_000_000
 max_attachment_bytes = 25_000_000
 model_context_length = 128_000
+# Output budget for chat completions. Left commented out ⇒ no `max_tokens`
+# field is sent and the model's own default budget applies (issue #117).
+# max_tokens = 16_384
+# Explicit budget for the single truncation retry (finish_reason = "length").
+max_tokens_retry = 32_768
+# Output budget for the summarization completion.
+max_tokens_summary = 4_096
+# Retry once with max_tokens_retry when a completion is truncated or empty.
+retry_on_truncation = true
 summarization_enabled = true
 summarization_ratio = 0.6
-summarization_target_tokens = 1024
+summarization_target_tokens = 2_048
 
 [webdav]
 url = ""

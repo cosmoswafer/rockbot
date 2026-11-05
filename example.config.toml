@@ -32,6 +32,11 @@ password = "EDITME"
 [rocketchat.model]
 default_provider = "openrouter"
 default_model = "gpt"
+# Optional output budget. Omitted ⇒ the model's own default applies.
+# max_tokens = 16_384
+# max_tokens_retry = 32_768
+# max_tokens_summary = 4_096
+# retry_on_truncation = true
 
 [webdav]
 url = "https://cloud.example.com"

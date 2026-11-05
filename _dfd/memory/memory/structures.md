@@ -208,7 +208,7 @@ Fields from `ModelConfig` in [Configuration Management](../../infra/config/main-
 | `memory_ttl_secs`      | `u64`   | 300     | Room idle timeout — evict from memory (after snapshot persisted) |
 | `persist_interval_secs`| `u64`   | 60      | How often the timer writes dirty snapshots to WebDAV |
 | `max_context_bytes`    | `usize` | 4_000_000 | Max byte size for context (triggers inline trim + post-reply summarization flag) |
-| `model_context_length` | `u32`   | 1_000_000 | Model's max context tokens; 85% threshold triggers post-LLM summarization |
+| `model_context_length` | `u32`   | 128_000 | Model's max context tokens; 85% threshold triggers post-LLM summarization |
 
 Field from `WebDavConfig` in [Configuration Management](../../infra/config/main-path.md):
 

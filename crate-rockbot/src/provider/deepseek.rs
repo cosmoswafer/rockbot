@@ -191,13 +191,7 @@ impl DeepSeekProvider {
             })
             .unwrap_or_default();
 
-        let usage = body.get("usage").and_then(|u| {
-            Some(UsageInfo {
-                prompt_tokens: u.get("prompt_tokens")?.as_u64()?,
-                completion_tokens: u.get("completion_tokens")?.as_u64()?,
-                total_tokens: u.get("total_tokens")?.as_u64()?,
-            })
-        });
+        let usage = body.get("usage").and_then(UsageInfo::from_json);
 
         Ok(CompletionResult {
             text,
@@ -350,6 +344,10 @@ impl AiProvider for DeepSeekProvider {
     fn supports_vision(&self) -> bool {
         self.model == VISION_MODEL
     }
+
+    fn supports_thinking_toggle(&self) -> bool {
+        true
+    }
 }
 
 /// Detect provider context-length exceeded errors from HTTP 400 error messages.
@@ -461,6 +459,30 @@ mod tests {
         assert!(result.tool_calls.is_empty());
         assert!(result.reasoning_content.is_none());
         assert_eq!(result.usage.unwrap().total_tokens, 15);
+    }
+
+    #[test]
+    fn test_parse_response_captures_reasoning_tokens_issue117() {
+        let json = serde_json::json!({
+            "choices": [{
+                "index": 0,
+                "message": { "role": "assistant", "content": "" },
+                "finish_reason": "length"
+            }],
+            "usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 4096,
+                "total_tokens": 4196,
+                "completion_tokens_details": { "reasoning_tokens": 4096 }
+            }
+        });
+
+        let result = DeepSeekProvider::parse_response_body(&json).unwrap();
+        assert_eq!(result.finish, FinishReason::Length);
+        assert_eq!(result.text, Some(String::new()));
+        let usage = result.usage.expect("usage parsed");
+        assert_eq!(usage.completion_tokens, 4096);
+        assert_eq!(usage.reasoning_tokens, Some(4096));
     }
 
     #[test]

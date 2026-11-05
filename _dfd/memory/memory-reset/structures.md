@@ -42,10 +42,14 @@ Fields from `ModelConfig` in [Configuration Management](../../infra/config/main-
 | Field                  | Type    | Default | Notes |
 | ---------------------- | ------- | ------- | ----- |
 | `max_context_bytes`    | `usize` | 4_000_000 | byte-size overflow trigger (pre-LLM inline trim, flag for post-reply summarization) |
-| `model_context_length` | `u32`   | 1_000_000 | Model's max context tokens. 85% threshold (`* 0.85`) triggers post-LLM summarization. Default 1M. |
+| `model_context_length` | `u32`   | 128_000 | Model's max context tokens. 85% threshold (`* 0.85`) triggers post-LLM summarization; also clamps explicit output budgets to 3/4 of the window. |
+| `max_tokens`           | `Option<u32>` | `None` | Chat output budget; `None` omits `max_tokens` so the model default applies (issue #117). |
+| `max_tokens_retry`     | `u32`   | 32_768 | Budget for the single truncation retry. |
+| `max_tokens_summary`   | `u32`   | 4_096 | Output budget for the summarization completion. |
+| `retry_on_truncation`  | `bool`  | `true` | Retry a `finish_reason = length` or empty completion once with `max_tokens_retry`. |
 | `summarization_enabled` | `bool` | `true` | If `true`, token/byte pressure triggers LLM summarization. If `false`, falls back to strip-half. |
 | `summarization_ratio`  | `f64`   | 0.6 | Portion of oldest messages to summarize (0.6 = 60%). Remaining 40% are retained. |
-| `summarization_target_tokens` | `usize` | 1024 | Target max tokens for the summarization LLM prompt instruction. |
+| `summarization_target_tokens` | `usize` | 2048 | Target max tokens for the summarization LLM prompt instruction. |
 
 ## 5. Trigger Summary
 

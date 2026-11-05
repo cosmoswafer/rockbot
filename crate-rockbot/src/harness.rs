@@ -14,7 +14,7 @@ use crate::knowledge::KnowledgeManager;
 use crate::memory::{MemoryManager, SoulMemory, count_json_bytes, strip_images_from_message, strip_orphaned_tool_calls, truncate_message_content};
 use crate::provider::AiProvider;
 use crate::tool::ToolRegistry;
-use crate::types::{ChatMessage, ChatRequest, Role};
+use crate::types::{ChatMessage, ChatRequest, FinishReason, Role, ThinkingConfig};
 use crate::utils::now_iso_string;
 
 /// Result of a memory reset operation.
@@ -294,6 +294,9 @@ impl AgentHarness {
         let mut image_ids_this_turn: Vec<String> = Vec::new();
         let mut context_reset = false;
         let mut tool_call_recovery = false;
+        // Set when the previous completion was truncated/empty and is being
+        // retried once with a larger output budget (issue #117).
+        let mut retry_pending = false;
 
         loop {
             iterations += 1;
@@ -312,9 +315,11 @@ impl AgentHarness {
                 return Ok(Some(fallback.to_string()));
             }
 
+            let is_retry = std::mem::take(&mut retry_pending);
             let request = ChatRequest {
                 model: model.clone(),
-                messages,
+                // Cloned so a truncation retry can resend the same context.
+                messages: messages.clone(),
                 tools: if have_tools {
                     Some(tool_defs.clone())
                 } else {
@@ -322,8 +327,15 @@ impl AgentHarness {
                 },
                 stream: false,
                 temperature: Some(0.7),
-                max_tokens: Some(4096),
-                thinking: None,
+                max_tokens: self.output_token_budget(is_retry),
+                thinking: if is_retry && self.provider.supports_thinking_toggle() {
+                    // Reasoning models can burn the whole budget on hidden
+                    // thinking; disable it for the truncation retry so the
+                    // larger budget goes to visible output.
+                    Some(ThinkingConfig::disabled())
+                } else {
+                    None
+                },
                 reasoning_effort: None,
                 tool_choice: None,
             };
@@ -340,6 +352,31 @@ impl AgentHarness {
                         result.text.is_some(),
                     );
 
+                    let text_len = result.text.as_deref().unwrap_or("").trim().len();
+                    let empty = text_len == 0;
+                    let retryable = result.finish.is_truncated()
+                        || (empty && !result.finish.is_failure());
+                    if result.tool_calls.is_empty()
+                        && retryable
+                        && !is_retry
+                        && self.config.active_model().retry_on_truncation
+                    {
+                        warn!(
+                            "Truncated/empty completion for room {} (finish={:?}, text_len={}, \
+                             completion_tokens={:?}, reasoning_tokens={:?}, iteration={}); \
+                             retrying once with max_tokens={:?}",
+                            room_id,
+                            result.finish,
+                            text_len,
+                            result.usage.as_ref().map(|u| u.completion_tokens),
+                            result.usage.as_ref().and_then(|u| u.reasoning_tokens),
+                            iterations,
+                            self.output_token_budget(true),
+                        );
+                        retry_pending = true;
+                        continue;
+                    }
+
                     // Check token pressure: if usage nears model context limit, flag for background summarization
                     if let Some(ref usage) = result.usage {
                         let threshold = (self.config.active_model().model_context_length as f64 * 0.85) as u64;
@@ -353,6 +390,18 @@ impl AgentHarness {
                     }
 
                     if !result.tool_calls.is_empty() {
+                        if result.finish.is_truncated() {
+                            warn!(
+                                "Truncated tool-call completion for room {} (finish={:?}, \
+                                 tool_calls={}, completion_tokens={:?}, reasoning_tokens={:?}); \
+                                 tool arguments may be clamped",
+                                room_id,
+                                result.finish,
+                                result.tool_calls.len(),
+                                result.usage.as_ref().map(|u| u.completion_tokens),
+                                result.usage.as_ref().and_then(|u| u.reasoning_tokens),
+                            );
+                        }
                         let assistant_msg = ChatMessage::assistant_with_tool_calls(
                             "",
                             result.tool_calls.clone(),
@@ -649,41 +698,51 @@ impl AgentHarness {
                         continue;
                     }
 
-                    if let Some(text) = result.text {
-                        let clean = text.trim().to_string();
-                        let assistant_msg = if clean.is_empty() {
-                            ChatMessage::assistant("(no response)")
-                        } else {
-                            ChatMessage::assistant(&clean)
-                        };
-                        self.append_to_history(room_id, assistant_msg);
-
-                        let reply = if clean.is_empty() {
-                            "I processed your request but received an empty response.".to_string()
-                        } else {
-                            clean
-                        };
-                        debug!(
-                            "process_message done: total_elapsed_ms={} iterations={}",
-                            msg_start.elapsed().as_millis(),
+                    let clean = result.text.as_deref().unwrap_or("").trim().to_string();
+                    let unusable = clean.is_empty() || result.finish.is_failure();
+                    if unusable {
+                        warn!(
+                            "Unusable completion for room {} (finish={:?}, text_len={}, \
+                             completion_tokens={:?}, reasoning_tokens={:?}, iteration={}): \
+                             not persisting an assistant turn",
+                            room_id,
+                            result.finish,
+                            clean.len(),
+                            result.usage.as_ref().map(|u| u.completion_tokens),
+                            result.usage.as_ref().and_then(|u| u.reasoning_tokens),
                             iterations,
                         );
-                        self.last_image_ids = image_ids_this_turn;
-                        if !self.last_image_ids.is_empty() {
-                            debug!("Carrying {} generated image(s) for post-reply upload: {:?}",
-                                self.last_image_ids.len(), self.last_image_ids);
-                        }
-                        return Ok(Some(reply));
+                        // Deliberately do NOT append an assistant message:
+                        // a bogus "(no response)" turn would anchor the next
+                        // request (issue #117).
+                        debug!(
+                            "process_message unusable completion: total_elapsed_ms={}",
+                            msg_start.elapsed().as_millis(),
+                        );
+                        return Ok(Some(Self::completion_failure_reply(&result.finish).to_string()));
                     }
 
-                    let fallback = "I received a response but it was empty. Please try again.";
-                    let assistant_msg = ChatMessage::assistant(fallback);
-                    self.append_to_history(room_id, assistant_msg);
+                    if result.finish.is_truncated() {
+                        warn!(
+                            "Truncated reply accepted for room {} after retry \
+                             (finish=length, text_len={})",
+                            room_id,
+                            clean.len(),
+                        );
+                    }
+
+                    self.append_to_history(room_id, ChatMessage::assistant(&clean));
                     debug!(
-                        "process_message empty response fallback: total_elapsed_ms={}",
+                        "process_message done: total_elapsed_ms={} iterations={}",
                         msg_start.elapsed().as_millis(),
+                        iterations,
                     );
-                    return Ok(Some(fallback.to_string()));
+                    self.last_image_ids = image_ids_this_turn;
+                    if !self.last_image_ids.is_empty() {
+                        debug!("Carrying {} generated image(s) for post-reply upload: {:?}",
+                            self.last_image_ids.len(), self.last_image_ids);
+                    }
+                    return Ok(Some(clean));
                 }
                 Err(e) => {
                     if matches!(e, RockBotError::ContextLengthExceeded(_)) {
@@ -781,6 +840,39 @@ impl AgentHarness {
                     return Ok(Some(fallback));
                 }
             }
+        }
+    }
+
+    /// Output-token budget for one chat completion, clamped so the prompt
+    /// still fits the model's context window. `None` (default `max_tokens`)
+    /// omits the field entirely, leaving the budget to the provider/model.
+    fn output_token_budget(&self, retry: bool) -> Option<u32> {
+        let model = self.config.active_model();
+        let requested = if retry {
+            Some(model.max_tokens_retry)
+        } else {
+            model.max_tokens
+        };
+        let ceiling = (model.model_context_length / 4 * 3).max(1024);
+        requested.map(|tokens| tokens.clamp(1, ceiling))
+    }
+
+    /// User-facing reply for a completion that cannot be used (truncated after
+    /// the retry, content-filtered, or resource-starved).
+    fn completion_failure_reply(finish: &FinishReason) -> &'static str {
+        match finish {
+            FinishReason::Length => {
+                "I ran out of output budget while composing that answer. \
+                 Please ask me to continue, or narrow the request."
+            }
+            FinishReason::ContentFilter => {
+                "The provider blocked that response with its content filter. \
+                 Please rephrase."
+            }
+            FinishReason::InsufficientSystemResource => {
+                "The model ran out of resources while answering. Please try again."
+            }
+            _ => "I received an incomplete response from the model. Please try again.",
         }
     }
 
@@ -1121,7 +1213,7 @@ impl AgentHarness {
             tools: None,
             stream: false,
             temperature: Some(0.3),
-            max_tokens: Some(1024),
+            max_tokens: Some(self.config.active_model().max_tokens_summary),
             thinking: None,
             reasoning_effort: None,
             tool_choice: None,
@@ -1707,11 +1799,12 @@ mod tests {
     use crate::provider::AiProvider;
     use crate::tool::Tool;
     use crate::tools::WebFetchTool;
-    use crate::types::{CompletionResult, FinishReason, ToolCall};
+    use crate::types::{CompletionResult, FinishReason, ToolCall, UsageInfo};
     use async_trait::async_trait;
 
     struct MockProvider {
         responses: std::sync::Mutex<Vec<Result<CompletionResult>>>,
+        requests: std::sync::Arc<std::sync::Mutex<Vec<ChatRequest>>>,
         call_count: std::sync::atomic::AtomicUsize,
     }
 
@@ -1721,6 +1814,7 @@ mod tests {
                 responses: std::sync::Mutex::new(
                     responses.into_iter().map(Ok).collect(),
                 ),
+                requests: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
                 call_count: std::sync::atomic::AtomicUsize::new(0),
             }
         }
@@ -1728,15 +1822,27 @@ mod tests {
         fn with_result_queue(responses: Vec<Result<CompletionResult>>) -> Self {
             Self {
                 responses: std::sync::Mutex::new(responses),
+                requests: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
                 call_count: std::sync::atomic::AtomicUsize::new(0),
             }
         }
 
+        /// Handle usable after the provider is boxed into the harness.
+        fn requests_handle(&self) -> std::sync::Arc<std::sync::Mutex<Vec<ChatRequest>>> {
+            self.requests.clone()
+        }
+    }
+
+    fn requests_snapshot(
+        handle: &std::sync::Arc<std::sync::Mutex<Vec<ChatRequest>>>,
+    ) -> Vec<ChatRequest> {
+        handle.lock().unwrap().clone()
     }
 
     #[async_trait]
     impl AiProvider for MockProvider {
-        async fn complete(&self, _request: ChatRequest) -> Result<CompletionResult> {
+        async fn complete(&self, request: ChatRequest) -> Result<CompletionResult> {
+            self.requests.lock().unwrap().push(request);
             let mut responses = self.responses.lock().unwrap();
             self.call_count
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -1821,6 +1927,230 @@ chat = "mock-model"
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap().unwrap(), "DM response");
+    }
+
+    #[tokio::test]
+    async fn test_truncated_empty_completion_retries_with_larger_budget() {
+        let config = make_test_config();
+        let mock = MockProvider::new(vec![
+            CompletionResult {
+                text: Some(String::new()),
+                tool_calls: vec![],
+                finish: FinishReason::Length,
+                reasoning_content: Some("hidden reasoning".into()),
+                usage: Some(UsageInfo {
+                    prompt_tokens: 100,
+                    completion_tokens: 4096,
+                    total_tokens: 4196,
+                    reasoning_tokens: Some(4096),
+                }),
+            },
+            CompletionResult {
+                text: Some("Recovered answer".into()),
+                tool_calls: vec![],
+                finish: FinishReason::Stop,
+                reasoning_content: None,
+                usage: None,
+            },
+        ]);
+        let requests = mock.requests_handle();
+        let mut harness = AgentHarness::new(
+            config,
+            Box::new(mock),
+            None,
+            Arc::new(ImageCache::new()),
+            "@testbot",
+        );
+
+        let reply = harness
+            .process_message("room1", "general", "General", false, "user", "draw miku", &[], &[])
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(reply, "Recovered answer");
+        let requests = requests_snapshot(&requests);
+        assert_eq!(requests.len(), 2, "expected one retry");
+        assert_eq!(
+            requests[0].max_tokens, None,
+            "first attempt must leave the budget to the model default"
+        );
+        assert_eq!(
+            requests[1].max_tokens,
+            Some(config_max_tokens_retry()),
+            "retry must use the configured retry budget"
+        );
+    }
+
+    fn config_max_tokens_retry() -> u32 {
+        crate::config::ModelConfig::default().max_tokens_retry
+    }
+
+    #[tokio::test]
+    async fn test_truncated_empty_after_retry_does_not_persist_assistant_turn() {
+        let config = make_test_config();
+        let truncated = || CompletionResult {
+            text: Some(String::new()),
+            tool_calls: vec![],
+            finish: FinishReason::Length,
+            reasoning_content: None,
+            usage: Some(UsageInfo {
+                prompt_tokens: 100,
+                completion_tokens: 4096,
+                total_tokens: 4196,
+                reasoning_tokens: Some(4096),
+            }),
+        };
+        let mock = MockProvider::new(vec![truncated(), truncated()]);
+        let requests = mock.requests_handle();
+        let mut harness = AgentHarness::new(
+            config,
+            Box::new(mock),
+            None,
+            Arc::new(ImageCache::new()),
+            "@testbot",
+        );
+
+        let reply = harness
+            .process_message("room1", "general", "General", false, "user", "draw miku", &[], &[])
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert!(
+            reply.contains("output budget"),
+            "expected the budget-exhaustion reply, got: {reply}"
+        );
+        assert_eq!(requests_snapshot(&requests).len(), 2);
+        let room = harness.memory().get("room1").expect("room1 exists");
+        assert_eq!(
+            room.history.messages.len(),
+            1,
+            "failed completion must not persist an assistant turn"
+        );
+        assert_eq!(room.history.messages[0].role, Role::User);
+    }
+
+    #[tokio::test]
+    async fn test_content_filter_returns_distinct_reply_without_assistant_turn() {
+        let config = make_test_config();
+        let mock = MockProvider::new(vec![CompletionResult {
+            text: Some(String::new()),
+            tool_calls: vec![],
+            finish: FinishReason::ContentFilter,
+            reasoning_content: None,
+            usage: None,
+        }]);
+        let mut harness = AgentHarness::new(
+            config,
+            Box::new(mock),
+            None,
+            Arc::new(ImageCache::new()),
+            "@testbot",
+        );
+
+        let reply = harness
+            .process_message("room1", "general", "General", false, "user", "something", &[], &[])
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert!(
+            reply.contains("content filter"),
+            "expected the content-filter reply, got: {reply}"
+        );
+        let room = harness.memory().get("room1").expect("room1 exists");
+        assert_eq!(room.history.messages.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_truncated_reply_accepted_when_retry_disabled() {
+        let config_toml = r#"
+[rocketchat.server]
+url = "test.example.com"
+username = "bot"
+password = "secret"
+
+[model]
+default_provider = "mock"
+default_model = "chat"
+retry_on_truncation = false
+
+[[chat_providers]]
+name = "mock"
+api_key = "sk-mock"
+base_url = "https://mock.ai/v1"
+
+[chat_providers.models]
+chat = "mock-model"
+"#;
+        let config = AppConfig::from_toml(config_toml).unwrap();
+        let mock = MockProvider::new(vec![CompletionResult {
+            text: Some("Partial answer".into()),
+            tool_calls: vec![],
+            finish: FinishReason::Length,
+            reasoning_content: None,
+            usage: None,
+        }]);
+        let requests = mock.requests_handle();
+        let mut harness = AgentHarness::new(
+            config,
+            Box::new(mock),
+            None,
+            Arc::new(ImageCache::new()),
+            "@testbot",
+        );
+
+        let reply = harness
+            .process_message("room1", "general", "General", false, "user", "long answer", &[], &[])
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(reply, "Partial answer");
+        assert_eq!(requests_snapshot(&requests).len(), 1);
+        let room = harness.memory().get("room1").expect("room1 exists");
+        assert_eq!(room.history.messages.len(), 2);
+    }
+
+    #[test]
+    fn test_output_token_budget_is_clamped_to_context() {
+        let config_toml = r#"
+[rocketchat.server]
+url = "test.example.com"
+username = "bot"
+password = "secret"
+
+[model]
+default_provider = "mock"
+default_model = "chat"
+model_context_length = 32_000
+max_tokens = 20_000
+max_tokens_retry = 32_768
+
+[[chat_providers]]
+name = "mock"
+api_key = "sk-mock"
+base_url = "https://mock.ai/v1"
+
+[chat_providers.models]
+chat = "mock-model"
+"#;
+        let config = AppConfig::from_toml(config_toml).unwrap();
+        let harness = AgentHarness::new(
+            config,
+            Box::new(MockProvider::new(vec![])),
+            None,
+            Arc::new(ImageCache::new()),
+            "@testbot",
+        );
+
+        assert_eq!(harness.output_token_budget(false), Some(20_000));
+        assert_eq!(
+            harness.output_token_budget(true),
+            Some(24_000),
+            "32k context clamps the 32_768 retry budget to 3/4 of the window"
+        );
     }
 
     #[tokio::test]

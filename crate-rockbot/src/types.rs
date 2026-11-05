@@ -25,6 +25,23 @@ pub enum FinishReason {
     Error,
 }
 
+impl FinishReason {
+    /// The completion was cut off by the output-token budget, so it may be
+    /// empty (all budget consumed by reasoning) or truncated.
+    pub fn is_truncated(&self) -> bool {
+        matches!(self, FinishReason::Length)
+    }
+
+    /// The completion was rejected/aborted by the provider and must not be
+    /// surfaced as a normal assistant answer.
+    pub fn is_failure(&self) -> bool {
+        matches!(
+            self,
+            FinishReason::ContentFilter | FinishReason::InsufficientSystemResource
+        )
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum MessageContent {
@@ -337,6 +354,26 @@ pub struct UsageInfo {
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
     pub total_tokens: u64,
+    /// Hidden reasoning tokens, when the provider reports them
+    /// (`usage.completion_tokens_details.reasoning_tokens`).
+    #[serde(default)]
+    pub reasoning_tokens: Option<u64>,
+}
+
+impl UsageInfo {
+    /// Parse a provider `usage` object. Returns `None` when the mandatory token
+    /// counts are absent (some providers omit `usage` entirely).
+    pub fn from_json(value: &serde_json::Value) -> Option<Self> {
+        Some(Self {
+            prompt_tokens: value.get("prompt_tokens")?.as_u64()?,
+            completion_tokens: value.get("completion_tokens")?.as_u64()?,
+            total_tokens: value.get("total_tokens")?.as_u64()?,
+            reasoning_tokens: value
+                .get("completion_tokens_details")
+                .and_then(|details| details.get("reasoning_tokens"))
+                .and_then(|tokens| tokens.as_u64()),
+        })
+    }
 }
 
 #[derive(Debug, Clone)]
