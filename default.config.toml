@@ -131,6 +131,17 @@ password = ""
 root = ""
 dav_path = "/remote.php/dav"
 snapshot_prefix = ".snapshots"
+# Large-file support (webdav_edit tool). Files at/above stream_threshold_bytes
+# use windowed, streamed reads; files above max_edit_bytes are rewritten through
+# Nextcloud chunked upload (chunk_size_bytes, v2 minimum 5 MiB).
+stream_threshold_bytes = 10485760
+max_edit_bytes = 33554432
+chunk_size_bytes = 5242880
+read_default_lines = 2000
+read_max_lines = 2000
+read_max_bytes = 65536
+read_max_line_chars = 2000
+index_checkpoint_lines = 1000
 
 [search]
 provider = "exa"

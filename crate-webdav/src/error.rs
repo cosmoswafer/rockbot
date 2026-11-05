@@ -32,6 +32,21 @@ pub enum WebDavError {
     #[error("Unexpected HTTP status {status}: {body}")]
     UnexpectedStatus { status: u16, body: String },
 
+    #[error("Precondition failed: {0}")]
+    PreconditionFailed(String),
+
+    #[error("Range not satisfiable: start={start} len={len}")]
+    RangeNotSatisfiable { start: u64, len: u64 },
+
+    #[error("Chunked upload is not supported by this WebDAV endpoint")]
+    ChunkedUploadUnsupported,
+
+    #[error("Line range out of bounds: {0}")]
+    LineOutOfRange(String),
+
+    #[error("File is not valid UTF-8 text: {0}")]
+    NotText(String),
+
     #[error("Config section missing: {0}")]
     ConfigMissing(String),
 

@@ -22,14 +22,14 @@ use rockbot::memory::{ConversationHistory, MemoryManager, PersistSnapshot};
 use rockbot::provider::AiProvider;
 use rockbot::tool::Tool;
 use rockbot::tools::{
-    BraveSearchProvider, CalendarTool, EditSoulTool, ExaSearchProvider, VisionTool, WebDavTool,
-    WebFetchTool, WebSearchTool,
+    BraveSearchProvider, CalendarTool, EditSoulTool, ExaSearchProvider, VisionTool,
+    WebDavEditLimits, WebDavEditTool, WebDavTool, WebFetchTool, WebSearchTool,
 };
 use rockbot::types::{ChatMessage, ChatRequest, CompletionResult, ContentPart, FinishReason, MessageContent, ToolCall};
 use rockbot::validated::{ConfigUrl, NonEmptyString, ProviderName};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use wiremock::matchers::{body_string_contains, header, method, path};
+use wiremock::matchers::{body_string_contains, header, method, path, path_regex};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -735,6 +735,33 @@ async fn test_webdav_write_file() {
 #[tokio::test]
 async fn test_webdav_read_text_file() {
     let mock_server = MockServer::start().await;
+
+    let propfind_body = r#"<?xml version="1.0" encoding="UTF-8"?>
+<d:multistatus xmlns:d="DAV:">
+  <d:response>
+    <d:href>/r-test/docs/readme.md</d:href>
+    <d:propstat>
+      <d:prop>
+        <d:getcontentlength>17</d:getcontentlength>
+        <d:getcontenttype>text/markdown</d:getcontenttype>
+        <d:getetag>"readme-v1"</d:getetag>
+        <d:resourcetype/>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+</d:multistatus>"#;
+
+    Mock::given(method("PROPFIND"))
+        .and(path("/r-test/docs/readme.md"))
+        .and(header("Authorization", "Basic dGVzdDpwYXNz"))
+        .respond_with(
+            ResponseTemplate::new(207)
+                .set_body_string(propfind_body)
+                .insert_header("Content-Type", "application/xml"),
+        )
+        .mount(&mock_server)
+        .await;
 
     Mock::given(method("GET"))
         .and(path("/r-test/docs/readme.md"))
@@ -1697,5 +1724,338 @@ mod openrouter_image_api {
         let msg = err.to_string();
         assert!(msg.contains("HTTP 400"), "got: {msg}");
         assert!(msg.contains("invalid aspect_ratio"), "got: {msg}");
+    }
+}
+
+// ============================================================================
+// _dfd/tools/webdav/large-file-edit.md — windowed reads and guarded edits
+// ============================================================================
+
+mod webdav_edit {
+    use super::*;
+
+    fn tool_for(server: &MockServer) -> WebDavEditTool {
+        let url = format!("{}/", server.uri());
+        WebDavEditTool::new(
+            webdav::WebDavClient::new(&url, "test", "pass").unwrap(),
+            WebDavEditLimits::default(),
+        )
+    }
+
+    async fn mount_stat(
+        server: &MockServer,
+        file: &str,
+        size: u64,
+        etag: &str,
+        content_type: &str,
+    ) {
+        let body = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<d:multistatus xmlns:d="DAV:">
+  <d:response>
+    <d:href>/{file}</d:href>
+    <d:propstat>
+      <d:prop>
+        <d:getcontentlength>{size}</d:getcontentlength>
+        <d:getcontenttype>{content_type}</d:getcontenttype>
+        <d:getetag>"{etag}"</d:getetag>
+        <d:resourcetype/>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+</d:multistatus>"#
+        );
+        Mock::given(method("PROPFIND"))
+            .and(path(format!("/r-test/{file}")))
+            .respond_with(
+                ResponseTemplate::new(207)
+                    .set_body_string(body)
+                    .insert_header("Content-Type", "application/xml"),
+            )
+            .mount(server)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn svg_stat_and_windowed_read() {
+        let server = MockServer::start().await;
+        mount_stat(&server, "art/map.svg", 30, "e1", "image/svg+xml").await;
+        Mock::given(method("GET"))
+            .and(path("/r-test/art/map.svg"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("l1\nl2\nl3\nl4\n"))
+            .mount(&server)
+            .await;
+
+        let tool = tool_for(&server);
+        let stat = tool
+            .execute(r#"{"action":"stat","path":"art/map.svg","webdav_dir":"r-test"}"#)
+            .await
+            .unwrap();
+        assert!(stat.contains("<etag>\"e1\"</etag>"));
+
+        let read = tool
+            .execute(
+                r#"{"action":"read","path":"art/map.svg","webdav_dir":"r-test","offset":2,"limit":2}"#,
+            )
+            .await
+            .unwrap();
+        assert!(read.contains("2: l2"), "got: {read}");
+        assert!(read.contains("3: l3"), "got: {read}");
+        assert!(read.contains("Use offset=4"), "got: {read}");
+    }
+
+    #[tokio::test]
+    async fn byte_window_uses_range() {
+        let server = MockServer::start().await;
+        mount_stat(&server, "one-line.svg", 10, "e1", "image/svg+xml").await;
+        Mock::given(method("GET"))
+            .and(path("/r-test/one-line.svg"))
+            .and(header("Range", "bytes=0-3"))
+            .respond_with(
+                ResponseTemplate::new(206)
+                    .set_body_string("abcd")
+                    .insert_header("Content-Range", "bytes 0-3/10"),
+            )
+            .mount(&server)
+            .await;
+
+        let tool = tool_for(&server);
+        let result = tool
+            .execute(
+                r#"{"action":"read","path":"one-line.svg","webdav_dir":"r-test","byteOffset":0,"byteLimit":4}"#,
+            )
+            .await
+            .unwrap();
+        assert!(result.contains("abcd"), "got: {result}");
+        assert!(result.contains("Bytes 0-4 of 10"), "got: {result}");
+    }
+
+    #[tokio::test]
+    async fn unique_edit_writes_with_if_match() {
+        let server = MockServer::start().await;
+        mount_stat(&server, "notes.txt", 11, "e1", "text/plain").await;
+        Mock::given(method("GET"))
+            .and(path("/r-test/notes.txt"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("alpha\nbeta\n"))
+            .mount(&server)
+            .await;
+        Mock::given(method("PUT"))
+            .and(path("/r-test/notes.txt"))
+            .and(header("If-Match", "\"e1\""))
+            .and(body_string_contains("gamma"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&server)
+            .await;
+
+        let tool = tool_for(&server);
+        let result = tool
+            .execute(
+                r#"{"action":"edit","path":"notes.txt","webdav_dir":"r-test","oldString":"beta","newString":"gamma"}"#,
+            )
+            .await
+            .unwrap();
+        assert!(result.contains("replaced 1 occurrence"), "got: {result}");
+    }
+
+    #[tokio::test]
+    async fn edit_rejects_multiple_matches() {
+        let server = MockServer::start().await;
+        mount_stat(&server, "dup.txt", 3, "e1", "text/plain").await;
+        Mock::given(method("GET"))
+            .and(path("/r-test/dup.txt"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("x x"))
+            .mount(&server)
+            .await;
+
+        let tool = tool_for(&server);
+        let error = tool
+            .execute(
+                r#"{"action":"edit","path":"dup.txt","webdav_dir":"r-test","oldString":"x","newString":"y"}"#,
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("matched 2 times"),
+            "got: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn insert_by_line() {
+        let server = MockServer::start().await;
+        mount_stat(&server, "notes.txt", 4, "e1", "text/plain").await;
+        Mock::given(method("GET"))
+            .and(path("/r-test/notes.txt"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("a\nb\n"))
+            .mount(&server)
+            .await;
+        Mock::given(method("PUT"))
+            .and(path("/r-test/notes.txt"))
+            .and(body_string_contains("a\nx\nb"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&server)
+            .await;
+
+        let tool = tool_for(&server);
+        let result = tool
+            .execute(
+                r#"{"action":"insert","path":"notes.txt","webdav_dir":"r-test","line":1,"text":"x"}"#,
+            )
+            .await
+            .unwrap();
+        assert!(result.contains("Inserted"), "got: {result}");
+    }
+
+    #[tokio::test]
+    async fn grep_returns_numbered_matches() {
+        let server = MockServer::start().await;
+        mount_stat(&server, "log.txt", 18, "e1", "text/plain").await;
+        Mock::given(method("GET"))
+            .and(path("/r-test/log.txt"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("alpha\nbeta\nalphabet\n"))
+            .mount(&server)
+            .await;
+
+        let tool = tool_for(&server);
+        let result = tool
+            .execute(
+                r#"{"action":"grep","path":"log.txt","webdav_dir":"r-test","pattern":"alpha"}"#,
+            )
+            .await
+            .unwrap();
+        assert!(result.contains("1: alpha"), "got: {result}");
+        assert!(result.contains("3: alphabet"), "got: {result}");
+    }
+
+    #[tokio::test]
+    async fn patch_applies_hunks_in_one_write() {
+        let server = MockServer::start().await;
+        mount_stat(&server, "art.svg", 6, "e1", "image/svg+xml").await;
+        Mock::given(method("GET"))
+            .and(path("/r-test/art.svg"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("a\nb\nc\n"))
+            .mount(&server)
+            .await;
+        Mock::given(method("PUT"))
+            .and(path("/r-test/art.svg"))
+            .and(body_string_contains("a\nB\nC\n"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&server)
+            .await;
+
+        let tool = tool_for(&server);
+        let result = tool
+            .execute(
+                r#"{"action":"patch","path":"art.svg","webdav_dir":"r-test","hunks":[{"oldString":"b","newString":"B"},{"oldString":"c","newString":"C"}]}"#,
+            )
+            .await
+            .unwrap();
+        assert!(result.contains("2 hunk(s) applied"), "got: {result}");
+    }
+
+    #[tokio::test]
+    async fn stale_etag_is_rejected() {
+        let server = MockServer::start().await;
+        mount_stat(&server, "notes.txt", 4, "e2", "text/plain").await;
+
+        let tool = tool_for(&server);
+        let error = tool
+            .execute(
+                r#"{"action":"edit","path":"notes.txt","webdav_dir":"r-test","oldString":"a","newString":"b","expectedEtag":"e1"}"#,
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("file changed since it was read"),
+            "got: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn large_edit_streams_through_chunked_upload() {
+        let server = MockServer::start().await;
+        let base = format!("{}/remote.php/dav/files/test/rockbot", server.uri());
+        let stat_body = r#"<?xml version="1.0" encoding="UTF-8"?>
+<d:multistatus xmlns:d="DAV:">
+  <d:response>
+    <d:href>/remote.php/dav/files/test/rockbot/r-test/art.svg</d:href>
+    <d:propstat>
+      <d:prop>
+        <d:getcontentlength>11</d:getcontentlength>
+        <d:getcontenttype>image/svg+xml</d:getcontenttype>
+        <d:getetag>"e1"</d:getetag>
+        <d:resourcetype/>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+</d:multistatus>"#;
+        Mock::given(method("PROPFIND"))
+            .and(path("/remote.php/dav/files/test/rockbot/r-test/art.svg"))
+            .respond_with(
+                ResponseTemplate::new(207)
+                    .set_body_string(stat_body)
+                    .insert_header("Content-Type", "application/xml"),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/remote.php/dav/files/test/rockbot/r-test/art.svg"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("alpha\nbeta\n"))
+            .mount(&server)
+            .await;
+        Mock::given(method("MKCOL"))
+            .and(path_regex(r"^/remote.php/dav/uploads/test/[^/]+$"))
+            .respond_with(ResponseTemplate::new(201))
+            .mount(&server)
+            .await;
+        Mock::given(method("PUT"))
+            .and(path_regex(r"^/remote.php/dav/uploads/test/[^/]+/00001$"))
+            .and(body_string_contains("gamma"))
+            .respond_with(ResponseTemplate::new(201))
+            .mount(&server)
+            .await;
+        Mock::given(method("MOVE"))
+            .and(path_regex(r"^/remote.php/dav/uploads/test/[^/]+/\.file$"))
+            .respond_with(ResponseTemplate::new(201))
+            .mount(&server)
+            .await;
+
+        let limits = WebDavEditLimits {
+            max_edit_bytes: 1,
+            chunk_size_bytes: 1024,
+            ..Default::default()
+        };
+        let tool = WebDavEditTool::new(
+            webdav::WebDavClient::new(&base, "test", "pass").unwrap(),
+            limits,
+        );
+        let result = tool
+            .execute(
+                r#"{"action":"edit","path":"art.svg","webdav_dir":"r-test","oldString":"beta","newString":"gamma"}"#,
+            )
+            .await
+            .unwrap();
+        assert!(result.contains("streaming rewrite"), "got: {result}");
+        assert!(result.contains("replaced 1 occurrence"), "got: {result}");
+    }
+
+    #[tokio::test]
+    async fn binary_file_is_rejected() {
+        let server = MockServer::start().await;
+        mount_stat(&server, "blob.bin", 4, "e1", "application/octet-stream").await;
+        Mock::given(method("GET"))
+            .and(path("/r-test/blob.bin"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(vec![0, 1, 2, 3]))
+            .mount(&server)
+            .await;
+
+        let tool = tool_for(&server);
+        let error = tool
+            .execute(r#"{"action":"read","path":"blob.bin","webdav_dir":"r-test"}"#)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("binary"), "got: {error}");
     }
 }

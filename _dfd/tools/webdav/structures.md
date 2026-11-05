@@ -60,6 +60,44 @@ image_gen, web_fetch) reference this layer instead of repeating it.**
 | `is_dir`   | `bool`   | True if collection (directory)     |
 | `size`     | `u64`    | File size in bytes (0 for dirs)    |
 | `modified` | `String` | Last-modified timestamp            |
+| `etag`     | `Option<String>` | Entity tag from `getetag`  |
+| `content_type` | `Option<String>` | MIME type from `getcontenttype` |
+
+#### `FileStat`
+
+Returned by a depth-0 PROPFIND: `size`, `etag`, `content_type`, `last_modified`,
+`is_dir`.
+
+#### `LineWindow` / `LineIndex` / `ChunkedUpload`
+
+`LineWindow { lines: Vec<Line>, next_line, reached_eof, truncated }` is the
+bounded result of `read_window` / `read_window_from`. `Line` carries a 1-based
+`number` and display `text`.
+
+`LineIndex { etag, size, checkpoint_every, total_lines, offsets }` records the
+byte offset of every N-th line so a line-addressed read can start at the nearest
+checkpoint instead of byte 0. Offsets are `offsets[i] =` byte offset of line
+`1 + i * checkpoint_every`.
+
+`ChunkedUpload` tracks the Nextcloud v2 upload directory
+(`{server}/{dav}/uploads/{user}/{transfer-id}`), destination URL, optional total
+length, and the next chunk ordinal.
+
+`LineOp` selects the streaming line transform: `InsertAfter { line, text }` or
+`ReplaceRange { start, end, text }`.
+
+#### `WebDavConfig` large-file limits
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `stream_threshold_bytes` | 10 MiB | files at/above stream windowed reads |
+| `max_edit_bytes` | 32 MiB | in-RAM edit ceiling; above streams |
+| `chunk_size_bytes` | 5 MiB | chunked-upload chunk size |
+| `read_default_lines` | 2000 | default `limit` for `webdav_edit read` |
+| `read_max_lines` | 2000 | maximum `limit` |
+| `read_max_bytes` | 65536 | byte cap per read window |
+| `read_max_line_chars` | 2000 | per-line display cap |
+| `index_checkpoint_lines` | 1000 | line-index checkpoint interval |
 
 #### `WebDavPath`
 

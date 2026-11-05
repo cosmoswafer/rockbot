@@ -7,8 +7,11 @@ pub mod types;
 pub mod validated;
 
 pub use calendar::{build_vevent_ics, quick_uid};
-pub use client::WebDavClient;
+pub use client::{ChunkedUpload, LineOp, WebDavClient};
 pub use config::WebDavConfig;
 pub use error::{Result, WebDavError};
 pub use path::WebDavPath;
-pub use types::{CaldavEvent, CaldavTodo, NonEmptyString, Reminder, ReminderAction, ReminderTrigger, WebDavEntry};
+pub use types::{
+    ByteWindow, CaldavEvent, CaldavTodo, FileStat, Line, LineIndex, LineWindow, NonEmptyString,
+    Reminder, ReminderAction, ReminderTrigger, WebDavEntry,
+};

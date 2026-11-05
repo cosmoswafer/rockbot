@@ -1274,6 +1274,31 @@ async fn test_webdav_read() {
     let mock_server = MockServer::start().await;
     let file_content = "Hello, WebDAV!";
 
+    let propfind_body = r#"<?xml version="1.0" encoding="UTF-8"?>
+<d:multistatus xmlns:d="DAV:">
+  <d:response>
+    <d:href>/general/notes.txt</d:href>
+    <d:propstat>
+      <d:prop>
+        <d:getcontentlength>15</d:getcontentlength>
+        <d:getcontenttype>text/plain</d:getcontenttype>
+        <d:getetag>"notes-v1"</d:getetag>
+        <d:resourcetype/>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+</d:multistatus>"#;
+    Mock::given(method("PROPFIND"))
+        .and(path("/general/notes.txt"))
+        .respond_with(
+            ResponseTemplate::new(207)
+                .set_body_string(propfind_body)
+                .insert_header("Content-Type", "application/xml"),
+        )
+        .mount(&mock_server)
+        .await;
+
     Mock::given(method("GET"))
         .and(path("/general/notes.txt"))
         .respond_with(ResponseTemplate::new(200).set_body_string(file_content))

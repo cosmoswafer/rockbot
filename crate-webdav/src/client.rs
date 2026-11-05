@@ -1,5 +1,7 @@
 use base64::Engine;
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{error, info};
 use url::Url;
 
@@ -9,7 +11,10 @@ use crate::calendar::{
 };
 use crate::error::{Result, WebDavError};
 use crate::path::WebDavPath;
-use crate::types::{CaldavEvent, CaldavTodo, MultiStatus, WebDavEntry};
+use crate::types::{
+    ByteWindow, CaldavEvent, CaldavTodo, FileStat, Line, LineIndex, LineWindow, MultiStatus,
+    WebDavEntry,
+};
 
 const MULTI_STATUS_XML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns" xmlns:nc="http://nextcloud.org/ns">
@@ -418,6 +423,726 @@ impl WebDavClient {
         self.write_file(path, content).await
     }
 
+    // ── Large-file primitives ──────────────────────────────────────────────────
+
+    /// Fetch depth-0 metadata for one path.
+    pub async fn stat(&self, path: &str) -> Result<FileStat> {
+        let url = self.full_url(path)?;
+        let mut headers = self.headers();
+        headers.insert("Depth", HeaderValue::from_static("0"));
+
+        let response = self
+            .client
+            .request(reqwest::Method::from_bytes(b"PROPFIND").unwrap(), url)
+            .headers(headers)
+            .header("Content-Type", "application/xml")
+            .body(MULTI_STATUS_XML)
+            .send()
+            .await?;
+
+        let xml = self
+            .handle_status(response, |s| s == 207)
+            .await?
+            .ok_or_else(|| WebDavError::NotFound(path.to_string()))?;
+
+        let multi_status: MultiStatus =
+            quick_xml::de::from_str(&xml).map_err(|e| WebDavError::XmlParse(e.to_string()))?;
+        let prop = multi_status
+            .responses
+            .first()
+            .and_then(|r| r.propstats.first())
+            .map(|ps| &ps.prop)
+            .ok_or_else(|| WebDavError::XmlParse("PROPFIND returned no properties".into()))?;
+
+        Ok(FileStat {
+            size: prop.getcontentlength.unwrap_or(0),
+            etag: prop.getetag.clone(),
+            content_type: prop.getcontenttype.clone(),
+            last_modified: prop.getlastmodified.clone(),
+            is_dir: prop.resourcetype.collection.is_some(),
+        })
+    }
+
+    /// Read a bounded byte range. Falls back to slicing a 200 response when the
+    /// server ignores the Range header.
+    pub async fn read_range(&self, path: &str, start: u64, len: u64) -> Result<ByteWindow> {
+        if len == 0 {
+            return Ok(ByteWindow {
+                bytes: Vec::new(),
+                start,
+                total: None,
+            });
+        }
+        let url = self.full_url(path)?;
+        let end = start.saturating_add(len.saturating_sub(1));
+        let response = self
+            .client
+            .get(url)
+            .headers(self.headers())
+            .header(reqwest::header::RANGE, format!("bytes={start}-{end}"))
+            .send()
+            .await?;
+
+        let status = response.status().as_u16();
+        let total = content_range_total(response.headers());
+
+        match status {
+            206 => Ok(ByteWindow {
+                bytes: response.bytes().await?.to_vec(),
+                start,
+                total,
+            }),
+            200 => {
+                // Range ignored: slice the full body locally.
+                let body = response.bytes().await?;
+                let from = (start as usize).min(body.len());
+                let to = start.saturating_add(len).min(body.len() as u64) as usize;
+                Ok(ByteWindow {
+                    bytes: body[from..to].to_vec(),
+                    start,
+                    total: Some(body.len() as u64),
+                })
+            }
+            401 => Err(WebDavError::AuthFailed("Invalid credentials".into())),
+            404 => Err(WebDavError::NotFound(path.to_string())),
+            416 => Err(WebDavError::RangeNotSatisfiable { start, len }),
+            status => {
+                let body = response.text().await.unwrap_or_default();
+                Err(WebDavError::UnexpectedStatus { status, body })
+            }
+        }
+    }
+
+    /// Byte window plus the file size when the server did not report it.
+    pub async fn read_byte_window(&self, path: &str, start: u64, len: u64) -> Result<ByteWindow> {
+        let mut window = self.read_range(path, start, len).await?;
+        if window.total.is_none() {
+            window.total = self.stat(path).await.ok().map(|s| s.size);
+        }
+        Ok(window)
+    }
+
+    /// Read a line window from the start of the file.
+    pub async fn read_window(
+        &self,
+        path: &str,
+        start_line: u64,
+        max_lines: usize,
+        max_bytes: usize,
+        max_line_chars: usize,
+    ) -> Result<LineWindow> {
+        self.read_window_from(path, 0, 1, start_line, max_lines, max_bytes, max_line_chars)
+            .await
+    }
+
+    /// Read a line window beginning at a known byte offset (line-index
+    /// checkpoint). `first_line_at_byte` is the 1-based line number at
+    /// `byte_start`.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn read_window_from(
+        &self,
+        path: &str,
+        byte_start: u64,
+        first_line_at_byte: u64,
+        start_line: u64,
+        max_lines: usize,
+        max_bytes: usize,
+        max_line_chars: usize,
+    ) -> Result<LineWindow> {
+        let start_line = start_line.max(1);
+        let max_lines = max_lines.max(1);
+        let max_bytes = max_bytes.max(1);
+        let max_line_chars = max_line_chars.max(1);
+
+        let url = self.full_url(path)?;
+        let request = self.client.get(url).headers(self.headers());
+        let request = if byte_start > 0 {
+            request.header(reqwest::header::RANGE, format!("bytes={byte_start}-"))
+        } else {
+            request
+        };
+        let mut response = request.send().await?;
+
+        let status = response.status().as_u16();
+        let mut skip = 0u64;
+        match status {
+            200 => skip = byte_start, // Range ignored: discard the prefix.
+            206 => {}
+            401 => return Err(WebDavError::AuthFailed("Invalid credentials".into())),
+            404 => return Err(WebDavError::NotFound(path.to_string())),
+            416 => {
+                return Err(WebDavError::RangeNotSatisfiable {
+                    start: byte_start,
+                    len: 0,
+                });
+            }
+            status => {
+                let body = response.text().await.unwrap_or_default();
+                return Err(WebDavError::UnexpectedStatus { status, body });
+            }
+        }
+
+        let mut buf: Vec<u8> = Vec::new();
+        let mut line_no = first_line_at_byte.saturating_sub(1);
+        let mut lines: Vec<Line> = Vec::new();
+        let mut used = 0usize;
+        let mut truncated = false;
+        let mut next_line = start_line;
+
+        'outer: while let Some(chunk) = response.chunk().await? {
+            buf.extend_from_slice(&chunk);
+
+            if skip > 0 {
+                let drop = (skip as usize).min(buf.len());
+                buf.drain(..drop);
+                skip -= drop as u64;
+                if skip > 0 {
+                    continue;
+                }
+            }
+
+            let mut consumed = 0usize;
+            while let Some(rel) = buf[consumed..].iter().position(|&b| b == b'\n') {
+                let end = consumed + rel;
+                let raw = &buf[consumed..end];
+                let raw = raw.strip_suffix(b"\r").unwrap_or(raw);
+                consumed = end + 1;
+                line_no += 1;
+
+                if line_no < start_line {
+                    continue;
+                }
+                if lines.len() >= max_lines || used >= max_bytes {
+                    truncated = true;
+                    next_line = line_no;
+                    break 'outer;
+                }
+
+                let text = String::from_utf8_lossy(raw);
+                let text = truncate_line(&text, max_line_chars);
+                used += text.len() + 1;
+                lines.push(Line {
+                    number: line_no,
+                    text,
+                });
+                next_line = line_no + 1;
+            }
+            buf.drain(..consumed);
+
+            // A file with no newlines (common for exported SVG) must not grow
+            // the buffer without bound.
+            if buf.len() > max_bytes.saturating_mul(8).max(1 << 20) {
+                line_no += 1;
+                let text = String::from_utf8_lossy(&buf);
+                let text = truncate_line(&text, max_line_chars);
+                if line_no >= start_line && lines.len() < max_lines {
+                    lines.push(Line {
+                        number: line_no,
+                        text,
+                    });
+                    next_line = line_no + 1;
+                }
+                truncated = true;
+                break;
+            }
+        }
+
+        if !truncated && !buf.is_empty() {
+            line_no += 1;
+            if line_no >= start_line {
+                if lines.len() >= max_lines || used >= max_bytes {
+                    truncated = true;
+                    next_line = line_no;
+                } else {
+                    let text = truncate_line(&String::from_utf8_lossy(&buf), max_line_chars);
+                    lines.push(Line {
+                        number: line_no,
+                        text,
+                    });
+                    next_line = line_no + 1;
+                }
+            }
+        }
+
+        let reached_eof = !truncated;
+        if lines.is_empty() {
+            next_line = start_line;
+        }
+
+        Ok(LineWindow {
+            lines,
+            next_line,
+            reached_eof,
+            truncated,
+        })
+    }
+
+    /// Stream every line without retaining the file. The callback returns
+    /// `false` to stop early. Returns the number of lines visited.
+    pub async fn for_each_line<F>(&self, path: &str, mut visit: F) -> Result<u64>
+    where
+        F: FnMut(u64, &str) -> bool,
+    {
+        let mut response = self
+            .client
+            .get(self.full_url(path)?)
+            .headers(self.headers())
+            .send()
+            .await?;
+
+        let status = response.status().as_u16();
+        if status != 200 && status != 206 {
+            let body = response.text().await.unwrap_or_default();
+            return Err(match status {
+                401 => WebDavError::AuthFailed("Invalid credentials".into()),
+                404 => WebDavError::NotFound(path.to_string()),
+                status => WebDavError::UnexpectedStatus { status, body },
+            });
+        }
+
+        let mut buf: Vec<u8> = Vec::new();
+        let mut line_no = 0u64;
+
+        while let Some(chunk) = response.chunk().await? {
+            buf.extend_from_slice(&chunk);
+            let mut consumed = 0usize;
+            while let Some(rel) = buf[consumed..].iter().position(|&b| b == b'\n') {
+                let end = consumed + rel;
+                let raw = &buf[consumed..end];
+                let raw = raw.strip_suffix(b"\r").unwrap_or(raw);
+                consumed = end + 1;
+                line_no += 1;
+                if !visit(line_no, &String::from_utf8_lossy(raw)) {
+                    return Ok(line_no);
+                }
+            }
+            buf.drain(..consumed);
+        }
+
+        if !buf.is_empty() {
+            line_no += 1;
+            visit(line_no, &String::from_utf8_lossy(&buf));
+        }
+        Ok(line_no)
+    }
+
+    /// Build a sparse line index in one streaming pass.
+    pub async fn build_line_index(&self, path: &str, checkpoint_every: u64) -> Result<LineIndex> {
+        let stat = self.stat(path).await?;
+        let every = checkpoint_every.max(1);
+
+        let mut response = self
+            .client
+            .get(self.full_url(path)?)
+            .headers(self.headers())
+            .send()
+            .await?;
+        let status = response.status().as_u16();
+        if status != 200 && status != 206 {
+            let body = response.text().await.unwrap_or_default();
+            return Err(WebDavError::UnexpectedStatus { status, body });
+        }
+
+        let mut offsets = vec![0u64];
+        let mut bytes_seen = 0u64;
+        let mut line_no = 0u64;
+        let mut buf: Vec<u8> = Vec::new();
+
+        while let Some(chunk) = response.chunk().await? {
+            buf.extend_from_slice(&chunk);
+            let mut consumed = 0usize;
+            while let Some(rel) = buf[consumed..].iter().position(|&b| b == b'\n') {
+                consumed += rel + 1;
+                bytes_seen += (rel + 1) as u64;
+                line_no += 1;
+                if line_no % every == 0 {
+                    offsets.push(bytes_seen);
+                }
+            }
+            buf.drain(..consumed);
+        }
+        if !buf.is_empty() {
+            line_no += 1;
+        }
+
+        Ok(LineIndex {
+            etag: stat.etag,
+            size: stat.size,
+            checkpoint_every: every,
+            total_lines: line_no,
+            offsets,
+        })
+    }
+
+    /// PUT with a WebDAV `If-Match` precondition.
+    pub async fn write_file_if_match(
+        &self,
+        path: &str,
+        content: impl Into<bytes::Bytes>,
+        etag: &str,
+    ) -> Result<()> {
+        let url = self.full_url(path)?;
+        let response = self
+            .client
+            .put(url)
+            .headers(self.headers())
+            .header(reqwest::header::IF_MATCH, etag)
+            .body(content.into())
+            .send()
+            .await?;
+
+        match response.status().as_u16() {
+            200 | 201 | 204 => Ok(()),
+            412 => Err(WebDavError::PreconditionFailed(etag.to_string())),
+            status => {
+                let body = response.text().await.unwrap_or_default();
+                Err(WebDavError::UnexpectedStatus { status, body })
+            }
+        }
+    }
+
+    /// Write through a sibling temp path, then atomically MOVE it over the
+    /// target. Parent directories are created through the normal fallback.
+    pub async fn write_file_atomic(
+        &self,
+        path: &str,
+        content: impl Into<bytes::Bytes>,
+    ) -> Result<()> {
+        let content = content.into();
+        let tmp = temp_sibling(path);
+        self.write_file_with_fallback(&tmp, content).await?;
+        match self.move_file_overwrite(&tmp, path).await {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                let _ = self.delete(&tmp).await;
+                Err(e)
+            }
+        }
+    }
+
+    /// MOVE that is allowed to replace an existing destination.
+    pub async fn move_file_overwrite(&self, from: &str, to: &str) -> Result<()> {
+        let src_url = self.full_url(from)?;
+        let dst_url = self.full_url(to)?;
+        let mut headers = self.headers();
+        headers.insert(
+            "Destination",
+            HeaderValue::from_str(dst_url.as_str())
+                .map_err(|e| WebDavError::InvalidUrl(format!("Invalid destination URL: {e}")))?,
+        );
+        headers.insert("Overwrite", HeaderValue::from_static("T"));
+
+        let response = self
+            .client
+            .request(reqwest::Method::from_bytes(b"MOVE").unwrap(), src_url)
+            .headers(headers)
+            .send()
+            .await?;
+
+        self.handle_status(response, |s| s == 201 || s == 204 || s == 200)
+            .await?;
+        Ok(())
+    }
+
+    // ── Nextcloud chunked upload v2 ───────────────────────────────────────────
+
+    /// Start a chunked upload directory. `total` is optional; when supplied it
+    /// is sent as `OC-Total-Length` so quota checks run early.
+    pub async fn begin_chunked_upload(
+        &self,
+        dest_path: &str,
+        total: Option<u64>,
+    ) -> Result<ChunkedUpload> {
+        let (prefix, user) = self.upload_root()?;
+        let dest_url = self.full_url(dest_path)?.to_string();
+        let transfer_id = unique_id();
+        let upload_url = format!("{prefix}/uploads/{user}/{transfer_id}");
+
+        let mut headers = self.headers();
+        headers.insert(
+            "Destination",
+            HeaderValue::from_str(&dest_url)
+                .map_err(|e| WebDavError::InvalidUrl(format!("Invalid destination URL: {e}")))?,
+        );
+        if let Some(total) = total {
+            headers.insert(
+                "OC-Total-Length",
+                HeaderValue::from_str(&total.to_string())
+                    .map_err(|e| WebDavError::InvalidUrl(format!("Invalid length: {e}")))?,
+            );
+        }
+
+        let response = self
+            .client
+            .request(reqwest::Method::from_bytes(b"MKCOL").unwrap(), &upload_url)
+            .headers(headers)
+            .send()
+            .await?;
+
+        let status = response.status().as_u16();
+        if status != 201 && status != 200 && status != 204 {
+            let body = response.text().await.unwrap_or_default();
+            return Err(WebDavError::UnexpectedStatus { status, body });
+        }
+
+        Ok(ChunkedUpload {
+            upload_url,
+            dest_url,
+            total,
+            next_chunk: 1,
+        })
+    }
+
+    /// Upload one chunk (Nextcloud v2 requires 5 MiB–5 GiB except the last).
+    pub async fn put_upload_chunk(&self, upload: &mut ChunkedUpload, chunk: &[u8]) -> Result<()> {
+        let url = format!("{}/{:05}", upload.upload_url, upload.next_chunk);
+        let mut headers = self.headers();
+        headers.insert(
+            "Destination",
+            HeaderValue::from_str(&upload.dest_url)
+                .map_err(|e| WebDavError::InvalidUrl(format!("Invalid destination URL: {e}")))?,
+        );
+        if let Some(total) = upload.total {
+            headers.insert(
+                "OC-Total-Length",
+                HeaderValue::from_str(&total.to_string())
+                    .map_err(|e| WebDavError::InvalidUrl(format!("Invalid length: {e}")))?,
+            );
+        }
+
+        let response = self
+            .client
+            .put(&url)
+            .headers(headers)
+            .body(chunk.to_vec())
+            .send()
+            .await?;
+
+        let status = response.status().as_u16();
+        if status != 201 && status != 200 && status != 204 {
+            let body = response.text().await.unwrap_or_default();
+            return Err(WebDavError::UnexpectedStatus { status, body });
+        }
+        upload.next_chunk += 1;
+        Ok(())
+    }
+
+    /// Assemble and move the uploaded chunks onto the destination.
+    pub async fn finish_chunked_upload(&self, upload: ChunkedUpload) -> Result<()> {
+        let url = format!("{}/.file", upload.upload_url);
+        let mut headers = self.headers();
+        headers.insert(
+            "Destination",
+            HeaderValue::from_str(&upload.dest_url)
+                .map_err(|e| WebDavError::InvalidUrl(format!("Invalid destination URL: {e}")))?,
+        );
+        if let Some(total) = upload.total {
+            headers.insert(
+                "OC-Total-Length",
+                HeaderValue::from_str(&total.to_string())
+                    .map_err(|e| WebDavError::InvalidUrl(format!("Invalid length: {e}")))?,
+            );
+        }
+
+        let response = self
+            .client
+            .request(reqwest::Method::from_bytes(b"MOVE").unwrap(), url)
+            .headers(headers)
+            .send()
+            .await?;
+
+        let status = response.status().as_u16();
+        if status != 201 && status != 204 && status != 200 {
+            let body = response.text().await.unwrap_or_default();
+            return Err(WebDavError::UnexpectedStatus { status, body });
+        }
+        Ok(())
+    }
+
+    /// Remove a partially uploaded chunk directory.
+    pub async fn abort_chunked_upload(&self, upload: &ChunkedUpload) -> Result<()> {
+        let response = self
+            .client
+            .delete(format!("{}/", upload.upload_url))
+            .headers(self.headers())
+            .send()
+            .await?;
+        let status = response.status().as_u16();
+        if status == 404 || status == 204 || status == 200 {
+            Ok(())
+        } else {
+            let body = response.text().await.unwrap_or_default();
+            Err(WebDavError::UnexpectedStatus { status, body })
+        }
+    }
+
+    /// Streaming literal replace. Memory stays bounded by `chunk_size` plus one
+    /// read chunk; a second match aborts the upload when `replace_all` is false.
+    pub async fn rewrite_literal(
+        &self,
+        path: &str,
+        old: &str,
+        new: &str,
+        replace_all: bool,
+        chunk_size: usize,
+        expected_etag: Option<&str>,
+    ) -> Result<usize> {
+        if old.is_empty() {
+            return Err(WebDavError::BadRequest(
+                "oldString must not be empty".into(),
+            ));
+        }
+        self.check_etag(path, expected_etag).await?;
+
+        let upload = self.begin_chunked_upload(path, None).await?;
+        let mut sink = UploadSink::new(self, upload, chunk_size.max(1));
+        let mut response = self
+            .client
+            .get(self.full_url(path)?)
+            .headers(self.headers())
+            .send()
+            .await?;
+        let status = response.status().as_u16();
+        if status != 200 && status != 206 {
+            let body = response.text().await.unwrap_or_default();
+            sink.abort().await;
+            return Err(WebDavError::UnexpectedStatus { status, body });
+        }
+
+        let needle = old.as_bytes();
+        let mut carry: Vec<u8> = Vec::new();
+        let mut matches = 0usize;
+
+        while let Some(chunk) = response.chunk().await? {
+            carry.extend_from_slice(&chunk);
+            loop {
+                match find_subslice(&carry, needle) {
+                    Some(pos) => {
+                        if matches >= 1 && !replace_all {
+                            sink.abort().await;
+                            return Err(WebDavError::BadRequest(
+                                "oldString matched more than once".into(),
+                            ));
+                        }
+                        sink.write(&carry[..pos]).await?;
+                        sink.write(new.as_bytes()).await?;
+                        carry.drain(..pos + needle.len());
+                        matches += 1;
+                    }
+                    None => break,
+                }
+            }
+            let keep = needle.len().saturating_sub(1);
+            if carry.len() > keep {
+                let drain_len = carry.len() - keep;
+                sink.write(&carry[..drain_len]).await?;
+                carry.drain(..drain_len);
+            }
+        }
+        sink.write(&carry).await?;
+
+        if matches == 0 {
+            sink.abort().await;
+            return Ok(0);
+        }
+        sink.finish().await?;
+        Ok(matches)
+    }
+
+    /// Streaming line insert / range replacement, used for files that must not
+    /// be buffered whole.
+    pub async fn rewrite_lines(
+        &self,
+        path: &str,
+        op: LineOp,
+        chunk_size: usize,
+        expected_etag: Option<&str>,
+    ) -> Result<()> {
+        self.check_etag(path, expected_etag).await?;
+
+        let upload = self.begin_chunked_upload(path, None).await?;
+        let mut sink = UploadSink::new(self, upload, chunk_size.max(1));
+        let mut response = self
+            .client
+            .get(self.full_url(path)?)
+            .headers(self.headers())
+            .send()
+            .await?;
+        let status = response.status().as_u16();
+        if status != 200 && status != 206 {
+            let body = response.text().await.unwrap_or_default();
+            sink.abort().await;
+            return Err(WebDavError::UnexpectedStatus { status, body });
+        }
+
+        let mut buf: Vec<u8> = Vec::new();
+        let mut line_no = 0u64;
+
+        while let Some(chunk) = response.chunk().await? {
+            buf.extend_from_slice(&chunk);
+            let mut consumed = 0usize;
+            while let Some(rel) = buf[consumed..].iter().position(|&b| b == b'\n') {
+                let end = consumed + rel;
+                let raw = &buf[consumed..end];
+                consumed = end + 1;
+                line_no += 1;
+                apply_line_op(&mut sink, &op, line_no, raw, true).await?;
+            }
+            buf.drain(..consumed);
+        }
+
+        if !buf.is_empty() {
+            line_no += 1;
+            let _ = apply_line_op(&mut sink, &op, line_no, &buf, false).await?;
+        }
+
+        match &op {
+            LineOp::InsertAfter { line, .. } if *line == 0 || *line > line_no => {
+                sink.abort().await;
+                return Err(WebDavError::LineOutOfRange(format!(
+                    "line {line} is out of range (file has {line_no} lines)"
+                )));
+            }
+            LineOp::ReplaceRange { start, .. } if *start == 0 || *start > line_no => {
+                sink.abort().await;
+                return Err(WebDavError::LineOutOfRange(format!(
+                    "startLine {start} is out of range (file has {line_no} lines)"
+                )));
+            }
+            _ => {}
+        }
+
+        sink.finish().await
+    }
+
+    async fn check_etag(&self, path: &str, expected: Option<&str>) -> Result<()> {
+        if let Some(expected) = expected {
+            let stat = self.stat(path).await?;
+            if stat.etag.as_deref() != Some(expected) {
+                return Err(WebDavError::PreconditionFailed(format!(
+                    "expected {expected}, server has {}",
+                    stat.etag.as_deref().unwrap_or("<none>")
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    fn upload_root(&self) -> Result<(String, String)> {
+        let idx = self
+            .base_url
+            .find("/files/")
+            .ok_or(WebDavError::ChunkedUploadUnsupported)?;
+        let prefix = self.base_url[..idx].to_string();
+        let rest = &self.base_url[idx + "/files/".len()..];
+        let user = rest
+            .split('/')
+            .next()
+            .filter(|u| !u.is_empty())
+            .ok_or(WebDavError::ChunkedUploadUnsupported)?;
+        Ok((prefix, user.to_string()))
+    }
+
     pub async fn ensure_room_directory(&self, room_id: &str) -> Result<()> {
         let path = WebDavPath::new("").room_dir(room_id);
         self.ensure_directory_all(&path).await
@@ -779,12 +1504,168 @@ impl WebDavClient {
                     is_dir,
                     size,
                     modified,
+                    etag: prop.getetag.clone(),
+                    content_type: prop.getcontenttype.clone(),
                 });
             }
         }
 
         Ok(entries)
     }
+}
+
+/// One in-progress Nextcloud chunked upload (v2).
+#[derive(Debug, Clone)]
+pub struct ChunkedUpload {
+    upload_url: String,
+    dest_url: String,
+    total: Option<u64>,
+    next_chunk: u32,
+}
+
+/// Streaming line mutation used by [`WebDavClient::rewrite_lines`].
+#[derive(Debug, Clone)]
+pub enum LineOp {
+    InsertAfter { line: u64, text: String },
+    ReplaceRange { start: u64, end: u64, text: String },
+}
+
+/// Buffers transformed output into 5 MiB-class chunks and uploads them.
+struct UploadSink<'a> {
+    client: &'a WebDavClient,
+    upload: ChunkedUpload,
+    buf: Vec<u8>,
+    chunk_size: usize,
+}
+
+impl<'a> UploadSink<'a> {
+    fn new(client: &'a WebDavClient, upload: ChunkedUpload, chunk_size: usize) -> Self {
+        Self {
+            client,
+            upload,
+            buf: Vec::new(),
+            chunk_size: chunk_size.max(1),
+        }
+    }
+
+    async fn write(&mut self, bytes: &[u8]) -> Result<()> {
+        self.buf.extend_from_slice(bytes);
+        while self.buf.len() >= self.chunk_size {
+            let rest = self.buf.split_off(self.chunk_size);
+            self.client
+                .put_upload_chunk(&mut self.upload, &self.buf)
+                .await?;
+            self.buf = rest;
+        }
+        Ok(())
+    }
+
+    async fn finish(mut self) -> Result<()> {
+        if !self.buf.is_empty() {
+            let buf = std::mem::take(&mut self.buf);
+            self.client.put_upload_chunk(&mut self.upload, &buf).await?;
+        } else if self.upload.next_chunk == 1 {
+            // An empty result still needs one chunk before the assembling MOVE.
+            self.client.put_upload_chunk(&mut self.upload, b"").await?;
+        }
+        let UploadSink { client, upload, .. } = self;
+        client.finish_chunked_upload(upload).await
+    }
+
+    async fn abort(self) {
+        let UploadSink { client, upload, .. } = self;
+        let _ = client.abort_chunked_upload(&upload).await;
+    }
+}
+
+async fn apply_line_op(
+    sink: &mut UploadSink<'_>,
+    op: &LineOp,
+    line_no: u64,
+    raw: &[u8],
+    terminated: bool,
+) -> Result<()> {
+    match op {
+        LineOp::InsertAfter { line, text } => {
+            sink.write(raw).await?;
+            if line_no == *line {
+                if !terminated {
+                    sink.write(b"\n").await?;
+                }
+                sink.write(text.as_bytes()).await?;
+                if terminated && !text.ends_with('\n') {
+                    sink.write(b"\n").await?;
+                }
+            } else if terminated {
+                sink.write(b"\n").await?;
+            }
+            Ok(())
+        }
+        LineOp::ReplaceRange { start, end, text } => {
+            if line_no < *start || line_no > *end {
+                sink.write(raw).await?;
+                if terminated {
+                    sink.write(b"\n").await?;
+                }
+            } else if line_no == *start && !text.is_empty() {
+                sink.write(text.as_bytes()).await?;
+                if terminated && !text.ends_with('\n') {
+                    sink.write(b"\n").await?;
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+    if needle.len() > haystack.len() {
+        return None;
+    }
+    haystack.windows(needle.len()).position(|w| w == needle)
+}
+
+fn truncate_line(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    let mut s: String = text.chars().take(max_chars).collect();
+    s.push_str(" … (line truncated)");
+    s
+}
+
+fn content_range_total(headers: &HeaderMap) -> Option<u64> {
+    headers
+        .get(reqwest::header::CONTENT_RANGE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.rsplit('/').next())
+        .and_then(|v| v.parse::<u64>().ok())
+}
+
+fn temp_sibling(path: &str) -> String {
+    let trimmed = path.trim_end_matches('/');
+    match trimmed.rfind('/') {
+        Some(pos) => format!("{}/.rockbot-tmp-{}", &trimmed[..pos], unique_id()),
+        None => format!(".rockbot-tmp-{}", unique_id()),
+    }
+}
+
+static UNIQUE_ID: AtomicU64 = AtomicU64::new(0);
+
+fn unique_id() -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!(
+        "{}-{}-{}",
+        std::process::id(),
+        nanos,
+        UNIQUE_ID.fetch_add(1, Ordering::Relaxed)
+    )
 }
 
 fn truncate_debug(s: &str, max_chars: usize) -> String {

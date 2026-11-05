@@ -469,6 +469,7 @@ impl AgentHarness {
                                     self.memory.soul_name(room_id),
                                 )
                             } else if tool_call.function.name == "webdav"
+                                || tool_call.function.name == "webdav_edit"
                                 || tool_call.function.name == "save_knowledge"
                                 || tool_call.function.name == "forget_knowledge"
                                 || tool_call.function.name == "recall_knowledge"

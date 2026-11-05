@@ -55,4 +55,9 @@ flowchart TD
     HTTP -->|"response body / status"| RESOLVE
 ```
 
-Note: `ensure_room_directory()` (client.rs:264) exists but is not currently called — directories are created implicitly by `write_file_with_fallback()` via AutoMkcol.
+Note: `ensure_room_directory()` exists but is not currently called — directories are created implicitly by `write_file_with_fallback()` via AutoMkcol.
+
+Large text files do not use this raw read path: `WebDavTool::read` rejects
+text files above 256 KiB and points the model at `webdav_edit`, whose windowed,
+streamed flow is documented in [large-file-edit.md](large-file-edit.md). SVG is
+text (`image/svg+xml`), never a base64 image.

@@ -161,6 +161,67 @@ pub struct WebDavEntry {
     pub is_dir: bool,
     pub size: u64,
     pub modified: String,
+    pub etag: Option<String>,
+    pub content_type: Option<String>,
+}
+
+/// Metadata for one remote file, returned by a depth-0 PROPFIND.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FileStat {
+    pub size: u64,
+    pub etag: Option<String>,
+    pub content_type: Option<String>,
+    pub last_modified: Option<String>,
+    pub is_dir: bool,
+}
+
+/// One 1-based line returned by a windowed read.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Line {
+    pub number: u64,
+    pub text: String,
+}
+
+/// A bounded window of lines. `next_line` is the line a caller should request
+/// next; `reached_eof` is false when a cap (lines, bytes, line length) stopped
+/// the read before the end of the file.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LineWindow {
+    pub lines: Vec<Line>,
+    pub next_line: u64,
+    pub reached_eof: bool,
+    pub truncated: bool,
+}
+
+/// A bounded window of bytes.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ByteWindow {
+    pub bytes: Vec<u8>,
+    pub start: u64,
+    pub total: Option<u64>,
+}
+
+/// Sparse byte-offset index for a line-addressed read of a large file.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LineIndex {
+    pub etag: Option<String>,
+    pub size: u64,
+    pub checkpoint_every: u64,
+    pub total_lines: u64,
+    /// `offsets[i]` is the byte offset of line `1 + i * checkpoint_every`.
+    pub offsets: Vec<u64>,
+}
+
+impl LineIndex {
+    /// Byte offset and first line number of the nearest checkpoint at or before
+    /// `start_line`.
+    pub fn checkpoint(&self, start_line: u64) -> (u64, u64) {
+        let every = self.checkpoint_every.max(1);
+        let idx = start_line.saturating_sub(1) / every;
+        let idx = idx.min(self.offsets.len().saturating_sub(1) as u64);
+        let byte = self.offsets.get(idx as usize).copied().unwrap_or(0);
+        (byte, idx * every + 1)
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -240,10 +301,7 @@ where
 {
     let s: Option<String> = Option::deserialize(deserializer).unwrap_or_default();
     match s {
-        Some(v) if !v.is_empty() => v
-            .parse::<u64>()
-            .map(Some)
-            .map_err(serde::de::Error::custom),
+        Some(v) if !v.is_empty() => v.parse::<u64>().map(Some).map_err(serde::de::Error::custom),
         _ => Ok(None),
     }
 }

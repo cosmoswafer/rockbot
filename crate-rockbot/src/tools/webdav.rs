@@ -68,6 +68,21 @@ impl WebDavTool {
             let name = path.rsplit('/').next().unwrap_or("image");
             Ok(format!("![{}](data:{};base64,{})", name, mime, b64))
         } else {
+            // Guard the plain read: large files must go through the windowed
+            // `webdav_edit` tool so a single tool result cannot flood the
+            // model context.
+            let stat = self
+                .client
+                .stat(&full)
+                .await
+                .map_err(|e| RockBotError::Provider(format!("WebDAV stat failed: {e}")))?;
+            if stat.size > MAX_TEXT_READ_BYTES {
+                return Err(RockBotError::ToolCallParse(format!(
+                    "File at {} is {} bytes; use the webdav_edit tool with action=read \
+                     (offset/limit) to read it in windows.",
+                    full, stat.size
+                )));
+            }
             self.client
                 .read_file_to_string(&full)
                 .await
@@ -104,7 +119,7 @@ impl WebDavTool {
         if content.len() > 500_000 {
             return Err(RockBotError::ToolCallParse(format!(
                 "File at {} is too large for 'edit' action ({} bytes, max 500 KB). \
-                 Use 'read' + 'write' instead.",
+                 Use the webdav_edit tool (action=edit, insert, replace_lines or patch).",
                 full,
                 content.len()
             )));
@@ -269,9 +284,9 @@ impl Tool for WebDavTool {
     fn description(&self) -> &str {
         "Manage files on remote WebDAV storage (NextCloud). \
          Each room has its own file space — paths are automatically scoped. \
-         Actions: read (get file content), write (create/overwrite a file), \
+         Actions: read (get file content; use webdav_edit for large files), write (create/overwrite a file), \
          edit (replace oldString with newString — reads file first, fails if oldString \
-         not found or matches multiple times, 500 KB max), \
+         not found or matches multiple times, 500 KB max; use webdav_edit for larger files), \
          list (list directory contents), mkdir (create directory tree), \
          delete (remove file/directory), exists (check if path exists), \
          rename (move or rename a file/directory — path is source, destination is target)."
@@ -357,6 +372,8 @@ impl Tool for WebDavTool {
     }
 }
 
+const MAX_TEXT_READ_BYTES: u64 = 262_144;
+
 fn is_image_extension(path: &str) -> bool {
     let lower = path.to_lowercase();
     lower.ends_with(".png")
@@ -364,7 +381,6 @@ fn is_image_extension(path: &str) -> bool {
         || lower.ends_with(".jpeg")
         || lower.ends_with(".gif")
         || lower.ends_with(".webp")
-        || lower.ends_with(".svg")
 }
 
 fn mime_for_path(path: &str) -> &str {
@@ -584,7 +600,7 @@ mod tests {
         assert!(is_image_extension("image.JPG"));
         assert!(is_image_extension("image.jpeg"));
         assert!(is_image_extension("anim.gif"));
-        assert!(is_image_extension("icon.svg"));
+        assert!(!is_image_extension("icon.svg"));
         assert!(is_image_extension("photo.webp"));
     }
 
