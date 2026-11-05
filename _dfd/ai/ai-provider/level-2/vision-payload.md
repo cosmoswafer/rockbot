@@ -73,7 +73,8 @@ compatible.
 
 **Fal seedream5 safety checker**: When the resolved model ID contains `"seedream/v5"`,
 `FalAiProvider::submit_request()` conditionally sends `enable_safety_checker` if
-present in `ImageGenParams`. The default value comes from
-  `ImageModelConfig::default_enable_safety_checker` (default `false`). This is gated
-on the model ID to avoid sending the parameter to non-seedream5 Fal models that
-may reject it.
+present in `ImageGenParams`. The `image_gen` tool no longer sets it — the
+`default_enable_safety_checker` config knob was removed in #114 because no fal
+seedream/v5 route remains in the roster; direct provider callers may still set
+it. This is gated on the model ID to avoid sending the parameter to
+non-seedream5 Fal models that may reject it.

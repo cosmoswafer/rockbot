@@ -54,9 +54,10 @@ the wire model id; auto-dimensional presets (`auto_*`) are omitted from the
 
 **Self-sized exception (issue #104):** the OpenRouter request builder checks
 `ImageModelTraits.self_sized` on the effective model id and omits `resolution`,
-`aspect_ratio`, and the chat-path `image_size` tier for `ming`
-(`inclusionai/ming-image-0.1-design`) — the model chooses its own dimensions and
-rejects explicit sizes. The LLM still supplies the required `aspect_ratio` arg
+`aspect_ratio`, and the chat-path `image_size` tier for the Ming Design model id
+(`inclusionai/ming-image-0.1-design`, no longer a roster alias since #114) — the
+model chooses its own dimensions and rejects explicit sizes. The LLM still
+supplies the required `aspect_ratio` arg
 (the tool schema is uniform); the value is stored as `image_size` but discarded
 for self-sized models, and the tool returns a one-line `note` in `ImageGenResult`
 instead of failing.

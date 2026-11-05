@@ -9,16 +9,17 @@ api_key = "EDITME"
 base_url = "https://queue.fal.run"
 
 [image_providers.models]
-seedream    = "fal-ai/bytedance/seedream/v4.5/text-to-image"
-gptimage    = "openai/gpt-image-2.5/flare/text-to-image"
-sunburst    = "openai/gpt-image-2.5/sunburst/text-to-image"
-grok        = "xai/grok-imagine-image/quality/text-to-image"
+gptimage    = "openai/gpt-image-2.6/flare/text-to-image"
+sunburst    = "openai/gpt-image-2.6/sunburst/text-to-image"
 
 [image_providers.edit_models]
-gptimage    = "openai/gpt-image-2.5/flare/edit"
-sunburst    = "openai/gpt-image-2.5/sunburst/edit"
-grok        = "xai/grok-imagine-image/quality/edit"
+gptimage    = "openai/gpt-image-2.6/flare/edit"
+sunburst    = "openai/gpt-image-2.6/sunburst/edit"
 ```
+
+> `models/image.toml` is the canonical alias roster (#114); the `models` /
+> `edit_models` tables here are the legacy config fallback and now contain only
+> the two surviving fal-only aliases (`gptimage`, `sunburst`).
 
 | Config field | Purpose |
 |---|---|
@@ -49,8 +50,8 @@ Success response (200):
 ```json
 {
   "request_id": "019eb448-b6c5-7fe2-bc14-2b2498ae92d0",
-  "status_url": "https://queue.fal.run/openai/gpt-image-2.5/flare/requests/019eb448.../status",
-  "response_url": "https://queue.fal.run/openai/gpt-image-2.5/flare/requests/019eb448..."
+  "status_url": "https://queue.fal.run/openai/gpt-image-2.6/flare/requests/019eb448.../status",
+  "response_url": "https://queue.fal.run/openai/gpt-image-2.6/flare/requests/019eb448..."
 }
 ```
 

@@ -2833,7 +2833,6 @@ mod summarization_tests {
                 default_num_images: 1,
                 default_image_size: "1024x1024".into(),
                 default_image_size_tier: "1K".into(),
-                default_enable_safety_checker: false,
             },
             tools: HashMap::new(),
             search: Default::default(),
@@ -3129,7 +3128,6 @@ dav_path = "remote.php/dav"
                 default_num_images: 1,
                 default_image_size: "1024x1024".into(),
                 default_image_size_tier: "1K".into(),
-                default_enable_safety_checker: false,
             },
             tools: HashMap::new(),
             search: Default::default(),
@@ -3550,7 +3548,6 @@ mod tool_call_parse_recovery_tests {
                 default_num_images: 1,
                 default_image_size: "1024x1024".into(),
                 default_image_size_tier: "1K".into(),
-                default_enable_safety_checker: false,
             },
             tools: HashMap::new(),
             search: Default::default(),
@@ -3824,7 +3821,7 @@ async fn mount_result_image_and_webdav(mock_server: &MockServer, base: &str) {
 async fn test_image_gen_tool_model_override_uses_catalog_model() {
     let mock_server = MockServer::start().await;
     let base = mock_server.uri();
-    let overridden_model = "bytedance/seedream/v5/pro/text-to-image";
+    let overridden_model = "openai/gpt-image-2.6/flare/text-to-image";
     let default_model = "fal-ai/flux/schnell";
 
     // Only the OVERRIDDEN model path is mounted — if the tool resolved the
@@ -3834,7 +3831,7 @@ async fn test_image_gen_tool_model_override_uses_catalog_model() {
 
     let mut img_cfg = make_fal_config(&base);
     img_cfg.models = HashMap::from([
-        ("seedream5".to_string(), overridden_model.to_string()),
+        ("gptimage".to_string(), overridden_model.to_string()),
         ("flux".to_string(), default_model.to_string()),
     ]);
     let provider = FalAiProvider::new(&img_cfg, default_model).unwrap();
@@ -3843,7 +3840,7 @@ async fn test_image_gen_tool_model_override_uses_catalog_model() {
 
     let result = tool
         .execute(
-            r#"{"prompt":"a cyberpunk city","aspect_ratio":"16:9","model":"seedream5","room_id":"d-abc"}"#,
+            r#"{"prompt":"a cyberpunk city","aspect_ratio":"16:9","model":"gptimage","room_id":"d-abc"}"#,
         )
         .await
         .unwrap();
@@ -3869,7 +3866,10 @@ async fn test_image_gen_tool_model_omitted_uses_provider_default() {
 
     let mut img_cfg = make_fal_config(&base);
     img_cfg.models = HashMap::from([
-        ("seedream5".to_string(), "bytedance/seedream/v5/pro/text-to-image".to_string()),
+        (
+            "gptimage".to_string(),
+            "openai/gpt-image-2.6/flare/text-to-image".to_string(),
+        ),
         ("flux".to_string(), default_model.to_string()),
     ]);
     let provider = FalAiProvider::new(&img_cfg, default_model).unwrap();
@@ -3924,7 +3924,8 @@ async fn test_openrouter_image_gen_model_id_override_in_body() {
         .await;
 
     let config = make_openrouter_image_config(&base);
-    let provider = OpenRouterImageProvider::new(&config, "microsoft/mai-image-2.5").unwrap();
+    let provider =
+        OpenRouterImageProvider::new(&config, "bytedance-seed/seedream-5-0-pro").unwrap();
     let mut params = ImageGenParams::new("a sunset");
     params.model_id = Some("qwen/qwen-image-3-pro".into());
     let bytes = provider.generate_image(&params).await.unwrap();
@@ -3932,11 +3933,9 @@ async fn test_openrouter_image_gen_model_id_override_in_body() {
 }
 
 #[tokio::test]
-async fn test_openrouter_image_gen_ming_omits_size_params() {
-    // Issue #104 acceptance: the Image API body for ming must contain no
-    // size/aspect-ratio fields, while output_format/n pass through. The
-    // catalog fixture mirrors the live GET /images/models entry (no
-    // resolution/aspect_ratio descriptors, n capped at 1).
+async fn test_openrouter_image_gen_banana_uses_image_api() {
+    // Surviving OpenRouter-only alias (#114): the Image API body carries the
+    // verified slug and the requested size params.
     let mock_server = MockServer::start().await;
     let base = mock_server.uri();
 
@@ -3944,11 +3943,12 @@ async fn test_openrouter_image_gen_ming_omits_size_params() {
         .and(path("/images/models"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "data": [{
-                "id": "inclusionai/ming-image-0.1-design",
+                "id": "google/gemini-nano-banana-2.1",
                 "supported_parameters": {
+                    "resolution": { "type": "enum", "values": ["1K", "2K", "4K"] },
+                    "aspect_ratio": { "type": "enum", "values": ["16:9", "2:3", "1:1", "4:3", "3:4", "3:2"] },
                     "output_format": { "type": "enum", "values": ["png", "jpeg", "webp"] },
-                    "n": { "type": "range", "min": 1, "max": 1 },
-                    "input_references": { "type": "range", "min": 0, "max": 0 }
+                    "n": { "type": "range", "min": 1, "max": 4 }
                 }
             }]
         })))
@@ -3966,9 +3966,8 @@ async fn test_openrouter_image_gen_ming_omits_size_params() {
         .await;
 
     let config = make_openrouter_image_config(&base);
-    let provider =
-        OpenRouterImageProvider::new(&config, "inclusionai/ming-image-0.1-design").unwrap();
-    let mut params = ImageGenParams::new("a poster with legible text");
+    let provider = OpenRouterImageProvider::new(&config, "google/gemini-nano-banana-2.1").unwrap();
+    let mut params = ImageGenParams::new("a banana on a beach");
     params.size_tier = Some("4K".into());
     params.image_size = Some(rockbot::ImageSizeValue::Preset("2:3".into()));
     params.num_images = Some(4);
@@ -3984,19 +3983,12 @@ async fn test_openrouter_image_gen_ming_omits_size_params() {
         .find(|r| r.url.path() == "/images")
         .expect("images POST captured");
     let body: serde_json::Value = serde_json::from_slice(&post.body).expect("request body is JSON");
-    assert_eq!(body["model"], "inclusionai/ming-image-0.1-design");
-    assert!(
-        body.get("resolution").is_none(),
-        "self-sized model must omit resolution: {body}"
-    );
-    assert!(
-        body.get("aspect_ratio").is_none(),
-        "self-sized model rejects aspect_ratio: {body}"
-    );
-    assert!(body.get("quality").is_none(), "ming does not advertise quality: {body}");
-    assert_eq!(body["n"], 1, "num_images clamps to the catalog max");
+    assert_eq!(body["model"], "google/gemini-nano-banana-2.1");
+    assert_eq!(body["resolution"], "4K");
+    assert_eq!(body["aspect_ratio"], "2:3");
+    assert_eq!(body["n"], 4, "num_images respects the catalog max");
     assert_eq!(body["output_format"], "png");
-    assert_eq!(body["prompt"], "a poster with legible text");
+    assert_eq!(body["prompt"], "a banana on a beach");
 }
 
 // ─── Dynamic tool description from [image_providers] config (issue #95) ──────
@@ -4009,10 +4001,20 @@ async fn test_openrouter_image_gen_ming_omits_size_params() {
 #[test]
 fn test_image_gen_description_and_schema_derived_from_config() {
     let models = vec![
-        test_entry("seedream5", "bytedance/seedream/v5/pro/text-to-image", None, "fal"),
-        test_entry("mai", "microsoft/mai-image-2.5", None, "openrouter"),
+        test_entry(
+            "gptimage",
+            "openai/gpt-image-2.6/flare/text-to-image",
+            None,
+            "fal",
+        ),
+        test_entry(
+            "seedream5pro",
+            "bytedance-seed/seedream-5-0-pro",
+            None,
+            "openrouter",
+        ),
     ];
-    let catalog = ImageModelCatalog::new(models, "mai");
+    let catalog = ImageModelCatalog::new(models, "seedream5pro");
     let provider = rockbot::provider::fal::FalAiProvider::new(
         &rockbot::config::ProviderConfig {
             name: rockbot::validated::ProviderName::try_new("fal".to_string()).unwrap(),
@@ -4024,31 +4026,45 @@ fn test_image_gen_description_and_schema_derived_from_config() {
             models: HashMap::new(),
             edit_models: HashMap::new(),
         },
-        "bytedance/seedream/v5/pro/text-to-image",
+        "openai/gpt-image-2.6/flare/text-to-image",
     )
     .unwrap();
     let tool = make_single_fal_tool(Box::new(provider), catalog, "https://example.com");
 
     let desc = tool.description();
-    assert!(desc.contains("mai (mai, openrouter:microsoft/mai-image-2.5)"), "desc: {desc}");
-    assert!(desc.contains("seedream5 (seedream5, fal:bytedance/seedream/v5/pro/text-to-image)"), "desc: {desc}");
-    assert!(desc.contains("Default: 'mai'"), "desc: {desc}");
-    assert!(desc.contains("'auto_2K'"), "seedream configured → auto hint in tool description: {desc}");
+    assert!(
+        desc.contains("gptimage (gptimage, fal:openai/gpt-image-2.6/flare/text-to-image)"),
+        "desc: {desc}"
+    );
+    assert!(
+        desc.contains(
+            "seedream5pro (seedream5pro, openrouter:bytedance-seed/seedream-5-0-pro)"
+        ),
+        "desc: {desc}"
+    );
+    assert!(desc.contains("Default: 'seedream5pro'"), "desc: {desc}");
+    assert!(
+        !desc.contains("'auto_2K'"),
+        "surviving roster has no fal seedream/v5 route → no auto hint: {desc}"
+    );
 
     let params = tool.parameters();
     assert_eq!(
         params["properties"]["model"]["enum"],
-        serde_json::json!(["mai", "seedream5"])
+        serde_json::json!(["gptimage", "seedream5pro"])
     );
     let aspect_desc = params["properties"]["aspect_ratio"]["description"]
         .as_str()
         .unwrap()
         .to_string();
-    assert!(aspect_desc.contains("auto_2K") && aspect_desc.contains("auto_1K"), "aspect_desc: {aspect_desc}");
+    assert!(!aspect_desc.contains("auto_2K"), "aspect_desc: {aspect_desc}");
 
     let model_desc = params["properties"]["model"]["description"].as_str().unwrap();
-    assert!(model_desc.contains("mai") && model_desc.contains("seedream5"), "model_desc: {model_desc}");
-    assert!(model_desc.contains("Default: 'mai'"), "model_desc: {model_desc}");
+    assert!(
+        model_desc.contains("gptimage") && model_desc.contains("seedream5pro"),
+        "model_desc: {model_desc}"
+    );
+    assert!(model_desc.contains("Default: 'seedream5pro'"), "model_desc: {model_desc}");
 }
 
 #[test]
@@ -4121,7 +4137,6 @@ fn make_single_fal_tool(
         "png".into(),
         1,
         "4K".into(),
-        false,
         20,
         webdav::WebDavClient::new(base, "user", "pass").unwrap(),
         Arc::new(rockbot::image_cache::ImageCache::new()),
@@ -4133,17 +4148,17 @@ async fn test_image_gen_routes_alias_to_its_own_provider_backend() {
     let mock_server = MockServer::start().await;
     let base = mock_server.uri();
 
-    let seedream_model = "bytedance/seedream/v5/pro/text-to-image";
-    let mai_model = "microsoft/mai-image-2.5";
+    let fal_model = "openai/gpt-image-2.6/flare/text-to-image";
+    let or_model = "bytedance-seed/seedream-5-0-pro";
 
-    // fal queue pipeline for the seedream alias (expect(1) — only the fal
+    // fal queue pipeline for the gptimage alias (expect(1) — only the fal
     // call may hit these endpoints).
-    mount_fal_queue_pipeline(&mock_server, &base, seedream_model).await;
+    mount_fal_queue_pipeline(&mock_server, &base, fal_model).await;
     // openrouter chat fallback (no image catalog loaded → /images/models 404s,
     // falling back to chat/completions).
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
-        .and(body_string_contains(format!("\"model\":\"{mai_model}\"")))
+        .and(body_string_contains(format!("\"model\":\"{or_model}\"")))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "choices": [{
                 "message": {
@@ -4160,41 +4175,40 @@ async fn test_image_gen_routes_alias_to_its_own_provider_backend() {
 
     let mut fal_cfg = make_fal_config(&base);
     fal_cfg.models = HashMap::from([
-        ("seedream5".to_string(), seedream_model.to_string()),
+        ("gptimage".to_string(), fal_model.to_string()),
     ]);
     let or_cfg = make_openrouter_image_config(&base);
 
     let catalog = ImageModelCatalog::new(
         vec![
-            test_entry("seedream5", seedream_model, None, "fal"),
-            test_entry("mai", mai_model, None, "openrouter"),
+            test_entry("gptimage", fal_model, None, "fal"),
+            test_entry("seedream5pro", or_model, None, "openrouter"),
         ],
-        "mai",
+        "seedream5pro",
     );
     let tool = ImageGenTool::new(
         HashMap::from([
             (
                 "fal".to_string(),
                 ImageBackend::new(
-                    Box::new(FalAiProvider::new(&fal_cfg, seedream_model).unwrap()),
+                    Box::new(FalAiProvider::new(&fal_cfg, fal_model).unwrap()),
                     None,
                 ),
             ),
             (
                 "openrouter".to_string(),
                 ImageBackend::new(
-                    Box::new(OpenRouterImageProvider::new(&or_cfg, mai_model).unwrap()),
+                    Box::new(OpenRouterImageProvider::new(&or_cfg, or_model).unwrap()),
                     None,
                 ),
             ),
         ]),
-        "mai".to_string(),
+        "seedream5pro".to_string(),
         catalog,
         "medium".into(),
         "png".into(),
         1,
         "4K".into(),
-        false,
         20,
         webdav::WebDavClient::new(&base, "user", "pass").unwrap(),
         Arc::new(rockbot::image_cache::ImageCache::new()),
@@ -4202,7 +4216,7 @@ async fn test_image_gen_routes_alias_to_its_own_provider_backend() {
 
     // openrouter-tagged alias → openrouter backend (chat/completions).
     let result = tool
-        .execute(r#"{"prompt":"a sunrise over waves","aspect_ratio":"16:9","model":"mai","room_id":"d-abc"}"#)
+        .execute(r#"{"prompt":"a sunrise over waves","aspect_ratio":"16:9","model":"seedream5pro","room_id":"d-abc"}"#)
         .await
         .unwrap();
     let v: serde_json::Value = serde_json::from_str(&result).unwrap();
@@ -4210,7 +4224,7 @@ async fn test_image_gen_routes_alias_to_its_own_provider_backend() {
 
     // fal-tagged alias → fal backend (queue pipeline + CDN download).
     let result = tool
-        .execute(r#"{"prompt":"a cyberpunk city","aspect_ratio":"16:9","model":"seedream5","room_id":"d-abc"}"#)
+        .execute(r#"{"prompt":"a cyberpunk city","aspect_ratio":"16:9","model":"gptimage","room_id":"d-abc"}"#)
         .await
         .unwrap();
     let v: serde_json::Value = serde_json::from_str(&result).unwrap();
@@ -4224,12 +4238,18 @@ async fn test_image_gen_catalog_spans_multiple_provider_entries() {
 
     let mut fal_cfg = make_fal_config(&base);
     fal_cfg.models = HashMap::from([
-        ("seedream5".to_string(), "bytedance/seedream/v5/pro/text-to-image".to_string()),
+        (
+            "gptimage".to_string(),
+            "openai/gpt-image-2.6/flare/text-to-image".to_string(),
+        ),
         ("flux".to_string(), "fal-ai/flux/schnell".to_string()),
     ]);
     let mut or_cfg = make_openrouter_image_config(&base);
     or_cfg.models = HashMap::from([
-        ("mai".to_string(), "microsoft/mai-image-2.5".to_string()),
+        (
+            "seedream5pro".to_string(),
+            "bytedance-seed/seedream-5-0-pro".to_string(),
+        ),
     ]);
 
     // Simulate the registry-time join of main.rs: merge both entries' models,
@@ -4241,21 +4261,21 @@ async fn test_image_gen_catalog_spans_multiple_provider_entries() {
     for (alias, id) in &or_cfg.models {
         merged.push(test_entry(alias, id, None, "openrouter"));
     }
-    let catalog = ImageModelCatalog::new(merged, "seedream5");
+    let catalog = ImageModelCatalog::new(merged, "gptimage");
 
     assert_eq!(
         catalog.allowed_aliases(),
-        vec!["flux", "mai", "seedream5"],
+        vec!["flux", "gptimage", "seedream5pro"],
         "catalog must span ALL provider entries"
     );
     assert_eq!(
-        catalog.resolve("mai"),
-        Some(("microsoft/mai-image-2.5", "openrouter")),
+        catalog.resolve("seedream5pro"),
+        Some(("bytedance-seed/seedream-5-0-pro", "openrouter")),
         "openrouter entry's model must resolve with its provider"
     );
     assert_eq!(
-        catalog.resolve("seedream5"),
-        Some(("bytedance/seedream/v5/pro/text-to-image", "fal")),
+        catalog.resolve("gptimage"),
+        Some(("openai/gpt-image-2.6/flare/text-to-image", "fal")),
         "fal entry's model must resolve with its provider"
     );
 
@@ -4268,25 +4288,25 @@ async fn test_image_gen_catalog_spans_multiple_provider_entries() {
     let desc = tool.description();
     assert!(
         desc.contains("flux (flux, fal:fal-ai/flux/schnell)")
-            && desc.contains("seedream5 (seedream5, fal:bytedance/seedream/v5/pro/text-to-image)")
-            && desc.contains("mai (mai, openrouter:microsoft/mai-image-2.5)"),
+            && desc.contains("gptimage (gptimage, fal:openai/gpt-image-2.6/flare/text-to-image)")
+            && desc.contains("seedream5pro (seedream5pro, openrouter:bytedance-seed/seedream-5-0-pro)"),
         "description must enumerate all providers' models: {desc}"
     );
 }
 
-// ─── GPT Image 2.5 Flare/Sunburst (issue #102) ───────────────────────────────
+// ─── GPT Image 2.6 Flare/Sunburst (issues #102, #114) ────────────────────────
 
 /// Flare is the default `gptimage` alias and carries a dedicated edit endpoint:
-/// an edit call must swap to `openai/gpt-image-2.5/flare/edit` and forward the
+/// an edit call must swap to `openai/gpt-image-2.6/flare/edit` and forward the
 /// input images. Only the edit endpoint is mounted — resolving to the t2i id
 /// would 404 and fail the test.
 #[tokio::test]
-async fn test_image_gen_gpt_image_2_5_flare_edit_uses_dedicated_endpoint() {
+async fn test_image_gen_gpt_image_2_6_flare_edit_uses_dedicated_endpoint() {
     let mock_server = MockServer::start().await;
     let base = mock_server.uri();
 
-    let flare_t2i = "openai/gpt-image-2.5/flare/text-to-image";
-    let flare_edit = "openai/gpt-image-2.5/flare/edit";
+    let flare_t2i = "openai/gpt-image-2.6/flare/text-to-image";
+    let flare_edit = "openai/gpt-image-2.6/flare/edit";
     let request_id = "req-flare-edit";
 
     Mock::given(method("POST"))
@@ -4337,7 +4357,6 @@ async fn test_image_gen_gpt_image_2_5_flare_edit_uses_dedicated_endpoint() {
         "png".into(),
         1,
         "4K".into(),
-        false,
         20,
         webdav::WebDavClient::new(&base, "user", "pass").unwrap(),
         Arc::new(rockbot::image_cache::ImageCache::new()),
@@ -4356,12 +4375,12 @@ async fn test_image_gen_gpt_image_2_5_flare_edit_uses_dedicated_endpoint() {
 /// Sunburst shares Flare's API shape; a text-to-image call (no input images)
 /// must hit the plain `sunburst/text-to-image` id, not the edit companion.
 #[tokio::test]
-async fn test_image_gen_gpt_image_2_5_sunburst_t2i_uses_plain_endpoint() {
+async fn test_image_gen_gpt_image_2_6_sunburst_t2i_uses_plain_endpoint() {
     let mock_server = MockServer::start().await;
     let base = mock_server.uri();
 
-    let sunburst_t2i = "openai/gpt-image-2.5/sunburst/text-to-image";
-    let sunburst_edit = "openai/gpt-image-2.5/sunburst/edit";
+    let sunburst_t2i = "openai/gpt-image-2.6/sunburst/text-to-image";
+    let sunburst_edit = "openai/gpt-image-2.6/sunburst/edit";
 
     // Only the t2i path is mounted — edit resolution would 404.
     mount_fal_queue_pipeline(&mock_server, &base, sunburst_t2i).await;
@@ -4372,7 +4391,7 @@ async fn test_image_gen_gpt_image_2_5_sunburst_t2i_uses_plain_endpoint() {
     let edit = FalAiProvider::new(&cfg, sunburst_edit).unwrap();
     let catalog = ImageModelCatalog::new(
         vec![test_entry("sunburst", sunburst_t2i, Some(sunburst_edit), "fal")],
-        "gptimage",
+        "sunburst",
     );
     let tool = ImageGenTool::new(
         HashMap::from([(
@@ -4385,7 +4404,6 @@ async fn test_image_gen_gpt_image_2_5_sunburst_t2i_uses_plain_endpoint() {
         "png".into(),
         1,
         "4K".into(),
-        false,
         20,
         webdav::WebDavClient::new(&base, "user", "pass").unwrap(),
         Arc::new(rockbot::image_cache::ImageCache::new()),
@@ -4412,9 +4430,9 @@ async fn test_image_gen_fails_over_and_reports_serving_route() {
     let mock_server = MockServer::start().await;
     let base = mock_server.uri();
 
-    let or_model = "openai/gpt-image-2.6-flare";
-    let fal_model = "openai/gpt-image-2.6/flare/text-to-image";
-    let fal_edit = "openai/gpt-image-2.6/flare/edit";
+    let or_model = "demo/or-generate";
+    let fal_model = "demo/fal-generate";
+    let fal_edit = "demo/fal-edit";
 
     mount_fal_queue_pipeline(&mock_server, &base, fal_model).await;
     mount_result_image_and_webdav(&mock_server, &base).await;
@@ -4433,10 +4451,10 @@ async fn test_image_gen_fails_over_and_reports_serving_route() {
 
     let catalog = ImageModelCatalog::new(
         vec![ImageModelEntry {
-            alias: "gptimage".to_string(),
-            label: "GPT Image 2.6 · Flare".to_string(),
-            family: "openai".to_string(),
-            version: "2.6".to_string(),
+            alias: "route-demo".to_string(),
+            label: "Route Demo".to_string(),
+            family: "demo".to_string(),
+            version: "1".to_string(),
             deprecated: false,
             routes: vec![
                 rockbot::types::ImageRoute {
@@ -4455,7 +4473,7 @@ async fn test_image_gen_fails_over_and_reports_serving_route() {
                 },
             ],
         }],
-        "gptimage",
+        "route-demo",
     );
 
     let tool = ImageGenTool::new(
@@ -4481,14 +4499,13 @@ async fn test_image_gen_fails_over_and_reports_serving_route() {
         "png".into(),
         1,
         "4K".into(),
-        false,
         20,
         webdav::WebDavClient::new(&base, "user", "pass").unwrap(),
         Arc::new(rockbot::image_cache::ImageCache::new()),
     );
 
     let result = tool
-        .execute(r#"{"prompt":"a sunrise over waves","aspect_ratio":"16:9","model":"gptimage","room_id":"d-abc"}"#)
+        .execute(r#"{"prompt":"a sunrise over waves","aspect_ratio":"16:9","model":"route-demo","room_id":"d-abc"}"#)
         .await
         .unwrap();
     let v: serde_json::Value = serde_json::from_str(&result).unwrap();
@@ -4504,7 +4521,7 @@ async fn test_image_gen_provider_arg_pins_route_end_to_end() {
     let mock_server = MockServer::start().await;
     let base = mock_server.uri();
 
-    let fal_model = "openai/gpt-image-2.6/flare/text-to-image";
+    let fal_model = "demo/fal-generate";
     mount_fal_queue_pipeline(&mock_server, &base, fal_model).await;
     mount_result_image_and_webdav(&mock_server, &base).await;
 
@@ -4515,29 +4532,29 @@ async fn test_image_gen_provider_arg_pins_route_end_to_end() {
 
     let catalog = ImageModelCatalog::new(
         vec![ImageModelEntry {
-            alias: "gptimage".to_string(),
-            label: "GPT Image 2.6 · Flare".to_string(),
-            family: "openai".to_string(),
-            version: "2.6".to_string(),
+            alias: "route-demo".to_string(),
+            label: "Route Demo".to_string(),
+            family: "demo".to_string(),
+            version: "1".to_string(),
             deprecated: false,
             routes: vec![
                 rockbot::types::ImageRoute {
                     provider_name: "openrouter".to_string(),
-                    generate_model_id: "openai/gpt-image-2.6-flare".to_string(),
-                    edit_model_id: Some("openai/gpt-image-2.6-flare".to_string()),
+                    generate_model_id: "demo/or-generate".to_string(),
+                    edit_model_id: Some("demo/or-generate".to_string()),
                     tier: rockbot::types::ImageTier::Standard,
                     is_default: true,
                 },
                 rockbot::types::ImageRoute {
                     provider_name: "fal".to_string(),
                     generate_model_id: fal_model.to_string(),
-                    edit_model_id: Some("openai/gpt-image-2.6/flare/edit".to_string()),
+                    edit_model_id: Some("demo/fal-edit".to_string()),
                     tier: rockbot::types::ImageTier::Standard,
                     is_default: false,
                 },
             ],
         }],
-        "gptimage",
+        "route-demo",
     );
 
     let tool = ImageGenTool::new(
@@ -4549,7 +4566,7 @@ async fn test_image_gen_provider_arg_pins_route_end_to_end() {
             (
                 "openrouter".to_string(),
                 ImageBackend::new(
-                    Box::new(OpenRouterImageProvider::new(&or_cfg, "openai/gpt-image-2.6-flare").unwrap()),
+                    Box::new(OpenRouterImageProvider::new(&or_cfg, "demo/or-generate").unwrap()),
                     None,
                 ),
             ),
@@ -4560,14 +4577,13 @@ async fn test_image_gen_provider_arg_pins_route_end_to_end() {
         "png".into(),
         1,
         "4K".into(),
-        false,
         20,
         webdav::WebDavClient::new(&base, "user", "pass").unwrap(),
         Arc::new(rockbot::image_cache::ImageCache::new()),
     );
 
     let result = tool
-        .execute(r#"{"prompt":"a sunrise","aspect_ratio":"16:9","model":"gptimage","provider":"fal","room_id":"d-abc"}"#)
+        .execute(r#"{"prompt":"a sunrise","aspect_ratio":"16:9","model":"route-demo","provider":"fal","room_id":"d-abc"}"#)
         .await
         .unwrap();
     let v: serde_json::Value = serde_json::from_str(&result).unwrap();

@@ -117,7 +117,6 @@ pub struct ImageGenTool {
     default_image_size_tier: String,
     #[allow(dead_code)]
     default_image_size: Option<String>,
-    default_enable_safety_checker: bool,
     pro_daily_cap: u32,
     pro_usage: Mutex<ProTierUsage>,
     webdav: WebDavClient,
@@ -134,7 +133,6 @@ impl ImageGenTool {
         default_output_format: String,
         default_num_images: u32,
         default_image_size_tier: String,
-        default_enable_safety_checker: bool,
         pro_daily_cap: u32,
         webdav: WebDavClient,
         image_cache: Arc<ImageCache>,
@@ -150,7 +148,6 @@ impl ImageGenTool {
             default_num_images,
             default_image_size_tier,
             default_image_size: None,
-            default_enable_safety_checker,
             pro_daily_cap,
             pro_usage: Mutex::new(ProTierUsage::new()),
             webdav,
@@ -435,7 +432,8 @@ impl Tool for ImageGenTool {
 
         params.image_size = Some(ImageSizeValue::Preset(args.aspect_ratio.as_str().to_string()));
         params.size_tier = Some(self.default_image_size_tier.clone());
-        params.enable_safety_checker = Some(self.default_enable_safety_checker);
+        // No safety-checker config knob since #114: the manifest no longer has
+        // any fal seedream/v5 route, the only family the param applies to.
 
         // Data URIs are uploaded with the primary route's backend: fal needs
         // CDN URLs, OpenRouter returns data URIs, and the primary route is the
@@ -767,7 +765,6 @@ mod tests {
             "png".into(),
             1,
             "4K".into(),
-            false,
            20,
             make_webdav(),
             make_image_cache(),
@@ -1088,7 +1085,6 @@ mod tests {
             "png".into(),
             1,
             "2K".into(),
-            false,
            20,
             make_webdav(),
             make_image_cache(),
@@ -1197,14 +1193,19 @@ mod tests {
         ImageModelCatalog::new(
             vec![
                 entry(
-                    "seedream5",
-                    "bytedance/seedream/v5/pro/text-to-image",
-                    Some("bytedance/seedream/v5/pro/edit"),
+                    "gptimage",
+                    "openai/gpt-image-2.6/flare/text-to-image",
+                    Some("openai/gpt-image-2.6/flare/edit"),
                     "fal",
                 ),
-                entry("mai2pro", "microsoft/mai-image-2.5-pro", None, "openrouter"),
+                entry(
+                    "seedream5pro",
+                    "bytedance-seed/seedream-5-0-pro",
+                    None,
+                    "openrouter",
+                ),
             ],
-            "mai2pro",
+            "seedream5pro",
         )
     }
 
@@ -1215,14 +1216,14 @@ mod tests {
         let args = serde_json::json!({
             "prompt": "a cat",
             "aspect_ratio": "1:1",
-            "model": "seedream5",
+            "model": "gptimage",
         });
         let _ = tool.execute(&args.to_string()).await;
         let guard = sink.lock().unwrap();
         let captured = guard.as_ref().expect("provider received params");
         assert_eq!(
             captured.model_id.as_deref(),
-            Some("bytedance/seedream/v5/pro/text-to-image"),
+            Some("openai/gpt-image-2.6/flare/text-to-image"),
             "model alias must resolve to the catalog's model id"
         );
     }
@@ -1233,14 +1234,19 @@ mod tests {
         let catalog = ImageModelCatalog::new(
             vec![
                 entry(
-                    "seedream5",
-                    "bytedance/seedream/v5/pro/text-to-image",
-                    Some("bytedance/seedream/v5/pro/edit"),
+                    "gptimage",
+                    "openai/gpt-image-2.6/flare/text-to-image",
+                    Some("openai/gpt-image-2.6/flare/edit"),
                     "fal",
                 ),
-                entry("mai2pro", "microsoft/mai-image-2.5-pro", None, "openrouter"),
+                entry(
+                    "seedream5pro",
+                    "bytedance-seed/seedream-5-0-pro",
+                    None,
+                    "openrouter",
+                ),
             ],
-            "seedream5",
+            "gptimage",
         );
         let tool = make_tool(provider, catalog);
         let args = serde_json::json!({
@@ -1252,84 +1258,9 @@ mod tests {
         let captured = guard.as_ref().expect("provider received params");
         assert_eq!(
             captured.model_id.as_deref(),
-            Some("bytedance/seedream/v5/pro/text-to-image"),
+            Some("openai/gpt-image-2.6/flare/text-to-image"),
             "omitted alias adopts the default alias's preferred route (#112)"
         );
-    }
-
-    /// Single-openrouter-backend tool whose catalog carries the issue #104
-    /// Ming Design alias.
-    fn make_ming_tool(provider: Box<dyn ImageProvider>) -> ImageGenTool {
-        ImageGenTool::new(
-            HashMap::from([(
-                "openrouter".to_string(),
-                ImageBackend::new(provider, None),
-            )]),
-            "openrouter".to_string(),
-            ImageModelCatalog::new(
-                vec![entry(
-                    "ming",
-                    "inclusionai/ming-image-0.1-design",
-                    None,
-                    "openrouter",
-                )],
-                "ming",
-            ),
-            "medium".into(),
-            "png".into(),
-            1,
-            "4K".into(),
-            false,
-           20,
-            make_webdav(),
-            make_image_cache(),
-        )
-    }
-
-    #[tokio::test]
-    async fn test_execute_ming_alias_resolves_to_inclusionai_id() {
-        // Issue #104 acceptance: image_gen(model="ming") resolves to
-        // inclusionai/ming-image-0.1-design on the openrouter backend (the
-        // actual wire-body bypass is asserted in provider/openrouter.rs).
-        let (provider, sink) = make_recording_provider();
-        let tool = make_ming_tool(provider);
-        let args = serde_json::json!({
-            "prompt": "a poster with legible text",
-            "aspect_ratio": "2:3",
-            "model": "ming",
-        });
-        let _ = tool.execute(&args.to_string()).await;
-        let guard = sink.lock().unwrap();
-        let captured = guard.as_ref().expect("provider received params");
-        assert_eq!(
-            captured.model_id.as_deref(),
-            Some("inclusionai/ming-image-0.1-design"),
-            "ming alias must resolve to its catalog model id"
-        );
-        match captured.image_size.as_ref() {
-            Some(ImageSizeValue::Preset(ratio)) => assert_eq!(ratio, "2:3"),
-            other => panic!("expected Preset aspect ratio, got {other:?}"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_execute_text_to_image_only_alias_rejects_edit() {
-        // Issue #104 acceptance: an edit call (input image) for ming fails
-        // before any provider request with a clear text-to-image-only error.
-        let tool = make_ming_tool(Box::new(MockImageProvider::new()));
-        let err = tool
-            .execute(
-                r#"{"prompt":"recolor","aspect_ratio":"1:1","model":"ming","image_urls":["https://example.com/in.png"]}"#,
-            )
-            .await
-            .unwrap_err();
-        assert!(
-            matches!(err, RockBotError::ToolCallParse(_)),
-            "edit rejection must be a parse-boundary error, got: {err:?}"
-        );
-        let msg = err.to_string();
-        assert!(msg.contains("text-to-image only"), "err: {msg}");
-        assert!(msg.contains("inclusionai/ming-image-0.1-design"), "err: {msg}");
     }
 
     #[tokio::test]
@@ -1346,7 +1277,31 @@ mod tests {
         let err = tool.execute(&args.to_string()).await.unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("not in image model catalog"), "err: {msg}");
-        assert!(msg.contains("mai2pro") && msg.contains("seedream5"), "err should list valid aliases: {msg}");
+        assert!(
+            msg.contains("gptimage") && msg.contains("seedream5pro"),
+            "err should list valid aliases: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_execute_dropped_alias_is_rejected_with_valid_alias_list() {
+        // Issue #114 acceptance: a room still pinned to a removed alias gets a
+        // clear parse-boundary error naming the surviving roster.
+        let tool = make_tool(
+            Box::new(MockImageProvider::with_generate_error(RockBotError::Provider("x".into()))),
+            make_multi_model_catalog(),
+        );
+        let err = tool
+            .execute(r#"{"prompt":"a cat","aspect_ratio":"1:1","model":"mai2pro"}"#)
+            .await
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("not in image model catalog"), "err: {msg}");
+        assert!(msg.contains("alias 'mai2pro'"), "err should name the dropped alias: {msg}");
+        assert!(
+            msg.contains("valid aliases: gptimage, seedream5pro"),
+            "err should list the surviving roster: {msg}"
+        );
     }
 
     // ----- Per-provider backend routing (issue #96) -----
@@ -1366,38 +1321,36 @@ mod tests {
             "png".into(),
             1,
             "4K".into(),
-            false,
            20,
             make_webdav(),
             make_image_cache(),
         );
 
-        // seedream5 → fal backend
-        let _ = tool.execute(r#"{"prompt":"a cat","aspect_ratio":"1:1","model":"seedream5"}"#).await;
+        // gptimage → fal backend
+        let _ = tool.execute(r#"{"prompt":"a cat","aspect_ratio":"1:1","model":"gptimage"}"#).await;
         assert_eq!(
             fal_sink.lock().unwrap().as_ref().unwrap().model_id.as_deref(),
-            Some("bytedance/seedream/v5/pro/text-to-image"),
+            Some("openai/gpt-image-2.6/flare/text-to-image"),
             "fal-tagged alias must hit the fal backend"
         );
         assert!(or_sink.lock().unwrap().is_none(), "fal alias must not hit openrouter");
 
-        // mai2pro → openrouter backend
-        let _ = tool.execute(r#"{"prompt":"a cat","aspect_ratio":"1:1","model":"mai2pro"}"#).await;
+        // seedream5pro → openrouter backend
+        let _ = tool.execute(r#"{"prompt":"a cat","aspect_ratio":"1:1","model":"seedream5pro"}"#).await;
         assert_eq!(
             or_sink.lock().unwrap().as_ref().unwrap().model_id.as_deref(),
-            Some("microsoft/mai-image-2.5-pro"),
+            Some("bytedance-seed/seedream-5-0-pro"),
             "openrouter-tagged alias must hit the openrouter backend"
         );
 
-        // omitted model → default backend (openrouter); default alias 'mai2pro'
-        // belongs to openrouter, so its entry now resolves mode-aware and sets
-        // the t2i id explicitly
+        // omitted model → default alias 'seedream5pro' (openrouter), so its
+        // entry resolves mode-aware and sets the t2i id explicitly
         let _ = tool.execute(r#"{"prompt":"a cat","aspect_ratio":"1:1"}"#).await;
         let or_captured = or_sink.lock().unwrap();
         let captured = or_captured.as_ref().unwrap();
         assert_eq!(
             captured.model_id.as_deref(),
-            Some("microsoft/mai-image-2.5-pro"),
+            Some("bytedance-seed/seedream-5-0-pro"),
             "omitted alias adopts the default alias entry (mode-aware)"
         );
         assert_eq!(captured.prompt.as_str(), "a cat");
@@ -1405,18 +1358,23 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_edit_mode_swaps_to_dedicated_endpoint() {
-        // Default alias = seedream5 (fal pair); tool default backend = fal.
+        // Default alias = gptimage (fal pair); tool default backend = fal.
         let catalog = ImageModelCatalog::new(
             vec![
                 entry(
-                    "seedream5",
-                    "bytedance/seedream/v5/pro/text-to-image",
-                    Some("bytedance/seedream/v5/pro/edit"),
+                    "gptimage",
+                    "openai/gpt-image-2.6/flare/text-to-image",
+                    Some("openai/gpt-image-2.6/flare/edit"),
                     "fal",
                 ),
-                entry("mai2pro", "microsoft/mai-image-2.5-pro", None, "openrouter"),
+                entry(
+                    "seedream5pro",
+                    "bytedance-seed/seedream-5-0-pro",
+                    None,
+                    "openrouter",
+                ),
             ],
-            "seedream5",
+            "gptimage",
         );
         let (fal_provider, fal_sink) = make_recording_provider();
         let (or_provider, or_sink) = make_recording_provider();
@@ -1431,7 +1389,6 @@ mod tests {
             "png".into(),
             1,
             "4K".into(),
-            false,
            20,
             make_webdav(),
             make_image_cache(),
@@ -1442,15 +1399,15 @@ mod tests {
         let _ = tool.execute(r#"{"prompt":"recolor","aspect_ratio":"1:1","image_urls":["https://example.com/in.png"]}"#).await;
         assert_eq!(
             fal_sink.lock().unwrap().as_ref().unwrap().model_id.as_deref(),
-            Some("bytedance/seedream/v5/pro/edit"),
+            Some("openai/gpt-image-2.6/flare/edit"),
             "default paired alias must swap to its edit endpoint in edit mode"
         );
 
-        // Same-model editing: mai2pro (no companion) keeps the plain id in edit mode
-        let _ = tool.execute(r#"{"prompt":"recolor","aspect_ratio":"1:1","model":"mai2pro","image_urls":["https://example.com/in.png"]}"#).await;
+        // Same-model editing: seedream5pro (no companion) keeps the plain id in edit mode
+        let _ = tool.execute(r#"{"prompt":"recolor","aspect_ratio":"1:1","model":"seedream5pro","image_urls":["https://example.com/in.png"]}"#).await;
         assert_eq!(
             or_sink.lock().unwrap().as_ref().unwrap().model_id.as_deref(),
-            Some("microsoft/mai-image-2.5-pro"),
+            Some("bytedance-seed/seedream-5-0-pro"),
             "alias without companion reuses the t2i id when editing (issue #100)"
         );
     }
@@ -1463,18 +1420,17 @@ mod tests {
                 ImageBackend::new(Box::new(MockImageProvider::new()), None),
             )]),
             "fal".to_string(),
-            make_multi_model_catalog(), // mai2pro → openrouter, but no openrouter backend
+            make_multi_model_catalog(), // seedream5pro → openrouter, but no openrouter backend
             "medium".into(),
             "png".into(),
             1,
             "4K".into(),
-            false,
            20,
             make_webdav(),
             make_image_cache(),
         );
         let err = tool
-            .execute(r#"{"prompt":"a cat","aspect_ratio":"1:1","model":"mai2pro"}"#)
+            .execute(r#"{"prompt":"a cat","aspect_ratio":"1:1","model":"seedream5pro"}"#)
             .await
             .unwrap_err();
         let msg = err.to_string();
@@ -1487,14 +1443,14 @@ mod tests {
         let schema = tool.parameters();
         let model = &schema["properties"]["model"];
         assert_eq!(model["type"], "string");
-        assert_eq!(model["enum"], serde_json::json!(["mai2pro", "seedream5"]));
+        assert_eq!(model["enum"], serde_json::json!(["gptimage", "seedream5pro"]));
     }
 
     #[test]
     fn test_schema_model_has_no_enum_when_catalog_empty() {
         let tool = make_tool(
             Box::new(MockImageProvider::new()),
-            ImageModelCatalog::new(Vec::new(), "mai2pro"),
+            ImageModelCatalog::new(Vec::new(), "gptimage"),
         );
         let schema = tool.parameters();
         let model = &schema["properties"]["model"];
@@ -1508,16 +1464,24 @@ mod tests {
     fn test_tool_description_lists_models_and_defaults() {
         let tool = make_tool(Box::new(MockImageProvider::new()), make_multi_model_catalog());
         let desc = tool.description();
-        assert!(desc.contains("mai2pro (mai2pro, openrouter:microsoft/mai-image-2.5-pro)"), "desc: {desc}");
         assert!(
             desc.contains(
-                "seedream5 (seedream5, fal:bytedance/seedream/v5/pro/text-to-image \
-                 (edit:bytedance/seedream/v5/pro/edit))"
+                "seedream5pro (seedream5pro, openrouter:bytedance-seed/seedream-5-0-pro)"
             ),
             "desc: {desc}"
         );
-        assert!(desc.contains("Default: 'mai2pro'"), "desc: {desc}");
-        assert!(desc.contains("auto_2K") && desc.contains("auto_1K"), "seedream5 in catalog → auto hint: {desc}");
+        assert!(
+            desc.contains(
+                "gptimage (gptimage, fal:openai/gpt-image-2.6/flare/text-to-image \
+                 (edit:openai/gpt-image-2.6/flare/edit))"
+            ),
+            "desc: {desc}"
+        );
+        assert!(desc.contains("Default: 'seedream5pro'"), "desc: {desc}");
+        assert!(
+            !desc.contains("auto_2K") && !desc.contains("auto_1K"),
+            "surviving roster has no fal seedream/v5 route → no auto hint: {desc}"
+        );
     }
 
     #[test]
@@ -1533,7 +1497,7 @@ mod tests {
     fn test_tool_description_empty_catalog() {
         let tool = make_tool(
             Box::new(MockImageProvider::new()),
-            ImageModelCatalog::new(Vec::new(), "mai2pro"),
+            ImageModelCatalog::new(Vec::new(), "gptimage"),
         );
         let desc = tool.description();
         assert!(desc.contains("no image models configured"), "desc: {desc}");
@@ -1542,7 +1506,19 @@ mod tests {
 
     #[test]
     fn test_aspect_ratio_description_auto_hint_conditional() {
-        let seedream_tool = make_tool(Box::new(MockImageProvider::new()), make_multi_model_catalog());
+        // The predicate is model-id driven, not alias driven: a catalog with a
+        // fal seedream/v5 slug still advertises the auto-dimensional hint even
+        // though the current roster has no such route.
+        let seedream_catalog = ImageModelCatalog::new(
+            vec![entry(
+                "synthetic-seedream",
+                "bytedance/seedream/v5/pro/text-to-image",
+                None,
+                "fal",
+            )],
+            "synthetic-seedream",
+        );
+        let seedream_tool = make_tool(Box::new(MockImageProvider::new()), seedream_catalog);
         let flux_tool = make_tool(Box::new(MockImageProvider::new()), make_model_catalog());
         let seedream_desc = seedream_tool
             .parameters()["properties"]["aspect_ratio"]["description"]
@@ -1564,10 +1540,10 @@ mod tests {
         let args = serde_json::json!({
             "prompt": "a cat",
             "aspect_ratio": "1:1",
-            "model": "mai2pro",
+            "model": "qwenimage",
         });
         let parsed: ImageGenArgs = serde_json::from_value(args).unwrap();
-        assert_eq!(parsed.model.as_ref().map(|m| m.as_str()), Some("mai2pro"));
+        assert_eq!(parsed.model.as_ref().map(|m| m.as_str()), Some("qwenimage"));
     }
 
     #[test]
@@ -1607,21 +1583,24 @@ mod tests {
         }
     }
 
-    fn gptimage_routes() -> ImageModelEntry {
+    /// Synthetic two-provider alias used only to exercise generic route
+    /// ordering (pin + failover). The real roster has no cross-provider
+    /// routes (#114).
+    fn route_demo_entry() -> ImageModelEntry {
         route_entry(
-            "gptimage",
+            "route-demo",
             vec![
                 (
                     "openrouter",
-                    "openai/gpt-image-2.6-flare",
-                    Some("openai/gpt-image-2.6-flare"),
+                    "demo/generate",
+                    Some("demo/generate"),
                     ImageTier::Standard,
                     true,
                 ),
                 (
                     "fal",
-                    "openai/gpt-image-2.6/flare/text-to-image",
-                    Some("openai/gpt-image-2.6/flare/edit"),
+                    "demo/generate-fal",
+                    Some("demo/edit-fal"),
                     ImageTier::Standard,
                     false,
                 ),
@@ -1646,7 +1625,6 @@ mod tests {
             "png".into(),
             1,
             "4K".into(),
-            false,
             pro_daily_cap,
             make_webdav(),
             make_image_cache(),
@@ -1658,7 +1636,7 @@ mod tests {
         let (fal, fal_sink) = make_recording_provider();
         let (or, or_sink) = make_recording_provider();
         let tool = make_multi_backend_tool(
-            ImageModelCatalog::new(vec![gptimage_routes()], "gptimage"),
+            ImageModelCatalog::new(vec![route_demo_entry()], "route-demo"),
             fal,
             or,
             0,
@@ -1666,7 +1644,7 @@ mod tests {
 
         let _ = tool
             .execute(
-                r#"{"prompt":"a cat","aspect_ratio":"1:1","model":"gptimage","provider":"fal"}"#,
+                r#"{"prompt":"a cat","aspect_ratio":"1:1","model":"route-demo","provider":"fal"}"#,
             )
             .await;
 
@@ -1678,7 +1656,7 @@ mod tests {
                 .expect("pinned fal backend received the call")
                 .model_id
                 .as_deref(),
-            Some("openai/gpt-image-2.6/flare/text-to-image")
+            Some("demo/generate-fal")
         );
         assert!(
             or_sink.lock().unwrap().is_none(),
@@ -1689,14 +1667,14 @@ mod tests {
     #[tokio::test]
     async fn test_execute_unknown_provider_pin_is_parse_error() {
         let tool = make_multi_backend_tool(
-            ImageModelCatalog::new(vec![gptimage_routes()], "gptimage"),
+            ImageModelCatalog::new(vec![route_demo_entry()], "route-demo"),
             Box::new(MockImageProvider::named("fal", "fal-default")),
             Box::new(MockImageProvider::named("openrouter", "or-default")),
             0,
         );
         let err = tool
             .execute(
-                r#"{"prompt":"a cat","aspect_ratio":"1:1","model":"gptimage","provider":"replicate"}"#,
+                r#"{"prompt":"a cat","aspect_ratio":"1:1","model":"route-demo","provider":"replicate"}"#,
             )
             .await
             .unwrap_err();
@@ -1707,28 +1685,30 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_tier_selects_route_over_default() {
+        // Generic tier-selection mechanism; the surviving roster only exposes
+        // pro (qwenimage/qwen3) and flash (seedream5flash) tiers (#114).
         let entry = route_entry(
-            "qwenimage",
+            "tier-demo",
             vec![
                 (
                     "openrouter",
-                    "qwen/qwen-image-2.1-pro",
-                    Some("qwen/qwen-image-2.1-pro"),
+                    "demo/pro",
+                    Some("demo/pro"),
                     ImageTier::Pro,
                     true,
                 ),
                 (
                     "openrouter",
-                    "qwen/qwen-image-2.1-turbo",
-                    Some("qwen/qwen-image-2.1-turbo"),
-                    ImageTier::Turbo,
+                    "demo/flash",
+                    Some("demo/flash"),
+                    ImageTier::Flash,
                     false,
                 ),
             ],
         );
         let (provider, sink) = make_recording_provider();
         let tool = make_multi_backend_tool(
-            ImageModelCatalog::new(vec![entry], "qwenimage"),
+            ImageModelCatalog::new(vec![entry], "tier-demo"),
             Box::new(MockImageProvider::named("fal", "fal-default")),
             provider,
             0,
@@ -1736,28 +1716,28 @@ mod tests {
 
         let _ = tool
             .execute(
-                r#"{"prompt":"a sketch","aspect_ratio":"1:1","model":"qwenimage","tier":"turbo"}"#,
+                r#"{"prompt":"a sketch","aspect_ratio":"1:1","model":"tier-demo","tier":"flash"}"#,
             )
             .await;
 
         assert_eq!(
             sink.lock().unwrap().as_ref().unwrap().model_id.as_deref(),
-            Some("qwen/qwen-image-2.1-turbo"),
-            "tier=turbo must pick the turbo route, not the pro default"
+            Some("demo/flash"),
+            "tier=flash must pick the flash route, not the pro default"
         );
     }
 
     #[tokio::test]
     async fn test_execute_unknown_tier_is_parse_error() {
         let tool = make_multi_backend_tool(
-            ImageModelCatalog::new(vec![gptimage_routes()], "gptimage"),
+            ImageModelCatalog::new(vec![route_demo_entry()], "route-demo"),
             Box::new(MockImageProvider::named("fal", "fal-default")),
             Box::new(MockImageProvider::named("openrouter", "or-default")),
             0,
         );
         let err = tool
             .execute(
-                r#"{"prompt":"a cat","aspect_ratio":"1:1","model":"gptimage","tier":"flash"}"#,
+                r#"{"prompt":"a cat","aspect_ratio":"1:1","model":"route-demo","tier":"flash"}"#,
             )
             .await
             .unwrap_err();
@@ -1768,7 +1748,7 @@ mod tests {
     async fn test_execute_fails_over_to_next_route() {
         let (fal, fal_sink) = make_recording_provider();
         let tool = make_multi_backend_tool(
-            ImageModelCatalog::new(vec![gptimage_routes()], "gptimage"),
+            ImageModelCatalog::new(vec![route_demo_entry()], "route-demo"),
             fal,
             Box::new(MockImageProvider::named_failing("openrouter", "or-default")),
             0,
@@ -1779,7 +1759,7 @@ mod tests {
         // so the overall call still errors — the failover is proven by the
         // second backend receiving the request.
         let _ = tool
-            .execute(r#"{"prompt":"a cat","aspect_ratio":"1:1","model":"gptimage"}"#)
+            .execute(r#"{"prompt":"a cat","aspect_ratio":"1:1","model":"route-demo"}"#)
             .await;
 
         assert_eq!(
@@ -1790,24 +1770,24 @@ mod tests {
                 .expect("failover route received the call")
                 .model_id
                 .as_deref(),
-            Some("openai/gpt-image-2.6/flare/text-to-image")
+            Some("demo/generate-fal")
         );
     }
 
     #[tokio::test]
     async fn test_execute_pro_tier_daily_cap() {
         let entry = route_entry(
-            "mai2pro",
+            "qwenimage",
             vec![(
                 "openrouter",
-                "microsoft/mai-image-2.6",
-                Some("microsoft/mai-image-2.6"),
+                "qwen/qwen-image-2.1-pro",
+                Some("qwen/qwen-image-2.1-pro"),
                 ImageTier::Pro,
                 true,
             )],
         );
         let tool = make_multi_backend_tool(
-            ImageModelCatalog::new(vec![entry], "mai2pro"),
+            ImageModelCatalog::new(vec![entry], "qwenimage"),
             Box::new(MockImageProvider::named("fal", "fal-default")),
             Box::new(MockImageProvider::named("openrouter", "or-default")),
             1,
@@ -1815,11 +1795,11 @@ mod tests {
 
         // First call is charged (and then fails at the WebDAV upload).
         let _ = tool
-            .execute(r#"{"prompt":"final art","aspect_ratio":"1:1","model":"mai2pro","room_id":"room-a"}"#)
+            .execute(r#"{"prompt":"final art","aspect_ratio":"1:1","model":"qwenimage","room_id":"room-a"}"#)
             .await;
 
         let err = tool
-            .execute(r#"{"prompt":"final art again","aspect_ratio":"1:1","model":"mai2pro","room_id":"room-a"}"#)
+            .execute(r#"{"prompt":"final art again","aspect_ratio":"1:1","model":"qwenimage","room_id":"room-a"}"#)
             .await
             .unwrap_err();
         assert!(
@@ -1829,7 +1809,7 @@ mod tests {
 
         // A different room has its own budget.
         let other = tool
-            .execute(r#"{"prompt":"final art","aspect_ratio":"1:1","model":"mai2pro","room_id":"room-b"}"#)
+            .execute(r#"{"prompt":"final art","aspect_ratio":"1:1","model":"qwenimage","room_id":"room-b"}"#)
             .await;
         assert!(
             !other

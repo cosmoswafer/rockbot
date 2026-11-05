@@ -11,11 +11,16 @@ basecf_url = ""
 draw_path = "/images"
 
 [image_providers.models]
-seedream = "bytedance-seed/seedream-4.5"
-banana   = "google/gemini-3.1-flash-image-preview"
-mai      = "microsoft/mai-image-2.5"
-qwenimage = "qwen/qwen-image-3-pro"
+banana        = "google/gemini-nano-banana-2.1"
+qwenimage     = "qwen/qwen-image-2.1-pro"
+qwen3         = "qwen/qwen-image-3-pro"
+seedream5pro  = "bytedance-seed/seedream-5-0-pro"
+seedream5flash = "bytedance-seed/seedream-5-0-flash"
+grok2         = "x-ai/grok-imagine-image-2.0"
 ```
+
+> `models/image.toml` is the canonical alias roster (#114); the table above is
+> the legacy config fallback. All six aliases are OpenRouter-only.
 
 > **Note:** Since Gitea issue #84, `draw_path` **is** used: models present in
 > OpenRouter's image catalog (`GET {base_url}/images/models`) are generated via
@@ -218,14 +223,18 @@ Known working models (as of writing):
 
 | Model slug | Notes |
 |---|---|
-| `google/gemini-3.1-flash-image-preview` | Extended aspect ratios (`1:4`, `4:1`, `1:8`, `8:1`), `0.5K` resolution tier |
-| `google/gemini-2.5-flash-image` | |
+| `google/gemini-nano-banana-2.1` | `banana` — Nano Banana 2.1 |
+| `qwen/qwen-image-2.1-pro` | `qwenimage` — pro tier |
+| `qwen/qwen-image-3-pro` | `qwen3` — pro tier |
+| `bytedance-seed/seedream-5-0-pro` | `seedream5pro` |
+| `bytedance-seed/seedream-5-0-flash` | `seedream5flash` — flash tier |
+| `x-ai/grok-imagine-image-2.0` | `grok2` |
+| `google/gemini-3.1-flash-image-preview` | Extended aspect ratios (`1:4`, `4:1`, `1:8`, `8:1`), `0.5K` resolution tier (not in the current roster) |
 | `black-forest-labs/flux.2-pro` | |
 | `black-forest-labs/flux.2-flex` | |
 | `sourceful/riverflow-v2-standard-preview` | |
 | `bytedance-seed/seedream-4.5` | |
 | `openai/gpt-5-image` | High quality, default for server-side tool |
-| `microsoft/mai-image-2.5` | Text-to-image and img2img; reliable via curl tests; `image_size: "4K"` with `aspect_ratio: "2:3"` outputs ~2730×4096 px |
 
 ## Trait Mapping
 

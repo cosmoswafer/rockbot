@@ -69,7 +69,7 @@ async fn test_fal_image_edit_with_p1() {
         .edit_models
         .get("gptimage")
         .cloned()
-        .unwrap_or_else(|| "openai/gpt-image-2.5/flare/edit".to_string());
+        .unwrap_or_else(|| "openai/gpt-image-2.6/flare/edit".to_string());
 
     eprintln!("FAL base_url: {}", fal_cfg.base_url.as_str());
     eprintln!("FAL edit model: {}", edit_model);

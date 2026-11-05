@@ -360,7 +360,6 @@ async fn run_bot(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
                     im.default_output_format.clone(),
                     im.default_num_images,
                     im.default_image_size_tier.clone(),
-                    im.default_enable_safety_checker,
                     im.pro_daily_cap,
                     webdav_client.clone(),
                     image_cache.clone(),

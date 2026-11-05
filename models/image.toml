@@ -1,4 +1,4 @@
-# models/image.toml — canonical `image_gen` model manifest (issues #111, #112).
+# models/image.toml — canonical `image_gen` model manifest (issues #111, #112, #114).
 #
 # Single source of truth for the alias roster: RockBot embeds this file at
 # build time (see `crate-rockbot/src/image_manifest.rs`) and the Leptos UI
@@ -8,15 +8,13 @@
 # Alias ≠ provider: one alias owns an ordered list of `[[model.route]]`
 # entries. Each route names the provider entry, the slugs per operation, and
 # an optional tier. The first route flagged `default`, else the first route,
-# is preferred; edit calls prefer routes with a dedicated `edit` slug. On a
-# provider error the tool advances to the next route once (failover is logged
-# and the serving route is returned to the caller).
+# is preferred; edit calls prefer routes with a dedicated `edit` slug.
 #
-# Verification (2026-11-05): every OpenRouter slug checked against
+# Verification (2026-11-05, roster #114): every OpenRouter slug checked against
 # `GET /api/v1/images/models`; every fal slug checked against the fal model
 # registry (`https://fal.ai/api/models`). `edit = ""` means the route is
 # generate-only — it is not a broken reference.
-version = "2026-11-05"
+version = "2026-11-05.1"
 
 # ------------------------------- GPT Image -------------------------------
 
@@ -28,12 +26,7 @@ version = "2.6"
 default = true
 ratios = ["16:9", "2:3", "1:1", "4:3", "3:4", "3:2"]
 tags = ["general", "text-rendering"]
-notes = "Default. Best general-purpose choice; use for legible text in the image."
-
-  [[model.route]]
-  provider = "openrouter"
-  generate = "openai/gpt-image-2.6-flare"
-  edit = "openai/gpt-image-2.6-flare"
+notes = "Default. Best general-purpose choice; use for legible text in the image. fal-only route."
 
   [[model.route]]
   provider = "fal"
@@ -47,57 +40,12 @@ family = "openai"
 version = "2.6"
 ratios = ["16:9", "2:3", "1:1", "4:3", "3:4", "3:2"]
 tags = ["general", "detail"]
-notes = "Detail-oriented sibling of gptimage (dense compositions, consistent edits)."
-
-  [[model.route]]
-  provider = "openrouter"
-  generate = "openai/gpt-image-2.6-sunburst"
-  edit = "openai/gpt-image-2.6-sunburst"
+notes = "Detail-oriented sibling of gptimage (dense compositions, consistent edits). fal-only route."
 
   [[model.route]]
   provider = "fal"
   generate = "openai/gpt-image-2.6/sunburst/text-to-image"
   edit = "openai/gpt-image-2.6/sunburst/edit"
-
-[[model]]
-alias = "gptimage25"
-label = "GPT Image 2.5 · Flare (deprecated)"
-family = "openai"
-version = "2.5"
-deprecated = true
-ratios = ["16:9", "2:3", "1:1", "4:3", "3:4", "3:2"]
-tags = ["deprecated"]
-notes = "Deprecated: kept one release so rooms pinned to GPT Image 2.5 keep working."
-
-  [[model.route]]
-  provider = "openrouter"
-  generate = "openai/gpt-image-2.5-flare"
-  edit = "openai/gpt-image-2.5-flare"
-
-  [[model.route]]
-  provider = "fal"
-  generate = "openai/gpt-image-2.5/flare/text-to-image"
-  edit = "openai/gpt-image-2.5/flare/edit"
-
-[[model]]
-alias = "sunburst25"
-label = "GPT Image 2.5 · Sunburst (deprecated)"
-family = "openai"
-version = "2.5"
-deprecated = true
-ratios = ["16:9", "2:3", "1:1", "4:3", "3:4", "3:2"]
-tags = ["deprecated"]
-notes = "Deprecated: kept one release so rooms pinned to GPT Image 2.5 Sunburst keep working."
-
-  [[model.route]]
-  provider = "openrouter"
-  generate = "openai/gpt-image-2.5-sunburst"
-  edit = "openai/gpt-image-2.5-sunburst"
-
-  [[model.route]]
-  provider = "fal"
-  generate = "openai/gpt-image-2.5/sunburst/text-to-image"
-  edit = "openai/gpt-image-2.5/sunburst/edit"
 
 # --------------------------------- Google --------------------------------
 
@@ -108,12 +56,7 @@ family = "google"
 version = "2.1"
 ratios = ["16:9", "2:3", "1:1", "4:3", "3:4", "3:2"]
 tags = ["general", "fast"]
-notes = "Strong all-rounder with cheap, fast edits; prefers the native fal edit endpoint."
-
-  [[model.route]]
-  provider = "fal"
-  generate = "google/nano-banana-2.1"
-  edit = "google/nano-banana-2.1/edit"
+notes = "Strong all-rounder with cheap, fast edits. OpenRouter-only route."
 
   [[model.route]]
   provider = "openrouter"
@@ -129,7 +72,7 @@ family = "qwen"
 version = "2.1"
 ratios = ["16:9", "2:3", "1:1", "4:3", "3:4", "3:2"]
 tags = ["general", "pro"]
-notes = "Pro tier: final output. For throwaway drafts request tier='turbo' instead."
+notes = "Pro tier: final output. OpenRouter-only route."
 
   [[model.route]]
   provider = "openrouter"
@@ -138,12 +81,6 @@ notes = "Pro tier: final output. For throwaway drafts request tier='turbo' inste
   tier = "pro"
   default = true
 
-  [[model.route]]
-  provider = "openrouter"
-  generate = "qwen/qwen-image-2.1-turbo"
-  edit = "qwen/qwen-image-2.1-turbo"
-  tier = "turbo"
-
 [[model]]
 alias = "qwen3"
 label = "Qwen Image 3 · Pro"
@@ -151,7 +88,7 @@ family = "qwen"
 version = "3"
 ratios = ["16:9", "2:3", "1:1", "4:3", "3:4", "3:2"]
 tags = ["general", "pro"]
-notes = "Previous qwenimage default, kept selectable under its own alias."
+notes = "Previous qwenimage default, kept selectable under its own alias. OpenRouter-only route."
 
   [[model.route]]
   provider = "openrouter"
@@ -159,112 +96,16 @@ notes = "Previous qwenimage default, kept selectable under its own alias."
   edit = "qwen/qwen-image-3-pro"
   tier = "pro"
 
-# -------------------------------- Microsoft ------------------------------
-
-[[model]]
-alias = "mai2pro"
-label = "MAI Image 2.6 · Pro"
-family = "microsoft"
-version = "2.6"
-ratios = ["16:9", "2:3", "1:1", "4:3", "3:4", "3:2"]
-tags = ["general", "pro"]
-notes = "Pro tier: final output. Use mai2flash for iteration/sketches."
-
-  [[model.route]]
-  provider = "openrouter"
-  generate = "microsoft/mai-image-2.6"
-  edit = "microsoft/mai-image-2.6"
-  tier = "pro"
-
-[[model]]
-alias = "mai2flash"
-label = "MAI Image 2.6 · Flash"
-family = "microsoft"
-version = "2.6"
-ratios = ["16:9", "2:3", "1:1", "4:3", "3:4", "3:2"]
-tags = ["general", "fast"]
-notes = "Flash tier: cheap and fast — use for drafts and iteration, not final output."
-
-  [[model.route]]
-  provider = "openrouter"
-  generate = "microsoft/mai-image-2.6-flash"
-  edit = "microsoft/mai-image-2.6-flash"
-  tier = "flash"
-
-# ---------------------------------- xAI ---------------------------------
-
-[[model]]
-alias = "grok2"
-label = "Grok Imagine 2.0"
-family = "x-ai"
-version = "2.0"
-ratios = ["16:9", "2:3", "1:1", "4:3", "3:4", "3:2"]
-tags = ["general"]
-notes = "OpenRouter-first; fal serves the same family when OpenRouter fails."
-
-  [[model.route]]
-  provider = "openrouter"
-  generate = "x-ai/grok-imagine-image-2.0"
-  edit = "x-ai/grok-imagine-image-2.0"
-
-  [[model.route]]
-  provider = "fal"
-  generate = "xai/grok-imagine-image/v2.0/text-to-image"
-  edit = "xai/grok-imagine-image/v2.0/edit"
-
-[[model]]
-alias = "grok"
-label = "Grok Imagine (quality)"
-family = "x-ai"
-version = "1.0"
-ratios = ["16:9", "2:3", "1:1", "4:3", "3:4", "3:2"]
-tags = ["general"]
-
-  [[model.route]]
-  provider = "fal"
-  generate = "xai/grok-imagine-image/quality/text-to-image"
-  edit = "xai/grok-imagine-image/quality/edit"
-
 # -------------------------------- ByteDance ------------------------------
 
 [[model]]
-alias = "seedream"
-label = "Seedream 4.5"
-family = "bytedance"
-version = "4.5"
-ratios = ["16:9", "2:3", "1:1", "4:3", "3:4", "3:2"]
-tags = ["general"]
-
-  [[model.route]]
-  provider = "fal"
-  generate = "fal-ai/bytedance/seedream/v4.5/text-to-image"
-
-  [[model.route]]
-  provider = "openrouter"
-  generate = "bytedance-seed/seedream-4.5"
-  edit = "bytedance-seed/seedream-4.5"
-
-[[model]]
-alias = "seedream5"
+alias = "seedream5pro"
 label = "Seedream 5 Pro"
 family = "bytedance"
 version = "5"
-ratios = ["16:9", "2:3", "1:1", "4:3", "3:4", "3:2", "auto_2K", "auto_1K"]
-tags = ["general", "pro"]
-notes = "Fal's native Seedream 5 Pro pair (auto-dimensional aspect strings supported)."
-
-  [[model.route]]
-  provider = "fal"
-  generate = "bytedance/seedream/v5/pro/text-to-image"
-  edit = "bytedance/seedream/v5/pro/edit"
-
-[[model]]
-alias = "seedream5pro"
-label = "Seedream 5 Pro (OpenRouter)"
-family = "bytedance"
-version = "5"
 ratios = ["16:9", "2:3", "1:1", "4:3", "3:4", "3:2"]
 tags = ["general", "pro"]
+notes = "Seedream 5 Pro via OpenRouter. OpenRouter-only route."
 
   [[model.route]]
   provider = "openrouter"
@@ -278,74 +119,26 @@ family = "bytedance"
 version = "5"
 ratios = ["16:9", "2:3", "1:1", "4:3", "3:4", "3:2"]
 tags = ["fast"]
-notes = "Flash tier: speed over fidelity — drafts, storyboards, quick iteration."
+notes = "Flash tier: speed over fidelity — drafts, storyboards, quick iteration. OpenRouter-only route."
 
   [[model.route]]
-  provider = "fal"
-  generate = "bytedance/seedream/v5/flash/text-to-image"
-  edit = "bytedance/seedream/v5/flash/edit"
+  provider = "openrouter"
+  generate = "bytedance-seed/seedream-5-0-flash"
+  edit = "bytedance-seed/seedream-5-0-flash"
   tier = "flash"
 
-# ---------------------------------- Bria ---------------------------------
+# ---------------------------------- xAI ---------------------------------
 
 [[model]]
-alias = "fibo"
-label = "BRIA Fibo 2"
-family = "bria"
-version = "2"
+alias = "grok2"
+label = "Grok Imagine 2.0"
+family = "x-ai"
+version = "2.0"
 ratios = ["16:9", "2:3", "1:1", "4:3", "3:4", "3:2"]
-tags = ["structured", "brand-safe"]
-notes = "Brand-safe / structured output (VGL scenes, product shots). Not a general default."
-
-  [[model.route]]
-  provider = "fal"
-  generate = "bria/fibo-2/generate"
-  edit = "bria/fibo-2/edit"
-
-# ---------------------------------- Fal ----------------------------------
-
-[[model]]
-alias = "moss"
-label = "Moss Image"
-family = "fal-ai"
-version = "1"
-ratios = ["16:9", "2:3", "1:1", "4:3", "3:4", "3:2"]
-tags = ["stylised", "t2i-only"]
-notes = "Stylised text-to-image only (no edit endpoint). Not a general default."
-
-  [[model.route]]
-  provider = "fal"
-  generate = "fal-ai/moss-image"
-
-# --------------------------------- Meta ----------------------------------
-
-[[model]]
-alias = "muse"
-label = "Muse Image"
-family = "meta"
-version = "1"
 tags = ["general"]
-notes = "Generate-only on OpenRouter; fal serves edits."
+notes = "OpenRouter-only route. fal no longer serves this alias."
 
   [[model.route]]
   provider = "openrouter"
-  generate = "meta/muse-image"
-
-  [[model.route]]
-  provider = "fal"
-  generate = "meta/muse-image/text-to-image"
-  edit = "meta/muse-image/edit"
-
-# ------------------------------- InclusionAI ----------------------------
-
-[[model]]
-alias = "ming"
-label = "Ming Image 0.1 Design"
-family = "inclusionai"
-version = "0.1"
-tags = ["design", "text-rendering", "t2i-only"]
-notes = "UI mockups/posters with legible text. Text-to-image ONLY (no edit calls); model chooses its own dimensions."
-
-  [[model.route]]
-  provider = "openrouter"
-  generate = "inclusionai/ming-image-0.1-design"
+  generate = "x-ai/grok-imagine-image-2.0"
+  edit = "x-ai/grok-imagine-image-2.0"

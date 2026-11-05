@@ -977,21 +977,26 @@ mod tests {
     fn test_image_model_catalog_resolution() {
         let entries = vec![
             entry(
-                "seedream5",
-                "bytedance/seedream/v5/pro/text-to-image",
-                Some("bytedance/seedream/v5/pro/edit"),
+                "gptimage",
+                "openai/gpt-image-2.6/flare/text-to-image",
+                Some("openai/gpt-image-2.6/flare/edit"),
                 "fal",
             ),
-            entry("mai2pro", "microsoft/mai-image-2.5-pro", None, "openrouter"),
+            entry(
+                "seedream5pro",
+                "bytedance-seed/seedream-5-0-pro",
+                None,
+                "openrouter",
+            ),
         ];
-        let catalog = ImageModelCatalog::new(entries, "mai2pro");
+        let catalog = ImageModelCatalog::new(entries, "gptimage");
         assert_eq!(
-            catalog.resolve("mai2pro"),
-            Some(("microsoft/mai-image-2.5-pro", "openrouter"))
+            catalog.resolve("seedream5pro"),
+            Some(("bytedance-seed/seedream-5-0-pro", "openrouter"))
         );
         assert_eq!(
-            catalog.resolve("seedream5"),
-            Some(("bytedance/seedream/v5/pro/text-to-image", "fal"))
+            catalog.resolve("gptimage"),
+            Some(("openai/gpt-image-2.6/flare/text-to-image", "fal"))
         );
         assert_eq!(catalog.resolve("nope"), None);
         assert!(!catalog.is_empty());
@@ -1002,28 +1007,33 @@ mod tests {
         let catalog = ImageModelCatalog::new(
             vec![
                 entry(
-                    "seedream5",
-                    "bytedance/seedream/v5/pro/text-to-image",
-                    Some("bytedance/seedream/v5/pro/edit"),
+                    "gptimage",
+                    "openai/gpt-image-2.6/flare/text-to-image",
+                    Some("openai/gpt-image-2.6/flare/edit"),
                     "fal",
                 ),
-                entry("mai2pro", "microsoft/mai-image-2.5-pro", None, "openrouter"),
+                entry(
+                    "seedream5pro",
+                    "bytedance-seed/seedream-5-0-pro",
+                    None,
+                    "openrouter",
+                ),
             ],
-            "mai2pro",
+            "gptimage",
         );
         // fal pair: edit mode swaps to the dedicated endpoint id (issue #100)
         assert_eq!(
-            catalog.resolve_for_mode("seedream5", true),
-            Some(("bytedance/seedream/v5/pro/edit", "fal"))
+            catalog.resolve_for_mode("gptimage", true),
+            Some(("openai/gpt-image-2.6/flare/edit", "fal"))
         );
         // same-model editing: no companion → t2i id in both modes
         assert_eq!(
-            catalog.resolve_for_mode("mai2pro", true),
-            Some(("microsoft/mai-image-2.5-pro", "openrouter"))
+            catalog.resolve_for_mode("seedream5pro", true),
+            Some(("bytedance-seed/seedream-5-0-pro", "openrouter"))
         );
         assert_eq!(
-            catalog.resolve_for_mode("mai2pro", false),
-            Some(("microsoft/mai-image-2.5-pro", "openrouter"))
+            catalog.resolve_for_mode("seedream5pro", false),
+            Some(("bytedance-seed/seedream-5-0-pro", "openrouter"))
         );
     }
 
@@ -1031,51 +1041,58 @@ mod tests {
     fn test_image_model_catalog_sorted_aliases() {
         let catalog = ImageModelCatalog::new(
             vec![
-                entry("seedream5", "a", None, "fal"),
+                entry("seedream5pro", "a", None, "openrouter"),
                 entry("banana", "b", None, "openrouter"),
-                entry("mai2pro", "c", None, "fal"),
+                entry("qwen3", "c", None, "openrouter"),
             ],
-            "mai2pro",
+            "qwen3",
         );
-        assert_eq!(catalog.allowed_aliases(), vec!["banana", "mai2pro", "seedream5"]);
-        assert_eq!(catalog.valid_alias_list(), "banana, mai2pro, seedream5");
-        assert_eq!(catalog.referenced_providers(), vec!["fal", "openrouter"]);
+        assert_eq!(catalog.allowed_aliases(), vec!["banana", "qwen3", "seedream5pro"]);
+        assert_eq!(catalog.valid_alias_list(), "banana, qwen3, seedream5pro");
+        assert_eq!(catalog.referenced_providers(), vec!["openrouter"]);
     }
 
     #[test]
     fn test_image_model_catalog_default_alias() {
         let catalog = ImageModelCatalog::new(
-            vec![entry("mai2pro", "microsoft/mai-image-2.5-pro", None, "openrouter")],
-            "mai2pro",
+            vec![entry("qwenimage", "qwen/qwen-image-2.1-pro", None, "openrouter")],
+            "qwenimage",
         );
-        assert_eq!(catalog.default_alias(), "mai2pro");
+        assert_eq!(catalog.default_alias(), "qwenimage");
     }
 
     #[test]
     fn test_image_model_catalog_empty() {
-        let catalog = ImageModelCatalog::new(Vec::new(), "mai2pro");
+        let catalog = ImageModelCatalog::new(Vec::new(), "gptimage");
         assert!(catalog.is_empty());
-        assert_eq!(catalog.resolve("mai2pro"), None);
+        assert_eq!(catalog.resolve("gptimage"), None);
         assert_eq!(catalog.valid_alias_list(), "(none configured)");
     }
 
     #[test]
     fn test_image_model_catalog_auto_aspect_capability() {
+        // The predicate is model-id driven; the current roster has no fal
+        // seedream/v5 route, but the capability still works for any future one.
         let seedream = ImageModelCatalog::new(
             vec![
                 entry(
-                    "seedream5",
+                    "synthetic-seedream",
                     "bytedance/seedream/v5/pro/text-to-image",
                     None,
                     "fal",
                 ),
-                entry("mai2pro", "microsoft/mai-image-2.5-pro", None, "openrouter"),
+                entry(
+                    "seedream5pro",
+                    "bytedance-seed/seedream-5-0-pro",
+                    None,
+                    "openrouter",
+                ),
             ],
-            "mai2pro",
+            "seedream5pro",
         );
         assert!(seedream.supports_auto_aspect(), "seedream/v5 id → auto aspect supported");
         assert_eq!(
-            seedream.resolve("seedream5"),
+            seedream.resolve("synthetic-seedream"),
             Some(("bytedance/seedream/v5/pro/text-to-image", "fal"))
         );
 
@@ -1085,54 +1102,58 @@ mod tests {
         );
         assert!(!flux.supports_auto_aspect(), "non-seedream models → no auto aspect");
 
-        let empty = ImageModelCatalog::new(Vec::new(), "mai2pro");
+        let empty = ImageModelCatalog::new(Vec::new(), "gptimage");
         assert!(!empty.supports_auto_aspect());
     }
 
     #[test]
-    fn test_image_model_traits_ming_design() {
-        // Issue #104: Ming Design is self-sized and text-to-image only.
+    fn test_image_model_traits_ming_design_model_id() {
+        // Issue #104: the Ming Design model id is self-sized and
+        // text-to-image only. The alias itself is no longer in the #114 roster,
+        // but the wire-level traits remain model-id driven.
         let ming = ImageModelTraits::for_model_id("inclusionai/ming-image-0.1-design");
         assert!(ming.self_sized, "ming rejects explicit size params");
         assert!(ming.text_to_image_only, "ming accepts no input references");
 
-        // Sibling layer model is not the registered alias — no false match.
+        // Sibling layer model is not the registered model id — no false match.
         let layer = ImageModelTraits::for_model_id("inclusionai/ming-image-0.1-design-layer");
         assert!(!layer.text_to_image_only, "layer variant must not match the t2i marker");
 
-        let other = ImageModelTraits::for_model_id("microsoft/mai-image-2.5-pro");
+        let other = ImageModelTraits::for_model_id("qwen/qwen-image-2.1-pro");
         assert_eq!(other, ImageModelTraits::default(), "unmarked models get all-default traits");
     }
 
     #[test]
     fn test_image_model_entry_traits() {
-        let ming = entry("ming", "inclusionai/ming-image-0.1-design", None, "openrouter");
+        let ming = entry("synthetic-ming", "inclusionai/ming-image-0.1-design", None, "openrouter");
         assert!(ming.traits().self_sized && ming.traits().text_to_image_only);
-        let mai = entry("mai2pro", "microsoft/mai-image-2.5-pro", None, "openrouter");
-        assert!(!mai.traits().self_sized && !mai.traits().text_to_image_only);
+        let qwen = entry("qwenimage", "qwen/qwen-image-2.1-pro", None, "openrouter");
+        assert!(!qwen.traits().self_sized && !qwen.traits().text_to_image_only);
     }
 
     // ----- Provider routes (issue #112) -----
 
+    /// Synthetic two-provider alias exercising generic route ordering; the
+    /// surviving #114 roster has no cross-provider routes.
     fn multi_route_entry() -> ImageModelEntry {
         ImageModelEntry {
-            alias: "gptimage".to_string(),
-            label: "GPT Image 2.6 · Flare".to_string(),
-            family: "openai".to_string(),
-            version: "2.6".to_string(),
+            alias: "route-demo".to_string(),
+            label: "Route Demo".to_string(),
+            family: "demo".to_string(),
+            version: "1".to_string(),
             deprecated: false,
             routes: vec![
                 route(
                     "openrouter",
-                    "openai/gpt-image-2.6-flare",
-                    Some("openai/gpt-image-2.6-flare"),
+                    "demo/generate",
+                    Some("demo/generate"),
                     ImageTier::Standard,
                     true,
                 ),
                 route(
                     "fal",
-                    "openai/gpt-image-2.6/flare/text-to-image",
-                    Some("openai/gpt-image-2.6/flare/edit"),
+                    "demo/generate-fal",
+                    Some("demo/edit-fal"),
                     ImageTier::Standard,
                     false,
                 ),
@@ -1157,14 +1178,14 @@ mod tests {
         let mut entry = multi_route_entry();
         entry.routes.push(route(
             "openrouter",
-            "qwen/qwen-image-2.1-turbo",
+            "demo/turbo",
             None,
             ImageTier::Turbo,
             false,
         ));
         let turbo = entry.route_candidates(None, Some(ImageTier::Turbo), false);
         assert_eq!(turbo.len(), 1);
-        assert_eq!(turbo[0].generate_model_id, "qwen/qwen-image-2.1-turbo");
+        assert_eq!(turbo[0].generate_model_id, "demo/turbo");
         assert!(entry.route_candidates(None, Some(ImageTier::Flash), false).is_empty());
     }
 
@@ -1188,9 +1209,9 @@ mod tests {
 
     #[test]
     fn test_prefer_provider_reorders_default_alias() {
-        let mut catalog = ImageModelCatalog::new(vec![multi_route_entry()], "gptimage");
+        let mut catalog = ImageModelCatalog::new(vec![multi_route_entry()], "route-demo");
         catalog.prefer_provider("fal");
-        let entry = catalog.entry("gptimage").unwrap();
+        let entry = catalog.entry("route-demo").unwrap();
         assert_eq!(entry.default_route().provider_name, "fal");
         assert_eq!(entry.routes[0].provider_name, "fal");
         assert!(entry.routes[0].is_default);
@@ -1199,10 +1220,10 @@ mod tests {
 
     #[test]
     fn test_restricted_to_providers_drops_missing_backends() {
-        let catalog = ImageModelCatalog::new(vec![multi_route_entry()], "gptimage");
+        let catalog = ImageModelCatalog::new(vec![multi_route_entry()], "route-demo");
         let available: std::collections::HashSet<&str> = ["openrouter"].into_iter().collect();
         let restricted = catalog.restricted_to_providers(&available);
-        let entry = restricted.entry("gptimage").unwrap();
+        let entry = restricted.entry("route-demo").unwrap();
         assert_eq!(entry.providers(), vec!["openrouter"]);
         assert_eq!(restricted.referenced_providers(), vec!["openrouter"]);
     }

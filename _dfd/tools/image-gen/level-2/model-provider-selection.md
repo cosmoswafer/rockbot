@@ -110,42 +110,37 @@ Pro-tier routes are charged to the room's daily budget before the call
   `image_gen ledger room=… provider=… model=… tier=… img2img=… elapsed_ms=…`.
   There is no per-model pricing table in this repo — `tier` is the cost proxy.
 
-## 6. Manifest roster (2026-11-05)
+## 6. Manifest roster (2026-11-05, #114)
 
 All slugs were verified against `GET https://openrouter.ai/api/v1/images/models`
-and the fal model registry. Selected entries:
+and the fal model registry. The roster is exactly eight aliases; every alias
+has **one provider** (no cross-provider failover routes):
 
-| alias            | routes (provider: generate / edit)                                            | tier |
+| alias            | provider: generate / edit                                                     | tier |
 | ---------------- | ----------------------------------------------------------------------------- | ---- |
-| `gptimage` (default) | openrouter: `openai/gpt-image-2.6-flare` · fal: `openai/gpt-image-2.6/flare/{text-to-image,edit}` | standard |
-| `sunburst`       | openrouter: `openai/gpt-image-2.6-sunburst` · fal: `openai/gpt-image-2.6/sunburst/{text-to-image,edit}` | standard |
-| `banana`         | fal: `google/nano-banana-2.1{/edit}` · openrouter: `google/gemini-nano-banana-2.1` | standard |
-| `qwenimage`      | openrouter: `qwen/qwen-image-2.1-pro` (default) / `qwen/qwen-image-2.1-turbo` | pro / turbo |
-| `qwen3`          | openrouter: `qwen/qwen-image-3-pro`                                            | pro |
-| `mai2pro`        | openrouter: `microsoft/mai-image-2.6`                                          | pro |
-| `mai2flash`      | openrouter: `microsoft/mai-image-2.6-flash`                                    | flash |
-| `grok2`          | openrouter: `x-ai/grok-imagine-image-2.0` · fal: `xai/grok-imagine-image/v2.0/{text-to-image,edit}` | standard |
-| `seedream`       | fal: `fal-ai/bytedance/seedream/v4.5/text-to-image` · openrouter: `bytedance-seed/seedream-4.5` | standard |
-| `seedream5`      | fal: `bytedance/seedream/v5/pro/{text-to-image,edit}`                          | standard |
-| `seedream5pro`   | openrouter: `bytedance-seed/seedream-5-0-pro`                                  | standard |
-| `seedream5flash` | fal: `bytedance/seedream/v5/flash/{text-to-image,edit}`                        | flash |
-| `fibo`           | fal: `bria/fibo-2/{generate,edit}`                                             | standard |
-| `moss`           | fal: `fal-ai/moss-image` (generate-only)                                       | standard |
-| `muse`           | openrouter: `meta/muse-image` · fal: `meta/muse-image/{text-to-image,edit}`    | standard |
-| `ming`           | openrouter: `inclusionai/ming-image-0.1-design` (generate-only)                | standard |
-| `gptimage25`, `sunburst25` | deprecated 2.5 routes (kept one release, `#111`)                     | standard |
+| `gptimage` (default) | fal: `openai/gpt-image-2.6/flare/{text-to-image,edit}`                    | standard |
+| `sunburst`       | fal: `openai/gpt-image-2.6/sunburst/{text-to-image,edit}`                     | standard |
+| `banana`         | openrouter: `google/gemini-nano-banana-2.1`                                   | standard |
+| `qwenimage`      | openrouter: `qwen/qwen-image-2.1-pro`                                         | pro |
+| `qwen3`          | openrouter: `qwen/qwen-image-3-pro`                                           | pro |
+| `seedream5pro`   | openrouter: `bytedance-seed/seedream-5-0-pro`                                 | standard |
+| `seedream5flash` | openrouter: `bytedance-seed/seedream-5-0-flash`                               | flash |
+| `grok2`          | openrouter: `x-ai/grok-imagine-image-2.0`                                     | standard |
 
-`gptimage`/`sunburst` moved 2.5 → 2.6; the old aliases remain as `gptimage25` /
-`sunburst25` with `deprecated = true` so rooms pinned to 2.5 keep working.
-`qwenimage` now defaults to 2.1 Pro with an opt-in turbo route; the former
-`qwen-image-3-pro` default stays selectable as `qwen3`. `mai2flash` and
-`seedream5flash` are the flash-tier aliases; `qwenimage` is the only alias with
-an in-alias tier split (`tier="turbo"`).
+`gptimage` remains the sole `default = true` alias and the only fal route pair
+alongside `sunburst`. The former 2.5 aliases (`gptimage25`, `sunburst25`) and
+the other eleven roster entries (`mai2pro`, `mai2flash`, `grok`, `seedream`,
+`seedream5`, `fibo`, `moss`, `muse`, `ming`) were removed in #114. A request
+naming a removed alias fails at the parse boundary with a `ToolCallParse` error
+listing the eight surviving aliases — there is no silent fallback to the
+default.
 
-`ming` (issue #104) remains text-to-image only and self-sized (see
-[aspect-ratio.md](aspect-ratio.md)). Its route is generate-only; an edit call
-fails at the parse boundary with a `ToolCallParse` error before selecting a
-backend.
+`qwenimage` is pro-only (the turbo route was dropped); `seedream5flash` is the
+only flash-tier alias; `qwenimage`/`qwen3` are the only pro-tier aliases.
+
+The Ming Design wire traits (self-sized / text-to-image-only) remain
+model-id driven in `ImageModelTraits`, but the `ming` alias is no longer in the
+roster (see [aspect-ratio.md](aspect-ratio.md)).
 
 ## 7. Provider differences
 

@@ -25,12 +25,13 @@ optional edit companion id for providers that genuinely use separate endpoints
 (fal); when no candidate route declares one, the generate slug serves edits.
 
 Per-model **wire-level traits** (issue #104, `ImageModelTraits`) cover quirks
-the OpenRouter image catalog does not advertise: *self-sized* models
-(`ming` → `inclusionai/ming-image-0.1-design`, Ming Image 0.1 Design) choose
-their own output dimensions, so the request builder drops `resolution` /
-`aspect_ratio`, and *text-to-image-only* models reject edit calls at the tool
-parse boundary with a clear error. `FalSizeParam` covers the fal request-shape
-split (image_size object vs `aspect_ratio` ± `resolution`).
+the OpenRouter image catalog does not advertise: the Ming Design model id
+(`inclusionai/ming-image-0.1-design`) is *self-sized* (the request builder drops
+`resolution` / `aspect_ratio`) and *text-to-image-only* (edit calls fail at the
+tool parse boundary). The `ming` alias itself is no longer in the eight-alias
+roster (#114), but the model-id-driven traits remain available. `FalSizeParam`
+covers the fal request-shape split (image_size object vs `aspect_ratio` ±
+`resolution`).
 
 The tool's description and `parameters()` schema are **generated from the
 catalog at registry time** (issue #95, see
@@ -65,12 +66,12 @@ LLM provides `prompt` and `aspect_ratio` (both required); all other fields come 
 | `reference_image_key` | LLM | `string` | Alternative to `image_urls` — the `image_key` from a prior `image_gen` result. Looked up in ImageCache; data URI uploaded to provider CDN. Tool-level arg — not a field on the Rust struct; resolved before `ImageGenParams` construction. |
 | `model`       | LLM              | `string` (alias)                              | **Optional.** Manifest alias (`models/image.toml`). Exposed in the tool schema as an `enum` of valid aliases, deprecated ones included (omitted when catalog empty). Resolved via `ImageModelCatalog`; unknown alias → `ToolCallParse` error at the parse boundary. |
 | `provider`    | LLM              | `string`                                       | **Optional.** Pins one route provider for the alias (`fal`, `openrouter`). Omitted ⇒ the alias's route order (preferred first) is used, with one failover step. A pin suppresses failover to other providers. |
-| `tier`        | LLM              | `ImageTier` (`standard`/`pro`/`turbo`/`flash`) | **Optional.** Selects a route by tier (e.g. `qwenimage` + `turbo`). Omitted ⇒ the alias default route. No matching route → `ToolCallParse` error listing the alias's tiers. |
+| `tier`        | LLM              | `ImageTier` (`standard`/`pro`/`turbo`/`flash`) | **Optional.** Selects a route by tier (e.g. `seedream5flash` + `flash`). Omitted ⇒ the alias default route. No matching route → `ToolCallParse` error listing the alias's tiers. |
 | `model_id`    | Tool (resolved)  | `string`                                       | Mode-aware slug of the attempt's route (`generate_model_id` or its `edit_model_id`). Set per attempt; failover updates it. `None` only when the catalog has no entry for the default alias (config leniency) — the provider instance then uses its configured default (`provider.model_id()`). |
 | `quality`       | Config            | `string`                                       | From `default_quality`                           |
 | `output_format` | Config            | `string`                                       | From `default_output_format`                     |
 | `num_images`    | Config            | `integer`                                      | From `default_num_images`                        |
-| `enable_safety_checker` | Config     | `boolean`                                      | From `default_enable_safety_checker` (default `false`). Sent by `FalAiProvider` only when model contains `"seedream/v5"`. |
+| `enable_safety_checker` | Provider   | `Option<boolean>`                              | No config knob since #114 (the roster has no fal seedream/v5 route). Direct callers may set it; `FalAiProvider` sends it only when the model contains `"seedream/v5"`. |
 
 #### `ImageModelCatalog`
 
@@ -88,7 +89,7 @@ by `main.rs`, and consumed by the tool — mismatches are compile-time errors.
 
 | Field             | Type             | Description                                                                 |
 | ----------------- | ---------------- | --------------------------------------------------------------------------- |
-| `alias`           | `string`         | LLM-facing selection name (e.g. `seedream5`).                                |
+| `alias`           | `string`         | LLM-facing selection name (e.g. `seedream5pro`).                             |
 | `label`           | `string`         | Human-facing model name (`GPT Image 2.6 · Flare`) — description text.        |
 | `family`          | `string`         | Model family (`openai`, `google`, `qwen`, …).                                |
 | `version`         | `string`         | Family version (`2.6`, `2.1`, …).                                            |
@@ -131,9 +132,10 @@ Per-model wire-level quirks **not** advertised by the OpenRouter image catalog,
 derived from the model id once (`ImageModelTraits::for_model_id` in `types.rs`,
 issue #104) — the canonical type consumed by both `ImageGenTool` and
 `OpenRouterImageProvider`, so tool behaviour and wire body can never disagree.
-The only marked model today is `ming` (`inclusionai/ming-image-0.1-design`,
-Ming Image 0.1 Design — text-to-image only, model-chosen dimensions, promo
-`$0.00` pricing on NovitaAI). Both traits default to `false`.
+The only marked model today is the Ming Design model id
+(`inclusionai/ming-image-0.1-design` — text-to-image only, model-chosen
+dimensions). The `ming` alias is not part of the eight-alias #114 roster. Both
+traits default to `false`.
 
 | Field                 | Type   | Description                                                                 |
 | --------------------- | ------ | --------------------------------------------------------------------------- |

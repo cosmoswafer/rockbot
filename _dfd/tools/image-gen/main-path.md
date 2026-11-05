@@ -20,14 +20,14 @@ the manifest's `default = true` alias. Two optional args refine routing:
 `provider` pins one route, `tier` picks a quality/speed route of the alias.
 
 Per-model wire traits (issue #104, [structures.md](structures.md) §3
-`ImageModelTraits`) shape the request beyond the catalog: the `ming` alias
-(`inclusionai/ming-image-0.1-design`, Ming Image 0.1 Design — promo `$0.00` on
-NovitaAI, single route) is **self-sized** (the provider omits `resolution` /
-`aspect_ratio`, the tool returns a one-line `note` instead) and
+`ImageModelTraits`) shape the request beyond the catalog: the Ming Design model
+id (`inclusionai/ming-image-0.1-design`) is **self-sized** (the provider omits
+`resolution` / `aspect_ratio`, the tool returns a one-line `note` instead) and
 **text-to-image-only** (an edit call carrying input images fails at the parse
-boundary with a clear `ToolCallParse` error before any provider request).
-`FalSizeParam` additionally selects the fal size-param shape per endpoint
-(`image_size` object vs `aspect_ratio`/`resolution`; see
+boundary with a clear `ToolCallParse` error before any provider request). The
+`ming` alias itself is not in the eight-alias #114 roster; the traits remain
+model-id driven. `FalSizeParam` additionally selects the fal size-param shape
+per endpoint (`image_size` object vs `aspect_ratio`/`resolution`; see
 [model-provider-selection.md](level-2/model-provider-selection.md)).
 
 - Upstream: [Agent Harness](../../agent/agent-harness/image-interception.md) injects `room_id`, `webdav_dir`,

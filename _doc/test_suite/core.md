@@ -44,8 +44,8 @@ Full `AgentHarness`: simple response, DM handling, provider error fallback, max_
 ### `src/tools/calendar.rs` — 12 tests (includes mini_calendar)
 `DateTimeTool` definition, `civil_from_days`/`days_from_civil` date algorithms (epoch, known dates, roundtrip), weekday names/indexes, ISO week number, calendar and weekday output generation, all 7 execution output formats (full, iso, human, unix, calendar, weekdays, week_number), empty args default, week_offset variants.
 
-### `src/tools/image_gen.rs` — 23 tests
-`ImageGenTool` definition (hidden `image_size` from LLM), execute error paths (missing prompt, invalid JSON), UUID format generation, webdav_dir extraction with room_id fallback, output format extension mapping, `ImageGenParams` construction/parsing (presets, custom sizes, image_urls for img2img, edge cases).
+### `src/tools/image_gen.rs` — 46 tests
+`ImageGenTool` definition (hidden `image_size` from LLM), execute error paths (missing prompt, invalid JSON), UUID format generation, webdav_dir extraction with room_id fallback, output format extension mapping, `ImageGenParams` construction/parsing (presets, custom sizes, image_urls for img2img, edge cases), catalog-derived description/schema, per-call alias resolution, dropped-alias rejection with the surviving alias list (#114), provider pin/tier/failover routing, pro-tier daily cap, and mode-aware edit endpoints.
 - Helpers: `make_fal_config()`, `make_fal_provider()`, `make_webdav()`, `make_image_cache()`
 
 ### `src/tools/vision.rs` — 9 tests

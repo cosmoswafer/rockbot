@@ -262,8 +262,6 @@ pub struct ImageModelConfig {
     pub default_image_size: String,
     #[serde(default = "default_image_size_tier")]
     pub default_image_size_tier: String,
-    #[serde(default = "default_enable_safety_checker")]
-    pub default_enable_safety_checker: bool,
 }
 
 fn default_image_pro_daily_cap() -> u32 {
@@ -299,10 +297,6 @@ fn default_image_size_tier() -> String {
     "4K".into()
 }
 
-fn default_enable_safety_checker() -> bool {
-    false
-}
-
 impl Default for ImageModelConfig {
     fn default() -> Self {
         Self {
@@ -316,7 +310,6 @@ impl Default for ImageModelConfig {
             default_num_images: default_image_num_images(),
             default_image_size: default_image_size(),
             default_image_size_tier: default_image_size_tier(),
-            default_enable_safety_checker: default_enable_safety_checker(),
         }
     }
 }
@@ -474,37 +467,24 @@ fn image_default_models(kind: &str) -> HashMap<String, String> {
     let mut m = HashMap::new();
     match kind {
         "openrouter" => {
-            m.insert("seedream".to_string(), "bytedance-seed/seedream-4.5".to_string());
-            m.insert("banana".to_string(), "google/gemini-3.1-flash-image-preview".to_string());
-            // Issue #101: pro-only mai variant + new OpenRouter image models
-            // (ids verified against GET /api/v1/images/models).
-            m.insert("mai2pro".to_string(), "microsoft/mai-image-2.5-pro".to_string());
+            // Issue #114 roster: OpenRouter-only aliases (ids verified against
+            // GET /api/v1/images/models).
+            m.insert("banana".to_string(), "google/gemini-nano-banana-2.1".to_string());
+            m.insert("qwenimage".to_string(), "qwen/qwen-image-2.1-pro".to_string());
+            m.insert("qwen3".to_string(), "qwen/qwen-image-3-pro".to_string());
             m.insert("seedream5pro".to_string(), "bytedance-seed/seedream-5-0-pro".to_string());
+            m.insert(
+                "seedream5flash".to_string(),
+                "bytedance-seed/seedream-5-0-flash".to_string(),
+            );
             m.insert("grok2".to_string(), "x-ai/grok-imagine-image-2.0".to_string());
-            m.insert("muse".to_string(), "meta/muse-image".to_string());
-            // Issue #104: Ming Image 0.1 Design — text-to-image only, model-chosen
-            // dimensions (never registered in edit_models). Promo $0.00 pricing on
-            // NovitaAI (its only route); treat the free price as promotional.
-            m.insert("ming".to_string(), "inclusionai/ming-image-0.1-design".to_string());
-            m.insert("qwenimage".to_string(), "qwen/qwen-image-3-pro".to_string());
         }
         "fal" => {
-            m.insert(
-                "seedream".to_string(),
-                "fal-ai/bytedance/seedream/v4.5/text-to-image".to_string(),
-            );
-            m.insert(
-                "seedream5".to_string(),
-                "bytedance/seedream/v5/pro/text-to-image".to_string(),
-            );
-            m.insert("gptimage".to_string(), "openai/gpt-image-2.5/flare/text-to-image".to_string());
+            // Issue #114 roster: the two fal-only aliases.
+            m.insert("gptimage".to_string(), "openai/gpt-image-2.6/flare/text-to-image".to_string());
             m.insert(
                 "sunburst".to_string(),
-                "openai/gpt-image-2.5/sunburst/text-to-image".to_string(),
-            );
-            m.insert(
-                "grok".to_string(),
-                "xai/grok-imagine-image/quality/text-to-image".to_string(),
+                "openai/gpt-image-2.6/sunburst/text-to-image".to_string(),
             );
         }
         _ => {}
@@ -515,18 +495,10 @@ fn image_default_models(kind: &str) -> HashMap<String, String> {
 fn image_default_edit_models(kind: &str) -> HashMap<String, String> {
     let mut m = HashMap::new();
     if kind == "fal" {
-        m.insert(
-            "seedream5".to_string(),
-            "bytedance/seedream/v5/pro/edit".to_string(),
-        );
-        m.insert("gptimage".to_string(), "openai/gpt-image-2.5/flare/edit".to_string());
+        m.insert("gptimage".to_string(), "openai/gpt-image-2.6/flare/edit".to_string());
         m.insert(
             "sunburst".to_string(),
-            "openai/gpt-image-2.5/sunburst/edit".to_string(),
-        );
-        m.insert(
-            "grok".to_string(),
-            "xai/grok-imagine-image/quality/edit".to_string(),
+            "openai/gpt-image-2.6/sunburst/edit".to_string(),
         );
     }
     m
@@ -843,7 +815,7 @@ api_key = "k"
         assert!(!img.models.contains_key("qwen"));
         assert!(!img.models.contains_key("minimax"));
         assert!(img.models.contains_key("banana"));
-        assert!(img.models.contains_key("mai2pro"));
+        assert!(img.models.contains_key("seedream5pro"));
 
         let chat = config.find_chat_provider("openrouter").unwrap();
         assert_eq!(
@@ -855,8 +827,8 @@ api_key = "k"
 
     #[test]
     fn test_fal_defaults_unified_aliases_with_edit_companions() {
-        // Issue #100: one alias per model family; dedicated edit endpoints
-        // live in edit_models (fal only) instead of separate *_edit aliases.
+        // Issue #114: only gptimage and sunburst remain on fal, both with
+        // dedicated 2.6 edit endpoints. No selectable *_edit aliases.
         let toml_str = r#"
 [[image_providers]]
 name = "fal"
@@ -870,10 +842,15 @@ api_key = "k"
         config.apply_provider_defaults();
 
         let fal = config.find_image_provider("fal").unwrap();
-        assert!(fal.models.contains_key("seedream5"), "unified alias");
+        assert_eq!(
+            fal.models.len(),
+            2,
+            "fal roster is trimmed to gptimage + sunburst (#114)"
+        );
         assert!(fal.models.contains_key("gptimage"), "unified alias");
-        assert!(fal.models.contains_key("sunburst"), "GPT Image 2.5 Sunburst alias");
-        assert!(fal.models.contains_key("grok"), "base grok alias now exists");
+        assert!(fal.models.contains_key("sunburst"), "GPT Image 2.6 Sunburst alias");
+        assert!(!fal.models.contains_key("grok"), "grok is OpenRouter-only (#114)");
+        assert!(!fal.models.contains_key("seedream5"), "fal-native seedream5 is dropped (#114)");
         assert!(
             !fal.models.keys().any(|a| a.ends_with("_edit")),
             "no selectable *_edit aliases: {:?}",
@@ -881,30 +858,22 @@ api_key = "k"
         );
         assert_eq!(
             fal.models.get("gptimage").map(|s| s.as_str()),
-            Some("openai/gpt-image-2.5/flare/text-to-image"),
-            "gptimage is now the GPT Image 2.5 Flare variant (issue #102)"
+            Some("openai/gpt-image-2.6/flare/text-to-image")
         );
         assert_eq!(
             fal.models.get("sunburst").map(|s| s.as_str()),
-            Some("openai/gpt-image-2.5/sunburst/text-to-image")
-        );
-        assert_eq!(
-            fal.edit_models.get("seedream5").map(|s| s.as_str()),
-            Some("bytedance/seedream/v5/pro/edit")
+            Some("openai/gpt-image-2.6/sunburst/text-to-image")
         );
         assert_eq!(
             fal.edit_models.get("gptimage").map(|s| s.as_str()),
-            Some("openai/gpt-image-2.5/flare/edit"),
-            "Flare carries a dedicated edit endpoint (issue #102)"
+            Some("openai/gpt-image-2.6/flare/edit"),
+            "Flare carries a dedicated edit endpoint"
         );
         assert_eq!(
             fal.edit_models.get("sunburst").map(|s| s.as_str()),
-            Some("openai/gpt-image-2.5/sunburst/edit")
+            Some("openai/gpt-image-2.6/sunburst/edit")
         );
-        assert_eq!(
-            fal.edit_models.get("grok").map(|s| s.as_str()),
-            Some("xai/grok-imagine-image/quality/edit")
-        );
+        assert!(!fal.edit_models.contains_key("grok"), "grok has no fal edit route");
 
         // Non-fal providers get no edit companions — same model both modes
         let or = config.find_image_provider("openrouter").unwrap();
@@ -912,9 +881,9 @@ api_key = "k"
     }
 
     #[test]
-    fn test_openrouter_image_defaults_issue101_aliases() {
-        // Issue #101: new OpenRouter image models (ids verified against
-        // GET /api/v1/images/models); the non-pro mai alias is removed.
+    fn test_openrouter_image_defaults_surviving_roster_issue114() {
+        // Issue #114: the OpenRouter defaults match the trimmed 8-alias roster
+        // (ids verified against GET /api/v1/images/models).
         let toml_str = r#"
 [[image_providers]]
 name = "openrouter"
@@ -927,60 +896,32 @@ default_provider = "openrouter"
         config.apply_provider_defaults();
 
         let or = config.find_image_provider("openrouter").unwrap();
-        assert_eq!(
-            or.models.get("mai2pro").map(|s| s.as_str()),
-            Some("microsoft/mai-image-2.5-pro"),
-            "pro variant replaces the deprecated non-pro alias"
-        );
-        assert_eq!(
-            or.models.get("seedream5pro").map(|s| s.as_str()),
-            Some("bytedance-seed/seedream-5-0-pro")
-        );
-        assert_eq!(
-            or.models.get("grok2").map(|s| s.as_str()),
-            Some("x-ai/grok-imagine-image-2.0")
-        );
-        assert_eq!(
-            or.models.get("muse").map(|s| s.as_str()),
-            Some("meta/muse-image")
-        );
-        assert!(
-            !or.models.contains_key("mai"),
-            "non-pro mai alias must be removed (issue #101)"
-        );
+        for (alias, slug) in [
+            ("banana", "google/gemini-nano-banana-2.1"),
+            ("qwenimage", "qwen/qwen-image-2.1-pro"),
+            ("qwen3", "qwen/qwen-image-3-pro"),
+            ("seedream5pro", "bytedance-seed/seedream-5-0-pro"),
+            ("seedream5flash", "bytedance-seed/seedream-5-0-flash"),
+            ("grok2", "x-ai/grok-imagine-image-2.0"),
+        ] {
+            assert_eq!(
+                or.models.get(alias).map(|s| s.as_str()),
+                Some(slug),
+                "alias '{alias}' must map to its surviving slug"
+            );
+        }
+        for dropped in ["mai2pro", "mai2flash", "muse", "ming", "seedream", "grok", "qwen3-flash"] {
+            assert!(
+                !or.models.contains_key(dropped),
+                "dropped alias '{dropped}' must not be registered (#114)"
+            );
+        }
     }
 
     #[test]
-    fn test_openrouter_image_defaults_issue104_ming_alias() {
-        // Issue #104: Ming Image 0.1 Design registers as a text-to-image alias
-        // in `models` only — never as an edit companion (the model rejects
-        // input references).
-        let toml_str = r#"
-[[image_providers]]
-name = "openrouter"
-api_key = "k"
-
-[image_model]
-default_provider = "openrouter"
-"#;
-        let mut config = AppConfig::from_toml(toml_str).unwrap();
-        config.apply_provider_defaults();
-
-        let or = config.find_image_provider("openrouter").unwrap();
-        assert_eq!(
-            or.models.get("ming").map(|s| s.as_str()),
-            Some("inclusionai/ming-image-0.1-design")
-        );
-        assert!(
-            !or.edit_models.contains_key("ming"),
-            "ming must not register an edit endpoint (text-to-image only)"
-        );
-    }
-
-    #[test]
-    fn test_gpt_image_2_5_flare_is_default_issue102() {
-        // Issue #102: the GPT Image 2 default is replaced by GPT Image 2.5;
-        // Flare is the global default, Sunburst the precision companion.
+    fn test_gpt_image_2_6_flare_is_default_issue114() {
+        // Issue #114: GPT Image 2.6 Flare is the single manifest default;
+        // Sunburst is the precision companion, fal-only.
         let toml_str = r#"
 [[image_providers]]
 name = "fal"
@@ -996,19 +937,19 @@ api_key = "k"
         let fal = config.find_image_provider("fal").unwrap();
         assert_eq!(
             fal.models.get("gptimage").map(|s| s.as_str()),
-            Some("openai/gpt-image-2.5/flare/text-to-image")
+            Some("openai/gpt-image-2.6/flare/text-to-image")
         );
         assert_eq!(
             fal.edit_models.get("gptimage").map(|s| s.as_str()),
-            Some("openai/gpt-image-2.5/flare/edit")
+            Some("openai/gpt-image-2.6/flare/edit")
         );
         assert_eq!(
             fal.models.get("sunburst").map(|s| s.as_str()),
-            Some("openai/gpt-image-2.5/sunburst/text-to-image")
+            Some("openai/gpt-image-2.6/sunburst/text-to-image")
         );
         assert_eq!(
             fal.edit_models.get("sunburst").map(|s| s.as_str()),
-            Some("openai/gpt-image-2.5/sunburst/edit")
+            Some("openai/gpt-image-2.6/sunburst/edit")
         );
         assert!(
             !fal.models.values().any(|id| id == "openai/gpt-image-2"),

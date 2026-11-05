@@ -217,33 +217,68 @@ mod tests {
             "sunburst",
             "banana",
             "qwenimage",
-            "mai2pro",
-            "mai2flash",
-            "grok2",
-            "moss",
-            "fibo",
+            "qwen3",
+            "seedream5pro",
             "seedream5flash",
-            "gptimage25",
-            "sunburst25",
+            "grok2",
         ] {
             assert!(
                 catalog.entry(required).is_some(),
                 "manifest must define '{required}'"
             );
         }
+        assert_eq!(catalog.allowed_aliases().len(), 8, "roster is trimmed to 8 aliases");
     }
 
     #[test]
     fn test_builtin_manifest_routes_are_mode_aware() {
         let catalog = ImageManifest::builtin().unwrap().into_catalog().unwrap();
         let gptimage = catalog.entry("gptimage").unwrap();
-        // Both routes expose an edit slug, so editing never falls back to a
-        // generate-only route.
+        // fal-only default: every route exposes an edit slug, so editing
+        // never falls back to a generate-only route.
         assert!(gptimage.routes.iter().all(|r| r.edit_model_id.is_some()));
-        // qwenimage: pro is default, turbo is opt-in.
+        assert!(
+            gptimage
+                .routes
+                .iter()
+                .all(|r| r.provider_name == "fal"),
+            "gptimage is fal-only (#114)"
+        );
+        // qwenimage: pro only, no turbo route.
         let qwen = catalog.entry("qwenimage").unwrap();
         assert_eq!(qwen.default_route().tier, ImageTier::Pro);
-        assert!(qwen.tiers().contains(&ImageTier::Turbo));
+        assert_eq!(qwen.tiers(), vec![ImageTier::Pro]);
+        assert!(qwen.routes.iter().all(|r| r.provider_name == "openrouter"));
+    }
+
+    #[test]
+    fn test_builtin_manifest_has_no_cross_provider_routes() {
+        let catalog = ImageManifest::builtin().unwrap().into_catalog().unwrap();
+        for entry in catalog.entries() {
+            let providers: HashSet<&str> =
+                entry.routes.iter().map(|r| r.provider_name.as_str()).collect();
+            assert_eq!(
+                providers.len(),
+                1,
+                "alias '{}' must have exactly one provider route (#114)",
+                entry.alias
+            );
+        }
+        let fal_aliases: Vec<&str> = catalog
+            .entries()
+            .iter()
+            .filter(|e| e.default_route().provider_name == "fal")
+            .map(|e| e.alias.as_str())
+            .collect();
+        assert_eq!(fal_aliases, vec!["gptimage", "sunburst"]);
+        let openrouter_only = ["banana", "qwenimage", "qwen3", "seedream5pro", "seedream5flash", "grok2"];
+        for alias in openrouter_only {
+            assert_eq!(
+                catalog.entry(alias).unwrap().default_route().provider_name,
+                "openrouter",
+                "'{alias}' is OpenRouter-only (#114)"
+            );
+        }
     }
 
     #[test]
