@@ -1,6 +1,6 @@
 # Scenarios — System Black Box Boundaries
 
-These documents define RockBot's black box scenarios: what the system must do and how well it must do it, without prescribing internal implementation. Anything observable from outside the box — user-facing behavior, quality attributes, external protocol contracts — belongs here. Internal mechanics (data flow, module wiring, tool dispatch) belong in `_dfd/`.
+These documents define RockBot's black box scenarios: what the system must do and how well it must do it, without prescribing internal implementation. Anything observable from outside the box — user-facing behavior, quality attributes, external protocol contracts — belongs here. Internal mechanics (data flow, module wiring, tool dispatch) belong in `docs/dfd/`.
 
 ## Files
 
@@ -12,4 +12,4 @@ These documents define RockBot's black box scenarios: what the system must do an
 
 ## Relationship to DFDs
 
-Scenarios specify the **contract** at the system boundary. DFDs in `_dfd/` specify the **internal plumbing** that fulfills that contract. When a scenario changes, DFDs must be re-checked; when a DFD reveals new externally-visible behavior, it should be promoted into a scenario here.
+Scenarios specify the **contract** at the system boundary. DFDs in `docs/dfd/` specify the **internal plumbing** that fulfills that contract. When a scenario changes, DFDs must be re-checked; when a DFD reveals new externally-visible behavior, it should be promoted into a scenario here.

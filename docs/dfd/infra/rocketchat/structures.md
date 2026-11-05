@@ -62,7 +62,7 @@ The agent harness computes `webdav_dir` using `room_fname`:
 
 The flat `r-`/`d-` prefixes prevent collisions. Room name resolution prefers
 `args[1].fname` from DDP, with a REST fallback when `fname` is absent (see
-[`room-name-fields.md`](../../../_doc/rocketchat/room-name-fields.md) for details).
+[`room-name-fields.md`](../../../rocketchat/room-name-fields.md) for details).
 
 > **Important distinction**: `room_id` (the RocketChat UUID from DDP `args[0].rid`)
 > and `webdav_dir` (the `r-`/`d-`-prefixed path key) are **separate values**.

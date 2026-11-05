@@ -41,4 +41,4 @@ flowchart TD
 > **Note**: `compute_webdav_dir` **panics** if `room_fname` is empty — this is a
 > safety net for programmer error. The `room_fname` is always resolved upstream
 > (via DDP or REST fallback) before reaching the harness, so this assert should
-> never fire at runtime. See [`room-name-fields.md`](../../../_doc/rocketchat/room-name-fields.md).
+> never fire at runtime. See [`room-name-fields.md`](../../../rocketchat/room-name-fields.md).

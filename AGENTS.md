@@ -6,10 +6,9 @@
 crate-rocketchat/     # lib + debug binary — standalone RocketChat DDP WebSocket client
 crate-rockbot/        # lib + application binary — config, AiProvider trait, MessagingClient trait (platform/), agent loop, tools, memory
 crate-webdav/         # lib only — WebDAV client for NextCloud storage operations
-_dfd/                # data flow diagrams (design spec): context diagram at root, subdirs by component (agent, infra, ai, memory, knowledge, tools, interception)
-_doc/                # constraints, test suite inventory
+docs/                 # reference docs — scenarios, test suite, historical design notes
 models/image.toml     # canonical image_gen alias manifest (embedded at build time)
-.agents/skills/       # OpenCode skills (dfd-md, gitea-issues, mermaid-cli)
+.agents/skills/       # OpenCode skills (std-dev, gitea-issues, mermaid-cli)
 default.config.toml   # full config spec with defaults (empty credentials)
 example.config.toml   # minimal overrides with EDITME placeholders
 ```
@@ -28,7 +27,7 @@ example.config.toml   # minimal overrides with EDITME placeholders
 
 ### Multi-instance deployment (design)
 
-Archived in [`_doc/multi-instance-deployment.md`](_doc/multi-instance-deployment.md) — concurrent instances, shared WebDAV root, one persona; `state_dir` per instance.
+Archived in [`docs/multi-instance-deployment.md`](docs/multi-instance-deployment.md) — concurrent instances, shared WebDAV root, one persona; `state_dir` per instance.
 
 ## Build & test
 
@@ -47,7 +46,7 @@ No CI, no `rustfmt.toml`/`clippy.toml`/`rust-toolchain`.
 - **Library versions**: `crate-rocketchat/Cargo.toml` and `crate-webdav/Cargo.toml` carry their own `[package] version`; bump one only when that crate itself changes.
 - **Semver**: fix → patch, feature → minor, breaking → major. The bump rides the change commit (no separate `chore: bump …` commit).
 - **Tag every release**: lightweight `vX.Y.Z` on the commit that carries the bump (`git tag v2.11.0` right after committing, or `git tag v2.10.0 <sha>` to backfill). Push to both remotes: `git push origin <tag> && git push github <tag>`.
-- **Create the Gitea release** for every pushed tag. Derive `$GITEA_API`/`$REPO` from `origin` exactly as in the [`gitea-issues` skill](.agents/skills/gitea-issues/SKILL.md), then `POST $GITEA_API/repos/$REPO/releases` with `{"tag_name":"vX.Y.Z","name":"vX.Y.Z","body":"## vX.Y.Z\n\n### New\n- …\n\n### Fixes\n- …","draft":false,"prerelease":false}` (write the body to `./tmp/release.json`, pass with `-d @./tmp/release.json`). Body mirrors the commits since the previous tag, grouped `### New` / `### Fixes`, with `closes #<N>` references.
+- **Create the Gitea release** for every pushed tag. Derive `$GITEA_API`/`$REPO` from `origin` exactly as in the [`gitea-issues` skill](.agents/skills/gitea-issues/SKILL.md), then `POST $GITEA_API/repos/$REPO/releases` with `{"tag_name":"vX.Y.Z","name":"vX.Y.Z","body":"## vX.Y.Z\n\n### New\n- …\n\n### Fixes\n- …","draft":false,"prerelease":false}` (write the body to `./tmp/release.json`, pass with `-d @./tmp/release.json`). Body mirrors the commits since the previous tag, grouped `### New` / `### Fixes`, with `#<N>` references.
 
 ## Code style
 
@@ -66,59 +65,29 @@ No CI, no `rustfmt.toml`/`clippy.toml`/`rust-toolchain`.
 - Main loop: exponential backoff reconnect (2^attempt s, max 5 retries, then exits).
 - `webdav` crate: `quick-xml` + `base64`.
 
-## DFD-driven development
+## Development flow (std-dev)
 
-DFDs in `_dfd/` are the design spec; notation/layout/file rules come from the [`dfd-md` skill](.agents/skills/dfd-md/SKILL.md). Before work, check open issues with the `gitea-issues` skill; note issue numbers — commits resolving them must say `closes #<N>`.
+Follow the [`std-dev` skill](.agents/skills/std-dev/SKILL.md). Before work, check open issues with the `gitea-issues` skill; note issue numbers and reference them in commits as `#<N>` — never use auto-closing keywords. No design documents are written: the plan lives in the conversation, and the types in the code are the durable artifact.
 
-1. **Probe** (optional, explicit request only) — live-data probe collecting real data shapes; skip if real-world data exists; feeds phase 2.
-2. **Revise DFD** — model desired data movement; base section-3 structures on probe shapes; keep levels clean.
-3. **Validation constraints** — enforce structures in code per the rules below; parse at subsystem entry points; shared cross-DFD types defined once, imported by producer+consumer → compile-time mismatch errors.
-4. **Implementation** — code types/logic/wiring from the DFD; incremental, type-first.
-5. **Review all DFDs** (optional, explicit request only) — confirm every DFD matches code; newer DFD `mtime` ⇒ stale code, vice versa ⇒ stale DFD.
-6. **Integration test** — Wiremock-mocked end-to-end tests; every DFD happy path covered by mocks; run `cargo test`.
-7. **Release** — `cargo build --release` → bump `crate-rockbot/Cargo.toml` (fix → patch, feature → minor; bump rides the change commit) → commit (never `Cargo.lock`/`config.toml`) → tag `vX.Y.Z` → push commits + tag to both remotes → create the Gitea release (see [Versioning, tags & releases](#versioning-tags--releases)) → restart bot only if requested; `closes #<N>` for resolved issues.
+1. **Probe** (optional) — only when an external API's real response shape is unknown or uncertain; capture live responses under `./tmp/`; skip when schemas/docs already cover the shape.
+2. **Plan the data flow** — map boundaries, canonical structures, transformation path, and constraints. For non-trivial work, agree on the plan with the user before coding.
+3. **Validation schemas first** — write the Rust types identified in step 2 before any business logic, following the type-driven rules below.
+4. **Implement type-first** — incremental: types → core logic → wiring; keep the change scoped and fix root causes.
+5. **Test** — `cargo test` must pass; add unit tests for new logic and Wiremock-mocked end-to-end tests for new paths in `crate-rockbot/tests/`.
+6. **Commit and push** — conventional commits describing the why; reference issues as `#<N>`; leave a comment on the issue when work is done and let a human close it. Never commit `Cargo.lock`/`config.toml`.
+7. **Release** — `cargo build --release` → bump `crate-rockbot/Cargo.toml` (fix → patch, feature → minor; bump rides the change commit) → commit → tag `vX.Y.Z` → push commits + tag to both remotes → create the Gitea release (see [Versioning, tags & releases](#versioning-tags--releases)) → restart bot only if requested.
 
 ### Rust type-driven design rules
 
-Every DFD section-3 structure becomes a Rust type; make violations compile-time errors:
+Every planned data structure becomes a Rust type; make violations compile-time errors:
 
 - **Parse at boundaries** — external input (JSON/TOML/CLI) parsed into domain types once at entry; never pass `serde_json::Value` or raw strings inward.
 - **Input protection** — [`serde_valid`](https://crates.io/crates/serde_valid) (format/shape at deserialization, `FromJsonValue` single-step) and/or [`validator`](https://crates.io/crates/validator) (domain rules) may both derive on one struct. Invariant newtypes: private field + fallible constructor (`TryFrom`/`FromStr`/factory) — holding the type guarantees the invariant, no `.is_valid()` checks.
-- **Cross-DFD shared types** — defined once in a canonical module, imported by producer and consumer.
-- **Errors via [`thiserror`](https://crates.io/crates/thiserror) + `?`** — messages name the DFD structure and offending field; no `unwrap()`/`expect()` in production (panics only for broken internal invariants).
-
-### DFD-to-code mapping
-
-| DFD | Primary source | Key secondary sources |
-| --- | -------------- | --------------------- |
-| `_dfd/context-diagram.md` | Level 0 system boundary (no code) | — |
-| `_dfd/infra/config/main-path.md` | `config.rs` | `example.config.toml`, `default.config.toml` |
-| `_dfd/infra/rocketchat/main-path.md` | rocketchat (`client.rs`, `ddp.rs`, `types.rs`), `platform/rocketchat.rs` | — |
-| `_dfd/infra/rocketchat-rest/rest-alias-send.md` | rocketchat (`rest.rs`), `harness.rs` | — |
-| `_dfd/infra/matrix/main-path.md` | `platform/matrix.rs` | `platform/mod.rs` |
-| `_dfd/ai/ai-provider/main-path.md` | `provider/mod.rs`, `provider/deepseek.rs`, `provider/openrouter.rs`, `provider/fal.rs`, `provider/llamacpp.rs` | `types.rs` |
-| `_dfd/memory/memory/retrieve-two-layers.md` | `memory.rs` | `harness.rs`, webdav crate |
-| `_dfd/memory/memory-reset/post-reply-decision.md` | `harness.rs` (`reset_room_if_needed`, `check_token_pressure`, `trim_context`) | `memory.rs`, `config.rs` |
-| `_dfd/knowledge/knowledge/write.md` | `knowledge.rs` | `tools/save_knowledge.rs`, `tools/forget_knowledge.rs`, `tools/recall_knowledge.rs` |
-| `_dfd/knowledge/knowledge-priority/priority-state.md` | `knowledge.rs` | `harness.rs`, `memory.rs` |
-| `_dfd/agent/agent-loop/main-path.md` | `main.rs`, `platform/mod.rs` | `harness.rs`, `config.rs`, `platform/rocketchat.rs`, `platform/matrix.rs` |
-| `_dfd/agent/agent-harness/agent-loop.md` | `harness.rs` | `memory.rs`, `tool.rs`, `provider/mod.rs` |
-| `_dfd/interception/image-interception/complete-pipeline.md` | `harness.rs` | `tools/image_gen.rs`, `tools/vision.rs`, `tools/webdav.rs`, `provider/fal.rs`, `image_cache.rs` |
-| `_dfd/interception/secret-interception/uuidv5-scoped-injection.md` | `harness.rs` (`load_secrets_from_webdav`, `filter_secrets_by_host`, `resolve_secret_refs_deep`, `replace_secret_refs`) | `tools/web_fetch.rs`, `tools/webdav.rs`, webdav crate |
-| `_dfd/tools/reset-memory/flag-driven.md` | `tools/reset_memory.rs` | `harness.rs`, `memory.rs` |
-| `_dfd/tools/webdav/main-path.md` | `tools/webdav.rs` | webdav crate |
-| `_dfd/tools/calendar/main-path.md` | `tools/calendar.rs` | webdav crate, `utils.rs` |
-| `_dfd/tools/search-web/main-path.md` | `tools/web_search.rs` | `tools/web_fetch.rs` |
-| `_dfd/tools/web-fetch/main-path.md` | `tools/web_fetch.rs` | `tools/web_search.rs`, `harness.rs` (secret interception) |
-| `_dfd/tools/image-gen/main-path.md` | `tools/image_gen.rs` | `image_manifest.rs`, `models/image.toml`, `types.rs`, `provider/fal.rs`, webdav crate |
-| `_dfd/tools/vision/main-path.md` | `tools/vision.rs` | — |
-| `_dfd/tools/edit-soul/main-path.md` | `tools/edit_soul.rs` | `memory.rs`, webdav crate |
-| `_dfd/tools/acp-delegate/main-path.md` | `tools/acp.rs` | `acp.rs`, `config.rs` |
-| `_dfd/tools/knowledge/save.md` | `tools/save_knowledge.rs`, `tools/forget_knowledge.rs`, `tools/recall_knowledge.rs` | `knowledge.rs`, webdav crate |
-
+- **Shared types** — defined once in a canonical module, imported by producer and consumer.
+- **Errors via [`thiserror`](https://crates.io/crates/thiserror) + `?`** — messages name the data structure and offending field; no `unwrap()`/`expect()` in production (panics only for broken internal invariants).
 
 ## OpenCode skills
 
-- `dfd-md` — Creates Data Flow Diagrams as `.md` files using Mermaid flowchart syntax.
-- `gitea-issues` — Lists, creates, comments on, and closes Gitea issues on the repo's Gitea server; also handles issue investigation (analysis-only workflow).
+- `std-dev` — Standard data-type-driven development flow: probe, plan the data flow, define validation schemas, implement type-first, test, commit and push.
+- `gitea-issues` — Lists, creates, comments on, and manages Gitea issues on the repo's Gitea server; never closes issues automatically.
 - `mermaid-cli` — Validates/fixes Mermaid syntax using `mermaid.parse()` with jsdom (no browser). Use only when asked to validate or fix Mermaid syntax.

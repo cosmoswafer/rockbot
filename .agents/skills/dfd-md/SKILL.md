@@ -149,12 +149,12 @@ diagram itself needs decomposition.
 | Level 1 — sub-process     | ✓ of the DFD directory                    | `{flow}.md`             |
 | Level 2 — detail          | ✓/level-2/ of the DFD directory           | `{concern}.md`          |
 | Level 3 — deeper detail   | ✓/level-3/ of the DFD directory           | `{concern}.md`          |
-| Shared (cross-cutting)    | `_dfd/shared/` (project root)             | `{concern}.md`          |
+| Shared (cross-cutting)    | `docs/dfd/shared/` (project root)             | `{concern}.md`          |
 
 The directory layout:
 
 ```
-_dfd/
+docs/dfd/
   context-diagram.md            # Level 0 — one dataflow (system + externals)
   shared/                       # cross-cutting concerns reused across DFDs
     error-toast.md
@@ -275,7 +275,7 @@ flowchart TD
   `{concern}` (e.g. `error-handling.md`)
 - Dashed `-.->` arrows for fallback paths (cache-miss reads, retries, error
   recovery, silent fallbacks with no user-visible error)
-- Use `_dfd/shared/{concern}.md` when the same detail diagram is reused across
+- Use `docs/dfd/shared/{concern}.md` when the same detail diagram is reused across
   multiple DFDs
 
 ### Level 3 — Deeper Detail (`{dfd-name}/level-3/`)

@@ -9,5 +9,5 @@ Multiple bot instances may run concurrently, each driven by its own `CONFIG_FILE
 - **No write coordination** — `edit_soul` is an unconditional PUT (last-write-wins); concurrent edits from both bots can lose a write.
 - **Legacy soul migration is race-safe** — both instances may migrate the same legacy file on first load; the rendered bytes differ only in the bot-stamped `updated` date (same day) and are otherwise deterministic, so last-write-wins is harmless. Migration is attempted once per room per process.
 - **`state_dir` must differ per instance** even when the WebDAV root is shared (Matrix SDK session stores must not collide).
-- **Snapshots isolated per bot**: `{root}/{snapshot_prefix}/{bot_id}/{webdav_dir}/snapshot.json` — see `_dfd/memory/memory/partitioning.md`.
-- Hostnames, accounts, config paths, restart commands = deployment info, gitignored `_doc/config-files.local.md` only — never the repo.
+- **Snapshots isolated per bot**: `{root}/{snapshot_prefix}/{bot_id}/{webdav_dir}/snapshot.json` — see `docs/dfd/memory/memory/partitioning.md`.
+- Hostnames, accounts, config paths, restart commands = deployment info, gitignored `docs/config-files.local.md` only — never the repo.

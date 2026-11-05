@@ -1,6 +1,6 @@
 //! ACP (Agent Client Protocol) client — spawns an external ACP agent as a
 //! subprocess over stdio (NDJSON JSON-RPC 2.0) and delegates task prompts to
-//! it. See `_dfd/tools/acp-delegate.md`.
+//! it. See `docs/dfd/tools/acp-delegate.md`.
 //!
 //! All `agent-client-protocol` SDK usage is encapsulated in this module.
 //!

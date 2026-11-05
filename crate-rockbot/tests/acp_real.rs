@@ -1,6 +1,6 @@
 // ─── Live Integration Probe: ACP Delegate vs real agent ─────────────────────
 //
-// DFD covered: _dfd/tools/acp-delegate.md
+// DFD covered: docs/dfd/tools/acp-delegate.md
 //
 // Ignored by default — requires `deno` on PATH (spawns `deno x opencode-ai
 // acp` as the ACP agent). Run with:

@@ -54,7 +54,7 @@ Tests connecting to live servers and APIs with real credentials. All `#[ignore]`
 
 | # | Test | What it does | Services |
 |---|------|-------------|----------|
-| 1 | `test_fal_image_edit_with_p1` | Loads fal config, reads `_docs/ref_img/p1.png`, uploads to fal CDN, calls `generate_image_url()` with edit prompt ("Change red sweater to Rei Ayanami's blue plugsuit") and `landscape_4_3` preset. Exercises full pipeline: upload_file → submit_request → poll_status → fetch_result. Asserts result is HTTPS URL. | fal.ai |
+| 1 | `test_fal_image_edit_with_p1` | Loads fal config, reads `docs/ref_img/p1.png`, uploads to fal CDN, calls `generate_image_url()` with edit prompt ("Change red sweater to Rei Ayanami's blue plugsuit") and `landscape_4_3` preset. Exercises full pipeline: upload_file → submit_request → poll_status → fetch_result. Asserts result is HTTPS URL. | fal.ai |
 
 **Helpers:** `workspace_root()`, `load_fal_config()`
 
@@ -66,7 +66,7 @@ Tests connecting to live servers and APIs with real credentials. All `#[ignore]`
 | # | Test | What it does | Services |
 |---|------|-------------|----------|
 | 1 | `test_image_gen_real_text_to_image` | Loads fal + WebDAV config, creates `ImageGenTool` with real provider and WebDAV client, executes a text-to-image prompt. Validates the DFD's `ImageGenResult` shape (`{"ok": true, "webdav_path": "...", "image_key": "..."}`), verifies image is in `ImageCache`, confirms WebDAV existence, collects share URL format. Cleans up generated file. | fal.ai, WebDAV |
-| 2 | `test_image_gen_real_data_uri_handling` | Same setup as above but reads the test image `_docs/test_suite/p0.png` (4x4 red square), base64-encodes it as a `data:` URI, and passes it in `image_urls` — exercises the `upload_data_uri` → provider CDN → img2img path. Validates that data URIs injected by the harness (per image-interception.md §2d) are correctly translated to provider CDN URLs by the tool. | fal.ai, WebDAV |
+| 2 | `test_image_gen_real_data_uri_handling` | Same setup as above but reads the test image `docs/test_suite/p0.png` (4x4 red square), base64-encodes it as a `data:` URI, and passes it in `image_urls` — exercises the `upload_data_uri` → provider CDN → img2img path. Validates that data URIs injected by the harness (per image-interception.md §2d) are correctly translated to provider CDN URLs by the tool. | fal.ai, WebDAV |
 | 3 | `test_openrouter_image_gen_seedream5flash` | Loads OpenRouter image provider config, creates `OpenRouterImageProvider` with `bytedance-seed/seedream-5-0-flash` (alias `seedream5flash`, issues #114/#119), calls `generate_image()` with a text-to-image prompt. Validates the returned bytes are non-empty and PNG format. Standalone — no WebDAV or ImageCache dependency. | OpenRouter |
 | 4 | `test_openrouter_image_gen_banana` | Loads OpenRouter image provider config, creates `OpenRouterImageProvider` with `google/gemini-nano-banana-2.1` (alias `banana`, issue #114), calls `generate_image()` with `image_size` + `size_tier` supplied. Validates the returned bytes are non-empty and PNG format. Standalone — no WebDAV or ImageCache dependency. | OpenRouter |
 

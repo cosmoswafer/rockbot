@@ -326,7 +326,7 @@ impl std::fmt::Debug for OpenRouterImageProvider {
 }
 
 /// Capability descriptor from the OpenRouter image catalog
-/// (`supported_parameters` values; see `_dfd/ai/ai-provider.md` §3).
+/// (`supported_parameters` values; see `docs/dfd/ai/ai-provider.md` §3).
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum ParamDescriptor {
@@ -651,7 +651,7 @@ impl OpenRouterImageProvider {
     }
 
     /// Dedicated OpenRouter Image API path (`POST {images_url}`) for models
-    /// present in the image catalog. See `_dfd/ai/ai-provider.md` §2d.
+    /// present in the image catalog. See `docs/dfd/ai/ai-provider.md` §2d.
     async fn generate_via_image_api(
         &self,
         params: &crate::types::ImageGenParams,

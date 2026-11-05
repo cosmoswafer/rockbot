@@ -181,7 +181,7 @@ api_key = ""
 
 # ACP (Agent Client Protocol) integration — delegate tasks to an external ACP
 # agent spawned as a subprocess over stdio. Disabled by default.
-# See _dfd/tools/acp-delegate.md.
+# See docs/dfd/tools/acp-delegate.md.
 [acp]
 enabled = false
 

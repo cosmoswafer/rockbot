@@ -1,6 +1,6 @@
 // ─── Mock Integration Tests: ACP Delegate ───────────────────────────────────
 //
-// DFD covered: _dfd/tools/acp-delegate.md
+// DFD covered: docs/dfd/tools/acp-delegate.md
 //
 // The mock is an in-process ACP agent — a tokio task speaking NDJSON JSON-RPC
 // over a duplex stream injected as the byte-stream transport via

@@ -46,7 +46,7 @@ impl Default for AgentConfig {
 }
 
 /// `[acp]` section — ACP (Agent Client Protocol) integration.
-/// See `_dfd/tools/acp-delegate.md` (`AcpConfig` data structure).
+/// See `docs/dfd/tools/acp-delegate.md` (`AcpConfig` data structure).
 #[derive(Debug, Clone, Deserialize, Validate)]
 pub struct AcpConfig {
     #[serde(default)]

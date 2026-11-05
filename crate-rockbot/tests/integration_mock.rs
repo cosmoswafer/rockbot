@@ -3086,7 +3086,7 @@ mod summarization_tests {
     }
 }
 
-// ─── _dfd/knowledge/knowledge.md — Knowledge Cache TTL (happy path) ────────────
+// ─── docs/dfd/knowledge/knowledge.md — Knowledge Cache TTL (happy path) ────────────
 
 #[cfg(test)]
 mod knowledge_cache_tests {
@@ -3513,7 +3513,7 @@ async fn test_llamacpp_401_maps_to_auth_failed() {
 
 // ─── Gitea #80 — Tool-Call JSON Parse Error Recovery ────────────────────────
 //
-// _dfd/agent/agent-harness.md §2k — the provider rejects a request because a
+// docs/dfd/agent/agent-harness.md §2k — the provider rejects a request because a
 // tool call `arguments` JSON document failed to parse (e.g. an 11K-char
 // truncated report argument — `[json.exception.parse_error.101] ... invalid
 // string: missing closing quote`). The harness must repair tool call args in
@@ -4034,7 +4034,7 @@ async fn test_openrouter_image_gen_banana_uses_image_api() {
 // The tool's description and schema are generated from the catalog at registry
 // time — config is the single source of truth. No wiremock served data is
 // needed: these tests assert the registry-time derivation (DFD
-// _dfd/tools/image-gen/level-2/tool-description.md).
+// docs/dfd/tools/image-gen/level-2/tool-description.md).
 
 #[test]
 fn test_image_gen_description_and_schema_derived_from_config() {
@@ -4146,7 +4146,7 @@ impl rockbot::provider::ImageProvider for MockImageProviderStub {
 //
 // The catalog spans ALL supported [[image_providers]] entries; each alias is
 // routed to its owning provider's backend. DFD
-// _dfd/tools/image-gen/level-2/model-provider-selection.md.
+// docs/dfd/tools/image-gen/level-2/model-provider-selection.md.
 
 /// Tags a provider entry's `models` map with the given provider name — the
 /// shape `ImageModelCatalog::new` expects.

@@ -159,7 +159,7 @@ The submit response includes `status_url` and `response_url`. Use them **as-is**
 
 `crate-rockbot/tests/fal_real.rs` (`#[ignore]`) — exercises the full flow against the live API:
 
-1. Reads `_docs/ref_img/p1.png` (~1.3 MB)
+1. Reads `docs/ref_img/p1.png` (~1.3 MB)
 2. Uploads to fal CDN
 3. Submits edit with image reference
 4. Polls every 2 s until COMPLETED

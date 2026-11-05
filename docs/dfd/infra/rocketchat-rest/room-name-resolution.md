@@ -49,7 +49,7 @@ flowchart TD
     DM_CHECK -->|"no"| ERROR
 ```
 
-See [`_doc/rocketchat/room-name-fields.md`](../../../_doc/rocketchat/room-name-fields.md)
+See [`docs/rocketchat/room-name-fields.md`](../../../rocketchat/room-name-fields.md)
 for the full rationale. If REST resolution fails and the room is **not** a DM
 (`is_dm == false`), the bot sends an error reply and skips message processing.
 For **DM rooms** (`is_dm == true`), the bot falls back to `room_name` (the

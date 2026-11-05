@@ -5,7 +5,7 @@
 //! files use bounded read-modify-write; files above `max_edit_bytes` stream
 //! through the Nextcloud chunked-upload API so they are never buffered whole.
 //!
-//! DFD: `_dfd/tools/webdav/main-path.md`, `_dfd/tools/webdav/large-file-edit.md`.
+//! DFD: `docs/dfd/tools/webdav/main-path.md`, `docs/dfd/tools/webdav/large-file-edit.md`.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::RwLock;

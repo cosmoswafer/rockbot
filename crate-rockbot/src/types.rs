@@ -477,7 +477,7 @@ impl ImageGenParams {
 /// Config-derived catalog of available image model aliases → model ids,
 /// each tagged with the `[[image_providers]]` entry name that owns it.
 ///
-/// Canonical shared type (see `_dfd/tools/image-gen/structures.md` §3):
+/// Canonical shared type (see `docs/dfd/tools/image-gen/structures.md` §3):
 /// produced by `main.rs` from the `models` maps of **every** configured image
 /// provider entry backed by a supported kind (fal / openrouter), plus the
 /// `[image_model]` default alias, and consumed by `ImageGenTool` for

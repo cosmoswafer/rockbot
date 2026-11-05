@@ -15,8 +15,8 @@ run. No headless browser, no npm install, no `/tmp` scripts.
 
 ```bash
 deno run -A --node-modules-dir=auto \
-  .opencode/skills/mermaid-cli/scripts/validate.js \
-  _dfd/agent-harness.md
+  .agents/skills/mermaid-cli/scripts/validate.js \
+  docs/dfd/agent/agent-harness/agent-loop.md
 ```
 
 Accepts a single `.md` file or a directory. First-run downloads + caches

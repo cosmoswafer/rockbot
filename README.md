@@ -8,7 +8,7 @@ by a NextCloud WebDAV server for persistent state.
 ## User Stories
 
 > **Priority**: P0 = critical, P1 = core, P2 = enhancement
-> Full details: [`_doc/scenarios/`](_doc/scenarios/)
+> Full details: [`docs/scenarios/`](docs/scenarios/)
 
 1. **DM Conversation** (P0) — DMs bot, gets AI replies with per-room conversation history across sessions.
 2. **@Mention & Display Name in Channels** (P0) — `@rockbot` or display name triggers reply in-thread; per-room isolation.
@@ -100,46 +100,46 @@ cargo test                           # unit + mock integration tests
 cargo test -- --ignored              # real integration tests (needs credentials)
 ```
 
-Test inventory and run instructions: [`_doc/test_suite/`](_doc/test_suite/).
+Test inventory and run instructions: [`docs/test_suite/`](docs/test_suite/).
 
 ## Reference docs
 
 ### Constraints & user stories
 | Document | Description |
 | -------- | ----------- |
-| [`_doc/scenarios/README.md`](_doc/scenarios/README.md) | Directory index |
-| [`_doc/scenarios/top-10-user-stories.md`](_doc/scenarios/top-10-user-stories.md) | Top-level user-facing features |
-| [`_doc/scenarios/image-generation-user-stories.md`](_doc/scenarios/image-generation-user-stories.md) | Image pipeline: 5 detailed stories |
-| [`_doc/scenarios/non-functional-requirements.md`](_doc/scenarios/non-functional-requirements.md) | Quality attributes |
+| [`docs/scenarios/README.md`](docs/scenarios/README.md) | Directory index |
+| [`docs/scenarios/top-10-user-stories.md`](docs/scenarios/top-10-user-stories.md) | Top-level user-facing features |
+| [`docs/scenarios/image-generation-user-stories.md`](docs/scenarios/image-generation-user-stories.md) | Image pipeline: 5 detailed stories |
+| [`docs/scenarios/non-functional-requirements.md`](docs/scenarios/non-functional-requirements.md) | Quality attributes |
 
-### DFDs
+### Design reference (archived DFDs)
 | Component | DFD | Detailed notes |
 | --------- | --- | -------------- |
-| Context diagram | [`_dfd/context-diagram.md`](_dfd/context-diagram.md) | — |
-| Agent loop | [`_dfd/agent/agent-loop.md`](_dfd/agent/agent-loop.md) | — |
-| Agent harness | [`_dfd/agent/agent-harness.md`](_dfd/agent/agent-harness.md) | [`_doc/agent-harness.md`](_doc/agent-harness.md) |
-| Boot sequence | [`_dfd/agent/boot-sequence.md`](_dfd/agent/boot-sequence.md) | — |
-| Config | [`_dfd/infra/config.md`](_dfd/infra/config.md) | — |
-| RocketChat client | [`_dfd/infra/rocketchat.md`](_dfd/infra/rocketchat.md) | [`_doc/rocketchat/rocketchat-client.md`](_doc/rocketchat/rocketchat-client.md) |
-| RocketChat REST | [`_dfd/infra/rocketchat-rest.md`](_dfd/infra/rocketchat-rest.md) | — |
-| Matrix client | [`_dfd/infra/matrix.md`](_dfd/infra/matrix.md) | — |
-| AI Provider | [`_dfd/ai/ai-provider.md`](_dfd/ai/ai-provider.md) | — |
-| Memory | [`_dfd/memory/memory.md`](_dfd/memory/memory.md) | — |
-| Memory reset | [`_dfd/memory/memory-reset.md`](_dfd/memory/memory-reset.md) | — |
-| Knowledge | [`_dfd/knowledge/knowledge.md`](_dfd/knowledge/knowledge.md) | — |
-| Knowledge priority | [`_dfd/knowledge/knowledge-priority.md`](_dfd/knowledge/knowledge-priority.md) | — |
-| Image interception | [`_dfd/interception/image-interception.md`](_dfd/interception/image-interception.md) | — |
-| Secret interception | [`_dfd/interception/secret-interception.md`](_dfd/interception/secret-interception.md) | — |
-| Web search | [`_dfd/tools/search-web.md`](_dfd/tools/search-web.md) | Exa / Brave multi-provider |
-| Web fetch | [`_dfd/tools/web-fetch.md`](_dfd/tools/web-fetch.md) | — |
-| Image gen tool | [`_dfd/tools/image-gen.md`](_dfd/tools/image-gen.md) | — |
-| Vision tool | [`_dfd/tools/vision.md`](_dfd/tools/vision.md) | — |
-| Calendar tool | [`_dfd/tools/calendar.md`](_dfd/tools/calendar.md) | — |
-| WebDAV tool | [`_dfd/tools/webdav.md`](_dfd/tools/webdav.md) | — |
-| Reset memory | [`_dfd/tools/reset-memory.md`](_dfd/tools/reset-memory.md) | — |
-| Edit soul | [`_dfd/tools/edit-soul.md`](_dfd/tools/edit-soul.md) | — |
-| Knowledge tools | [`_dfd/tools/knowledge.md`](_dfd/tools/knowledge.md) | — |
-| Test suite | — | [`_doc/test_suite/running.md`](_doc/test_suite/running.md) |
+| Context diagram | [`docs/dfd/context-diagram.md`](docs/dfd/context-diagram.md) | — |
+| Agent loop | [`docs/dfd/agent/agent-loop/main-path.md`](docs/dfd/agent/agent-loop/main-path.md) | — |
+| Agent harness | [`docs/dfd/agent/agent-harness/agent-loop.md`](docs/dfd/agent/agent-harness/agent-loop.md) | [`docs/agent-harness.md`](docs/agent-harness.md) |
+| Boot sequence | [`docs/dfd/agent/boot-sequence/platform-connect.md`](docs/dfd/agent/boot-sequence/platform-connect.md) | — |
+| Config | [`docs/dfd/infra/config/main-path.md`](docs/dfd/infra/config/main-path.md) | — |
+| RocketChat client | [`docs/dfd/infra/rocketchat/main-path.md`](docs/dfd/infra/rocketchat/main-path.md) | [`docs/rocketchat/rocketchat-client.md`](docs/rocketchat/rocketchat-client.md) |
+| RocketChat REST | [`docs/dfd/infra/rocketchat-rest/rest-alias-send.md`](docs/dfd/infra/rocketchat-rest/rest-alias-send.md) | — |
+| Matrix client | [`docs/dfd/infra/matrix/main-path.md`](docs/dfd/infra/matrix/main-path.md) | — |
+| AI Provider | [`docs/dfd/ai/ai-provider/main-path.md`](docs/dfd/ai/ai-provider/main-path.md) | — |
+| Memory | [`docs/dfd/memory/memory/retrieve-two-layers.md`](docs/dfd/memory/memory/retrieve-two-layers.md) | — |
+| Memory reset | [`docs/dfd/memory/memory-reset/post-reply-decision.md`](docs/dfd/memory/memory-reset/post-reply-decision.md) | — |
+| Knowledge | [`docs/dfd/knowledge/knowledge/write.md`](docs/dfd/knowledge/knowledge/write.md) | — |
+| Knowledge priority | [`docs/dfd/knowledge/knowledge-priority/priority-state.md`](docs/dfd/knowledge/knowledge-priority/priority-state.md) | — |
+| Image interception | [`docs/dfd/interception/image-interception/complete-pipeline.md`](docs/dfd/interception/image-interception/complete-pipeline.md) | — |
+| Secret interception | [`docs/dfd/interception/secret-interception/uuidv5-scoped-injection.md`](docs/dfd/interception/secret-interception/uuidv5-scoped-injection.md) | — |
+| Web search | [`docs/dfd/tools/search-web/main-path.md`](docs/dfd/tools/search-web/main-path.md) | Exa / Brave multi-provider |
+| Web fetch | [`docs/dfd/tools/web-fetch/main-path.md`](docs/dfd/tools/web-fetch/main-path.md) | — |
+| Image gen tool | [`docs/dfd/tools/image-gen/main-path.md`](docs/dfd/tools/image-gen/main-path.md) | — |
+| Vision tool | [`docs/dfd/tools/vision/main-path.md`](docs/dfd/tools/vision/main-path.md) | — |
+| Calendar tool | [`docs/dfd/tools/calendar/main-path.md`](docs/dfd/tools/calendar/main-path.md) | — |
+| WebDAV tool | [`docs/dfd/tools/webdav/main-path.md`](docs/dfd/tools/webdav/main-path.md) | — |
+| Reset memory | [`docs/dfd/tools/reset-memory/flag-driven.md`](docs/dfd/tools/reset-memory/flag-driven.md) | — |
+| Edit soul | [`docs/dfd/tools/edit-soul/main-path.md`](docs/dfd/tools/edit-soul/main-path.md) | — |
+| Knowledge tools | [`docs/dfd/tools/knowledge/save.md`](docs/dfd/tools/knowledge/save.md) | — |
+| Test suite | — | [`docs/test_suite/running.md`](docs/test_suite/running.md) |
 
 ## Environment variables
 

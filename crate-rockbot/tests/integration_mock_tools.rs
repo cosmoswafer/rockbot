@@ -5,16 +5,16 @@
 // Pure-computation tools (calendar/memory) are tested via direct execute() calls.
 //
 // DFDs covered:
-//   _dfd/tools/vision.md
-//   _dfd/tools/exa-search.md
-//   _dfd/tools/web-fetch.md
-//   _dfd/tools/edit-soul.md
-//   _dfd/tools/webdav.md
-//   _dfd/tools/calendar.md
-//   _dfd/base/memory.md
-//   _dfd/agent-harness.md
-//   _dfd/image-interception.md
-//   _dfd/agent-loop.md
+//   docs/dfd/tools/vision.md
+//   docs/dfd/tools/exa-search.md
+//   docs/dfd/tools/web-fetch.md
+//   docs/dfd/tools/edit-soul.md
+//   docs/dfd/tools/webdav.md
+//   docs/dfd/tools/calendar.md
+//   docs/dfd/base/memory.md
+//   docs/dfd/agent-harness.md
+//   docs/dfd/image-interception.md
+//   docs/dfd/agent-loop.md
 
 use rockbot::harness::AgentHarness;
 use rockbot::image_cache::ImageCache;
@@ -47,7 +47,7 @@ fn tiny_png_bytes() -> Vec<u8> {
 }
 
 // ============================================================================
-// _dfd/tools/vision.md — Happy Path (wiremock)
+// docs/dfd/tools/vision.md — Happy Path (wiremock)
 // ============================================================================
 
 #[tokio::test]
@@ -172,7 +172,7 @@ async fn test_vision_missing_url_param() {
 }
 
 // ============================================================================
-// _dfd/tools/search-web.md — Happy Path (wiremock)
+// docs/dfd/tools/search-web.md — Happy Path (wiremock)
 // ============================================================================
 
 #[tokio::test]
@@ -205,7 +205,7 @@ async fn test_search_web_missing_query() {
 }
 
 // ============================================================================
-// _dfd/tools/search-web.md — Exa wiremock happy path
+// docs/dfd/tools/search-web.md — Exa wiremock happy path
 // ============================================================================
 
 #[tokio::test]
@@ -329,7 +329,7 @@ async fn test_search_web_exa_text_mode_uses_text_contents() {
 }
 
 // ============================================================================
-// _dfd/tools/search-web.md — Brave wiremock happy path
+// docs/dfd/tools/search-web.md — Brave wiremock happy path
 // ============================================================================
 
 #[tokio::test]
@@ -427,7 +427,7 @@ async fn test_search_web_tool_definitions_includes_all_modes() {
 }
 
 // ============================================================================
-// _dfd/tools/web-fetch.md — Happy Path (wiremock)
+// docs/dfd/tools/web-fetch.md — Happy Path (wiremock)
 // ============================================================================
 
 #[tokio::test]
@@ -552,7 +552,7 @@ async fn test_web_fetch_http_error() {
 }
 
 // ============================================================================
-// _dfd/tools/edit-soul.md — Happy Path (wiremock WebDAV)
+// docs/dfd/tools/edit-soul.md — Happy Path (wiremock WebDAV)
 // ============================================================================
 
 #[tokio::test]
@@ -701,7 +701,7 @@ async fn test_edit_soul_missing_content_fails() {
 }
 
 // ============================================================================
-// _dfd/tools/webdav.md — Happy Path (wiremock WebDAV)
+// docs/dfd/tools/webdav.md — Happy Path (wiremock WebDAV)
 // ============================================================================
 
 #[tokio::test]
@@ -1027,7 +1027,7 @@ async fn test_webdav_rename_file() {
 }
 
 // ============================================================================
-// _dfd/tools/calendar.md — Tool definition + param validation
+// docs/dfd/tools/calendar.md — Tool definition + param validation
 // ============================================================================
 
 #[tokio::test]
@@ -1070,7 +1070,7 @@ async fn test_calendar_add_event_missing_required_fields() {
 }
 
 // ============================================================================
-// _dfd/base/memory.md — Happy Path (MemoryManager, ConversationHistory, PersistSnapshot)
+// docs/dfd/base/memory.md — Happy Path (MemoryManager, ConversationHistory, PersistSnapshot)
 // ============================================================================
 
 #[test]
@@ -1138,7 +1138,7 @@ fn test_persist_snapshot_serialization() {
 }
 
 // ============================================================================
-// _dfd/agent-harness.md — Happy Path (harness with mock AI provider)
+// docs/dfd/agent-harness.md — Happy Path (harness with mock AI provider)
 // ============================================================================
 
 /// A mock AI provider that returns canned responses for testing the harness.
@@ -1258,7 +1258,7 @@ async fn test_harness_get_or_create_room() {
 }
 
 // ============================================================================
-// _dfd/image-interception.md — Harness image pool starts empty
+// docs/dfd/image-interception.md — Harness image pool starts empty
 // ============================================================================
 
 #[tokio::test]
@@ -1277,7 +1277,7 @@ async fn test_harness_image_pool_starts_empty() {
 }
 
 // ============================================================================
-// _dfd/agent-loop.md — Happy Path (main loop config-driven behavior)
+// docs/dfd/agent-loop.md — Happy Path (main loop config-driven behavior)
 // ============================================================================
 
 #[test]
@@ -1288,7 +1288,7 @@ fn test_agent_loop_max_iterations_from_config() {
 }
 
 // ============================================================================
-// _dfd/interception/image-interception.md — Vision/webdav result interception
+// docs/dfd/interception/image-interception.md — Vision/webdav result interception
 // (image_pool caching + ContentPart injection)
 // ============================================================================
 
@@ -1487,7 +1487,7 @@ dav_path = "remote.php/dav"
 }
 
 // ============================================================================
-// _dfd/ai/ai-provider.md §2d — OpenRouter Image API Routing (wiremock)
+// docs/dfd/ai/ai-provider.md §2d — OpenRouter Image API Routing (wiremock)
 // ============================================================================
 
 mod openrouter_image_api {
@@ -1732,7 +1732,7 @@ mod openrouter_image_api {
 }
 
 // ============================================================================
-// _dfd/tools/webdav/large-file-edit.md — windowed reads and guarded edits
+// docs/dfd/tools/webdav/large-file-edit.md — windowed reads and guarded edits
 // ============================================================================
 
 mod webdav_edit {

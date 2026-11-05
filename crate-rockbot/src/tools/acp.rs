@@ -1,5 +1,5 @@
 //! `acp_delegate` tool — lets the LLM delegate a task to the external ACP
-//! agent via [`AcpClient`]. See `_dfd/tools/acp-delegate.md`.
+//! agent via [`AcpClient`]. See `docs/dfd/tools/acp-delegate.md`.
 
 use std::sync::Arc;
 

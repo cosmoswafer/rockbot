@@ -1,6 +1,6 @@
 // ─── Live Integration Probe: DeepSeek vision (image input) contract ─────────
 //
-// DFD covered: _dfd/ai/ai-provider.md §2c, _dfd/interception/image-interception.md
+// DFD covered: docs/dfd/ai/ai-provider.md §2c, docs/dfd/interception/image-interception.md
 // Issue: ReLab/Ideas #116 — "[BUG] DeepSeek provider still doesn't support vision
 // (should)". Collects live API data that drove the diagnosis:
 //   * deepseek-flash (the sole DeepSeek chat model) accepts OpenAI-style
