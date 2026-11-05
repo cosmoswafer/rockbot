@@ -61,3 +61,8 @@ Large text files do not use this raw read path: `WebDavTool::read` rejects
 text files above 256 KiB and points the model at `webdav_edit`, whose windowed,
 streamed flow is documented in [large-file-edit.md](large-file-edit.md). SVG is
 text (`image/svg+xml`), never a base64 image.
+
+To **display** an SVG (or any image) that already lives in WebDAV, the model
+calls `share_image`. SVG shares are displayed through Nextcloud's server-side
+`/preview` rasterizer; raster images use the normal `/download` share link. See
+[image-sharing.md](../../agent/agent-harness/image-sharing.md).
