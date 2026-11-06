@@ -3373,6 +3373,161 @@ dav_path = "remote.php/dav"
         // Attempted once only — a second load must not retry the PUT.
         harness.restore_history("room1", "mig", "mig", false).await;
     }
+
+    // ─── Gitea #123 — explicit reset must invalidate the persisted snapshot ───
+
+    const SNAPSHOT_PATH: &str = "/.snapshots/@testbot/r-general/snapshot.json";
+
+    fn make_webdav(base_url: &str) -> webdav::WebDavClient {
+        webdav::WebDavClient::new(base_url, "testuser", "testpass").unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_reset_shortcut_persists_empty_snapshot() {
+        let mock_server = MockServer::start().await;
+        let base_url = mock_server.uri();
+
+        // Seed a stale snapshot so we can prove the reset overwrites it, and
+        // that no soul.md is needed for the write to happen.
+        Mock::given(method("PUT"))
+            .and(path(SNAPSHOT_PATH))
+            .and(body_string_contains(r#""messages":[]"#))
+            .and(body_string_contains(r#""archive_seq":1"#))
+            .respond_with(ResponseTemplate::new(201))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let mut harness = AgentHarness::new(
+            make_knowledge_test_config(&base_url),
+            Box::new(MockMinProvider),
+            Some(make_webdav(&base_url)),
+            Arc::new(rockbot::image_cache::ImageCache::new()),
+            "@testbot",
+        );
+
+        let room = harness
+            .memory_mut()
+            .get_or_create("room1", "general", "general", false);
+        room.history.append(rockbot::types::ChatMessage::user("old context"));
+        room.history
+            .append(rockbot::types::ChatMessage::assistant("old reply"));
+
+        let reply = harness
+            .process_message("room1", "general", "general", false, "alice", "!reset", &[], &[])
+            .await
+            .unwrap();
+
+        assert_eq!(reply.as_deref(), Some("Memory cleared."));
+        assert_eq!(harness.memory().message_count("room1"), 0);
+        assert!(!harness.memory().has_explicit_reset("room1"));
+    }
+
+    #[tokio::test]
+    async fn test_reset_on_unloaded_room_still_invalidates_snapshot() {
+        let mock_server = MockServer::start().await;
+        let base_url = mock_server.uri();
+
+        // The room is created by the shortcut itself: nothing is in memory, so
+        // `archive_seq` is 0 and only the forced write can invalidate the stale
+        // snapshot left by a previous process.
+        Mock::given(method("PUT"))
+            .and(path(SNAPSHOT_PATH))
+            .and(body_string_contains(r#""messages":[]"#))
+            .and(body_string_contains(r#""archive_seq":1"#))
+            .respond_with(ResponseTemplate::new(201))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let mut harness = AgentHarness::new(
+            make_knowledge_test_config(&base_url),
+            Box::new(MockMinProvider),
+            Some(make_webdav(&base_url)),
+            Arc::new(rockbot::image_cache::ImageCache::new()),
+            "@testbot",
+        );
+
+        let reply = harness
+            .process_message("room1", "general", "general", false, "alice", "!reset", &[], &[])
+            .await
+            .unwrap();
+
+        assert_eq!(reply.as_deref(), Some("Memory cleared."));
+        assert_eq!(harness.memory().message_count("room1"), 0);
+    }
+
+    #[tokio::test]
+    async fn test_restore_after_reset_starts_empty() {
+        let mock_server = MockServer::start().await;
+        let base_url = mock_server.uri();
+
+        Mock::given(method("GET"))
+            .and(path(SNAPSHOT_PATH))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "schema": "rockbot-snapshot/1",
+                "room_id": "room1",
+                "messages": [],
+                "char_count": 0,
+                "archive_seq": 1,
+                "updated_at": "2026-01-01T00:00:00Z"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let mut harness = AgentHarness::new(
+            make_knowledge_test_config(&base_url),
+            Box::new(MockMinProvider),
+            Some(make_webdav(&base_url)),
+            Arc::new(rockbot::image_cache::ImageCache::new()),
+            "@testbot",
+        );
+
+        harness
+            .memory_mut()
+            .get_or_create("room1", "general", "general", false);
+        harness
+            .restore_history("room1", "general", "general", false)
+            .await;
+
+        assert_eq!(harness.memory().message_count("room1"), 0);
+        assert_eq!(
+            harness.memory().get("room1").unwrap().history.archive_seq,
+            1,
+            "restored archive_seq must keep needs_restore false"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_flush_skips_rooms_that_never_had_history() {
+        let mock_server = MockServer::start().await;
+        let base_url = mock_server.uri();
+
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(201))
+            .expect(0)
+            .mount(&mock_server)
+            .await;
+
+        let mut harness = AgentHarness::new(
+            make_knowledge_test_config(&base_url),
+            Box::new(MockMinProvider),
+            Some(make_webdav(&base_url)),
+            Arc::new(rockbot::image_cache::ImageCache::new()),
+            "@testbot",
+        );
+
+        harness
+            .memory_mut()
+            .get_or_create("room1", "general", "general", false);
+        harness.memory_mut().mark_snapshot_dirty("room1");
+        harness.flush_all_snapshots().await;
+
+        assert!(
+            !harness.memory().dirty_snapshots().contains(&"room1".to_string()),
+            "the never-used room must be skipped and cleared from the dirty set"
+        );
+    }
 }
 
 // ─── Mock HTTP Tests: LlamaCppProvider auth header (issue #73) ────────────────

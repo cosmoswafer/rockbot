@@ -3,9 +3,11 @@
 ## 1. Purpose
 
 All triggers are evaluated **after the bot reply has been delivered to the
-user** — zero delay between user request and bot response. The token and
+user** — zero delay between user request and bot response — except the literal
+`!reset`/`!clearmemory` shortcut, which resets before replying. The token and
 byte pressure flags route to **LLM summarization** (compress oldest messages,
-keep recent). The `explicit_reset` flag routes to **hard reset** (clear all).
+keep recent). The `explicit_reset` flag routes to **hard reset** (clear all)
+plus a synchronous empty-snapshot write.
 
 References: [Hard Reset Deep Dive](level-2/hard-reset.md),
 [reset_memory Tool](reset-memory-tool.md),
@@ -42,7 +44,7 @@ flowchart TD
 |------|-----------|-----------|--------|
 | `token_pressure_flag` | Each LLM provider response | `usage.total_tokens > model_context_length * 0.85` | Summarize & compress |
 | `byte_pressure_flag` | Context assembly (`trim_context`) | Serialized context bytes > `max_context_bytes` | Summarize & compress |
-| `explicit_reset` | Pre-LLM shortcut or `reset_memory` tool call (in `process_message`) | `!reset` / `!clearmemory` exact match, or natural-language request | Hard reset (clear all) |
+| `explicit_reset` | Pre-LLM shortcut (applied immediately) or `reset_memory` tool call (deferred to post-reply) | `!reset` / `!clearmemory` exact match, or natural-language request | Hard reset (clear all) + synchronous empty-snapshot write |
 
 `explicit_reset` is checked first — if set, hard reset runs regardless of
 other flags. Token/byte pressure flags route to `summarize_and_compress()`.

@@ -17,6 +17,10 @@ pub struct PersistSnapshot {
     pub room_id: NonEmptyString,
     pub messages: Vec<ChatMessage>,
     pub char_count: usize,
+    /// Monotonic count of prune operations on this room's history. Empty
+    /// `messages` together with `archive_seq > 0` is the durable marker of an
+    /// explicit `!reset`; empty `messages` with `archive_seq == 0` means the
+    /// room never had history.
     pub archive_seq: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub soul: Option<String>,

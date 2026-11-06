@@ -3,7 +3,8 @@
 ## 1. Purpose
 
 When the user sends a literal `!reset` or `!clearmemory` command, the harness
-detects it before any LLM call and returns a canned reply. No token cost.
+detects it before any LLM call, clears Layer 1, persists the empty snapshot, and
+only then returns a canned reply. No token cost, no restart window.
 
 - References: [Pre-LLM Shortcut](../../memory/memory-reset/pre-llm-shortcut.md)
 
@@ -13,23 +14,21 @@ detects it before any LLM call and returns a canned reply. No token cost.
 flowchart TD
     USER["User: !reset<br/>or !clearmemory"]
     CHECK{"clean_text ==<br/>!reset or !clearmemory?"}
-    SET_FLAG["Set explicit_reset<br/>flag on room"]
+    RESET["reset_room_if_needed()<br/>(clear Layer 1 now)"]
+    PERSIST["Write empty snapshot<br/>(archive_seq >= 1)"]
     REPLY["Return canned reply<br/>(Memory cleared.)"]
-    POST["Post-reply:<br/>reset_room_if_needed()"]
-    CLEAR["Clear ALL Messages<br/>(Layer 1 → 0)"]
-    DIRTY[Mark Snapshot Dirty]
 
     USER -->|"exact command"| CHECK
-    CHECK -->|"yes"| SET_FLAG
-    SET_FLAG --> REPLY
+    CHECK -->|"yes"| RESET
+    RESET --> PERSIST
+    PERSIST --> REPLY
     REPLY -->|"bot reply (instant)"| USER
-    REPLY -->|"after reply sent"| POST
-    POST --> CLEAR
-    CLEAR --> DIRTY
 ```
 
-No LLM call, no tool dispatch. The `reset_memory` tool registration is still
-needed for natural-language reset requests handled by the LLM (§2a).
+No LLM call, no tool dispatch. The wipe and the WebDAV write happen **before**
+the canned reply, so a crash or restart cannot resurrect the cleared history.
+The `reset_memory` tool registration is still needed for natural-language reset
+requests handled by the LLM (§2a).
 
 ## 3. Data Structures
 

@@ -19,8 +19,9 @@ messages instantly. The former full-wipe-on-pressure and the former
   thresholds (`max_context_bytes`, `model_context_length`,
   `summarization_enabled`, `summarization_ratio`,
   `summarization_target_tokens`)
-- Downstream: none — summarization and reset are purely in-memory (no WebDAV
-  writes)
+- Downstream: WebDAV snapshots — an explicit reset writes an empty snapshot
+  synchronously (`archive_seq >= 1`) so a restart cannot restore cleared
+  history; pressure summarization stays in-memory until the next flush
 
 ## 3. Data Structures
 
@@ -60,8 +61,8 @@ truncation) runs pre-LLM but is not a reset trigger.
 |---------|-----------------|-----------|--------|
 | **Token near-limit** | Flag set during LLM call, checked after reply | `usage.total_tokens > model_context_length * 0.85` | Summarize & compress (oldest ~60% → LLM summary) |
 | **Byte pressure** | Flag set during context assembly, checked after reply | `context_bytes > max_context_bytes` | Summarize & compress (oldest ~60% → LLM summary) |
-| **User command shortcut** | Before LLM call (early return) | `clean_text == "!reset"` or `"!clearmemory"` | Hard reset (clear all L1 messages), no LLM call |
-| **User request (NL)** | Flag set by `reset_memory` tool, checked after reply | Tool called by LLM (intent detection) | Hard reset (clear all L1 messages) |
+| **User command shortcut** | Before LLM call (applied immediately) | `clean_text == "!reset"` or `"!clearmemory"` | Hard reset (clear all L1 messages) + synchronous empty-snapshot write, no LLM call |
+| **User request (NL)** | Flag set by `reset_memory` tool, checked after reply | Tool called by LLM (intent detection) | Hard reset (clear all L1 messages) + synchronous empty-snapshot write |
 | **Safety net** | Before each LLM call | `context_bytes > max_context_bytes` | Inline trim only (strip images, truncate); sets byte_pressure_flag |
 | **Provider error** | During LLM call | `ContextLengthExceeded` | Hard reset + hard truncate + retry (once) |
 

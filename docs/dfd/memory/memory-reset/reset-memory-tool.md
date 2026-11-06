@@ -21,6 +21,7 @@ flowchart TD
     LLM_REPLY["LLM generates reply<br/>(full context intact)"]
     POST["Post-reply:<br/>reset_room_if_needed"]
     CLEAR["Clear Layer 1<br/>(zero messages)"]
+    PERSIST["Write empty snapshot<br/>(archive_seq >= 1)"]
 
     USER -->|"explicit request"| AI
     AI -->|"tool_call: reset_memory"| TOOL
@@ -29,8 +30,10 @@ flowchart TD
     LLM_REPLY -->|"bot reply (no delay)"| USER
     LLM_REPLY -->|"after reply"| POST
     POST --> CLEAR
+    CLEAR --> PERSIST
 ```
 
 The user receives the bot's reply immediately. Reset runs after the reply is
-delivered (silent — no follow-up message). See
+delivered (silent — no follow-up message) and writes the empty snapshot
+synchronously. See
 [reset-memory.md](../../tools/reset-memory/flag-driven.md) for the full tool flow.

@@ -193,8 +193,20 @@ impl AgentHarness {
 
         let trimmed = clean_text.trim();
         if trimmed == "!reset" || trimmed == "!clearmemory" {
-            debug!("Reset shortcut: detected literal '{}' — skipping LLM", trimmed);
+            debug!("Reset shortcut: detected literal '{}' — clearing memory before reply", trimmed);
+            // Create the room first so the wipe has a target even when the old
+            // snapshot has not been loaded yet (fresh process, evicted room).
+            self.memory
+                .get_or_create(room_id, room_name, room_fname, is_dm)
+                .touch();
             self.memory.set_explicit_reset(room_id);
+            // Apply the wipe and persist it now — the canned reply must not
+            // outrun the reset, and a restart must not resurrect the history.
+            let reset = self.reset_room_if_needed(room_id).await?;
+            debug!(
+                "Reset shortcut: cleared {} message(s) for room {}",
+                reset.messages_cleared, room_id
+            );
             return Ok(Some("Memory cleared.".to_string()));
         }
 
@@ -1095,29 +1107,54 @@ impl AgentHarness {
         let was_explicit = self.memory.has_explicit_reset(room_id);
 
         if was_explicit {
-            // User explicitly requested reset — full wipe
-            if let Some((rid, msgs)) = self.memory.check_and_archive(room_id, true) {
-                let count = msgs.len();
-                self.memory.prune_archived(&rid, count);
-                self.memory.clear_pressure_flags(&rid);
-                self.memory.mark_snapshot_dirty(&rid);
-                debug!(
-                    "Reset memory for room {}: cleared {} messages (explicit)",
-                    rid, count
+            // Full wipe, then persist it immediately: waiting for the next
+            // maintenance tick leaves the old snapshot on WebDAV, which a
+            // restart (or an evicted room) would restore.
+            let webdav_dir = match self.memory.get(room_id) {
+                Some(room) if self.webdav.is_some() => {
+                    compute_webdav_dir(&room.room_name, &room.room_fname, room.is_dm)
+                }
+                Some(_) => String::new(),
+                None => {
+                    self.memory.clear_pressure_flags(room_id);
+                    return Ok(ResetResult {
+                        did_reset: false,
+                        was_explicit,
+                        messages_cleared: 0,
+                    });
+                }
+            };
+
+            let cleared = match self.memory.check_and_archive(room_id, true) {
+                Some((rid, msgs)) => {
+                    let count = msgs.len();
+                    self.memory.prune_archived(&rid, count);
+                    count
+                }
+                None => 0,
+            };
+
+            self.memory.clear_pressure_flags(room_id);
+            self.memory.mark_snapshot_dirty(room_id);
+
+            if let Err(e) = self.write_snapshot(room_id, &webdav_dir, true).await {
+                // Memory is already cleared; keep the room dirty so the next
+                // maintenance tick retries the write.
+                warn!(
+                    "Explicit reset for room {} cleared {} message(s) in memory but could not be persisted yet: {}",
+                    room_id, cleared, e
                 );
-                Ok(ResetResult {
-                    did_reset: true,
-                    was_explicit,
-                    messages_cleared: count,
-                })
-            } else {
-                self.memory.clear_pressure_flags(room_id);
-                Ok(ResetResult {
-                    did_reset: false,
-                    was_explicit,
-                    messages_cleared: 0,
-                })
             }
+
+            debug!(
+                "Reset memory for room {}: cleared {} messages (explicit)",
+                room_id, cleared
+            );
+            return Ok(ResetResult {
+                did_reset: cleared > 0,
+                was_explicit,
+                messages_cleared: cleared,
+            });
         } else {
             // Token/byte pressure — summarize instead of full wipe
             self.summarize_and_compress(room_id).await
@@ -1398,74 +1435,85 @@ impl AgentHarness {
         Ok(())
     }
 
-    /// Persist all dirty snapshots to WebDAV immediately (used for graceful shutdown).
-    pub async fn flush_all_snapshots(&mut self) {
+    /// Write one room's snapshot to WebDAV now.
+    ///
+    /// `force` marks an explicit reset: the snapshot is written even when the
+    /// in-memory history is empty, because "no messages" is the state that must
+    /// survive a restart. Without `force`, rooms that never had history are
+    /// still skipped so the periodic flush stays quiet.
+    ///
+    /// The dirty flag is cleared only on success, so a failed write is retried
+    /// by the next maintenance tick.
+    async fn write_snapshot(&mut self, room_id: &str, webdav_dir: &str, force: bool) -> Result<()> {
         let webdav_client = match &self.webdav {
-            Some(c) => c,
-            None => return,
+            Some(client) => client.clone(),
+            None => {
+                self.memory.clear_dirty(room_id);
+                return Ok(());
+            }
         };
 
+        if webdav_dir.is_empty() {
+            self.memory.clear_dirty(room_id);
+            return Ok(());
+        }
+
+        let mut snapshot = match self.memory.build_snapshot(room_id) {
+            Some(snapshot) => snapshot,
+            None => {
+                self.memory.clear_dirty(room_id);
+                return Ok(());
+            }
+        };
+
+        if force {
+            snapshot.messages.clear();
+            snapshot.char_count = 0;
+            snapshot.summary = None;
+            // Durable reset marker: restore_snapshot() copies this into the
+            // room, keeping `needs_restore` false after the restart.
+            snapshot.archive_seq = snapshot.archive_seq.max(1);
+            snapshot.updated_at = now_iso_string();
+        } else if snapshot.messages.is_empty()
+            && snapshot.archive_seq == 0
+            && snapshot.soul.is_none()
+        {
+            self.memory.clear_dirty(room_id);
+            return Ok(());
+        }
+
+        let path = WebDavPath::new("").bot_snapshot_path(&self.snapshot_prefix, &self.bot_id, webdav_dir);
+        let snap_soul_len = snapshot.soul.as_ref().map(|s| s.chars().count()).unwrap_or(0);
+        let snap_soul_tail: String = snapshot
+            .soul
+            .as_ref()
+            .map(|s| s.chars().rev().take(200).collect::<Vec<_>>().into_iter().rev().collect())
+            .unwrap_or_default();
+        let snap_room_id = snapshot.room_id.as_str().to_string();
+        let json = serde_json::to_vec(&snapshot)?;
+
+        debug!(
+            "write_snapshot: room={} (dir={}, snap_room_id={}, messages={}, archive_seq={}, force={}, soul_len={} chars, soul_tail={:?})",
+            room_id, webdav_dir, snap_room_id, snapshot.messages.len(), snapshot.archive_seq, force, snap_soul_len, snap_soul_tail
+        );
+
+        webdav_client.write_file_with_fallback(&path, json).await?;
+        self.memory.clear_dirty(room_id);
+        info!("Flushed snapshot for room {}", room_id);
+        Ok(())
+    }
+
+    /// Persist all dirty snapshots to WebDAV immediately (used for graceful shutdown).
+    pub async fn flush_all_snapshots(&mut self) {
         let dirty: Vec<String> = self.memory.dirty_snapshots();
         for room_id in &dirty {
-            let snapshot = match self.memory.build_snapshot(room_id) {
-                Some(s) => s,
-                None => {
-                    self.memory.clear_dirty(room_id);
-                    continue;
-                }
-            };
-
-            if snapshot.messages.is_empty()
-                && snapshot.soul.is_none()
-                && snapshot.summary.is_none()
-            {
-                self.memory.clear_dirty(room_id);
-                continue;
-            }
-
-            let wd = {
-                let room = self.memory.get(room_id);
-                room.map(|r| compute_webdav_dir(&r.room_name, &r.room_fname, r.is_dm))
-                    .unwrap_or_default()
-            };
-
-            if wd.is_empty() {
-                self.memory.clear_dirty(room_id);
-                continue;
-            }
-
-            let path = WebDavPath::new("").bot_snapshot_path(&self.snapshot_prefix, &self.bot_id, &wd);
-            let snap_soul_len = snapshot.soul.as_ref().map(|s| s.chars().count()).unwrap_or(0);
-            let snap_soul_tail: String = snapshot
-                .soul
-                .as_ref()
-                .map(|s| s.chars().rev().take(200).collect::<Vec<_>>().into_iter().rev().collect())
+            let webdav_dir = self
+                .memory
+                .get(room_id)
+                .map(|room| compute_webdav_dir(&room.room_name, &room.room_fname, room.is_dm))
                 .unwrap_or_default();
-            let snap_room_id = snapshot.room_id.as_str().to_string();
-            let json = match serde_json::to_vec(&snapshot) {
-                Ok(j) => j,
-                Err(e) => {
-                    warn!("Failed to serialize snapshot for {}: {}", room_id, e);
-                    continue;
-                }
-            };
-
-            debug!(
-                "flush_snapshot: room={} (dir={}, snap_room_id={}, soul_len={} chars, soul_tail={:?})",
-                room_id, wd, snap_room_id, snap_soul_len, snap_soul_tail
-            );
-
-            match webdav_client.write_file_with_fallback(&path, json).await {
-                Ok(()) => {
-                    self.memory.clear_dirty(room_id);
-                    info!("Flushed snapshot for room {}", room_id);
-                }
-                Err(e) => {
-                    warn!(
-                        "Failed to flush snapshot for {}: {}",
-                        room_id, e
-                    );
-                }
+            if let Err(e) = self.write_snapshot(room_id, &webdav_dir, false).await {
+                warn!("Failed to flush snapshot for {}: {}", room_id, e);
             }
         }
     }
@@ -3367,6 +3415,15 @@ You can now see the image."#;
         let config = make_test_config();
         let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()), "@testbot");
 
+        // Seed in-memory history so the shortcut has something to wipe.
+        {
+            let room = harness
+                .memory_mut()
+                .get_or_create("room1", "general", "General", false);
+            room.history.append(ChatMessage::user("old context"));
+            room.history.append(ChatMessage::assistant("old reply"));
+        }
+
         let result = harness
             .process_message("room1", "general", "General", false, "alice", "!reset", &[], &[])
             .await
@@ -3374,11 +3431,12 @@ You can now see the image."#;
 
         assert_eq!(result, Some("Memory cleared.".to_string()));
         assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), 0, "LLM must NOT be called for !reset shortcut");
-
-        assert!(harness.memory().needs_reset("room1"), "explicit_reset flag must be set");
-        let reset = harness.reset_room_if_needed("room1").await.unwrap();
-        assert!(reset.was_explicit);
-        assert!(!harness.memory().needs_reset("room1"), "flags must be cleared after reset");
+        assert!(!harness.memory().needs_reset("room1"), "shortcut must apply the reset before replying");
+        assert_eq!(harness.memory().message_count("room1"), 0, "history must be empty right after the shortcut");
+        assert!(
+            harness.memory().get("room1").unwrap().history.archive_seq > 0,
+            "reset marker must be set so a restore does not resurrect history"
+        );
     }
 
     #[tokio::test]
@@ -3388,6 +3446,12 @@ You can now see the image."#;
         let config = make_test_config();
         let mut harness = AgentHarness::new(config, provider, None, Arc::new(ImageCache::new()), "@testbot");
 
+        harness
+            .memory_mut()
+            .get_or_create("room2", "general", "General", false)
+            .history
+            .append(ChatMessage::user("old context"));
+
         let result = harness
             .process_message("room2", "general", "General", false, "bob", "!clearmemory", &[], &[])
             .await
@@ -3395,6 +3459,8 @@ You can now see the image."#;
 
         assert_eq!(result, Some("Memory cleared.".to_string()));
         assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), 0, "LLM must NOT be called for !clearmemory shortcut");
+        assert_eq!(harness.memory().message_count("room2"), 0);
+        assert!(!harness.memory().needs_reset("room2"));
     }
 
     #[tokio::test]
