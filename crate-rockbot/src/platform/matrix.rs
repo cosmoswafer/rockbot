@@ -22,6 +22,9 @@ pub struct MatrixPlatform {
     device_id: Option<String>,
     state_dir: String,
     force_relogin: AtomicBool,
+    /// Use matrix-sdk's in-memory store instead of SQLite. Test support only:
+    /// avoids the first-open schema migration on throwaway stores.
+    use_memory_store: bool,
 }
 
 impl MatrixPlatform {
@@ -33,6 +36,18 @@ impl MatrixPlatform {
             device_id: config.device_id.clone(),
             state_dir: config.state_dir.clone(),
             force_relogin: AtomicBool::new(false),
+            use_memory_store: false,
+        }
+    }
+
+    /// Test-only constructor: uses an in-memory session store, so no SQLite
+    /// database is created and matrix-sdk's first-open schema migrations are
+    /// skipped. Production always uses the persistent SQLite store.
+    #[doc(hidden)]
+    pub fn new_with_memory_store(config: &crate::config::MatrixServerConfig) -> Self {
+        Self {
+            use_memory_store: true,
+            ..Self::new(config)
         }
     }
 }
@@ -124,9 +139,11 @@ impl MessagingClient for MatrixPlatform {
 
         std::fs::create_dir_all(&self.state_dir).ok();
 
-        let client = Client::builder()
-            .homeserver_url(&self.homeserver)
-            .sqlite_store(&self.state_dir, None)
+        let mut builder = Client::builder().homeserver_url(&self.homeserver);
+        if !self.use_memory_store {
+            builder = builder.sqlite_store(&self.state_dir, None);
+        }
+        let client = builder
             .build()
             .await
             .map_err(|e| RockBotError::Config(format!("Matrix client build failed: {e}")))?;

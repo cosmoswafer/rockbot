@@ -105,8 +105,8 @@ impl Tool for AcpTool {
 }
 
 /// Wire-format (snake_case) stop reason names.
-fn stop_reason_str(reason: &agent_client_protocol::schema::v1::StopReason) -> &'static str {
-    use agent_client_protocol::schema::v1::StopReason;
+fn stop_reason_str(reason: &agent_client_protocol::v1::schema::StopReason) -> &'static str {
+    use agent_client_protocol::v1::schema::StopReason;
     match reason {
         StopReason::EndTurn => "end_turn",
         StopReason::MaxTokens => "max_tokens",

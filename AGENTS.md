@@ -50,7 +50,7 @@ No CI, no `rustfmt.toml`/`clippy.toml`/`rust-toolchain`.
 
 ## Code style
 
-- Async Rust everywhere (sole exception: `crate-rocketchat/src/main.rs` debug binary uses sync `fn main` + `block_on`). Edition 2024, MSRV 1.93, modern Rust welcome.
+- Async Rust everywhere (sole exception: `crate-rocketchat/src/main.rs` debug binary uses sync `fn main` + `block_on`). Edition 2024, MSRV 1.96, modern Rust welcome.
 - Ownership-first — `&T`/`&str` transient, `Arc<str>`/`String` owned.
 
 ## Key facts

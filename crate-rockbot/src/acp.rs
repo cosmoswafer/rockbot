@@ -18,13 +18,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use agent_client_protocol::schema::ProtocolVersion;
-use agent_client_protocol::schema::v1::{
+use agent_client_protocol::v1::ConnectionTo;
+use agent_client_protocol::v1::schema::{
     CancelNotification, ContentBlock, Implementation, InitializeRequest, NewSessionRequest,
     PermissionOptionKind, PromptRequest, RequestPermissionOutcome, RequestPermissionRequest,
     RequestPermissionResponse, SelectedPermissionOutcome, SessionId, SessionNotification,
     SessionUpdate, StopReason, TextContent, ToolCallStatus,
 };
-use agent_client_protocol::{Agent, ByteStreams, ConnectTo, ConnectionTo, DynConnectTo};
+use agent_client_protocol::{Agent, ByteStreams, ConnectTo, DynConnectTo};
 use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 use tracing::{debug, info, warn};
@@ -403,7 +404,7 @@ async fn run_connection<C>(
     let notif_turn = turn.clone();
 
     let result = agent_client_protocol::Client
-        .builder()
+        .v1()
         .name("rockbot")
         .on_receive_notification(
             async move |notification: SessionNotification, _cx| {

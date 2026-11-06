@@ -1,9 +1,9 @@
 [package]
 name = "rockbot"
-version = "2.16.1"
+version = "2.17.0"
 edition = "2024"
 license = "MIT"
-rust-version = "1.93"
+rust-version = "1.96"
 description = "AI-powered RocketChat bot — config, provider, agent loop, tools, memory, WebDAV"
 repository = "https://github.com/anomalyco/rockbot"
 
@@ -12,21 +12,21 @@ tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "stream"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-toml = "1.1"
+toml = "1.2"
 thiserror = "2"
 async-trait = "0.1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 webdav = { path = "../crate-webdav" }
 rocketchat = { path = "../crate-rocketchat" }
-base64 = "0.22"
+base64 = "0.23"
 regex = "1"
 uuid = { version = "1", features = ["v5"] }
 url = "2"
-serde_valid = "0.18"
-validator = { version = "0.20", features = ["derive"] }
-matrix-sdk = { version = "0.18", default-features = false, features = ["markdown", "bundled-sqlite"] }
-agent-client-protocol = "2"
+serde_valid = "3"
+validator = { version = "0.21", features = ["derive"] }
+matrix-sdk = { version = "0.19", default-features = false, features = ["markdown", "bundled-sqlite"] }
+agent-client-protocol = "5"
 tokio-util = { version = "0.7", features = ["compat"] }
 
 [dev-dependencies]

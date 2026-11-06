@@ -3,7 +3,9 @@
 /// Verifies that M_UNKNOWN_TOKEN errors from the Matrix sync endpoint
 /// are detected and mapped to RockBotError::AuthFailed, triggering
 /// the force_relogin mechanism for the next connect cycle.
-
+///
+/// Uses the in-memory store: the tests only exercise error mapping, and a
+/// fresh SQLite store makes matrix-sdk run its full schema migration.
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -80,7 +82,7 @@ async fn test_unknown_token_maps_to_auth_failed() {
         state_dir: state_dir.clone(),
     };
 
-    let platform = MatrixPlatform::new(&config);
+    let platform = MatrixPlatform::new_with_memory_store(&config);
 
     let result = tokio::time::timeout(
         Duration::from_secs(30),
@@ -137,7 +139,7 @@ async fn test_force_relogin_after_unknown_token() {
         state_dir: state_dir.clone(),
     };
 
-    let platform = MatrixPlatform::new(&config);
+    let platform = MatrixPlatform::new_with_memory_store(&config);
 
     // First connect: login + sync returns M_UNKNOWN_TOKEN -> AuthFailed
     let result1 = tokio::time::timeout(
