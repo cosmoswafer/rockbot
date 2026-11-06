@@ -51,8 +51,11 @@ Full `AgentHarness`: simple response, DM handling, provider error fallback, max_
 ### `src/image_kind.rs` — 4 tests
 `ImageKind` classification by extension (png/jpg/jpeg/gif/webp/svg, case-insensitive), unsupported/extensionless rejection, MIME/extension mapping, and `is_vector` (SVG only).
 
-### `src/tools/share_image.rs` — 5 tests
-`ShareImageTool` definition (`path` required, harness-only `image_cache_key` hidden), Nextcloud `/preview` URL derivation from `/download`, unsupported-extension and missing-path errors. Wiremock coverage lives in `tests/integration_mock_tools.rs` (`share_image` module): SVG → `/preview` + cached PNG, raster → `/download` + original bytes, preview failure caches nothing, oversized source rejected before share.
+### `src/tools/share_image.rs` — 6 tests
+`ShareImageTool` definition (`path` required, harness-only `image_cache_key` hidden), MIME normalization (`; charset` stripped, case-insensitive), Nextcloud `/preview` URL derivation from `/download`, unsupported-extension and missing-path errors. Wiremock coverage lives in `tests/integration_mock_tools.rs` (`share_image` module): SVG `/download` (303 redirect) → vector bytes, `text/plain`/`404` fallback → `/preview` + cached PNG, both failing caches nothing, oversized vector download rejected, raster → `/download` + original bytes.
+
+### `src/image_cache.rs` — 1 test
+`GeneratedImage::file_extension()` mapping for jpeg/png/webp/svg and the unknown-MIME fallback.
 
 ### `src/tools/vision.rs` — 9 tests
 `VisionTool` definition, image name extraction from URLs (with/without query params), MIME detection by extension (png/jpg/jpeg/gif/webp/svg) with content-type preference, markdown tag format, `with_max_bytes` constructor, optional prompt parameter, missing URL error.

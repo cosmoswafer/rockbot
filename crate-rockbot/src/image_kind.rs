@@ -1,8 +1,9 @@
 /// Image formats the bot can display in chat.
 ///
 /// The classification happens once at the tool boundary; downstream code
-/// trusts it. SVG is the only vector format and is displayed through
-/// Nextcloud's server-side `/preview` rasterizer (issue #120).
+/// trusts it. SVG is the only vector format: it is displayed through the
+/// share's `/download` endpoint when Nextcloud serves it as `image/svg+xml`,
+/// with `/preview` as the raster fallback (issue #122).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImageKind {
     Png,

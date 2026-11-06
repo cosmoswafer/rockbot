@@ -1,8 +1,10 @@
+use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use reqwest::header::CONTENT_TYPE;
+use reqwest::header::{HeaderMap, CONTENT_TYPE};
+use reqwest::StatusCode;
 use serde::Deserialize;
 use tracing::{debug, info};
 use webdav::{WebDavClient, WebDavPath};
@@ -16,8 +18,10 @@ use crate::validated::NonEmptyString;
 
 /// Share a WebDAV image into the current chat.
 ///
-/// SVG is displayed through Nextcloud's server-side `/preview` rasterizer
-/// (issue #120). Raster formats keep the normal `/download` share link.
+/// SVG is served through the share's `/download` endpoint when Nextcloud
+/// returns `image/svg+xml`; otherwise the tool falls back to Nextcloud's
+/// server-side `/preview` rasterizer (issue #122). Raster formats keep the
+/// normal `/download` share link.
 pub struct ShareImageTool {
     webdav: WebDavClient,
     image_cache: Arc<ImageCache>,
@@ -102,14 +106,32 @@ impl ShareImageTool {
             })?;
 
         let (image_bytes, mime_type, display_url) = if kind.is_vector() {
-            let preview = preview_url(&download_url).ok_or_else(|| {
-                RockBotError::Provider(format!(
-                    "share_image: unexpected Nextcloud share URL '{download_url}'"
-                ))
-            })?;
-            let (bytes, content_type) =
-                fetch_preview(&self.http, &preview, self.max_attachment_bytes).await?;
-            (bytes, content_type, preview)
+            match fetch_svg_download(&self.http, &download_url, self.max_attachment_bytes).await? {
+                // Vector first: no raster, no animation loss, no WebDAV re-read.
+                SvgDownload::Vector(bytes) => (bytes, kind.mime().to_string(), download_url),
+                SvgDownload::Unsupported(reason) => {
+                    debug!(
+                        "share_image: {download_url} is not displayable as SVG ({reason}) — \
+                         falling back to /preview"
+                    );
+                    let preview = preview_url(&download_url).ok_or_else(|| {
+                        RockBotError::Provider(format!(
+                            "share_image: unexpected Nextcloud share URL '{download_url}'"
+                        ))
+                    })?;
+                    let (bytes, content_type) =
+                        fetch_preview(&self.http, &preview, self.max_attachment_bytes)
+                            .await
+                            .map_err(|e| {
+                                RockBotError::Provider(format!(
+                                    "share_image: SVG download unusable ({reason}) and /preview \
+                                     fallback failed: {e} — check config/mimetypemapping.json + \
+                                     occ maintenance:mimetype:update-db, and enabledPreviewProviders"
+                                ))
+                            })?;
+                    (bytes, content_type, preview)
+                }
+            }
         } else {
             let bytes = self.webdav.read_file(&source).await.map_err(|e| {
                 RockBotError::Provider(format!("share_image: read failed for {source}: {e}"))
@@ -165,6 +187,118 @@ fn preview_url(download_url: &str) -> Option<String> {
         .map(|base| format!("{base}/preview"))
 }
 
+/// Why `{share}/download` cannot be used as a vector display URL.
+#[derive(Debug)]
+enum DownloadRejection {
+    /// Non-2xx final status (reqwest already followed redirects).
+    Status(StatusCode),
+    /// 2xx but the final `Content-Type` is not `image/svg+xml`.
+    Mime(String),
+    /// DNS/TLS/timeout/transport failure.
+    Transport(String),
+}
+
+impl fmt::Display for DownloadRejection {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Status(s) => write!(f, "HTTP {s}"),
+            Self::Mime(m) => write!(f, "content-type {m:?}"),
+            Self::Transport(e) => write!(f, "transport error: {e}"),
+        }
+    }
+}
+
+/// One-shot result of probing `{share}/download`.
+enum SvgDownload {
+    /// `2xx` + `image/svg+xml`; these are the bytes to display.
+    Vector(Vec<u8>),
+    /// Not displayable as vector; the caller falls back to `/preview`.
+    Unsupported(DownloadRejection),
+}
+
+/// Lowercase the bare MIME type, dropping parameters such as `; charset=UTF-8`.
+fn normalized_mime(headers: &HeaderMap) -> String {
+    headers
+        .get(CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase()
+}
+
+/// GET `{share}/download` once. A `2xx` + `image/svg+xml` response returns the
+/// body as the display bytes; any other outcome is reported so the caller can
+/// fall back to `/preview`. Transport failures are reported as `Unsupported`;
+/// size-cap and mid-stream read failures are hard tool errors.
+async fn fetch_svg_download(
+    http: &reqwest::Client,
+    url: &str,
+    max_bytes: u64,
+) -> Result<SvgDownload> {
+    let response = match http.get(url).timeout(Duration::from_secs(30)).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            return Ok(SvgDownload::Unsupported(DownloadRejection::Transport(
+                e.to_string(),
+            )));
+        }
+    };
+
+    let status = response.status();
+    let content_type = normalized_mime(response.headers());
+    if !status.is_success() {
+        return Ok(SvgDownload::Unsupported(DownloadRejection::Status(status)));
+    }
+    if content_type != "image/svg+xml" {
+        return Ok(SvgDownload::Unsupported(DownloadRejection::Mime(
+            content_type,
+        )));
+    }
+
+    let bytes = read_body_capped(response, max_bytes, "SVG").await?;
+    if bytes.is_empty() {
+        return Err(RockBotError::Provider(
+            "share_image: Nextcloud share download returned an empty SVG body".into(),
+        ));
+    }
+    debug!(
+        "share_image: /download served SVG ({} bytes, content-type={content_type})",
+        bytes.len()
+    );
+    Ok(SvgDownload::Vector(bytes))
+}
+
+/// Read a response body without ever buffering more than `max_bytes`.
+async fn read_body_capped(
+    mut response: reqwest::Response,
+    max_bytes: u64,
+    what: &str,
+) -> Result<Vec<u8>> {
+    if let Some(len) = response.content_length()
+        && len > max_bytes
+    {
+        return Err(RockBotError::ToolCallParse(format!(
+            "share_image: Nextcloud {what} is {len} bytes, above the {max_bytes} byte limit"
+        )));
+    }
+
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|e| {
+        RockBotError::Provider(format!("share_image: Nextcloud {what} read failed: {e}"))
+    })? {
+        if bytes.len() as u64 + chunk.len() as u64 > max_bytes {
+            return Err(RockBotError::ToolCallParse(format!(
+                "share_image: Nextcloud {what} is above the {max_bytes} byte limit"
+            )));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
+}
+
 /// Fetch and validate a Nextcloud public preview.
 ///
 /// The endpoint must return `2xx` with an `image/*` content type; anything
@@ -185,50 +319,22 @@ async fn fetch_preview(
         })?;
 
     let status = response.status();
-    let content_type = response
-        .headers()
-        .get(CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .to_string();
-    let mime = content_type
-        .split(';')
-        .next()
-        .unwrap_or("")
-        .trim()
-        .to_ascii_lowercase();
+    let mime = normalized_mime(response.headers());
 
     if !status.is_success() || !mime.starts_with("image/") {
         return Err(RockBotError::Provider(format!(
-            "share_image: Nextcloud preview unavailable ({status}, content-type={content_type:?}) — \
+            "share_image: Nextcloud preview unavailable ({status}, content-type={mime:?}) — \
              check the Nextcloud preview settings (enabledPreviewProviders)"
         )));
     }
 
-    if let Some(len) = response.content_length() {
-        if len > max_bytes {
-            return Err(RockBotError::ToolCallParse(format!(
-                "share_image: preview is {len} bytes, above the {max_bytes} byte limit"
-            )));
-        }
-    }
-
-    let bytes = response.bytes().await.map_err(|e| {
-        RockBotError::Provider(format!("share_image: Nextcloud preview read failed: {e}"))
-    })?;
-    if bytes.len() as u64 > max_bytes {
-        return Err(RockBotError::ToolCallParse(format!(
-            "share_image: preview is {} bytes, above the {max_bytes} byte limit",
-            bytes.len()
-        )));
-    }
-
+    let bytes = read_body_capped(response, max_bytes, "preview").await?;
     debug!(
         "share_image: preview ok ({} bytes, content-type={})",
         bytes.len(),
         mime
     );
-    Ok((bytes.to_vec(), mime))
+    Ok((bytes, mime))
 }
 
 #[async_trait]
@@ -239,8 +345,10 @@ impl Tool for ShareImageTool {
 
     fn description(&self) -> &str {
         "Share an image stored in the room's WebDAV workspace into the chat. \
-         SVG is displayed through Nextcloud's server-side /preview rasterizer; \
-         PNG/JPEG/GIF/WebP use the normal /download share link. \
+         SVG is served through the share's /download endpoint when Nextcloud \
+         returns image/svg+xml (vector, animation preserved); otherwise it falls \
+         back to the server-side /preview rasterizer. PNG/JPEG/GIF/WebP use the \
+         normal /download share link. \
          Returns {\"ok\":true,\"image_key\":\"...\"}. \
          Include ![description]({image_key}) in your reply to display it."
     }
@@ -290,10 +398,20 @@ mod tests {
     }
 
     #[test]
+    fn normalized_mime_drops_parameters_and_case() {
+        let mut headers = HeaderMap::new();
+        headers.insert(CONTENT_TYPE, "IMAGE/SVG+XML; charset=UTF-8".parse().unwrap());
+        assert_eq!(normalized_mime(&headers), "image/svg+xml");
+
+        assert_eq!(normalized_mime(&HeaderMap::new()), "");
+    }
+
+    #[test]
     fn tool_definition_exposes_path_only() {
         let client = WebDavClient::new("https://example.com", "user", "pass").unwrap();
         let tool = ShareImageTool::new(client, Arc::new(ImageCache::new()), 1024);
         assert_eq!(tool.name(), "share_image");
+        assert!(tool.description().contains("/download"));
         assert!(tool.description().contains("/preview"));
 
         let params = tool.parameters();

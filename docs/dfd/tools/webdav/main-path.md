@@ -63,6 +63,8 @@ streamed flow is documented in [large-file-edit.md](large-file-edit.md). SVG is
 text (`image/svg+xml`), never a base64 image.
 
 To **display** an SVG (or any image) that already lives in WebDAV, the model
-calls `share_image`. SVG shares are displayed through Nextcloud's server-side
-`/preview` rasterizer; raster images use the normal `/download` share link. See
+calls `share_image`. SVG uses the share's `/download` URL when Nextcloud serves
+it as `image/svg+xml` (vector, animation preserved) and falls back to the
+server-side `/preview` rasterizer otherwise; raster images use the normal
+`/download` share link. See
 [image-sharing.md](../../agent/agent-harness/image-sharing.md).

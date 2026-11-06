@@ -2065,7 +2065,7 @@ mod webdav_edit {
 }
 
 // ============================================================================
-// docs/dfd/agent/agent-harness/image-sharing.md — share_image (issue #120)
+// docs/dfd/agent/agent-harness/image-sharing.md — share_image (issues #120, #122)
 // ============================================================================
 
 mod share_image {
@@ -2132,11 +2132,66 @@ mod share_image {
             .await;
     }
 
+    const SVG_BYTES: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="red"/></svg>"#;
+
     #[tokio::test]
-    async fn svg_uses_preview_and_caches_png_bytes() {
+    async fn svg_download_served_as_svg_uses_vector_bytes() {
         let server = MockServer::start().await;
         mount_stat(&server, "diagram.svg", 512, "image/svg+xml").await;
         mount_share(&server, "tok").await;
+
+        // Nextcloud answers 303 -> public.php/dav/files/{token}; reqwest follows.
+        Mock::given(method("GET"))
+            .and(path("/s/tok/download"))
+            .respond_with(ResponseTemplate::new(303).insert_header(
+                "Location",
+                format!("{}/public.php/dav/files/tok", server.uri()),
+            ))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/public.php/dav/files/tok"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_bytes(SVG_BYTES)
+                    .insert_header("Content-Type", "image/svg+xml; charset=UTF-8")
+                    .insert_header("Content-Disposition", "attachment; filename=\"diagram.svg\""),
+            )
+            .mount(&server)
+            .await;
+
+        // No GET on the authenticated WebDAV path and no /preview mock:
+        // either would 404 and fail this test.
+        let cache = Arc::new(ImageCache::new());
+        let result = tool(&server, cache.clone(), 1_000_000)
+            .execute(r#"{"path":"diagram.svg","webdav_dir":"r-test","image_cache_key":"call_svg"}"#)
+            .await
+            .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["image_key"], "call_svg");
+        assert_eq!(parsed["mime_type"], "image/svg+xml");
+        assert!(parsed["display_url"].as_str().unwrap().ends_with("/download"));
+
+        let cached = cache.get("call_svg").unwrap();
+        assert_eq!(cached.image_bytes, SVG_BYTES);
+        assert_eq!(cached.mime_type.as_str(), "image/svg+xml");
+        assert!(cached.share_url.unwrap().ends_with("/download"));
+    }
+
+    #[tokio::test]
+    async fn svg_download_text_plain_falls_back_to_preview() {
+        let server = MockServer::start().await;
+        mount_stat(&server, "diagram.svg", 512, "image/svg+xml").await;
+        mount_share(&server, "tok").await;
+        Mock::given(method("GET"))
+            .and(path("/s/tok/download"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_bytes(SVG_BYTES)
+                    .insert_header("Content-Type", "text/plain; charset=UTF-8"),
+            )
+            .mount(&server)
+            .await;
         Mock::given(method("GET"))
             .and(path("/s/tok/preview"))
             .respond_with(
@@ -2149,18 +2204,56 @@ mod share_image {
 
         let cache = Arc::new(ImageCache::new());
         let result = tool(&server, cache.clone(), 1_000_000)
-            .execute(r#"{"path":"diagram.svg","webdav_dir":"r-test","image_cache_key":"call_svg"}"#)
+            .execute(
+                r#"{"path":"diagram.svg","webdav_dir":"r-test","image_cache_key":"call_fallback"}"#,
+            )
             .await
             .unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
-        assert_eq!(parsed["image_key"], "call_svg");
         assert_eq!(parsed["mime_type"], "image/png");
         assert!(parsed["display_url"].as_str().unwrap().ends_with("/preview"));
 
-        let cached = cache.get("call_svg").unwrap();
+        let cached = cache.get("call_fallback").unwrap();
         assert_eq!(cached.image_bytes, tiny_png_bytes());
         assert_eq!(cached.mime_type.as_str(), "image/png");
         assert!(cached.share_url.unwrap().ends_with("/preview"));
+    }
+
+    #[tokio::test]
+    async fn svg_download_404_falls_back_to_preview() {
+        let server = MockServer::start().await;
+        mount_stat(&server, "diagram.svg", 512, "image/svg+xml").await;
+        mount_share(&server, "tok").await;
+        Mock::given(method("GET"))
+            .and(path("/s/tok/download"))
+            .respond_with(
+                ResponseTemplate::new(404)
+                    .set_body_string("share gone")
+                    .insert_header("Content-Type", "text/html"),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/s/tok/preview"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_bytes(tiny_png_bytes())
+                    .insert_header("Content-Type", "image/png"),
+            )
+            .mount(&server)
+            .await;
+
+        let cache = Arc::new(ImageCache::new());
+        let result = tool(&server, cache.clone(), 1_000_000)
+            .execute(
+                r#"{"path":"diagram.svg","webdav_dir":"r-test","image_cache_key":"call_404"}"#,
+            )
+            .await
+            .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["mime_type"], "image/png");
+        assert!(parsed["display_url"].as_str().unwrap().ends_with("/preview"));
+        assert!(cache.get("call_404").is_some());
     }
 
     #[tokio::test]
@@ -2193,10 +2286,19 @@ mod share_image {
     }
 
     #[tokio::test]
-    async fn preview_failure_is_a_tool_error_and_caches_nothing() {
+    async fn svg_download_and_preview_failure_is_a_tool_error_and_caches_nothing() {
         let server = MockServer::start().await;
         mount_stat(&server, "diagram.svg", 512, "image/svg+xml").await;
         mount_share(&server, "tok").await;
+        Mock::given(method("GET"))
+            .and(path("/s/tok/download"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_bytes(SVG_BYTES)
+                    .insert_header("Content-Type", "text/plain"),
+            )
+            .mount(&server)
+            .await;
         Mock::given(method("GET"))
             .and(path("/s/tok/preview"))
             .respond_with(
@@ -2212,8 +2314,37 @@ mod share_image {
             .execute(r#"{"path":"diagram.svg","webdav_dir":"r-test","image_cache_key":"call_bad"}"#)
             .await
             .unwrap_err();
-        assert!(error.to_string().contains("preview unavailable"), "got: {error}");
+        let message = error.to_string();
+        assert!(message.contains("preview unavailable"), "got: {message}");
+        assert!(message.contains("mimetypemapping.json"), "got: {message}");
         assert!(cache.get("call_bad").is_none());
+    }
+
+    #[tokio::test]
+    async fn oversized_svg_download_is_rejected_and_caches_nothing() {
+        let server = MockServer::start().await;
+        mount_stat(&server, "diagram.svg", 512, "image/svg+xml").await;
+        mount_share(&server, "tok").await;
+        Mock::given(method("GET"))
+            .and(path("/s/tok/download"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_bytes(vec![b'x'; 2048])
+                    .insert_header("Content-Type", "image/svg+xml"),
+            )
+            .mount(&server)
+            .await;
+
+        let cache = Arc::new(ImageCache::new());
+        let error = tool(&server, cache.clone(), 1024)
+            .execute(r#"{"path":"diagram.svg","webdav_dir":"r-test","image_cache_key":"call_big"}"#)
+            .await
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("above the 1024 byte limit"),
+            "got: {error}"
+        );
+        assert!(cache.get("call_big").is_none());
     }
 
     #[tokio::test]

@@ -77,17 +77,29 @@ RocketChat. This eliminates both the `Message_MaxAllowedSize` REST limit
 (Match failed [400]). Share links expire after 7 days, longer than typical
 chat message lifetimes.
 
-**SVG (`share_image`, issue #120)**: images already stored in WebDAV are shared
-by the `share_image` tool rather than `image_gen`. SVG cannot use `/download` —
-Nextcloud serves it as `text/plain`, which RocketChat's markdown image parser
-will not render. For SVG the tool derives `{share}/preview`, lets Nextcloud
-rasterize the vector to PNG server-side, validates that the response is
-`2xx` + `image/*`, and stores those preview bytes in `ImageCache` under the
-tool call id. The reply pipeline is unchanged: `main.rs` appends the
-`/preview` URL as markdown exactly like an `image_gen` `/download` URL.
+**SVG (`share_image`, issues #120/#122)**: images already stored in WebDAV are
+shared by the `share_image` tool rather than `image_gen`. Since 2026-11-06 the
+instance returns `image/svg+xml` from `{share}/download` (after
+`config/mimetypemapping.json` + `occ maintenance:mimetype:update-db`), so the
+tool probes `/download` once and uses that response body directly when it is
+`2xx` + `image/svg+xml`. This keeps the vector (CSS/SMIL animation) and avoids
+a WebDAV re-read. If `/download` returns `text/plain`,
+`application/octet-stream`, a non-2xx status, or a transport failure, the tool
+falls back to `{share}/preview`, validates `2xx` + `image/*`, and stores the
+rasterized PNG bytes. The reply pipeline is unchanged: `main.rs` appends the
+chosen URL as markdown exactly like an `image_gen` `/download` URL.
 PNG/JPEG/GIF/WebP inputs keep the `/download` path and original bytes. The
 harness injects `image_cache_key` into `share_image` arguments and queues its
 call id in `last_image_ids`, just like `image_gen`.
+
+**Probe (2026-11-06, share `apJsNRMeGggHd2n`)**: `GET /download` → `303` → `200`,
+`image/svg+xml`, 7,254 B, `Content-Disposition: attachment`; `GET /preview` →
+`200`, `image/png`, 77,528 B (`800-600-max.png`). The vector is ~10× smaller
+than its preview. CSP `default-src 'none'` on the download response does not
+block `<style>`/`style=` or CSS animations when the SVG is rendered in an
+`<img>` or CSS background image (checked in Firefox; Chromium has historically
+not enforced CSP for SVG images). Content-Disposition is irrelevant for
+subresource rendering; clicking the link still downloads.
 
 **Suffix choice (probed, issue #97)**: on paper `/preview`
 (`PublicPreviewController::directLink`) looks superior — HTTP 200 directly,

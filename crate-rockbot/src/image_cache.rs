@@ -24,6 +24,7 @@ impl GeneratedImage {
             "image/jpeg" | "image/jpg" => "jpg",
             "image/png" => "png",
             "image/webp" => "webp",
+            "image/svg+xml" => "svg",
             _ => "png",
         }
     }
@@ -68,4 +69,28 @@ impl ImageCache {
 
 pub fn image_markdown(description: &str, url: &str) -> String {
     format!("![{}]({})", description, url)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn image(mime: &str) -> GeneratedImage {
+        GeneratedImage {
+            webdav_path: NonEmptyString::try_new("r-test/image".to_string()).unwrap(),
+            image_bytes: Vec::new(),
+            mime_type: NonEmptyString::try_new(mime.to_string()).unwrap(),
+            share_url: None,
+        }
+    }
+
+    #[test]
+    fn file_extension_maps_supported_mime_types() {
+        assert_eq!(image("image/jpeg").file_extension(), "jpg");
+        assert_eq!(image("image/jpg").file_extension(), "jpg");
+        assert_eq!(image("image/png").file_extension(), "png");
+        assert_eq!(image("image/webp").file_extension(), "webp");
+        assert_eq!(image("image/svg+xml").file_extension(), "svg");
+        assert_eq!(image("application/octet-stream").file_extension(), "png");
+    }
 }
