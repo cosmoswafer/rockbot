@@ -179,6 +179,41 @@ The watcher only reads: it never labels, assigns, comments, or closes. It does
 not tell the agent which stage to run — the agent decides that from the issue
 body, the comments, their authors, and their order.
 
+## Tests — `tests/watch-issues.test.sh`
+
+Offline functional suite for the watcher, kept alongside the script as the
+executable reference for its documented behaviour. It sources
+`scripts/watch-issues.sh`, replaces `http_get` with fixture files, and drives
+`poll_once` / `cmd_*` directly — no network, no Gitea server, no token.
+
+```bash
+.agents/skills/gitea-bots/tests/watch-issues.test.sh
+```
+
+Each scenario starts from a fresh state directory under `./tmp/gitea-bots-test/`
+(never `/tmp`), prints `ok: <scenario>`, and exits non-zero on the first
+failure with the offending poll's output. Change the watcher and run this
+before touching the stage contract; add a scenario for every new event rule.
+
+| Scenario | Pinned behaviour |
+| --- | --- |
+| baseline / repeat poll | first poll records issues + comment IDs silently; no duplicates |
+| `--report-existing` | lists existing issues on the baseline poll, still keeps comments silent |
+| issue events | title / state / labels / assignees / milestone changes and body-only edits each emit one `UPDATED ISSUE` |
+| new issue + trigger | `NEW ISSUE` and `TRIGGER COMMENT` are emitted and comment IDs stored |
+| same-second comment | detected via comment ID even when `updated_at` does not move, without a spurious issue event |
+| trigger table | `/plan`, `/implement`, `/investigate`, `execute dev flow`, `plan how to implement`, `plan the implementation` (case-insensitive) match; bare `plan`, `planned`, `implementation details`, `ok`, `LGTM`, emoji do not |
+| self-filter | token-user comments are consumed but not surfaced; `GITEA_BOTS_IGNORE_SELF=0` surfaces them |
+| all-comments | `GITEA_BOTS_ALL_COMMENTS=1` reports non-trigger comments |
+| pull requests | entries with a non-null `pull_request` are filtered out |
+| API failure | a failed fetch leaves `last_poll` unadvanced for the next retry |
+| state repair | empty repo, invalid `last_poll`, corrupt `state.json` (`.corrupt.*` backup), foreign repo (`.repo.*` backup) all re-baseline |
+| commands | `reset` backs state up and clears it; `status` / `stop` handle a stale PID file |
+
+Fixtures are plain API-shaped JSON built with `issue()` / `comment()` helpers;
+`HTTP_FAIL_RE` simulates an API outage. The suite never spawns the background
+loop, so `start` / `loop` keep only their manual checks.
+
 ## The three-stage contract
 
 | Stage | Name | Trigger (all explicit) | Output | After |

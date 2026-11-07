@@ -90,5 +90,5 @@ Every planned data structure becomes a Rust type; make violations compile-time e
 
 - `std-dev` — Standard data-type-driven development flow: probe, plan the data flow, define validation schemas, implement type-first, test, commit and push.
 - `gitea-issues` — Lists, creates, comments on, and manages Gitea issues on the repo's Gitea server; never closes issues automatically.
-- `gitea-bots` — Staged Gitea-issue workflow (Summary-only issue → investigated plan → std-dev implementation) driven by `scripts/watch-issues.sh`, which surfaces new issues and stage-trigger comments; each stage waits for an explicit human trigger.
+- `gitea-bots` — Staged Gitea-issue workflow (Summary-only issue → investigated plan → std-dev implementation) driven by `scripts/watch-issues.sh`, which surfaces new issues and stage-trigger comments; each stage waits for an explicit human trigger. `tests/watch-issues.test.sh` is the offline fixture suite for the watcher.
 - `mermaid-cli` — Validates/fixes Mermaid syntax using `mermaid.parse()` with jsdom (no browser). Use only when asked to validate or fix Mermaid syntax.
