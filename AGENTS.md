@@ -8,14 +8,14 @@ crate-rockbot/        # lib + application binary — config, AiProvider trait, M
 crate-webdav/         # lib only — WebDAV client for NextCloud storage operations
 docs/                 # reference docs — scenarios, test suite, historical design notes
 models/image.toml     # canonical image_gen alias manifest (embedded at build time)
-.agents/skills/       # OpenCode skills (std-dev, gitea-issues, mermaid-cli)
+.agents/skills/       # OpenCode skills (std-dev, gitea-issues, gitea-bots, issue-labels, mermaid-cli)
+scripts/              # repo-local helpers (prune_tmp.py, opencode-task-status.sh) + their tests
 default.config.toml   # full config spec with defaults (empty credentials)
 example.config.toml   # minimal overrides with EDITME placeholders
 ```
 
 ## Runtime
 
-- Everything generated at runtime or by tools (logs, state, screenshots, request/response dumps, traces, probe output) goes in `./tmp/` — never `/tmp/`.
 - `pkill rockbot` (process name), never `pkill -f` — reads `/proc/*/cmdline`, can hang on stuck D-state kernel threads.
 - Bot always runs in background: run `nohup ... &` alone in its own Bash call (never chain after `;`/`&&`), verify in a separate call.
 - Start: `./target/release/rockbot &> ./tmp/rockbot.log &`
@@ -24,6 +24,16 @@ example.config.toml   # minimal overrides with EDITME placeholders
   2. `nohup ./target/release/rockbot < /dev/null > ./tmp/rockbot.log 2>&1 &`
 
   Debug variant: prepend `RUST_LOG=debug` to the `nohup` line.
+
+### Temp directory
+
+- Everything generated at runtime or by tools (logs, state, screenshots, request/response dumps, traces, probe output) goes in `./tmp/` — never `/tmp/`.
+- Structured layout — write new artifacts as:
+  - `tmp/gitea-bots/scratch/` — per-issue dumps, plans, comment payloads, ad-hoc scripts.
+  - `tmp/artifacts/` — screenshots, console logs, traces, network dumps.
+  - Flat files at the `tmp/` root are legacy leftovers and prunable scratch.
+- **Retention policy** — never delete live gitea-bots state: `tmp/gitea-bots/state.db*`, `pending.md`, `poll.lock`, `pending.lock`, `watcher.pid`, `watcher.meta`, `watcher.log`, `notify.log`. Scratch, build output and other artifacts are prunable at any time. Stop the watcher (`watch-issues.py stop`) and let reply workers finish before pruning; never delete `state.db` while the watcher runs.
+- **Prune helper** — `python3 scripts/prune_tmp.py` previews the safe prune (dry run by default), `--apply` deletes it, `--truncate-logs` empties append-only watcher logs only while the watcher is stopped.
 
 ### Multi-instance deployment (design)
 
@@ -36,9 +46,28 @@ cargo build --release               # workspace build (3 crates)
 cargo test                          # all unit + mock integration tests; -p {crate} for one crate
 cargo test -- --ignored             # live-data probes / real integration tests (needs config.toml credentials)
 RUST_LOG=debug cargo test -p rocketchat --test integration_real -- --ignored --nocapture  # with logging
+
+python3 .agents/skills/gitea-bots/scripts/run-tests.py    # watcher/notification unit tests
+python3 .agents/skills/issue-labels/scripts/run-tests.py  # shared label-set tests
+python3 scripts/run-tests.py                              # repo helper tests (prune_tmp)
+bash .agents/skills/gitea-bots/tests/opencode-task-status.test.sh  # job-observability helper tests
 ```
 
-No CI, no `rustfmt.toml`/`clippy.toml`/`rust-toolchain`.
+No CI, no `rustfmt.toml`/`clippy.toml`/`rust-toolchain`. Python tooling needs 3.10+ and `requests` only.
+
+## Background job observability
+
+The agent tool catalog does not expose live status/output/kill/wait for background shell jobs (upstream gap: #127), and `/api/shell` defaults `location[directory]` to the service cwd. Use the repo-local fallback `scripts/opencode-task-status.sh`, which always passes `location[directory]`, supports cursor-based output, refuses unbounded `wait`, and requires `kill <id> --yes`:
+
+```bash
+scripts/opencode-task-status.sh --directory "$PWD" list
+scripts/opencode-task-status.sh --directory "$PWD" status <shell-id>
+scripts/opencode-task-status.sh --directory "$PWD" output <shell-id> --cursor 0 [--tail 80]
+scripts/opencode-task-status.sh --directory "$PWD" kill <shell-id> --yes
+scripts/opencode-task-status.sh --directory "$PWD" [--session "$OPENCODE_SESSION_ID"] wait <shell-id> --timeout 120 --interval 2
+```
+
+Inspect long-running jobs (gitea-bots watcher, `cargo test`) through that helper or their own logs/status files — never by guessing the service cwd.
 
 ## Versioning, tags & releases
 
@@ -89,6 +118,7 @@ Every planned data structure becomes a Rust type; make violations compile-time e
 ## OpenCode skills
 
 - `std-dev` — Standard data-type-driven development flow: probe, plan the data flow, define validation schemas, implement type-first, test, commit and push.
-- `gitea-issues` — Lists, creates, comments on, and manages Gitea issues on the repo's Gitea server; never closes issues automatically.
-- `gitea-bots` — Staged Gitea-issue workflow (Summary-only issue → investigated plan → std-dev implementation) driven by `scripts/watch-issues.sh`, which surfaces new issues and stage-trigger comments; each stage waits for an explicit human trigger. `tests/watch-issues.test.sh` is the offline fixture suite for the watcher.
+- `gitea-issues` — Lists, creates, comments on, and manages Gitea issues on the repo's Gitea server; reads the token from `.env`; never closes issues automatically.
+- `gitea-bots` — Gitea issue watcher and notification plumbing: `scripts/watch-issues.py` (Python, SQLite state under `tmp/gitea-bots/`) polls for new issues and at-mention replies, dispatches workers from `pending.md`, and the skill defines the filing → plan → implementation bookkeeping. No command vocabulary; work follows `AGENTS.md`. `scripts/run-tests.py` is the offline test suite.
+- `issue-labels` — Canonical status label set (`👀 seeing`, `💬 responded`, `🔨 working`, `❓ question`, `✅ committed`), lifecycle, `--reconcile` derivation and migration helpers; `scripts/set-status.py` is the shared CLI.
 - `mermaid-cli` — Validates/fixes Mermaid syntax using `mermaid.parse()` with jsdom (no browser). Use only when asked to validate or fix Mermaid syntax.
