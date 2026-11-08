@@ -39,6 +39,8 @@ from .identity import Fingerprint
 from .locks import FileLock
 from .models import Issue
 from .rules import (
+    body_mention_digest,
+    body_mention_paragraphs,
     classify_comment,
     comments_have_stage2_marker,
     label_status,
@@ -227,6 +229,7 @@ class Watcher:
         prev_last_id = int(p.get("last_comment_id") or 0)
         prev_auto_plan_at = p.get("auto_plan_at", "") or ""
         prev_last_assignee_event_id = int(p.get("last_assignee_event_id") or 0)
+        prev_body_mention = p.get("body_mention_sha", "") or ""
 
         data = reads if reads is not None else self._fetch_issue_data(issue, baseline)
         if data.error:
@@ -313,6 +316,35 @@ class Watcher:
                 auto_plan_at = now_utc()
                 auto_plan_emitted = True
 
+        # --- at-mention in the issue body (#185) ------------------------------
+        # Bodies have no monotonic ID, so the cursor is a digest of the mention
+        # paragraphs only. A `sync-tasks.py` rewrite or any unrelated body edit
+        # therefore does not re-emit the request.
+        body_paragraphs = body_mention_paragraphs(
+            issue.author, issue.body, self.config.self_login,
+            shared_login=self.config.shared_login,
+        )
+        body_sha = body_mention_digest(body_paragraphs)
+        body_mention_emitted = False
+        if body_paragraphs and body_sha != prev_body_mention:
+            if baseline:
+                # A fresh start reports existing issues, a silent baseline only
+                # records the digest for later polls.
+                allowed = report_existing >= 1
+            elif had_prev:
+                allowed = True
+            else:
+                # Mirror NEW ISSUE: an old untracked issue must not replay an
+                # ancient request the first time it enters the window.
+                allowed = timestamp_in_window(
+                    issue.created_at, window_start, window_epoch)
+            if allowed:
+                self._events.emit(
+                    f"DIRECTED COMMENT on #{num} (issue body) by "
+                    f"{issue.author} — {issue.html_url}", self.output)
+                self._events.body("\n\n".join(body_paragraphs), self.output)
+                body_mention_emitted = True
+
         # --- issue-level event ----------------------------------------------
         if baseline:
             if report_existing >= 1 and not auto_plan_emitted:
@@ -337,9 +369,11 @@ class Watcher:
                         f"UPDATED ISSUE #{num} — changed: {' '.join(changed)} — "
                         f"{issue.html_url}", self.output)
             elif (issue.updated_at != prev_updated and not new_comments
-                  and not auto_plan_emitted and not reassign_emitted):
+                  and not auto_plan_emitted and not reassign_emitted
+                  and not body_mention_emitted):
                 # updated_at moved but no tracked field or new comment explains
-                # it (typically an issue-body edit): noise, not a request.
+                # it (typically an issue-body edit): noise, not a request —
+                # unless the edit carried a real at-mention (already emitted).
                 self._events.emit(
                     f"UPDATED ISSUE #{num} — changed: body/other — "
                     f"{issue.html_url}", self.output)
@@ -384,6 +418,7 @@ class Watcher:
             "milestone": issue.milestone,
             "last_comment_id": last_id,
             "last_assignee_event_id": int(last_assignee_event_id or 0),
+            "body_mention_sha": body_sha,
         }
         if auto_plan_at:
             snapshot["auto_plan_at"] = auto_plan_at
@@ -661,6 +696,7 @@ class Watcher:
                 "last_comment_id": last_id,
                 "auto_plan_at": now_utc(),
                 "last_assignee_event_id": int(last_assignee_event_id or 0),
+                "body_mention_sha": prev.get("body_mention_sha", "") or "",
             }
 
         event_count = self._events.count

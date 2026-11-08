@@ -26,6 +26,11 @@ SHARED_REPLY = (
     "2026-11-08T05:07:56Z DIRECTED COMMENT on #130 (comment 2716) by testbot "
     "— https://gitea.test/x/issues/130\n    | @testbot /implement\n"
 )
+BODY_REPLY = (
+    "2026-11-08T05:07:56Z DIRECTED COMMENT on #132 (issue body) by testbot "
+    "— https://gitea.test/x/issues/132\n"
+    "    | @testbot please implement this\n"
+)
 TWO_REPLIES = (
     "2026-11-08T05:07:56Z DIRECTED COMMENT on #130 (comment 2716) by alice "
     "— https://gitea.test/x/issues/130\n    | @testbot implement this\n"
@@ -157,6 +162,23 @@ class NotifierTests(unittest.TestCase):
         payload = json.loads(self._posts(run)[0].args[0][-1])
         self.assertIn("pinned background worker", payload["text"])
         self.assertIn("spawned pinned reply worker", self.h.stdout)
+
+    def test_issue_body_mention_spawns_worker_and_marks_seeing(self):
+        # #185: an at-mention in the issue body is the same request as one in
+        # a comment, so it must spawn a reply worker and show `seeing`.
+        self.h.client.issues.append(issue(132))
+        run, popen = self._notify(events_text=BODY_REPLY, self_login="testbot")
+        self.assertEqual(popen.call_count, 1)
+        prompt = popen.call_args.args[0][-1]
+        self.assertIn("#132", prompt)
+        self.assertIn("(issue body)", prompt)
+        self.assertIn("please implement this", prompt)
+        payload = json.loads(self._posts(run)[0].args[0][-1])
+        self.assertIn("pinned background worker", payload["text"])
+        self.assertEqual(
+            self._label_writes(),
+            ["/repos/Atom/example/issues/132/labels"],
+        )
 
     def test_shared_login_disabled_keeps_old_behaviour(self):
         run, popen = self._notify(events_text=SHARED_REPLY, self_login="testbot",

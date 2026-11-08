@@ -48,6 +48,8 @@ if str(_SHARED_SCRIPTS) not in sys.path:
 # older version triggers one catch-up scan so previously-consumed events can be
 # re-surfaced instead of lost. The value is stored in `meta.version`; the
 # legacy `state.json` import preserves it.
-EVENTS_VERSION = 2
+# 3: issue-body at-mentions surface as `DIRECTED COMMENT on #N (issue body)`
+#    and are deduped by a `body_mention_sha` cursor (#185).
+EVENTS_VERSION = 3
 
 __version__ = "2.3.0"

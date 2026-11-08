@@ -56,7 +56,8 @@ more work on your own.
 ## Setup
 
 **Canonical implementation: Python.** The watcher and helpers are
-`watch-issues.py`, `set-status.py`, `sync-tasks.py` and `probe-live.py`, backed
+`watch-issues.py`, `set-status.py`, `sync-tasks.py`, `probe-live.py`,
+`probe-live-write.py` and `probe-e2e.py`, backed
 by the `scripts/gitea_bots/` package. They require Python 3.10+ and `requests` —
 the only non-stdlib dependency. No `curl`, `jq`, `flock`, `awk` or `stdbuf` is
 needed by the tooling itself: HTTP uses `requests`, JSON uses `json`, locking
@@ -82,6 +83,22 @@ unittest gate `GITEA_BOTS_LIVE=1 python3 scripts/run-tests.py` still works as a
 thin adapter over the same probe. The probe refuses every non-GET request and
 uses `tmp/gitea-bots-live-probe/`, never the live watcher's
 `tmp/gitea-bots/` state.
+
+The **write-data probe** (`probe-live-write.py`) and the **end-to-end probe**
+(`probe-e2e.py`) are the opt-in write-side checks. The write probe exercises
+create → comment → label → assign → close → delete on one dummy issue. The e2e
+probe creates controlled dummy issues, runs the **real watcher** against them
+(NEW ISSUE / AUTO PLAN / DIRECTED COMMENT / REASSIGNED), asserts the emitted
+events, `state.db` transitions, idempotence and the real status labels, then
+deletes every fixture and fails loudly on a leftover. **Stop the production
+watcher first** — the e2e harness refuses while `watcher.pid` points at a live
+process, because the live loop would consume the dummies. It uses
+`tmp/gitea-bots-live-e2e/` plus a sibling lock, never `tmp/gitea-bots/`.
+`GITEA_BOTS_LIVE_WRITE=1` / `GITEA_BOTS_LIVE_E2E=1` are the unittest gates.
+Deletion is admin-gated: a non-admin token gets the same loud `403` fallback
+that clears labels/assignees, keeps the dummy closed and reports the leftover
+URL. The e2e report lands under `tmp/artifacts/gitea-bots-e2e-<ts>.log` (plus a
+structured `.json` sibling).
 
 **In-session launch:** launch `loop` as a **background shell job of the current
 OpenCode session** (rather than a detached `start`), e.g.
@@ -173,17 +190,21 @@ Sample output:
 2026-11-08T10:05:00Z NEW ISSUE #42 "Quick camera: use server time" by alice — https://gitea.example/Atom/rockbot/issues/42
 2026-11-08T10:06:12Z DIRECTED COMMENT on #42 (comment 910) by alice — https://gitea.example/Atom/rockbot/issues/42#issuecomment-910
     | the bot login asked for a status update
+2026-11-08T10:06:12Z DIRECTED COMMENT on #43 (issue body) by alice — https://gitea.example/Atom/rockbot/issues/43
+    | the bot login was edited into the issue body
 2026-11-08T10:06:12Z UPDATED ISSUE #42 — changed: labels — https://gitea.example/Atom/rockbot/issues/42
 ```
 
 Event tags: `NEW ISSUE`, `UPDATED ISSUE` (title/state/labels/assignees/milestone
 changed, or `body/other` when only the issue body changed), `NEW COMMENT`
 (all-comments mode), `DIRECTED COMMENT` (a human reply that at-mentioned the
-bot login — answer it), `AUTO PLAN` (plan-eligible Summary-only issue with no
-plan; authorizes investigation and planning once), `REASSIGNED` (issue
+bot login — in a comment, `(comment <id>)`, or in the issue body itself,
+`(issue body)` — answer it), `AUTO PLAN` (plan-eligible Summary-only issue with
+no plan; authorizes investigation and planning once), `REASSIGNED` (issue
 re-assigned to the token user after a plan exists — ask before re-planning).
 Comment-only updates produce comment events without a redundant issue event. A
-complete comment body is printed under the event, prefixed `    | `.
+complete comment or mention paragraph is printed under the event, prefixed
+`    | `.
 
 ### State, logs, and restarts
 
@@ -199,7 +220,7 @@ All runtime state lives under `./tmp/gitea-bots/` (never `/tmp`):
 
 | Path | Purpose |
 | --- | --- |
-| `state.db` | authoritative local SQLite store (WAL): `meta` (`repo`, `api`, `last_poll`, schema `version`), `issues` (per-issue `updated_at` + field snapshot + `last_comment_id` + `auto_plan_at` + `last_assignee_event_id`), `batches` + `events` (pending/acked history), `tasks` (the `## Tasks` mirror), `polls` (one row per poll) |
+| `state.db` | authoritative local SQLite store (WAL): `meta` (`repo`, `api`, `last_poll`, schema `version`), `issues` (per-issue `updated_at` + field snapshot + `last_comment_id` + `auto_plan_at` + `last_assignee_event_id` + `body_mention_sha`), `batches` + `events` (pending/acked history), `tasks` (the `## Tasks` mirror), `polls` (one row per poll) |
 | `pending.md` | generated view of unacknowledged batches (`inbox` / `ack`) |
 | `legacy-json-<ts>/` | one-shot archive of the pre-SQLite flat files after migration (compatibility path retired 2027-01-01) |
 | `watcher.pid` | PID of the background loop (checked against `/proc/<pid>/cmdline`) |
@@ -309,12 +330,16 @@ source.
 - Editing an issue body bumps `updated_at`, so the next poll emits
   `UPDATED ISSUE — changed: body/other`. When that edit was the bot's own
   `sync-tasks.py` (or a human's whitespace tweak), the event is noise: report it
-  and move on.
+  and move on. An edit that puts an at-mention into the body is the exception:
+  it emits `DIRECTED COMMENT on #N (issue body)` instead of the noise line, so
+  the request spawns a reply worker just like a comment (deduped by
+  `body_mention_sha`, a digest of the mention paragraphs only).
 - `meta.version` in `state.db` carries the event schema version. When it is
   older than the script's event schema, the next poll runs a **catch-up scan**
   over the last `GITEA_BOTS_CATCHUP_MINUTES` (default 60) and re-surfaces recent
-  directed mentions as `DIRECTED COMMENT (catch-up)`. This recovers events a
-  previous version recorded in state but had no way to deliver.
+  directed mentions — comment and issue-body — as `DIRECTED COMMENT (catch-up)`.
+  This recovers events a previous version recorded in state but had no way to
+  deliver.
 - The background loop runs under `python -u` (unbuffered stdio), so
   `watcher.log` is line-buffered and survives a kill.
 
@@ -326,7 +351,8 @@ distinguish human from bot. The invariant is instead:
 
 - **The bot never writes an at-mention.** Any at-mention of the bot login
   outside code spans is a **human reply**, regardless of the author account.
-  The watcher surfaces it as `DIRECTED COMMENT` and the agent must answer it.
+  The watcher surfaces it as `DIRECTED COMMENT` (from a comment or from the
+  issue body) and the agent must answer it.
 - **Loop avoidance** comes from that invariant plus two exemptions: bot output
   (comments carrying a stage marker) and at-mentions quoted inside fenced,
   inline or indented code are never human replies. Plain comments with no
@@ -682,6 +708,11 @@ completion notes and drive the `--reconcile` label. They are not user input and
 never appear in a prompt. With no marker, the issue is at the filed/planning
 stage. A marker quoted in documentation is an example, not workflow state.
 
+An issue-body at-mention is deduped separately: `issues.body_mention_sha` holds
+the SHA-256 of the blank-line-separated mention paragraphs (code spans stripped),
+so a request edited into the body is surfaced once and an unrelated body edit or
+a `sync-tasks.py` rewrite does not re-surface it.
+
 ## Clarification rules
 
 Stop and ask when:
@@ -757,9 +788,13 @@ is a stopgap until OpenCode provides first-class `task.*` tools/API defaults.
    report, `--report-existing-all` to include closed issues, or `reset` to
    force a fresh baseline.
 4. **A reply was not surfaced** — the body must at-mention the bot login
-   outside code spans. Check with `GITEA_BOTS_ALL_COMMENTS=1` to confirm it was
+   outside code spans. That applies to comments **and** the issue body: a body
+   at-mention is only surfaced when the mention paragraphs changed after the
+   baseline (a silent first poll records the digest without reporting, and an
+   old untracked issue does not replay a mention outside the incremental
+   window). Check with `GITEA_BOTS_ALL_COMMENTS=1` to confirm a comment was
    seen. Wording alone (for example a former slash command) is not a request:
-   the skill has no command vocabulary, so a comment without an at-mention is
+   the skill has no command vocabulary, so text without an at-mention is
    ordinary chat. The watcher is a notifier, not an authorization mechanism.
 5. **Duplicate events** — state was deleted/corrupted or the repo changed.
    Check `state.db` (`meta.repo`, `meta.last_poll`) and the `.corrupt.*` /

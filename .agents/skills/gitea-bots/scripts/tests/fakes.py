@@ -15,6 +15,7 @@ from pathlib import Path
 from gitea_bots.clock import to_epoch
 from gitea_bots.config import Config
 from gitea_bots.db import Database
+from gitea_bots.errors import GiteaError
 from gitea_bots.inbox import Inbox
 from gitea_bots.log import Logger
 from gitea_bots.notify import Notifier
@@ -66,8 +67,11 @@ def comment(cid, body, author="alice", num=1, created_at=FUTURE):
 class FakeClient:
     """A duck-typed stand-in for :class:`gitea_bots.client.GiteaClient`."""
 
-    def __init__(self, repo="Atom/example"):
+    def __init__(self, repo="Atom/example", *, raise_missing_issue=False):
         self.repo = repo
+        # The e2e probe verifies a delete with a GET, so it needs the real 404
+        # behaviour; the watcher/status tests keep the permissive default.
+        self.raise_missing_issue = raise_missing_issue
         self.issues = []                 # baseline / open-set issues
         self.incremental_issues = None  # overrides GET issues?...&since=... when set
         self.comments = {}               # num -> [comment]
@@ -75,6 +79,7 @@ class FakeClient:
         self.labels = []                 # repo labels
         self.writes = []                 # (method, path, payload)
         self.next_label_id = 500
+        self.next_timeline_id = 1000
         self._prefix = f"/repos/{repo}"
 
     # -- helpers --------------------------------------------------------------
@@ -118,9 +123,12 @@ class FakeClient:
         if match:
             num = int(match.group(1))
             found = next(
-                (i for i in self.issues if i.get("number") == num),
-                {"number": num, "body": "", "labels": []},
+                (i for i in self.issues if i.get("number") == num), None
             )
+            if found is None:
+                if self.raise_missing_issue:
+                    raise GiteaError(f"HTTP 404 from GET {path} — not found")
+                return {"number": num, "body": "", "labels": []}
             return dict(found)
         return None
 
@@ -142,7 +150,9 @@ class FakeClient:
             number = max(
                 (current.get("number", 0) for current in self.issues), default=0
             ) + 1
-            created = issue(
+            # Freshly created rows must fall inside an incremental `since`
+            # window; the watcher tests set their own fixed timestamps.
+            created = future_issue(
                 number,
                 title=payload.get("title", "T"),
                 body=payload.get("body", ""),
@@ -161,6 +171,7 @@ class FakeClient:
             cid = max((entry.get("id", 0) for entry in bucket), default=0) + 1
             created = comment(cid, payload.get("body", ""), author="testbot", num=num)
             bucket.append(created)
+            self._touch(num)
             return {"id": cid}
         if path == self._prefix + "/labels" and isinstance(payload, dict):
             label_id = self.next_label_id
@@ -202,9 +213,13 @@ class FakeClient:
                 if "state" in payload:
                     current["state"] = payload["state"]
                 if "assignees" in payload:
+                    old = {a.get("login") for a in current.get("assignees") or []}
+                    new = set(payload["assignees"])
+                    self._record_assignee_events(num, old, new)
                     current["assignees"] = [
                         {"login": login} for login in payload["assignees"]
                     ]
+                self._touch(num)
         label_match = re.match(re.escape(self._prefix) + r"/labels/(\d+)$", path)
         if label_match and isinstance(payload, dict):
             label_id = int(label_match.group(1))
@@ -224,6 +239,9 @@ class FakeClient:
                 current for current in self.issues
                 if current.get("number") != num
             ]
+            # Issue deletion cascades to comments and timeline events.
+            self.comments.pop(num, None)
+            self.timeline.pop(num, None)
         label_match = re.match(re.escape(self._prefix) + r"/labels/(\d+)$", path)
         if label_match:
             label_id = int(label_match.group(1))
@@ -231,6 +249,32 @@ class FakeClient:
                 label for label in self.labels if label.get("id") != label_id
             ]
         return None
+
+    def _touch(self, num):
+        """Move an issue's ``updated_at`` forward so a poll picks it up."""
+        for current in self.issues:
+            if current.get("number") == num:
+                current["updated_at"] = FUTURE
+
+    def _record_assignee_events(self, num, old, new):
+        """Append Gitea-shaped ``assignees`` timeline events for a PATCH."""
+        bucket = self.timeline.setdefault(num, [])
+        for login in sorted(old - new):
+            bucket.append({
+                "id": self.next_timeline_id,
+                "type": "assignees",
+                "assignee": {"login": login},
+                "removed_assignee": True,
+            })
+            self.next_timeline_id += 1
+        for login in sorted(new - old):
+            bucket.append({
+                "id": self.next_timeline_id,
+                "type": "assignees",
+                "assignee": {"login": login},
+                "removed_assignee": False,
+            })
+            self.next_timeline_id += 1
 
 
 def make_config(state_dir, **overrides):

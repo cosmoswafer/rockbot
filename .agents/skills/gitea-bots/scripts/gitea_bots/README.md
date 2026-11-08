@@ -3,8 +3,8 @@
 A dependency-light, high-cohesion / low-coupling Python implementation of the
 gitea-bots watcher tooling. This is the **only** implementation: the deprecated
 bash scripts and their black-box tests were removed in #155. Use the
-`watch-issues.py`, `set-status.py`, `sync-tasks.py`, `probe-live.py` and
-`probe-live-write.py` entry points below.
+`watch-issues.py`, `set-status.py`, `sync-tasks.py`, `probe-live.py`,
+`probe-live-write.py` and `probe-e2e.py` entry points below.
 
 The Python tooling uses the SQLite store `state.db`. A state directory created
 before #135 still has the flat files (`state.json`, `events.jsonl`, `pending/`,
@@ -34,6 +34,7 @@ points throughout.
 | `sync-tasks.py` | Mirror a plan's `## Tasks` checklist into the issue body |
 | `probe-live.py` | Opt-in, read-only probe of the real Gitea API shapes (`-n/--issues N`, `--verbose`) |
 | `probe-live-write.py` | Opt-in write-data probe: one dummy issue through create → comment → label → assign → close → delete, with guaranteed cleanup |
+| `probe-e2e.py` | Opt-in end-to-end probe: dummy issues → real watcher events/state/labels → guaranteed cleanup (`--verbose`) |
 
 Run them with `python3`, e.g.:
 
@@ -50,6 +51,7 @@ python3 scripts/sync-tasks.py 42 ./tmp/plan.md
 python3 scripts/probe-live.py
 python3 scripts/probe-live.py --issues 5 --verbose
 python3 scripts/probe-live-write.py
+python3 scripts/probe-e2e.py        # stop the watcher first
 ```
 
 All environment variables from `SKILL.md` are honoured (`GITEA_TOKEN` from
@@ -85,6 +87,8 @@ cli.py  (composition root: builds Config -> components -> command handlers)
   +-- tasks.py     sync-tasks
   +-- watcher.py   polling + command verbs (writes only status labels)
   +-- live_probe.py  opt-in read-only real-server scenarios (no write paths)
+  +-- write_probe.py opt-in write lifecycle on one dummy issue
+  +-- e2e_probe.py   opt-in dummy issues -> real watcher -> state/labels -> cleanup
 ```
 
 Key design points:
@@ -108,14 +112,19 @@ Key design points:
   `batches` / `events` replace the batch files + `events.jsonl`; `tasks` mirrors
   `sync-tasks.py`; `polls` records one row per poll. `pending.md` is generated.
   `migrate_from_files()` imports the legacy files once in a single transaction
-  and archives them under `legacy-json-<ts>/`.
+  and archives them under `legacy-json-<ts>/`. Schema v2 adds
+  `issues.body_mention_sha`; `ensure_schema()` applies it to an existing
+  database with an idempotent `ALTER TABLE`.
 
 ## Behavioural notes
 
 - There is **no command vocabulary** (#134). A comment is a request only when
   a human at-mentions the bot login (shared-login mode) or the author differs
   from the token user (dedicated-bot mode); what the reply asks for is read
-  from the issue and the repo's `AGENTS.md`, not from slash commands.
+  from the issue and the repo's `AGENTS.md`, not from slash commands. Since
+  #185 the same rule applies to an at-mention edited into the **issue body**:
+  it emits `DIRECTED COMMENT on #N (issue body)` and is deduped by
+  `issues.body_mention_sha`, a digest of the mention paragraphs only.
 - `.env` precedence: `cwd/.env` < repo-root `.env` < process environment. A
   real exported `GITEA_TOKEN` is never clobbered by a stale `.env` value.
 - Notification children are spawned with `close_fds=True` and `start_new_session`
@@ -374,7 +383,12 @@ no lost events on a failed fetch, per-issue worker dispatch), the #140 AUTO PLAN
 equivalence (anchored parser, dedupe/sort, reply-covered issues skipped, one
 batch worker, both disable toggles, reporter fallback), and the #150
 assignment-only plan-eligibility predicate shared by polling, catch-up and
-`scan-unplanned`.
+`scan-unplanned`, the #185 issue-body mention path (paragraph extraction,
+digest stability, watcher emission/dedupe/suppression, notifier worker
+spawning, v1→v2 column migration), and the end-to-end probe (baseline →
+fixtures → expected events → idempotence → REASSIGNED → pickup label → label
+reconcile → cleanup, plus the live-watcher and overlapping-lock refusals)
+against the same fake.
 
 ### Live probe test (opt-in, read-only)
 
@@ -450,4 +464,77 @@ model:
 
 Offline coverage for the happy path, mid-run cleanup, the `403` fallback, the
 target guard and a label-less repo is `tests/test_write_probe.py`.
+
+### Live end-to-end probe (opt-in, creates and deletes dummy issues)
+
+The read and write probes prove the API, but neither runs the watcher. The
+documented trigger→response scenarios were only covered offline against
+`FakeClient`. `gitea_bots/e2e_probe.py` closes that layer: it creates
+controlled dummy issues on the real server, lets the **real watcher** poll and
+classify them, asserts the emitted events, `state.db` transitions, durable
+batches and real status labels, checks idempotence and deletes everything
+afterwards.
+
+Run it directly (running the script is the opt-in):
+
+```bash
+# The production watcher would consume the dummy issues: stop it first.
+python3 scripts/watch-issues.py stop
+python3 scripts/probe-e2e.py
+python3 scripts/watch-issues.py start
+```
+
+or as the unittest adapter, which keeps the opt-in gate so the offline suite
+never creates issues:
+
+```bash
+GITEA_BOTS_LIVE_E2E=1 python3 scripts/run-tests.py
+```
+
+Fixtures are one run id `[probe] gitea-bots e2e <ts>` and cover:
+
+| Case | Shape | Expected |
+| --- | --- | --- |
+| A | open, assigned, `## Summary` only | AUTO PLAN |
+| B | open, unassigned, `## Summary` only | no AUTO PLAN (#150) |
+| C | open, assigned, no `## Summary` | no AUTO PLAN (#151) |
+| D | open, assigned, `## Summary` + `## Tasks` | no AUTO PLAN; REASSIGNED after unassign → assign |
+| E | human comment at-mentioning the bot login (shared-login mode) | DIRECTED COMMENT |
+| F | bot output (stage-3 marker) without an at-mention | no DIRECTED COMMENT |
+| H | closed issue | tracked as closed, never planned |
+| I | unassigned Summary-only body with an at-mention paragraph | DIRECTED COMMENT (issue body), once (#185) |
+
+The run sequence is baseline (silent) → fixtures → first incremental poll →
+second poll (idempotence) → unassign/assign (REASSIGNED) → pickup-label case →
+`set-status --reconcile` on every fixture → cleanup. The pickup case
+uses a recording `Notifier`, so `👀 seeing` is asserted on A, E and I **without
+starting any `opencode` process**. Reports are written under
+`tmp/artifacts/gitea-bots-e2e-<ts>.log` (plus a structured `.json` sibling).
+
+Safety model:
+
+- the probe refuses to start while the production `watcher.pid` points at a
+  live `watch-issues.py` process; its message says to run `watch-issues.py stop`
+  first;
+- its state lives in `tmp/gitea-bots-live-e2e/` and a sibling
+  `tmp/gitea-bots-live-e2e.lock` refuses overlapping runs — never the live
+  watcher's `tmp/gitea-bots/`;
+- every fixture is created by this run, re-read (title marker verified) before
+  its first mutation, and every mutating issue path goes through
+  `_issue_path()`, which refuses an uncreated number;
+- notifications and worker spawns are disabled for the polls; the optional
+  pickup case records dispatches instead of spawning;
+- cleanup runs in `finally`: each dummy is deleted and a `GET` must answer
+  `404`; temporary labels created during the run are removed; a leftover scan
+  fails the probe loudly. Delete is admin-gated, so a non-admin token gets the
+  same `403` fallback as the write probe (labels/assignees cleared, issue kept
+  closed, leftover URL reported).
+
+Assertions are scoped to the run's issue numbers (never a bare substring), so
+unrelated `UPDATED ISSUE` noise from another human touching the repo mid-run is
+tolerated. Production state (`tmp/gitea-bots/state.db`, pending, `watcher.pid`)
+is never written by the probe.
+
+Offline coverage for the sequence, event parser, guards, mid-run cleanup, the
+`403` fallback and artifact writing is `tests/test_e2e_probe.py`.
 

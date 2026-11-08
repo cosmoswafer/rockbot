@@ -8,7 +8,7 @@ from pathlib import Path
 from gitea_bots.clock import now_utc, shift_iso
 from gitea_bots.errors import GiteaError
 from gitea_bots.rules import STAGE2_MARKER, STAGE3_MARKER
-from tests.fakes import BASE, FakeClient, Harness, comment, issue
+from tests.fakes import BASE, FakeClient, Harness, comment, future_issue, issue
 
 
 class _TrackingCommentsClient(FakeClient):
@@ -259,6 +259,109 @@ class WatcherTests(unittest.TestCase):
         h.client.comments[1] = [comment(42, "just chatting", "alice", 1)]
         h.watcher.check(0)
         self.assertIn("NEW COMMENT on #1 (comment 42) by alice", h.stdout)
+
+    # --- issue-body mentions (#185) -----------------------------------------
+    def _baseline_with(self, issues):
+        self.h.client.issues = issues
+        self.h.client.incremental_issues = []
+        self.h.watcher.check(0)
+        self.h.reset_output()
+
+    def test_issue_body_mention_is_surfaced_once(self):
+        body = "## Summary\n\n@testbot implement this\n\n## Tasks\n\n- [ ] x\n"
+        self._baseline_with([issue(1, "Body mention")])  # no mention yet
+        self.h.client.incremental_issues = [
+            issue(1, "Body mention", body=body, updated_at="2026-11-08T00:01:00Z")
+        ]
+        self.h.watcher.check(0)
+        self.assertIn(
+            "DIRECTED COMMENT on #1 (issue body) by alice", self.h.stdout
+        )
+        self.assertIn("implement this", self.h.stdout)
+        self.assertNotIn("body/other", self.h.stdout)  # one request, one event
+
+        self.h.reset_output()
+        self.h.watcher.check(0)
+        self.assertNotIn("DIRECTED COMMENT", self.h.stdout)
+
+    def test_silent_baseline_records_the_body_mention_cursor(self):
+        body = "## Summary\n\n@testbot implement this\n"
+        self._baseline_with([issue(1, "Body mention", body=body)])
+        self.assertNotIn("DIRECTED COMMENT", self.h.stdout)
+        snapshot = self.h.state.load()["issues"]["1"]
+        self.assertTrue(snapshot["body_mention_sha"])
+
+        self.h.client.incremental_issues = [
+            issue(1, "Body mention", body=body, updated_at="2026-11-08T00:01:00Z")
+        ]
+        self.h.watcher.check(0)
+        self.assertNotIn("DIRECTED COMMENT", self.h.stdout)
+
+    def test_baseline_report_surfaces_a_body_mention(self):
+        body = "## Summary\n\n@testbot implement this\n"
+        self.h.client.issues = [issue(1, "Body mention", body=body)]
+        self.h.watcher.check(1)
+        self.assertIn(
+            "DIRECTED COMMENT on #1 (issue body) by alice", self.h.stdout
+        )
+
+    def test_unrelated_body_edit_does_not_reemit_the_mention(self):
+        mention = "@testbot implement this\n"
+        self._baseline_with([issue(1, "Body mention")])  # no mention yet
+        self.h.client.incremental_issues = [
+            issue(1, "Body mention", body=f"## Summary\n\n{mention}\nA.\n",
+                  updated_at="2026-11-08T00:01:00Z")
+        ]
+        self.h.watcher.check(0)
+        self.assertIn("DIRECTED COMMENT on #1 (issue body)", self.h.stdout)
+
+        self.h.reset_output()
+        self.h.client.incremental_issues = [
+            issue(1, "Body mention", body=f"## Summary\n\n{mention}\nB.\n",
+                  updated_at="2026-11-08T00:02:00Z")
+        ]
+        self.h.watcher.check(0)
+        self.assertNotIn("DIRECTED COMMENT", self.h.stdout)
+        self.assertIn("body/other", self.h.stdout)
+
+    def test_first_seen_old_issue_body_mention_is_not_replayed(self):
+        self._baseline_with([])
+        self.h.client.incremental_issues = [
+            issue(77, "Ancient", body="## Summary\n\n@testbot old request\n",
+                  created_at="2020-01-01T00:00:00Z",
+                  updated_at="2026-11-08T00:01:00Z")
+        ]
+        self.h.watcher.check(0)
+        self.assertIn("previously untracked", self.h.stdout)
+        self.assertNotIn("DIRECTED COMMENT", self.h.stdout)
+
+    def test_first_seen_new_issue_body_mention_surfaces(self):
+        self._baseline_with([])
+        self.h.client.incremental_issues = [
+            future_issue(78, title="Fresh",
+                         body="## Summary\n\n@testbot fresh request\n")
+        ]
+        self.h.watcher.check(0)
+        self.assertIn("DIRECTED COMMENT on #78 (issue body)", self.h.stdout)
+        self.assertIn('NEW ISSUE #78 "Fresh"', self.h.stdout)
+
+    def test_catch_up_assigned_preserves_the_body_mention_cursor(self):
+        self.h.state.write({
+            "version": 3, "repo": "Atom/example",
+            "api": "https://gitea.test/api/v1",
+            "last_poll": shift_iso(now_utc(), -600),
+            "issues": _tracked(50, title="Planned later", assignees="testbot",
+                               body_mention_sha="kept-digest"),
+        })
+        self.h.client.issues = [
+            issue(50, "Planned later", assignees=["testbot"])
+        ]
+        self.h.watcher.catch_up_assigned()
+        self.assertIn("AUTO PLAN #50", self.h.stdout)
+        self.assertEqual(
+            self.h.state.load()["issues"]["50"]["body_mention_sha"],
+            "kept-digest",
+        )
 
     # --- concurrent prefetch (#138) -----------------------------------------
     def test_comment_prefetch_runs_concurrently(self):

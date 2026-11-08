@@ -66,6 +66,57 @@ class DatabaseSchemaTests(unittest.TestCase):
         self.assertEqual([row["text"] for row in rows], ["one", "two"])
         self.assertEqual([row["done"] for row in rows], [0, 1])
 
+    def test_body_mention_cursor_round_trips(self):
+        self.db.ensure_schema()
+        with self.db.transaction() as conn:
+            self.db.upsert_issue(
+                7, {"title": "X", "body_mention_sha": "abc123"}, conn=conn
+            )
+        self.assertEqual(self.db.get_issue(7)["body_mention_sha"], "abc123")
+        self.assertEqual(self.db.issue_map()["7"]["body_mention_sha"], "abc123")
+
+    def test_v1_database_gains_the_body_mention_column(self):
+        # An existing state.db from before #185 has no body_mention_sha; the
+        # migration must add it without dropping the row.
+        conn = sqlite3.connect(self.dir / "state.db")
+        conn.executescript(
+            """
+            CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+            CREATE TABLE issues (
+                number INTEGER PRIMARY KEY,
+                updated_at TEXT,
+                title TEXT,
+                state TEXT,
+                labels TEXT,
+                assignees TEXT,
+                milestone TEXT,
+                last_comment_id INTEGER NOT NULL DEFAULT 0,
+                auto_plan_at TEXT,
+                last_assignee_event_id INTEGER NOT NULL DEFAULT 0
+            );
+            INSERT INTO issues (number, title) VALUES (3, 'Old row');
+            PRAGMA user_version = 1;
+            """
+        )
+        conn.commit()
+        conn.close()
+
+        migrated = Database(self.dir / "state.db", _logger())
+        migrated.ensure_schema()
+        try:
+            self.assertEqual(migrated.user_version(), SCHEMA_VERSION)
+            columns = {
+                row["name"]
+                for row in migrated.connect().execute(
+                    "PRAGMA table_info(issues)"
+                )
+            }
+            self.assertIn("body_mention_sha", columns)
+            self.assertEqual(migrated.get_issue(3)["title"], "Old row")
+            self.assertEqual(migrated.get_issue(3)["body_mention_sha"], "")
+        finally:
+            migrated.close()
+
 
 class MigrationTests(unittest.TestCase):
     def setUp(self):

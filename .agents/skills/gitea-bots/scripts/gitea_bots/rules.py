@@ -12,6 +12,7 @@ from the issue and the repo's `AGENTS.md`, not from a skill-defined vocabulary.
 
 from __future__ import annotations
 
+import hashlib
 import re
 
 from issue_labels.labels import (
@@ -98,6 +99,35 @@ def is_directed_mention(author, body, self_login, *, shared_login=True):
     if not shared_login and author == self_login:
         return False
     return has_bot_mention(body, self_login)
+
+
+# --- Issue-body mentions (#185) -------------------------------------------
+# An at-mention in the issue body is the same request signal as one in a
+# comment (the bot never writes at-mentions, so it is always human). Bodies
+# have no monotonic ID, so the cursor is a digest of the mention paragraphs
+# only: a `sync-tasks.py` rewrite or any unrelated body edit does not re-emit.
+def body_mention_paragraphs(author, body, self_login, *, shared_login=True):
+    """Blank-line-separated paragraphs of ``body`` that at-mention the bot.
+
+    Reuses the same code-stripping, bot-output exemption and dedicated-bot
+    author guard as :func:`is_directed_mention`, so a mention quoted in a
+    fenced/inline/indented code block stays an example, not a request.
+    """
+    if not self_login or is_bot_output(body):
+        return []
+    if not shared_login and author == self_login:
+        return []
+    stripped = strip_code_spans(body)
+    paragraphs = (p.strip() for p in re.split(r"\n\s*\n", stripped))
+    return [p for p in paragraphs if p and has_bot_mention(p, self_login)]
+
+
+def body_mention_digest(paragraphs) -> str:
+    """Stable content digest of the mention paragraphs (``""`` when none)."""
+    paragraphs = list(paragraphs or [])
+    if not paragraphs:
+        return ""
+    return hashlib.sha256("\n\n".join(paragraphs).encode("utf-8")).hexdigest()
 
 
 def classify_comment(author, body, *, self_login, all_comments,
@@ -214,12 +244,13 @@ def strip_one_trailing_newline(text: str) -> str:
 # --- Batch-level human-reply detection (#131/#136/#134) -------------------
 # An emitted event line looks like:
 #   2026-11-08T05:07:56Z DIRECTED COMMENT on #130 (comment 2716) by saru — https://...
-# (optionally with " (catch-up)" after the tag). Indented comment bodies
-# ("    | ...") are not matched.
+#   2026-11-08T05:07:56Z DIRECTED COMMENT on #130 (issue body) by saru — https://...
+# (optionally with " (catch-up)" after the tag). Indented bodies ("    | ...")
+# are not matched.
 _DIRECTED_EVENT_LINE = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\S+\s+"
     r"DIRECTED COMMENT(?:\s+\(catch-up\))?\s+"
-    r"on\s+#(\d+)\s+\(comment\s+\d+\)\s+by\s+(.+?)\s+—\s+"
+    r"on\s+#(\d+)\s+\((?:comment\s+\d+|issue body)\)\s+by\s+(.+?)\s+—\s+"
 )
 
 
@@ -233,7 +264,8 @@ def human_reply_blocks(events_text, self_login, *, shared_login=True):
 
     A human reply is a ``DIRECTED COMMENT`` whose body at-mentions the bot
     login outside code spans (or, in dedicated-bot mode, whose author differs
-    from the token user). The block is the emitted event line plus its
+    from the token user). The reply may come from a comment or from the issue
+    body itself (``(issue body)``). The block is the emitted event line plus its
     indented ``    | `` body lines, so a per-issue worker receives exactly its
     own event and no other issue's payload. Multiple replies for one issue in
     the same batch are concatenated in emission order. An unknown bot identity

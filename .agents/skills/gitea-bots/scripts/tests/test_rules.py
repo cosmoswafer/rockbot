@@ -6,6 +6,8 @@ from gitea_bots.rules import (
     STAGE2_MARKER,
     STAGE3_MARKER,
     auto_plan_issues_in_batch,
+    body_mention_digest,
+    body_mention_paragraphs,
     classify_comment,
     comments_have_stage2_marker,
     comments_have_stage3_marker,
@@ -152,6 +154,76 @@ class MarkerAndSectionTests(unittest.TestCase):
         self.assertTrue(has_tasks("## Tasks   \n\n- [ ] x\n"))
 
 
+class BodyMentionTests(unittest.TestCase):
+    """#185: an at-mention in the issue body is the same request as a comment."""
+
+    def test_returns_only_mention_paragraphs(self):
+        body = (
+            "## Summary\n\n"
+            "Something harmless.\n\n"
+            "@testbot implement this, please\n\n"
+            "Unrelated trailing note.\n"
+        )
+        self.assertEqual(
+            body_mention_paragraphs("alice", body, "testbot"),
+            ["@testbot implement this, please"],
+        )
+
+    def test_multi_line_paragraph_is_kept_whole(self):
+        body = "intro\n\n@testbot do the thing\nand this too\n\noutro\n"
+        self.assertEqual(
+            body_mention_paragraphs("alice", body, "testbot"),
+            ["@testbot do the thing\nand this too"],
+        )
+
+    def test_quoted_and_code_mentions_are_examples(self):
+        body = (
+            "`@testbot` inline\n\n"
+            "```\n@testbot fenced\n```\n\n"
+            "    @testbot indented\n\n"
+            "no real mention\n"
+        )
+        self.assertEqual(body_mention_paragraphs("alice", body, "testbot"), [])
+
+    def test_bot_output_is_exempt(self):
+        body = f"@testbot plan follows\n\n{STAGE2_MARKER}\n"
+        self.assertEqual(body_mention_paragraphs("alice", body, "testbot"), [])
+
+    def test_dedicated_bot_ignores_self_authored_body(self):
+        body = "@testbot hi\n"
+        self.assertEqual(
+            body_mention_paragraphs("testbot", body, "testbot",
+                                    shared_login=False),
+            [],
+        )
+        self.assertEqual(
+            body_mention_paragraphs("alice", body, "testbot",
+                                    shared_login=False),
+            ["@testbot hi"],
+        )
+
+    def test_unknown_identity_fails_closed(self):
+        self.assertEqual(body_mention_paragraphs("alice", "@testbot hi", ""), [])
+
+    def test_digest_is_stable_and_ignores_unrelated_edits(self):
+        first = body_mention_paragraphs(
+            "alice", "intro\n\n@testbot implement\n\noutro\n", "testbot"
+        )
+        edited_outro = body_mention_paragraphs(
+            "alice", "intro changed\n\n@testbot implement\n\noutro changed\n",
+            "testbot",
+        )
+        changed_mention = body_mention_paragraphs(
+            "alice", "intro\n\n@testbot implement differently\n\noutro\n",
+            "testbot",
+        )
+        self.assertEqual(body_mention_digest(first), body_mention_digest(edited_outro))
+        self.assertNotEqual(
+            body_mention_digest(first), body_mention_digest(changed_mention)
+        )
+        self.assertEqual(body_mention_digest([]), "")
+
+
 class HumanReplyBlockTests(unittest.TestCase):
     """#131/#136/#134: per-issue blocks keyed on a DIRECTED human reply."""
 
@@ -248,6 +320,24 @@ class HumanReplyBlockTests(unittest.TestCase):
         self.assertEqual(human_reply_blocks(self.SELF_FENCED, "testbot"), {})
         self.assertEqual(human_reply_blocks(self.SELF_BOT_OUTPUT, "testbot"), {})
         self.assertEqual(human_reply_blocks(self.HUMAN, ""), {})
+
+    def test_body_mention_event_is_a_human_reply(self):
+        text = (
+            "2026-11-08T05:07:56Z DIRECTED COMMENT on #130 (issue body) by "
+            "alice — https://gitea.test/x/issues/130\n"
+            "    | @testbot please implement this\n"
+        )
+        blocks = human_reply_blocks(text, "testbot")
+        self.assertEqual(sorted(blocks), [130])
+        self.assertIn("please implement this", blocks[130])
+
+    def test_body_mention_variant_is_parsed_with_catchup(self):
+        text = (
+            "2026-11-08T05:07:56Z DIRECTED COMMENT (catch-up) on #5 "
+            "(issue body) by testbot — https://gitea.test/x/issues/5\n"
+            "    | @testbot status?\n"
+        )
+        self.assertEqual(sorted(human_reply_blocks(text, "testbot")), [5])
 
     def test_multiple_replies_for_one_issue_are_concatenated(self):
         text = (

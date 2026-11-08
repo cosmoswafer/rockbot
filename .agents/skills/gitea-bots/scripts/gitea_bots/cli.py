@@ -18,6 +18,7 @@ from issue_labels.cli import main_status as _shared_main_status
 from .client import GiteaClient
 from .config import Config
 from .db import Database
+from .e2e_probe import build_e2e_probe, write_report_artifact
 from .errors import BotFatal, GiteaError
 from .inbox import Inbox
 from .live_probe import DEFAULT_ISSUE_LIMIT, build_probe
@@ -110,6 +111,27 @@ tmp/gitea-bots-live-write-probe/, never a live watcher's tmp/gitea-bots/ state.
 Requires GITEA_TOKEN in .env and network access. Running the script is the
 opt-in; there is no GITEA_BOTS_LIVE_WRITE gate here (the unittest adapter
 keeps one).
+"""
+
+E2E_PROBE_EPILOG = """\
+Creates controlled dummy issues on the real Gitea server, lets the real watcher
+poll and classify them (NEW ISSUE / AUTO PLAN / DIRECTED COMMENT / REASSIGNED),
+asserts the emitted events, state.db transitions, real status labels and
+idempotence, then deletes every dummy it created.
+
+STOP THE PRODUCTION WATCHER FIRST. The probe refuses to run while its
+watcher.pid points at a live watch-issues.py process, because the live loop
+would consume the dummy issues (AUTO PLAN / reply workers). It uses
+tmp/gitea-bots-live-e2e/ and a sibling lock, never the live watcher's
+tmp/gitea-bots/ state.
+
+Delete is admin-gated. When the token may not delete issues, the probe clears
+labels/assignees, keeps the dummy closed, records the leftover URL and fails
+loudly. A report is written under tmp/artifacts/gitea-bots-e2e-<ts>.log (plus a
+structured .json sibling).
+
+Requires GITEA_TOKEN in .env and network access. Running the script is the
+opt-in; the unittest adapter keeps the GITEA_BOTS_LIVE_E2E=1 gate.
 """
 
 
@@ -361,6 +383,50 @@ def main_probe_write(argv=None, script_path=None) -> int:
         logger.event(report.render())
         if probe.leftover_url:
             logger.warn(f"probe issue was left behind: {probe.leftover_url}")
+        return 0 if report.ok else 1
+    except BotFatal:
+        return 1
+    except GiteaError as exc:
+        logger.warn(str(exc))
+        return 1
+
+
+# ---------------------------------------------------------------------------
+# probe-e2e.py
+# ---------------------------------------------------------------------------
+def main_probe_e2e(argv=None, script_path=None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    script_dir, script_path = _script(script_path)
+    logger = Logger()
+    parser = argparse.ArgumentParser(
+        prog="probe-e2e.py",
+        description=(
+            "Run the real watcher against dummy issues on the real Gitea "
+            "server, assert the result, then delete everything (opt-in)."
+        ),
+        epilog=E2E_PROBE_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--verbose", action="store_true",
+        help="Print probe progress in addition to the report.",
+    )
+    args = parser.parse_args(argv)
+
+    try:
+        config = Config.load(script_dir, script_path, logger)
+        logger.verbose_enabled = args.verbose
+        config.require_remote(logger)
+        config.require_token(logger)
+        probe = build_e2e_probe(config, logger)
+        report = probe.run()
+        logger.event(report.render())
+        artifacts = write_report_artifact(report, config)
+        logger.log(
+            f"e2e report: {artifacts['log']} (json: {artifacts['json']})"
+        )
+        for url in probe.leftover_urls:
+            logger.warn(f"probe issue was left behind: {url}")
         return 0 if report.ok else 1
     except BotFatal:
         return 1

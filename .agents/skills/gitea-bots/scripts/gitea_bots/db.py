@@ -31,7 +31,7 @@ from pathlib import Path
 from . import EVENTS_VERSION
 from .clock import compact_utc, now_utc
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -48,7 +48,8 @@ CREATE TABLE IF NOT EXISTS issues (
     milestone TEXT,
     last_comment_id INTEGER NOT NULL DEFAULT 0,
     auto_plan_at TEXT,
-    last_assignee_event_id INTEGER NOT NULL DEFAULT 0
+    last_assignee_event_id INTEGER NOT NULL DEFAULT 0,
+    body_mention_sha TEXT
 );
 CREATE TABLE IF NOT EXISTS batches (
     id TEXT PRIMARY KEY,
@@ -95,8 +96,18 @@ _ISSUE_FIELDS = (
     "last_comment_id",
     "auto_plan_at",
     "last_assignee_event_id",
+    "body_mention_sha",
 )
 _META_FIELDS = ("version", "repo", "api", "initialized_at", "last_poll")
+
+# Columns added after the original schema. `ensure_schema()` runs
+# `CREATE TABLE IF NOT EXISTS`, which leaves an existing `issues` table alone,
+# so every post-v1 column needs an explicit, idempotent `ALTER TABLE`.
+_ADDED_COLUMNS = {
+    "issues": {
+        "body_mention_sha": "TEXT",
+    },
+}
 
 
 def _as_int(value, default: int = 0) -> int:
@@ -192,9 +203,23 @@ class Database:
             return
         conn = self.connect()
         conn.executescript(SCHEMA)
+        self._migrate_columns(conn)
         if self.user_version() < SCHEMA_VERSION:
             conn.execute(f"PRAGMA user_version = {int(SCHEMA_VERSION)}")
         self._schema_ready = True
+
+    def _migrate_columns(self, conn) -> None:
+        """Add post-v1 columns to an existing database (idempotent)."""
+        for table, columns in _ADDED_COLUMNS.items():
+            present = {
+                row["name"]
+                for row in conn.execute(f"PRAGMA table_info({table})")
+            }
+            for name, sql_type in columns.items():
+                if name not in present:
+                    conn.execute(
+                        f"ALTER TABLE {table} ADD COLUMN {name} {sql_type}"
+                    )
 
     def user_version(self) -> int:
         row = self.connect().execute("PRAGMA user_version").fetchone()
@@ -275,18 +300,21 @@ class Database:
             _as_int(snapshot.get("last_comment_id")),
             snapshot.get("auto_plan_at") or None,
             _as_int(snapshot.get("last_assignee_event_id")),
+            snapshot.get("body_mention_sha") or "",
         )
         (conn or self.connect()).execute(
             "INSERT INTO issues (number, updated_at, title, state, labels, "
             "assignees, milestone, last_comment_id, auto_plan_at, "
-            "last_assignee_event_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "last_assignee_event_id, body_mention_sha) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(number) DO UPDATE SET "
             "updated_at = excluded.updated_at, title = excluded.title, "
             "state = excluded.state, labels = excluded.labels, "
             "assignees = excluded.assignees, milestone = excluded.milestone, "
             "last_comment_id = excluded.last_comment_id, "
             "auto_plan_at = excluded.auto_plan_at, "
-            "last_assignee_event_id = excluded.last_assignee_event_id",
+            "last_assignee_event_id = excluded.last_assignee_event_id, "
+            "body_mention_sha = excluded.body_mention_sha",
             values,
         )
 

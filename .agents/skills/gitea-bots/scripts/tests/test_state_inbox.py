@@ -4,6 +4,7 @@ import io
 import tempfile
 import unittest
 
+from gitea_bots import EVENTS_VERSION
 from gitea_bots.inbox import Inbox
 from gitea_bots.log import Logger
 from gitea_bots.state import StateStore
@@ -23,7 +24,7 @@ class StateTests(unittest.TestCase):
     def test_fresh_state_is_baseline(self):
         state = self.store.load_or_init()
         self.assertTrue(self.store.is_baseline(state))
-        self.assertEqual(self.store.version(state), 2)
+        self.assertEqual(self.store.version(state), EVENTS_VERSION)
         self.assertEqual(state["repo"], "Atom/example")
 
     def test_roundtrip(self):
