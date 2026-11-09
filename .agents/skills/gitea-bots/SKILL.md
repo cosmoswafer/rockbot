@@ -176,8 +176,8 @@ python3 .agents/skills/gitea-bots/scripts/watch-issues.py reset
 python3 .agents/skills/gitea-bots/scripts/watch-issues.py scan-unplanned
 
 # helpers (agent-side)
-python3 .agents/skills/gitea-bots/scripts/set-status.py --reconcile <N>
-python3 .agents/skills/gitea-bots/scripts/sync-tasks.py <N> <plan-file>
+python3 .agents/skills/gitea-bots/scripts/set-status.py --reconcile '<N>'
+python3 .agents/skills/gitea-bots/scripts/sync-tasks.py '<N>' '<plan-file>'
 ```
 
 Default interval is 20 s, configurable with `--interval N` or
@@ -746,11 +746,11 @@ catalog yet (upstream gap: #127). Use the repo-local fallback:
 # /api/shell without location[directory] — the service cwd default can return
 # [] or 404 for a valid job.
 scripts/opencode-task-status.sh --directory "$PWD" list
-scripts/opencode-task-status.sh --directory "$PWD" status <shell-id>
-scripts/opencode-task-status.sh --directory "$PWD" output <shell-id> --cursor 0
-scripts/opencode-task-status.sh --directory "$PWD" output <shell-id> --cursor <n> --tail 80
-scripts/opencode-task-status.sh --directory "$PWD" kill <shell-id> --yes   # explicit/destructive
-scripts/opencode-task-status.sh --directory "$PWD" [--session "$OPENCODE_SESSION_ID"] wait <shell-id> --timeout 120 --interval 2
+scripts/opencode-task-status.sh --directory "$PWD" status '<shell-id>'
+scripts/opencode-task-status.sh --directory "$PWD" output '<shell-id>' --cursor 0
+scripts/opencode-task-status.sh --directory "$PWD" output '<shell-id>' --cursor '<n>' --tail 80
+scripts/opencode-task-status.sh --directory "$PWD" kill '<shell-id>' --yes   # explicit/destructive
+scripts/opencode-task-status.sh --directory "$PWD" [--session "$OPENCODE_SESSION_ID"] wait '<shell-id>' --timeout 120 --interval 2
 ```
 
 Notes: `list` always queries `/api/shell?location[directory]=...`; with
