@@ -43,8 +43,16 @@ def blob_hash(repo: Path, rel: str) -> tuple[str, str]:
 
 
 def drifted(copies: list[dict]) -> bool:
-    """True when committed copies differ, or a copy has uncommitted edits."""
-    return len({c["head_blob"] for c in copies}) > 1 or len({c["work_blob"] for c in copies}) > 1
+    """True when committed copies differ, or the contents differ once uncommitted
+    and untracked copies are counted."""
+    return len(committed_variants(copies)) > 1 or len({c["work_blob"] for c in copies}) > 1
+
+
+def committed_variants(copies: list[dict]) -> set[str]:
+    """Distinct committed contents. An untracked copy has no HEAD blob, so it must
+    not be counted as its own committed variant — it only shows up in the
+    working-tree count."""
+    return {c["head_blob"] for c in copies if c["head_blob"]}
 
 
 def scan(root: Path) -> dict[str, list[dict]]:
@@ -102,7 +110,7 @@ def main() -> int:
         print(json.dumps(skills, indent=2, ensure_ascii=False))
     else:
         for name, copies in sorted(skills.items()):
-            committed = len({c["head_blob"] for c in copies})
+            committed = len(committed_variants(copies))
             actual = len({c["work_blob"] for c in copies})
             note = "" if committed == actual else f"  ({actual} including uncommitted edits)"
             print(f"\n{name} — {len(copies)} copies, {committed} variant(s)"

@@ -113,6 +113,18 @@ def build_sandbox():
     sh("git", "reset", "--hard", "-q", "HEAD~1", cwd=ROOT / "projB")
 
 
+def reach_unified_state():
+    """Rebuild, fold projA's rule into the canonical text, get every repo
+    committed and in sync with its remote, then sync for real."""
+    build_sandbox()
+    promote_canon_rule3()
+    sh("git", "add", "-A", cwd=ROOT / "canon")
+    sh("git", "commit", "-qm", "canon gains rule three", cwd=ROOT / "canon")
+    sh("git", "commit", "-qam", "projC commits its work", cwd=ROOT / "projC")
+    sh("git", "pull", "-q", "--ff-only", "origin", "main", cwd=ROOT / "projB")
+    return sync("demo", "--from", "canon", "--commit", "--push")
+
+
 def promote_canon_rule3():
     """Fold projA's extra knowledge into the canonical text, as the workflow says."""
     skill = ROOT / "canon" / "skills" / "demo" / "SKILL.md"
@@ -179,13 +191,7 @@ def run_suite():
     check("--prune removes it", not (ROOT / "projA" / "skills" / "demo" / "stale.md").exists())
 
     print("\n7. full sync of clean repos yields one blob everywhere")
-    build_sandbox()
-    promote_canon_rule3()
-    sh("git", "add", "-A", cwd=ROOT / "canon")
-    sh("git", "commit", "-qm", "canon gains rule three", cwd=ROOT / "canon")
-    sh("git", "commit", "-qam", "projC commits its work", cwd=ROOT / "projC")
-    sh("git", "pull", "-q", "--ff-only", "origin", "main", cwd=ROOT / "projB")
-    rc, out, err = sync("demo", "--from", "canon", "--commit", "--push")
+    rc, out, err = reach_unified_state()
     blobs = {r: head_blob(r) for r in ("canon", "projA", "projB", "projC")}
     check("all four share one blob", len(set(blobs.values())) == 1, str(blobs))
     check("scan now reports unified", "unified" in scan("--skill", "demo")[1])
@@ -226,7 +232,19 @@ def run_suite():
     check("projD nothing ahead of remote",
           sh("git", "rev-list", "--count", "origin/main..HEAD", cwd=ROOT / "projD")[1].strip() == "0")
 
-    print("\n11. usage errors")
+    print("\n11. an untracked copy counts as content, not as a committed variant")
+    reach_unified_state()
+    (ROOT / "projE").mkdir(parents=True)
+    sh("git", "init", "-q", ".", cwd=ROOT / "projE")
+    e = ROOT / "projE" / ".agents" / "skills" / "demo"
+    e.mkdir(parents=True)
+    (e / "SKILL.md").write_text(BODY + RULE3 + "\nNever committed copy.\n")
+    rc, out, _ = scan("--skill", "demo")
+    check("committed variants not inflated by the untracked copy",
+          "1 variant(s)" in out and "2 including uncommitted edits" in out, out.splitlines()[0])
+    check("still reported as DRIFT", "DRIFT" in out)
+
+    print("\n12. usage errors")
     rc, out, err = sync("nope", "--from", "canon")
     check("missing skill => 2", rc == 2 and "not found" in err)
     rc, out, err = sync("demo", "--from", "canon", "--repos", "ghostrepo")

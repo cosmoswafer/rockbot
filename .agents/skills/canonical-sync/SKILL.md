@@ -33,17 +33,20 @@ description: Keep agent skills byte-identical across the workspace repositories 
 
 ## 三、掃描與彙報
 
+下列路徑以 `<skill-root>` 表示本技能所在目錄：在本庫為 `skills/canonical-sync`，
+於其他庫則為 `.agents/skills/canonical-sync`（或該庫自有之技能根目錄）。
+
 列出某技能在各庫之狀態（路徑、大小、blob、髒淨、最近提交）：
 
 ```bash
-python3 skills/canonical-sync/scripts/scan-skills.py --skill gitea-issues
+python3 <skill-root>/scripts/scan-skills.py --skill gitea-issues
 ```
 
 全工作區之健檢（僅列出有差異者），供定期巡檢使用：
 
 ```bash
-python3 skills/canonical-sync/scripts/scan-skills.py --only-drifted
-python3 skills/canonical-sync/scripts/scan-skills.py --json
+python3 <skill-root>/scripts/scan-skills.py --only-drifted
+python3 <skill-root>/scripts/scan-skills.py --json
 ```
 
 輸出樣例：
@@ -66,7 +69,7 @@ gitea-issues — 7 copies, 4 variant(s)   DRIFT  (5 including uncommitted edits)
 2. **試算**（預設不寫入任何檔案）：
 
    ```bash
-   python3 skills/canonical-sync/scripts/sync-skill.py <name> --from <repo> \
+   python3 <skill-root>/scripts/sync-skill.py <name> --from <repo> \
      --repos rockbot,weight-management-frontend,openrouter-image-runner
    ```
 
@@ -79,13 +82,13 @@ gitea-issues — 7 copies, 4 variant(s)   DRIFT  (5 including uncommitted edits)
 4. **寫入**：
 
    ```bash
-   python3 skills/canonical-sync/scripts/sync-skill.py <name> --from qoder-skills --apply
+   python3 <skill-root>/scripts/sync-skill.py <name> --from qoder-skills --apply
    ```
 
 5. **提交並推送**：提交僅限該技能目錄，勿夾帶其他檔案。
 
    ```bash
-   python3 skills/canonical-sync/scripts/sync-skill.py <name> --from qoder-skills \
+   python3 <skill-root>/scripts/sync-skill.py <name> --from qoder-skills \
      --commit --push --message 'docs({skill}): adopt the cross-repo canonical skill text'
    ```
 
@@ -94,7 +97,7 @@ gitea-issues — 7 copies, 4 variant(s)   DRIFT  (5 including uncommitted edits)
 6. **鋪展至新庫**：
 
    ```bash
-   python3 skills/canonical-sync/scripts/sync-skill.py <name> --from qoder-skills \
+   python3 <skill-root>/scripts/sync-skill.py <name> --from qoder-skills \
      --repos projD --apply --commit --push
    ```
 
@@ -116,15 +119,16 @@ done | sort -u | wc -l   # 應為 1
 
 ## 六、測試
 
-腳本之行為由一自足之測試套件驗證：於沙箱內建立四個（連鋪展目標共五個）暫時 git
-倉庫，各附獨立之 bare remote，全程離線，不觸及沙箱外之任何倉庫。
+腳本之行為由一自足之測試套件驗證：於沙箱內建立五個暫時 git 倉庫（其中一個尚無該
+技能，用作鋪展目標），另加一份未提交之複本，各倉庫均附獨立之 bare remote；全程離
+線，不觸及沙箱外之任何倉庫。共 12 組 42 項檢查。
 
 ```bash
-python3 skills/canonical-sync/tests/sync-test.py --root ./tmp/canonical-sync-sandbox
+python3 <skill-root>/tests/sync-test.py --root ./tmp/canonical-sync-sandbox
 ```
 
-涵蓋：漂移偵測、`coverage gaps`、髒淨與落後之拒絕、整目錄寫入、提交範圍、推送、
-blob 唯一性、格式檢查、鋪展、用法錯誤。回傳碼 0 為全數通過，1 為有失敗；預設於結束
+涵蓋：漂移偵測（含未提交與未納管複本之計數）、`coverage gaps`、外來修改與落後遠端
+之拒絕、整目錄寫入、提交範圍、推送、blob 唯一性、格式檢查、鋪展、用法錯誤。回傳碼 0 為全數通過，1 為有失敗；預設於結束
 時清除沙箱，`--keep` 可保留。於禁用系統 `/tmp` 之環境，務必以 `--root` 指到本庫
 `./tmp/`。
 
