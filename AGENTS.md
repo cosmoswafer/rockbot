@@ -75,7 +75,7 @@ Inspect long-running jobs (gitea-bots watcher, `cargo test`) through that helper
 - **Library versions**: `crate-rocketchat/Cargo.toml` and `crate-webdav/Cargo.toml` carry their own `[package] version`; bump one only when that crate itself changes.
 - **Semver**: fix → patch, feature → minor, breaking → major. The bump rides the change commit (no separate `chore: bump …` commit).
 - **Tag every release**: lightweight `vX.Y.Z` on the commit that carries the bump (`git tag v2.11.0` right after committing, or `git tag v2.10.0 <sha>` to backfill). Push the tag to the Gitea remote: `git push origin <tag>`.
-- **Create the Gitea release** for every pushed tag. Derive `$GITEA_API`/`$REPO` from `origin` exactly as in the [`gitea-issues` skill](.agents/skills/gitea-issues/SKILL.md), then `POST $GITEA_API/repos/$REPO/releases` with `{"tag_name":"vX.Y.Z","name":"vX.Y.Z","body":"## vX.Y.Z\n\n### New\n- …\n\n### Fixes\n- …","draft":false,"prerelease":false}` (write the body to `./tmp/release.json`, pass with `-d @./tmp/release.json`). Body mirrors the commits since the previous tag, grouped `### New` / `### Fixes`, with `#<N>` references.
+- **Create the Gitea release** for every pushed tag. Derive `$GITEA_API`/`$GITEA_OWNER_REPO` from `origin` exactly as in the [`gitea-issues` skill](.agents/skills/gitea-issues/SKILL.md), then `POST $GITEA_API/repos/$GITEA_OWNER_REPO/releases` with `{"tag_name":"vX.Y.Z","name":"vX.Y.Z","body":"## vX.Y.Z\n\n### New\n- …\n\n### Fixes\n- …","draft":false,"prerelease":false}` (write the body to `./tmp/release.json`, pass with `-d @./tmp/release.json`). Body mirrors the commits since the previous tag, grouped `### New` / `### Fixes`, with `#<N>` references.
 
 ## Code style
 
