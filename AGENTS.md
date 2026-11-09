@@ -8,7 +8,7 @@ crate-rockbot/        # lib + application binary — config, AiProvider trait, M
 crate-webdav/         # lib only — WebDAV client for NextCloud storage operations
 docs/                 # reference docs — scenarios, test suite, historical design notes
 models/image.toml     # canonical image_gen alias manifest (embedded at build time)
-.agents/skills/       # OpenCode skills (std-dev, gitea-issues, gitea-bots, issue-labels, mermaid-cli)
+.agents/skills/       # OpenCode skills (std-dev, gitea-issues, gitea-bots, issue-labels, mermaid-cli, canonical-sync)
 scripts/              # repo-local helpers (prune_tmp.py, opencode-task-status.sh) + their tests
 default.config.toml   # full config spec with defaults (empty credentials)
 example.config.toml   # minimal overrides with EDITME placeholders
@@ -49,6 +49,7 @@ RUST_LOG=debug cargo test -p rocketchat --test integration_real -- --ignored --n
 
 python3 .agents/skills/gitea-bots/scripts/run-tests.py    # watcher/notification unit tests
 python3 .agents/skills/issue-labels/scripts/run-tests.py  # shared label-set tests
+python3 .agents/skills/canonical-sync/tests/sync-test.py --root ./tmp/canonical-sync-sandbox  # skill-sync tooling (offline sandbox)
 python3 scripts/run-tests.py                              # repo helper tests (prune_tmp)
 bash .agents/skills/gitea-bots/tests/opencode-task-status.test.sh  # job-observability helper tests
 ```
@@ -103,7 +104,7 @@ Follow the [`std-dev` skill](.agents/skills/std-dev/SKILL.md). Before work, chec
 3. **Validation schemas first** — write the Rust types identified in step 2 before any business logic, following the type-driven rules below.
 4. **Implement type-first** — incremental: types → core logic → wiring; keep the change scoped and fix root causes.
 5. **Test** — `cargo test` must pass; add unit tests for new logic and Wiremock-mocked end-to-end tests for new paths in `crate-rockbot/tests/`.
-6. **Commit and push** — conventional commits describing the why; reference issues as `#<N>`; leave a comment on the issue when work is done and let a human close it. Never commit `Cargo.lock`/`config.toml`.
+6. **Commit and push** — conventional commits describing the why; reference issues as `#<N>`; leave a comment on the issue when work is done and let a human close it. Never commit `Cargo.lock`/`config.toml`. If the change touched a shared skill under `.agents/skills/`, sync it out to the other repos right after committing (see [Shared skills](#shared-skills--canonical-store-and-sync)).
 7. **Release** — `cargo build --release` → bump `crate-rockbot/Cargo.toml` (fix → patch, feature → minor; bump rides the change commit) → commit → tag `vX.Y.Z` → push commit + tag to `origin` → create the Gitea release (see [Versioning, tags & releases](#versioning-tags--releases)) → restart bot only if requested.
 
 ### Rust type-driven design rules
@@ -115,6 +116,50 @@ Every planned data structure becomes a Rust type; make violations compile-time e
 - **Shared types** — defined once in a canonical module, imported by producer and consumer.
 - **Errors via [`thiserror`](https://crates.io/crates/thiserror) + `?`** — messages name the data structure and offending field; no `unwrap()`/`expect()` in production (panics only for broken internal invariants).
 
+## Shared skills — canonical store and sync
+
+`~/Workspaces/qoder-skills/skills/` is the canonical store for every skill shared
+between the workspace repos. A shared skill must be **byte-identical** in each repo
+that carries it (one git blob), so diffs between repos come up empty and any of them
+can serve as the source of truth. Use the [`canonical-sync` skill](.agents/skills/canonical-sync/SKILL.md)
+rather than copying files by hand.
+
+```bash
+# 1. Drift check — a skill, or the whole workspace
+python3 .agents/skills/canonical-sync/scripts/scan-skills.py --skill gitea-issues
+python3 .agents/skills/canonical-sync/scripts/scan-skills.py --only-drifted
+
+# 2. Plan (dry run). --repos scopes the run; without it, EVERY repo holding the
+#    skill is in scope, so name the four that share this one explicitly.
+python3 .agents/skills/canonical-sync/scripts/sync-skill.py gitea-issues --from qoder-skills \
+  --repos rockbot,weight-management-frontend,openrouter-image-runner
+
+# 3. Merge, ship, commit only the skill dir, push where the branch allows it
+python3 .agents/skills/canonical-sync/scripts/sync-skill.py gitea-issues --from qoder-skills \
+  --repos rockbot,weight-management-frontend,openrouter-image-runner \
+  --commit --push --message 'docs(skills): adopt the cross-repo canonical gitea-issues text'
+```
+
+Repos deliberately outside the unified set (`sharkapi`, `weasel`,
+`consent-cross-backend`) keep their older copies; list them nowhere in
+`--repos`, and read `DRIFT` in the scan output with that in mind. Naming a repo
+that does not have the skill yet rolls it out there.
+
+Rules that decide the merge, not the tooling:
+
+- Judge "newer" by `git log` dates plus content coverage, never by file mtime — copies
+  and checkouts move mtimes.
+- Two-way fork is the normal case: fold each repo's unique knowledge into the canonical
+  text first (the plan's `coverage gaps` list is exactly that check), then distribute.
+  Never one-way copy over another repo's work.
+- Generalise repo-specific wording on the way in — "the project's own checks" instead of
+  a hardcoded `cargo test`/`deno task check`, conditional phrasing for sibling-skill
+  pointers — so one text serves every repo. Tooling that legitimately differs per repo
+  (the `gitea-bots` skill's own `$REPO` derivation block; the `issue-labels` directory,
+  which only some repos carry) is not drift and stays as it is.
+- Commit only the skill directory, and only in repos whose branch can fast-forward; a
+  repo trailing its own remote is fixed by a human, never by pushing into it.
+
 ## OpenCode skills
 
 - `std-dev` — Standard data-type-driven development flow: probe, plan the data flow, define validation schemas, implement type-first, test, commit and push.
@@ -122,3 +167,4 @@ Every planned data structure becomes a Rust type; make violations compile-time e
 - `gitea-bots` — Gitea issue watcher and notification plumbing: `scripts/watch-issues.py` (Python, SQLite state under `tmp/gitea-bots/`) polls for new issues and at-mention replies, dispatches workers from `pending.md`, and the skill defines the filing → plan → implementation bookkeeping. No command vocabulary; work follows `AGENTS.md`. `scripts/run-tests.py` is the offline test suite.
 - `issue-labels` — Canonical status label set (`👀 seeing`, `💬 responded`, `🔨 working`, `❓ question`, `✅ committed`), lifecycle, `--reconcile` derivation and migration helpers; `scripts/set-status.py` is the shared CLI.
 - `mermaid-cli` — Validates/fixes Mermaid syntax using `mermaid.parse()` with jsdom (no browser). Use only when asked to validate or fix Mermaid syntax.
+- `canonical-sync` — Keeps shared skills byte-identical across the workspace repos with `scripts/scan-skills.py` (drift inventory) and `scripts/sync-skill.py` (two-way merge, apply, commit, push); `tests/sync-test.py` is its offline sandbox suite. See [Shared skills](#shared-skills--canonical-store-and-sync).
