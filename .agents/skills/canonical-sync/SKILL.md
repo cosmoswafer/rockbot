@@ -72,6 +72,8 @@ gitea-issues — 7 copies, 4 variant(s)   DRIFT  (5 including uncommitted edits)
 
    輸出包含：正典文字之格式檢查結果、`coverage gaps`（目標仍持有而正典遺失之行）、
    各庫 `ahead/behind/dirty` 及將要做之動作。加上 `--fetch` 可先更新遠端參考再判落後。
+   未給 `--repos` 時，凡持有該技能之庫皆在範圍內；若有些庫長期不納入同步，或本次
+   僅欲更新部分庫，須明確列出，以免誤為分發。
 3. **補足遺漏**：逐條檢視 `coverage gaps`，將屬實之知識併入正典，重試步驟 2，直至無
    遺漏。純措辭改寫而語意重複者，可判定為無損，續以 `--ignore-coverage`。
 4. **寫入**：
