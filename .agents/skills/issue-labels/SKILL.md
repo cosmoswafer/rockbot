@@ -337,6 +337,24 @@ a reread while there is no completion marker; `seeing` stays while the issue is
 unplanned. Reconciliation never invents `seeing` from a `## Summary` body and
 never erases a real pickup marker.
 
+To reconcile by hand, read the body and comments, pick the row above, then call
+`set_status` with the derived set:
+
+```bash
+ISSUE=42
+
+curl -s -H "Authorization: token $GITEA_TOKEN" \
+  "$GITEA_API/repos/$GITEA_OWNER_REPO/issues/$ISSUE" \
+  | jq -r '.body'
+
+curl -s -H "Authorization: token $GITEA_TOKEN" \
+  "$GITEA_API/repos/$GITEA_OWNER_REPO/issues/$ISSUE/comments?limit=50" \
+  | jq -r '.[].body'
+
+# Example: the body now has a plan or a ## Tasks checklist
+set_status "$ISSUE" responded
+```
+
 ## Legacy names and migration
 
 Older repos may still carry these names. They are accepted as input and are
