@@ -1,6 +1,6 @@
 ---
 name: gitea-issues
-description: Use when working with Gitea issues: list, create, comment on and manage issues on the project's Gitea server. The skill never closes issues on its own. It comments and lets a human close. It derives the server and repo from the git remote and reads the token from .env.
+description: Use when working with Gitea issues: list, create, comment on and manage issues on the project's Gitea server. Includes curl diagnostics for the token, .env, API base, owner/repo and server access. The skill never closes issues on its own. It comments and lets a human close. It derives the server and repo from the git remote and reads the token from .env.
 license: CC0-1.0
 ---
 
@@ -51,6 +51,63 @@ To reach another repo on the same server, override the path:
 `GITEA_OWNER_REPO=Atom/weasel`.
 
 Run the block in the same shell as the snippets below.
+
+## Diagnostics — run this before any write
+
+This read-only check prints what is wrong and what to do next. It never prints
+the token.
+
+```bash
+echo "== gitea-issues diagnostics =="
+
+for tool in git curl jq; do
+  if command -v "$tool" >/dev/null 2>&1; then
+    echo "PASS  $tool: $(command -v "$tool")"
+  else
+    echo "FAIL  $tool is missing — install it before using this skill"
+  fi
+done
+
+if [ -f .env ]; then
+  echo "PASS  .env found at $PWD/.env"
+else
+  echo "FAIL  no .env at $PWD — create it with GITEA_TOKEN=..."
+fi
+
+if [ -n "${GITEA_TOKEN:-}" ]; then
+  echo "PASS  GITEA_TOKEN set (${#GITEA_TOKEN} characters; value hidden)"
+else
+  echo "FAIL  GITEA_TOKEN is empty — add GITEA_TOKEN=<token> to .env"
+fi
+
+echo "INFO  API=$GITEA_API  REPO=$GITEA_OWNER_REPO"
+
+HTTP=$(curl -s -o /dev/null -w '%{http_code}' \
+  -H "Authorization: token $GITEA_TOKEN" \
+  "$GITEA_API/repos/$GITEA_OWNER_REPO")
+
+case "$HTTP" in
+  200) echo "PASS  repo access: HTTP 200" ;;
+  401) echo "FAIL  HTTP 401 — token rejected; use the literal word 'token' in the header, not 'Bearer'" ;;
+  403) echo "FAIL  HTTP 403 — token lacks repository access or the needed scope" ;;
+  404) echo "FAIL  HTTP 404 — wrong host or owner/repo; check the origin remote" ;;
+  000) echo "FAIL  no response — DNS, TLS or network problem reaching $GITEA_HOST" ;;
+  *)   echo "FAIL  repo access: HTTP $HTTP" ;;
+esac
+
+curl -s -H "Authorization: token $GITEA_TOKEN" \
+  "$GITEA_API/repos/$GITEA_OWNER_REPO" \
+  | jq -r 'if .full_name then "PASS  repository: \(.full_name)" else "FAIL  repository: \(.message // "unexpected response")" end'
+
+# Optional: confirms the token user (needs read:user; a 403 here is not fatal)
+curl -s -H "Authorization: token $GITEA_TOKEN" \
+  "$GITEA_API/user" \
+  | jq -r 'if .login then "PASS  token user: \(.login)" else "WARN  token user: \(.message // "unavailable")" end'
+```
+
+If every line says `PASS`, the server, token, auth header and owner/repo are
+correct. A `WARN` on the last line only means the token lacks `read:user`; the
+issue endpoints still work. If any line says `FAIL`, fix it before writing.
 
 ## Common operations
 
@@ -144,8 +201,6 @@ Template rules:
 
 Payload notes:
 
-- **Labels** take numeric IDs (see "List labels") — an empty array `[]` or IDs
-  like `[24]`.
 - **Assignees** take the token user's login. See "Get the current user".
 - **Milestone** uses the JSON key `milestone` with a numeric ID, e.g.
   `"milestone": 61`. The API does **not** accept `milestone_id`. If you use it,
@@ -157,7 +212,7 @@ For simple bodies without special characters, use inline JSON:
 curl -s -X POST \
   -H "Authorization: token $GITEA_TOKEN" \
   -H "Content-Type: application/json" \
-  -d "{\"title\":\"Issue title here\",\"body\":\"Issue body / description\",\"labels\":[],\"assignees\":[\"$GITEA_USER\"]}" \
+  -d "{\"title\":\"Issue title here\",\"body\":\"Issue body / description\",\"assignees\":[\"$GITEA_USER\"]}" \
   "$GITEA_API/repos/$GITEA_OWNER_REPO/issues" \
   | jq '{number, title, html_url}'
 ```
@@ -189,7 +244,7 @@ jq -n \
   --arg title "Quick camera: use server time, not photo EXIF" \
   --rawfile body ./tmp/issue-body.md \
   --arg user "$GITEA_USER" \
-  '{title: $title, body: $body, labels: [], assignees: [$user], milestone: 61}' \
+  '{title: $title, body: $body, assignees: [$user], milestone: 61}' \
   > ./tmp/issue.json
 
 # 3. Create the issue
@@ -238,74 +293,6 @@ curl -s -X PATCH \
   | jq '{number, title, state}'
 ```
 
-### List labels
-
-```bash
-curl -s \
-  -H "Authorization: token $GITEA_TOKEN" \
-  "$GITEA_API/repos/$GITEA_OWNER_REPO/labels" \
-  | jq '.[] | {id, name, color}'
-```
-
-### Issue status labels
-
-Repos that track agent work share a five-label status vocabulary. The labels
-keep issues easy to scan, whether a human or a background workflow handles
-them. The canonical source is the `issue-labels` skill where the repo has one,
-at `.agents/skills/issue-labels/SKILL.md`. Repos without it still follow the
-same vocabulary by hand.
-
-| Canonical | Display | Colour | Meaning |
-| --- | --- | --- | --- |
-| `seeing` | `👀 seeing` | `1d76db` | a background agent has picked the issue up and is working on it |
-| `responded` | `💬 responded` | `fbca04` | a reply, answer or plan is posted |
-| `working` | `🔨 working` | `5319e7` | implementing code/tests |
-| `question` | `❓ question` | `d93f0b` | blocked, waiting on human input |
-| `committed` | `✅ committed` | `0e8a16` | a commit has been pushed (additive with `responded`) |
-
-Lifecycle: `seeing` → `responded` → `working` / `question` → `responded` +
-`committed`. `question` is temporary. `committed` is additive. Filing an issue
-writes no status label. `seeing` is a pickup marker, and only the agent that
-takes the issue sets it.
-
-Gitea's issue `PATCH` **silently ignores `labels`**. Change labels through the
-dedicated endpoint. Send the **full** set of numeric label IDs to keep:
-
-```bash
-# 1. Resolve label IDs (names may carry a leading emoji)
-curl -s -H "Authorization: token $GITEA_TOKEN" \
-  "$GITEA_API/repos/$GITEA_OWNER_REPO/labels?limit=100" \
-  | jq -r '.[] | [.id, .name] | @tsv'
-
-# 2. Replace the issue's label set (include unrelated labels you keep)
-curl -s -X PUT \
-  -H "Authorization: token $GITEA_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"labels": [24, 31]}' \
-  "$GITEA_API/repos/$GITEA_OWNER_REPO/issues/42/labels" \
-  | jq '.[].name'
-```
-
-Create a missing canonical label with its exact display name, colour and
-description:
-
-```bash
-curl -s -X POST \
-  -H "Authorization: token $GITEA_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"🔨 working","color":"5319e7","description":"implementing code/tests"}' \
-  "$GITEA_API/repos/$GITEA_OWNER_REPO/labels" \
-  | jq '{id, name, color}'
-```
-
-Where the repo has the shared CLI, it resolves the IDs and merges the set for
-you:
-
-```bash
-python3 .agents/skills/issue-labels/scripts/set-status.py 42 working
-python3 .agents/skills/issue-labels/scripts/set-status.py --reconcile 42
-```
-
 ### List milestones
 
 ```bash
@@ -339,7 +326,6 @@ cat > ./tmp/issue.json << JSONEOF
 {
   "title": "Issue title",
   "body": "Issue body",
-  "labels": [29],
   "assignees": ["$GITEA_USER"],
   "milestone": 61
 }
@@ -557,11 +543,6 @@ curl -s -X PATCH -H "Authorization: token $GITEA_TOKEN" \
   PRs (supported in newer Gitea versions).
 - Pagination: Gitea defaults to 30 items per page. Use `&limit=50` or `&page=N`
   for more.
-- **Labels take numeric IDs**, not names. List the labels with their IDs first
-  (see "List labels"). Then use the numeric `id` value in the `labels` array
-  (e.g. `"labels":[24]` for the "bug" label). Label name strings return a JSON
-  unmarshal error. Issue `PATCH` silently ignores `labels`. Use
-  `PUT /issues/{n}/labels` with the full set (see "Issue status labels").
 - **Milestones take a numeric ID under the `milestone` key**. `milestone_id`
   and milestone names are silently ignored, by both `POST` and `PATCH`.
 - **Complex bodies**: when the issue body holds special characters (backticks,

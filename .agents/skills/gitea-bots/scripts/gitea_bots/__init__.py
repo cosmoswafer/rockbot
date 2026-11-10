@@ -8,8 +8,9 @@ Design goals
   wired together in :mod:`gitea_bots.cli`. Pure decision logic lives in
   :mod:`gitea_bots.rules` and has no I/O, so it is trivially unit-testable.
 * **Shared label plumbing** — the canonical status vocabulary, the label
-  manager and the generic Gitea client come from the sibling ``issue-labels``
-  skill (one implementation for every consumer).
+  manager and the generic Gitea client are vendored in ``scripts/issue_labels``
+  so the watcher works without the separate ``issue-labels`` documentation
+  skill (which is curl-only and needs no Python).
 
 The read-only watcher (:mod:`gitea_bots.watcher`) surfaces events; it never
 creates, edits, assigns, comments on, or closes issues. Its only writes are
@@ -24,20 +25,18 @@ import os
 import sys
 from pathlib import Path
 
-# The status vocabulary/manager/client live in the sibling issue-labels skill.
-# Bootstrap its scripts directory before any submodule imports issue_labels, so
-# the shared package stays a single implementation with no install step. The
-# two skills must remain siblings under .agents/skills/; ISSUE_LABELS_SCRIPTS is
-# the escape hatch for a moved checkout.
-_SKILLS_ROOT = Path(__file__).resolve().parents[3]
+# The status vocabulary/manager/client are vendored at
+# ``scripts/issue_labels`` next to this package, so the tooling has no
+# cross-skill dependency and installs with the gitea-bots directory alone.
+# ISSUE_LABELS_SCRIPTS remains as an escape hatch for an out-of-tree package.
+_SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 _SHARED_SCRIPTS = Path(
-    os.environ.get("ISSUE_LABELS_SCRIPTS")
-    or _SKILLS_ROOT / "issue-labels" / "scripts"
+    os.environ.get("ISSUE_LABELS_SCRIPTS") or _SCRIPTS_DIR
 )
 if not (_SHARED_SCRIPTS / "issue_labels").is_dir():
     raise ImportError(
-        "the shared issue-labels skill was not found at "
-        f"'{_SHARED_SCRIPTS}' (expected a sibling of "
+        "the vendored issue_labels package was not found at "
+        f"'{_SHARED_SCRIPTS / 'issue_labels'}' (expected next to "
         f"'{Path(__file__).resolve().parents[2]}'; set ISSUE_LABELS_SCRIPTS "
         "to override)"
     )

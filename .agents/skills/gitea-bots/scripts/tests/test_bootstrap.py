@@ -1,4 +1,4 @@
-"""Tests that the sibling issue-labels skill is wired in (bootstrap contract)."""
+"""Tests that the vendored issue_labels package is wired in (bootstrap contract)."""
 
 import unittest
 from pathlib import Path
@@ -15,11 +15,12 @@ from gitea_bots.status import StatusManager
 
 
 class BootstrapTests(unittest.TestCase):
-    def test_shared_package_resolves_from_the_sibling_skill(self):
+    def test_shared_package_is_vendored_next_to_the_tooling(self):
         resolved = Path(issue_labels.__file__).resolve()
         self.assertEqual(resolved.parent.name, "issue_labels")
-        self.assertIn("issue-labels", resolved.parts)
-        self.assertIn("skills", resolved.parts)
+        # Vendored under gitea-bots/scripts, not a sibling skill.
+        self.assertIn("gitea-bots", resolved.parts)
+        self.assertIn("scripts", resolved.parts)
 
     def test_version_reflects_the_new_capability(self):
         self.assertEqual(gitea_bots.__version__, "2.3.0")

@@ -1,4 +1,4 @@
-"""Public surface of the shared issue-labels package."""
+"""Public surface of the vendored issue-label package."""
 
 from .gitea import GiteaClient, GiteaError, GiteaSettings, derive_remote, load_dotenv
 from .labels import (

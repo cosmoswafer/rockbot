@@ -7,7 +7,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from issue_labels.gitea import GiteaClient, derive_remote, load_dotenv
+from issue_labels.gitea import (
+    GiteaClient,
+    GiteaError,
+    derive_remote,
+    load_dotenv,
+)
 
 
 class _Response:
@@ -65,6 +70,34 @@ class ClientSessionTests(unittest.TestCase):
         self.assertIsNot(captured["a"], captured["b"])
         self.assertIsNot(captured["a"], main_session)
         self.assertIsNot(captured["b"], main_session)
+
+
+class ErrorStatusTests(unittest.TestCase):
+    """Non-2xx responses carry the HTTP status on the raised GiteaError so
+    callers can tell a server-side failure (retryable/fallback) apart from a
+    client error (real failure)."""
+
+    class _Boom:
+        status_code = 500
+        content = b'{"message":"oops"}'
+
+        @staticmethod
+        def json():
+            return {"message": "oops"}
+
+    class _BoomSession:
+        def request(self, *args, **kwargs):
+            return ErrorStatusTests._Boom()
+
+    def test_http_error_carries_status(self):
+        client = GiteaClient("https://gitea.test/api/v1", "s", session=self._BoomSession())
+        with self.assertRaises(GiteaError) as ctx:
+            client.post("/x", payload={})
+        self.assertEqual(ctx.exception.status, 500)
+        self.assertIn("HTTP 500", str(ctx.exception))
+
+    def test_non_http_failure_has_no_status(self):
+        self.assertIsNone(GiteaError("no origin").status)
 
 
 class RemoteTests(unittest.TestCase):

@@ -3,20 +3,47 @@
 import re
 from types import SimpleNamespace
 
+from issue_labels.gitea import GiteaError
 from issue_labels.manager import StatusManager
 
 
-class FakeClient:
-    """In-memory stand-in for :class:`issue_labels.gitea.GiteaClient`."""
+def _strip_emoji(text):
+    return re.sub(r"[^\x00-\uFFFF]+", "", str(text or "")).strip()
 
-    def __init__(self, repo="Atom/example"):
+
+class FakeClient:
+    """In-memory stand-in for :class:`issue_labels.gitea.GiteaClient`.
+
+    ``reject_emoji`` emulates a Gitea whose label store cannot hold 4-byte
+    characters: any label write carrying an emoji name fails with HTTP 500 and
+    changes nothing. ``strip_on_reject`` goes one step further and mirrors the
+    observed half-succeeded variant — the label is stored/renamed with the
+    emoji stripped *and* the request still fails with 500. ``reject_status``
+    picks the status code the hostile server answers with.
+    """
+
+    def __init__(self, repo="Atom/example", reject_emoji=False,
+                 strip_on_reject=False, reject_status=500):
         self.repo = repo
         self.issues = []
         self.comments = {}
         self.labels = []
         self.writes = []
         self.next_label_id = 500
+        self.reject_emoji = reject_emoji
+        self.strip_on_reject = strip_on_reject
+        self.reject_status = reject_status
         self._prefix = f"/repos/{repo}"
+
+    def _emoji_rejection(self, method, path, payload):
+        """GiteaError for a label write whose name carries emoji, else None."""
+        if not (self.reject_emoji or self.strip_on_reject):
+            return None
+        name = payload.get("name") if isinstance(payload, dict) else None
+        if not name or _strip_emoji(name) == name:
+            return None
+        return GiteaError(f"HTTP {self.reject_status} from {method} {path}",
+                          status=self.reject_status)
 
     @staticmethod
     def _paginate(items, params):
@@ -59,16 +86,23 @@ class FakeClient:
     def post(self, path, payload=None, params=None):
         self.writes.append(("POST", path, payload))
         if path == self._prefix + "/labels" and isinstance(payload, dict):
-            label_id = self.next_label_id
-            self.next_label_id += 1
+            rejection = self._emoji_rejection("POST", path, payload)
+            if rejection is not None and not self.strip_on_reject:
+                raise rejection
+            name = payload.get("name")
+            if rejection is not None:  # strip_on_reject: store stripped, then fail
+                name = _strip_emoji(name)
             label = {
-                "id": label_id,
-                "name": payload.get("name"),
+                "id": self.next_label_id,
+                "name": name,
                 "color": payload.get("color"),
                 "description": payload.get("description"),
             }
+            self.next_label_id += 1
             self.labels.append(label)
-            return {"id": label_id}
+            if rejection is not None:
+                raise rejection
+            return {"id": label["id"]}
         return {}
 
     def put(self, path, payload=None):
@@ -89,6 +123,11 @@ class FakeClient:
         self.writes.append(("PATCH", path, payload))
         label_match = re.match(re.escape(self._prefix) + r"/labels/(\d+)$", path)
         if label_match and isinstance(payload, dict):
+            rejection = self._emoji_rejection("PATCH", path, payload)
+            if rejection is not None:
+                if not self.strip_on_reject:
+                    raise rejection
+                payload = dict(payload, name=_strip_emoji(payload.get("name")))
             label_id = int(label_match.group(1))
             for label in self.labels:
                 if label.get("id") == label_id:

@@ -2,12 +2,13 @@
 
 import unittest
 
+from issue_labels.gitea import GiteaError
 from issue_labels.labels import (
     STATUS_COLORS,
     STATUS_DESCRIPTIONS,
     status_label_name,
 )
-from tests.fakes import comment, issue, make_manager
+from tests.label_fakes import comment, FakeClient, issue, make_manager
 
 
 class ApplyTests(unittest.TestCase):
@@ -195,6 +196,141 @@ class ReconcileTests(unittest.TestCase):
         ]
         _, _, expect = self.manager.reconcile(9)
         self.assertEqual(expect, frozenset({"committed"}))
+
+
+class EmojiHostileServerTests(unittest.TestCase):
+    """Label writes must survive a Gitea whose store rejects emoji names.
+
+    Such a server answers any label write whose name carries an emoji with a
+    5xx (the 4-byte characters do not fit), which used to abort every status
+    label write. The manager must degrade to the bare canonical spelling.
+    """
+
+    def setUp(self):
+        self.client = FakeClient(reject_emoji=True)
+        self.manager, self.client, self.logger = make_manager(client=self.client)
+
+    def _by_name(self):
+        return {label["name"]: label for label in self.client.labels}
+
+    def test_create_falls_back_to_the_bare_spelling(self):
+        self.client.issues = [issue(8)]
+        changed, text = self.manager.apply(8, "seeing")
+        self.assertTrue(changed)
+        self.assertIn("→ seeing", text)
+        by_name = self._by_name()
+        self.assertNotIn(status_label_name("seeing"), by_name)
+        self.assertIn("seeing", by_name)
+        self.assertEqual(by_name["seeing"]["color"], STATUS_COLORS["seeing"])
+        self.assertEqual(
+            by_name["seeing"]["description"], STATUS_DESCRIPTIONS["seeing"]
+        )
+        self.assertTrue(any("bare spelling" in w for w in self.logger.warnings))
+
+    def test_half_succeeded_create_is_adopted_without_duplicates(self):
+        self.client.reject_emoji = False
+        self.client.strip_on_reject = True
+        self.client.issues = [issue(8)]
+        changed, _ = self.manager.apply(8, "seeing")
+        self.assertTrue(changed)
+        names = [label["name"] for label in self.client.labels]
+        self.assertEqual(len(names), len(set(names)))  # the stripped label was
+        self.assertIn("seeing", names)                 # adopted, not re-created
+        puts = [w for w in self.client.writes if w[0] == "PUT"]
+        by_id = {label["id"]: label for label in self.client.labels}
+        self.assertEqual(
+            [by_id[i]["name"] for i in puts[0][2]["labels"]], ["seeing"]
+        )
+
+    def test_existing_bare_label_is_kept_not_renamed(self):
+        self.client.labels = [
+            {
+                "id": 5,
+                "name": "seeing",
+                "color": STATUS_COLORS["seeing"],
+                "description": STATUS_DESCRIPTIONS["seeing"],
+            }
+        ]
+        self.client.issues = [issue(8, labels=[{"id": 5, "name": "seeing"}])]
+        changed, text = self.manager.apply(8, "seeing")
+        self.assertFalse(changed)
+        self.assertIn("already", text)
+        self.assertEqual(self._by_name()["seeing"]["id"], 5)
+
+    def test_metadata_drift_is_repaired_with_the_bare_name(self):
+        self.client.labels = [
+            {"id": 5, "name": "seeing", "color": "000000", "description": "stale"}
+        ]
+        self.client.issues = [issue(8, labels=[{"id": 5, "name": "seeing"}])]
+        self.manager.apply(8, "seeing")
+        label = self._by_name()["seeing"]
+        self.assertEqual(label["color"], STATUS_COLORS["seeing"])
+        self.assertEqual(label["description"], STATUS_DESCRIPTIONS["seeing"])
+
+    def test_drifted_display_label_is_healed_down_to_bare(self):
+        emoji = status_label_name("seeing")
+        self.client.labels = [
+            {
+                "id": 5,
+                "name": emoji,
+                "color": "000000",
+                "description": STATUS_DESCRIPTIONS["seeing"],
+            }
+        ]
+        self.client.issues = [issue(8, labels=[{"id": 5, "name": emoji}])]
+        changed, _ = self.manager.apply(8, "seeing")
+        self.assertFalse(changed)  # the issue's label set was already correct
+        by_name = self._by_name()
+        self.assertNotIn(emoji, by_name)
+        self.assertEqual(by_name["seeing"]["id"], 5)  # id survived the heal
+        self.assertEqual(by_name["seeing"]["color"], STATUS_COLORS["seeing"])
+
+    def test_degradation_skips_later_emoji_attempts_in_the_same_run(self):
+        self.client.issues = [issue(8)]
+        self.manager.apply(8, "committed")
+        posts = [w for w in self.client.writes if w[0] == "POST"]
+        emoji_posts = [
+            w for w in posts
+            if any(ord(ch) > 0xFFFF for ch in w[2]["name"])
+        ]
+        # seeing (which trips the 5xx) is the only emoji attempt; once the run
+        # degrades, responded/working/question/committed POST bare names only.
+        self.assertEqual(len(emoji_posts), 1)
+
+    def test_canonical_question_wins_over_the_stock_default_label(self):
+        self.client.reject_emoji = False
+        self.client.strip_on_reject = True
+        self.client.labels = [
+            {"id": 34, "name": "question", "color": "cc317c",
+             "description": "More information is needed"},  # Gitea default
+            {"id": 64, "name": "question", "color": STATUS_COLORS["question"],
+             "description": STATUS_DESCRIPTIONS["question"]},  # canonical
+        ]
+        self.client.issues = [issue(8)]
+        self.manager.apply(8, "question")
+        puts = [w for w in self.client.writes if w[0] == "PUT"]
+        self.assertEqual(puts[0][2]["labels"], [64])
+        patches = [w for w in self.client.writes if w[0] == "PATCH"]
+        self.assertEqual(patches, [])  # the stock label is left alone
+
+    def test_client_errors_are_not_degraded_away(self):
+        self.client.reject_status = 422
+        self.client.issues = [issue(8)]
+        with self.assertRaises(GiteaError):
+            self.manager.apply(8, "seeing")
+        self.assertTrue(self.manager._emoji_ok)  # no unjust bare-name fallback
+        self.assertEqual(self.client.labels, [])
+
+    def test_reconcile_writes_labels_on_a_hostile_server(self):
+        self.client.issues = [
+            issue(9, body="## Summary\n\nHi.\n\n## Tasks\n\n- [ ] x\n")
+        ]
+        changed, _, expect = self.manager.reconcile(9)
+        self.assertTrue(changed)
+        self.assertEqual(expect, frozenset({"responded"}))
+        puts = [w for w in self.client.writes if w[0] == "PUT"]
+        by_id = {label["id"]: label["name"] for label in self.client.labels}
+        self.assertEqual([by_id[i] for i in puts[0][2]["labels"]], ["responded"])
 
 
 class MigrationTests(unittest.TestCase):

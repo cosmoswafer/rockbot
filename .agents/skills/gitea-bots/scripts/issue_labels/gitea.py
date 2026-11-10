@@ -18,7 +18,16 @@ import requests
 
 
 class GiteaError(Exception):
-    """A Gitea API call or environment resolution failed."""
+    """A Gitea API call or environment resolution failed.
+
+    ``status`` is the HTTP status code when the failure came from a non-2xx
+    response, else ``None``. Callers use it to tell a server-side failure
+    (degrade-and-retry) apart from a client error (raise).
+    """
+
+    def __init__(self, message, status=None):
+        super().__init__(message)
+        self.status = status
 
 
 # ---------------------------------------------------------------------------
@@ -230,7 +239,10 @@ class GiteaClient:
             except ValueError:
                 message = ""
             suffix = f" — {message.splitlines()[0]}" if message else ""
-            raise GiteaError(f"HTTP {resp.status_code} from {method} {path}{suffix}")
+            raise GiteaError(
+                f"HTTP {resp.status_code} from {method} {path}{suffix}",
+                status=resp.status_code,
+            )
 
         if not resp.content:
             return None

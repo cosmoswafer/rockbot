@@ -1,4 +1,4 @@
-"""Command-line entry point for the shared issue-labels skill.
+"""Command-line entry point for the vendored issue-label status set.
 
 Resolves the repo, API base and token from ``origin`` + ``.env``, then applies,
 reconciles or migrates the canonical status label set. A staged workflow can

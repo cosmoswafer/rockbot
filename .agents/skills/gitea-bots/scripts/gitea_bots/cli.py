@@ -257,10 +257,10 @@ def main_watch(argv=None, script_path=None) -> int:
 # set-status.py
 # ---------------------------------------------------------------------------
 def main_status(argv=None, script_path=None) -> int:
-    """Forward to the shared issue-labels CLI, injecting the workflow derive.
+    """Forward to the vendored issue_labels CLI, injecting the workflow derive.
 
     The service commands (apply / ``--reconcile`` / ``--migrate``) and their
-    help text live in the ``issue-labels`` skill. Only the projection differs:
+    help text live in ``issue_labels.cli``. Only the projection differs:
     here the stage markers in the comment list are marker-aware.
     """
     return _shared_main_status(argv, script_path, derive=derive_status)

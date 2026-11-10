@@ -1,6 +1,6 @@
 """Shared exception types.
 
-``GiteaError`` is re-exported from the shared issue-labels package so the label
+``GiteaError`` is re-exported from the vendored ``issue_labels`` package so the label
 CLI and the bot raise the same type. ``BotFatal`` stays here: it is specific to
 the watcher CLI's fatal-configuration handling.
 """

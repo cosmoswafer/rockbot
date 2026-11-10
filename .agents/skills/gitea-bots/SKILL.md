@@ -1,6 +1,6 @@
 ---
 name: gitea-bots
-description: Use when working with the project's Gitea issue watcher — polling for new issues and comments, reporting them from tmp/gitea-bots/pending.md, answering a human reply, and doing the requested issue work by following AGENTS.md. The skill owns the watcher, event store, notification prompts and issue plumbing only; it defines no command vocabulary and no separate development flow.
+description: Use when working with the project's Gitea issue watcher — polling for new issues and comments, reporting them from tmp/gitea-bots/pending.md, answering a human reply, and doing the requested issue work by following AGENTS.md. Also use to diagnose the setup — Python 3.10+ and requests, the sibling gitea-issues and issue-labels skills, .env and GITEA_TOKEN, origin derivation, and Gitea server access. The skill owns the watcher, event store, notification prompts and issue plumbing only; it defines no command vocabulary and no separate development flow.
 license: CC0-1.0
 ---
 
@@ -58,7 +58,9 @@ more work on your own.
 **Canonical implementation: Python.** The watcher and helpers are
 `watch-issues.py`, `set-status.py`, `sync-tasks.py`, `probe-live.py`,
 `probe-live-write.py` and `probe-e2e.py`, backed
-by the `scripts/gitea_bots/` package. They require Python 3.10+ and `requests` —
+by the `scripts/gitea_bots/` package. The status vocabulary and HTTP client are
+vendored in `scripts/issue_labels/`, so the tooling needs no sibling skill and
+no install step. They require Python 3.10+ and `requests` —
 the only non-stdlib dependency. No `curl`, `jq`, `flock`, `awk` or `stdbuf` is
 needed by the tooling itself: HTTP uses `requests`, JSON uses `json`, locking
 uses `fcntl`, and the background loop is line-buffered with `python -u`. Run
@@ -122,22 +124,157 @@ REMOTE=$(git remote get-url origin)
 REMOTE="${REMOTE%.git}"
 if [[ "$REMOTE" == *://* ]]; then
   BARE="${REMOTE#*://}"; BARE="${BARE#*@}"
-  REPO="${BARE#*/}"; HOSTPART="${BARE%%/*}"
+  GITEA_OWNER_REPO="${BARE#*/}"; HOSTPART="${BARE%%/*}"
 else
-  BARE="${REMOTE#*@}"; HOSTPART="${BARE%%:*}"; REPO="${BARE#*:}"
+  BARE="${REMOTE#*@}"; HOSTPART="${BARE%%:*}"; GITEA_OWNER_REPO="${BARE#*:}"
 fi
 HOST="${HOSTPART%%:*}"
 GITEA_API="https://${HOST}/api/v1"
 ```
 
-After this block: `$GITEA_API`, `$REPO`, and `$GITEA_TOKEN` are available. The
-snippets below assume it has already run. For labels, assignees, milestones,
-and API failure modes, see the [`gitea-issues` skill](../gitea-issues/SKILL.md).
+After this block: `$GITEA_API`, `$GITEA_OWNER_REPO`, and `$GITEA_TOKEN` are
+available. The snippets below assume it has already run. For the issue API,
+assignees, milestones and API failure modes, see the
+[`gitea-issues` skill](../gitea-issues/SKILL.md). For the status label
+vocabulary and curl recipes, see the
+[`issue-labels` skill](../issue-labels/SKILL.md). The Python tooling reads
+`.env` and `origin` itself; this block is only for the curl examples below.
 
 Sanity check (never prints the token):
 
 ```bash
 curl -s -H "Authorization: token $GITEA_TOKEN" "$GITEA_API/user" | jq '.login // .message'
+```
+
+## Diagnostics — check the toolchain, skills, token and server
+
+Run this from the repository root before starting the watcher or debugging
+silence. It prints `PASS` / `WARN` / `FAIL` for each requirement and ends with
+next steps. It never prints the token. Run the Setup block above first.
+
+```bash
+echo "== gitea-bots diagnostics =="
+
+SKILLS_DIR=".agents/skills"
+if [ ! -f "$SKILLS_DIR/gitea-bots/SKILL.md" ]; then
+  SKILLS_DIR="skills"
+fi
+BOTS_DIR="$SKILLS_DIR/gitea-bots/scripts"
+
+# 1. Toolchain
+if command -v git >/dev/null 2>&1; then
+  echo "PASS  git: $(command -v git)"
+else
+  echo "FAIL  git is missing — the skills derive the repo from the origin remote"
+fi
+
+if python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
+  echo "PASS  Python $(python3 -c 'import platform; print(platform.python_version())') (needs 3.10+)"
+else
+  echo "FAIL  Python 3.10+ is required — install it and re-run"
+fi
+
+if python3 -c 'import requests' 2>/dev/null; then
+  echo "PASS  requests installed (the only non-stdlib dependency)"
+else
+  echo "FAIL  requests is missing — run: python3 -m pip install requests"
+fi
+
+if command -v curl >/dev/null 2>&1; then
+  echo "PASS  curl: $(command -v curl)"
+else
+  echo "WARN  curl missing — the Python tooling still works; curl examples will not"
+fi
+if command -v jq >/dev/null 2>&1; then
+  echo "PASS  jq: $(command -v jq)"
+else
+  echo "WARN  jq missing — drop the '| jq' pipes in the curl examples"
+fi
+if command -v opencode >/dev/null 2>&1; then
+  echo "PASS  opencode: $(command -v opencode)"
+else
+  echo "WARN  opencode missing — events still queue in pending.md, but no notification"
+fi
+
+# 2. Skill layout (gitea-issues and issue-labels are independent helpers)
+for skill in gitea-bots gitea-issues issue-labels; do
+  if [ -f "$SKILLS_DIR/$skill/SKILL.md" ]; then
+    echo "PASS  skill found: $SKILLS_DIR/$skill/SKILL.md"
+  else
+    echo "WARN  skill missing: $SKILLS_DIR/$skill/SKILL.md (install it or run from the qoder-skills checkout)"
+  fi
+done
+
+for script in watch-issues.py set-status.py sync-tasks.py; do
+  if [ -f "$BOTS_DIR/$script" ]; then
+    echo "PASS  script found: $BOTS_DIR/$script"
+  else
+    echo "FAIL  script missing: $BOTS_DIR/$script"
+  fi
+done
+
+if [ -d "$BOTS_DIR/issue_labels" ]; then
+  echo "PASS  vendored issue_labels package found"
+else
+  echo "FAIL  vendored issue_labels package missing — reinstall the gitea-bots skill"
+fi
+
+# 3. Remote and token
+echo "INFO  origin: $(git remote get-url origin 2>/dev/null || echo '(no origin remote)')"
+echo "INFO  API=$GITEA_API  REPO=$GITEA_OWNER_REPO"
+if [ -n "${GITEA_OWNER_REPO:-}" ]; then
+  echo "PASS  owner/repo derived: $GITEA_OWNER_REPO"
+else
+  echo "FAIL  could not derive owner/repo from origin"
+fi
+if [ -f .env ]; then
+  echo "PASS  .env found at $PWD/.env"
+else
+  echo "FAIL  no .env at $PWD — create it with GITEA_TOKEN=..."
+fi
+if [ -n "${GITEA_TOKEN:-}" ]; then
+  echo "PASS  GITEA_TOKEN set (${#GITEA_TOKEN} characters; value hidden)"
+else
+  echo "FAIL  GITEA_TOKEN is empty — add GITEA_TOKEN=<token> to .env"
+fi
+
+# 4. Server access
+HTTP=$(curl -s -o /dev/null -w '%{http_code}' \
+  -H "Authorization: token $GITEA_TOKEN" \
+  "$GITEA_API/repos/$GITEA_OWNER_REPO")
+case "$HTTP" in
+  200) echo "PASS  Gitea repo access: HTTP 200" ;;
+  401) echo "FAIL  HTTP 401 — token rejected; use the literal word 'token', not 'Bearer'" ;;
+  403) echo "FAIL  HTTP 403 — token lacks repository access or the needed scope" ;;
+  404) echo "FAIL  HTTP 404 — wrong host or owner/repo; check the origin remote" ;;
+  000) echo "FAIL  no response — DNS, TLS or network problem reaching $GITEA_HOST" ;;
+  *)   echo "FAIL  Gitea repo access: HTTP $HTTP" ;;
+esac
+curl -s -H "Authorization: token $GITEA_TOKEN" \
+  "$GITEA_API/repos/$GITEA_OWNER_REPO" \
+  | jq -r 'if .full_name then "PASS  repository: \(.full_name)" else "FAIL  repository: \(.message // "unexpected response")" end' 2>/dev/null
+curl -s -H "Authorization: token $GITEA_TOKEN" "$GITEA_API/user" \
+  | jq -r 'if .login then "PASS  token user: \(.login)" else "WARN  token user: \(.message // "unavailable") (read:user scope missing is not fatal)" end' 2>/dev/null
+
+# 5. Local watcher state (optional; WARN means it has not run here yet)
+echo "INFO  watcher state: ./tmp/gitea-bots/"
+if [ -f "$BOTS_DIR/watch-issues.py" ]; then
+  python3 "$BOTS_DIR/watch-issues.py" status 2>&1 | sed 's/^/      /'
+fi
+if [ -f ./tmp/gitea-bots/watcher.log ]; then
+  echo "INFO  last watcher log lines:"
+  tail -n 5 ./tmp/gitea-bots/watcher.log | sed 's/^/      /'
+else
+  echo "WARN  no watcher.log yet — start the watcher when you want background polling"
+fi
+
+echo
+echo "Next steps for a FAIL:"
+echo "  missing Python 3.10+ / requests -> install them, then re-run this block"
+echo "  missing skill or script          -> install the skill under $SKILLS_DIR/"
+echo "  HTTP 401                         -> Authorization: token \$GITEA_TOKEN (never Bearer)"
+echo "  HTTP 403 / 404                   -> check the token scope, origin remote and owner/repo casing"
+echo "  no watcher yet                   -> optional; see 'Watcher' below to start it"
 ```
 
 ## Watcher — `scripts/watch-issues.py`
@@ -646,11 +783,12 @@ unless it actually asks for it, and it never authorizes closing the issue.
 
 ## Status labels
 
-The label vocabulary, emoji display names, colours, aliases, migration and the
-`set-status` mechanics live in the shared **issue-labels** skill
-([`../../issue-labels/SKILL.md`](../../issue-labels/SKILL.md)): `👀 seeing`,
-`💬 responded`, `🔨 working`, `❓ question`, `✅ committed`. This skill only
-decides which moment sets which label:
+The label vocabulary, emoji display names, colours, aliases, migration, manual
+curl recipes and the `set-status` mechanics are documented in the **issue-labels**
+skill ([`../issue-labels/SKILL.md`](../issue-labels/SKILL.md)): `👀 seeing`,
+`💬 responded`, `🔨 working`, `❓ question`, `✅ committed`. The watcher imports
+the same labels from the vendored `scripts/issue_labels/` package. This skill
+only decides which moment sets which label:
 
 | Moment | Labels |
 | --- | --- |
@@ -677,7 +815,7 @@ shown. After merging loop code, restart the watcher (`stop` then `start`) so the
 notifier write itself becomes active, then verify one dispatch shows `seeing`;
 #152 makes a stale loop visible through the per-poll fingerprint `WARN`.
 
-`scripts/set-status.py` is a thin wrapper over the shared CLI with the
+`scripts/set-status.py` is a thin wrapper over the vendored CLI with the
 workflow's marker-aware `--reconcile` injected: a stage-3 marker →
 `responded` + `committed`, a stage-2 marker (or a directed-reply answer) →
 `responded`, an unmarked body plan → `responded` plus a `NOTE`, a
@@ -686,11 +824,12 @@ label (the projection never invents it). The watcher applies the derived set on
 startup (`GITEA_BOTS_START_RECONCILE=0` disables it). It never changes markers,
 comments, assignment, or issue state.
 
-For a hand-tracked issue (no issue bookkeeping), use the shared CLI directly:
+For a hand-tracked issue (no issue bookkeeping), use the gitea-bots wrapper
+directly, or follow the curl recipes in the `issue-labels` skill:
 
 ```bash
-python3 .agents/skills/issue-labels/scripts/set-status.py 42 responded
-python3 .agents/skills/issue-labels/scripts/set-status.py --reconcile 42
+python3 .agents/skills/gitea-bots/scripts/set-status.py 42 responded
+python3 .agents/skills/gitea-bots/scripts/set-status.py --reconcile 42
 ```
 
 ## How work state is determined

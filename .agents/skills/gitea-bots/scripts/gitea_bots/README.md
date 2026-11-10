@@ -156,20 +156,22 @@ change does; a meta without a fingerprint reports `stale-check: unavailable`.
 ## Status labels (#133)
 
 The vocabulary, emoji display names, colours, aliases, migration and the label
-manager now live in the shared **issue-labels** skill
-(`.agents/skills/issue-labels/`): `👀 seeing`, `💬 responded`, `🔨 working`,
-`❓ question`, `✅ committed`.
+manager are documented in the **issue-labels** skill and vendored here as
+`scripts/issue_labels/`: `👀 seeing`, `💬 responded`, `🔨 working`,
+`❓ question`, `✅ committed`. The label skill is curl-only, so this package is
+what the watcher actually imports.
 
-- `gitea_bots/__init__.py` bootstraps that skill's `scripts/` directory onto
-  `sys.path` (sibling path; `ISSUE_LABELS_SCRIPTS` overrides it).
+- `gitea_bots/__init__.py` puts the sibling `scripts/` directory on `sys.path`
+  so the vendored package resolves with no install step
+  (`ISSUE_LABELS_SCRIPTS` overrides it for an out-of-tree checkout).
 - `rules.py`, `client.py`, `errors.py` and `config.py` re-export the moved
   names, so `watcher.py`, `models.py` and the tests keep their imports.
 - `status.py` is a thin `StatusManager` subclass that injects the workflow's
   marker-aware derive; the shared manager owns apply/reconcile/migrate.
-- `scripts/set-status.py` forwards to the shared CLI with that derive, so all
+- `scripts/set-status.py` forwards to the vendored CLI with that derive, so all
   documented `set-status` commands keep working (marker-aware `--reconcile`).
-  The standalone skill's CLI is body-only; use this wrapper inside the
-  workflow.
+  Manual label work through the `issue-labels` skill uses plain `curl`; this
+  wrapper is the workflow-aware path.
 
 The workflow-specific label mapping stays documented in `SKILL.md`.
 `derive_status()` there still takes `(body, comments, labels)`; the shared

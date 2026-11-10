@@ -38,7 +38,7 @@ STAGE2_MARKER = "<!-- gitea-bots: stage=2 -->"
 STAGE3_MARKER = "<!-- gitea-bots: stage=3 -->"
 
 # The canonical status vocabulary, body helpers and generic projection are
-# re-exported above from the shared issue-labels skill so existing call sites
+# re-exported above from the vendored issue_labels package so existing call sites
 # (watcher, models, tests) keep importing them from `gitea_bots.rules`.
 
 # --- Event tags -----------------------------------------------------------
