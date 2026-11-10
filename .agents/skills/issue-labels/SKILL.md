@@ -251,6 +251,12 @@ set_status() {
   want_ids=$(jq -c --argjson names "$want_names" \
     '[.[] | select(.name as $n | $names | index($n)) | .id]' <<<"$repo_labels")
 
+  if [ "$(jq 'length' <<<"$want_ids")" -ne "${#wanted[@]}" ]; then
+    echo "one or more status labels do not exist in this repo;" >&2
+    echo "run the 'Create the missing canonical labels' block first." >&2
+    return 3
+  fi
+
   payload=$(jq -n --argjson keep "$keep_json" --argjson want "$want_ids" \
     '{labels: ($keep + $want)}')
 
@@ -268,7 +274,8 @@ keeps only unrelated labels).
 
 ### Worked example — pick up issue 42 and mark it `seeing`
 
-OpenCode is asked to work on issue 42. Before investigating, mark the pickup:
+Run "Create the missing canonical labels" once in this repo first. Then, when
+OpenCode is asked to work on issue 42, mark the pickup before investigating:
 
 ```bash
 set_status 42 seeing
