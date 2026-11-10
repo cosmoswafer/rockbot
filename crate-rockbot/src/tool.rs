@@ -50,12 +50,30 @@ impl ToolResult {
     }
 }
 
+/// Default budget for the arguments one tool call may carry from the model.
+/// Larger payloads must go through a chunked or file-backed route.
+pub const DEFAULT_MAX_TOOL_ARG_BYTES: usize = 8 * 1024;
+
+/// Budget for the designated large-content tools (`webdav`, `webdav_edit`):
+/// whole-file writes and patch blocks legitimately exceed the default.
+pub const LARGE_CONTENT_MAX_ARG_BYTES: usize = 64 * 1024;
+
+/// Budget for `save_knowledge`, whose markdown body can be several KiB.
+pub const KNOWLEDGE_MAX_ARG_BYTES: usize = 32 * 1024;
+
 #[async_trait]
 pub trait Tool: Send + Sync {
     fn name(&self) -> &str;
     fn description(&self) -> &str;
     fn parameters(&self) -> serde_json::Value;
     async fn execute(&self, arguments: &str) -> Result<String>;
+
+    /// Budget for the arguments this tool accepts from the model. The harness
+    /// rejects larger arguments before execution: a call this big is usually a
+    /// serialization truncated by the output budget (issue #110).
+    fn max_arg_bytes(&self) -> usize {
+        DEFAULT_MAX_TOOL_ARG_BYTES
+    }
 
     fn to_def(&self) -> ToolDef {
         ToolDef::new(self.name(), self.description(), self.parameters())
@@ -156,6 +174,48 @@ mod tests {
         async fn execute(&self, _arguments: &str) -> Result<String> {
             Ok(self.result.clone())
         }
+    }
+
+    #[test]
+    fn test_tool_default_arg_budget() {
+        let tool = MockTool {
+            name: "test_tool".into(),
+            desc: "A test tool".into(),
+            params: serde_json::json!({}),
+            result: "ok".into(),
+        };
+        assert_eq!(tool.max_arg_bytes(), DEFAULT_MAX_TOOL_ARG_BYTES);
+        assert_eq!(DEFAULT_MAX_TOOL_ARG_BYTES, 8 * 1024);
+    }
+
+    struct LargeArgMockTool;
+
+    #[async_trait]
+    impl Tool for LargeArgMockTool {
+        fn name(&self) -> &str {
+            "large"
+        }
+
+        fn description(&self) -> &str {
+            "Accepts large payloads"
+        }
+
+        fn parameters(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object", "required": []})
+        }
+
+        fn max_arg_bytes(&self) -> usize {
+            LARGE_CONTENT_MAX_ARG_BYTES
+        }
+
+        async fn execute(&self, _arguments: &str) -> Result<String> {
+            Ok("ok".into())
+        }
+    }
+
+    #[test]
+    fn test_tool_can_override_arg_budget() {
+        assert_eq!(LargeArgMockTool.max_arg_bytes(), 64 * 1024);
     }
 
     #[test]

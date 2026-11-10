@@ -369,24 +369,71 @@ impl AgentHarness {
                     let empty = text_len == 0;
                     let retryable = result.finish.is_truncated()
                         || (empty && !result.finish.is_failure());
-                    if result.tool_calls.is_empty()
-                        && retryable
+                    // Issue #110: a truncated completion *with* tool calls is
+                    // just as unsafe as an empty one — the arguments may be
+                    // half-written. Retry it exactly like the #117 path, and
+                    // never execute a still-truncated call.
+                    let truncated_tool_call =
+                        !result.tool_calls.is_empty() && result.finish.is_truncated();
+                    let empty_text = result.tool_calls.is_empty() && retryable;
+                    if (truncated_tool_call || empty_text)
                         && !is_retry
                         && self.config.active_model().retry_on_truncation
                     {
                         warn!(
                             "Truncated/empty completion for room {} (finish={:?}, text_len={}, \
-                             completion_tokens={:?}, reasoning_tokens={:?}, iteration={}); \
-                             retrying once with max_tokens={:?}",
+                             tool_calls={}, completion_tokens={:?}, reasoning_tokens={:?}, \
+                             iteration={}); retrying once with max_tokens={:?}",
                             room_id,
                             result.finish,
                             text_len,
+                            result.tool_calls.len(),
                             result.usage.as_ref().map(|u| u.completion_tokens),
                             result.usage.as_ref().and_then(|u| u.reasoning_tokens),
                             iterations,
                             self.output_token_budget(true),
                         );
                         retry_pending = true;
+                        continue;
+                    }
+
+                    // Still truncated after the retry (or retrying disabled):
+                    // acknowledge the assistant turn but execute nothing. A
+                    // partial write / stray reset from repaired arguments is
+                    // worse than asking the model to retry with smaller calls.
+                    if truncated_tool_call {
+                        warn!(
+                            "Truncated tool-call completion for room {} accepted without \
+                             execution (finish={:?}, tool_calls={}, completion_tokens={:?}, \
+                             reasoning_tokens={:?}); reporting an error tool result per call",
+                            room_id,
+                            result.finish,
+                            result.tool_calls.len(),
+                            result.usage.as_ref().map(|u| u.completion_tokens),
+                            result.usage.as_ref().and_then(|u| u.reasoning_tokens),
+                        );
+                        let assistant_msg = ChatMessage::assistant_with_tool_calls(
+                            "",
+                            result.tool_calls.clone(),
+                            result.reasoning_content.clone(),
+                        );
+                        self.append_to_history(room_id, assistant_msg);
+                        for tool_call in &result.tool_calls {
+                            let msg = format!(
+                                "Tool not executed: `{}` completion was truncated \
+                                 (finish_reason=length) by the output budget, so its \
+                                 arguments may be incomplete. Nothing was executed. Split \
+                                 the work into smaller tool calls.",
+                                tool_call.function.name,
+                            );
+                            self.append_to_history(
+                                room_id,
+                                ChatMessage::tool(&tool_call.id, &msg),
+                            );
+                        }
+                        messages = self
+                            .rebuild_messages(room_id, &system_prompt)
+                            .await;
                         continue;
                     }
 
@@ -403,18 +450,6 @@ impl AgentHarness {
                     }
 
                     if !result.tool_calls.is_empty() {
-                        if result.finish.is_truncated() {
-                            warn!(
-                                "Truncated tool-call completion for room {} (finish={:?}, \
-                                 tool_calls={}, completion_tokens={:?}, reasoning_tokens={:?}); \
-                                 tool arguments may be clamped",
-                                room_id,
-                                result.finish,
-                                result.tool_calls.len(),
-                                result.usage.as_ref().map(|u| u.completion_tokens),
-                                result.usage.as_ref().and_then(|u| u.reasoning_tokens),
-                            );
-                        }
                         let assistant_msg = ChatMessage::assistant_with_tool_calls(
                             "",
                             result.tool_calls.clone(),
@@ -426,6 +461,34 @@ impl AgentHarness {
                         let mut altered_knowledge = false;
 
                         for tool_call in &result.tool_calls {
+                            // Pre-flight on the raw model-written arguments,
+                            // before room-context / image-URL injection: an
+                            // oversized or incomplete document is usually a
+                            // serialization truncated by the output budget
+                            // (issue #110). Never execute one.
+                            let preflight_error = self
+                                .tools
+                                .get(&tool_call.function.name)
+                                .and_then(|tool| {
+                                    preflight_tool_arguments(
+                                        tool,
+                                        &tool_call.function.arguments,
+                                    )
+                                });
+                            if let Some(msg) = preflight_error {
+                                warn!(
+                                    "Tool {} not executed: arguments failed pre-flight \
+                                     ({} bytes)",
+                                    tool_call.function.name,
+                                    tool_call.function.arguments.len(),
+                                );
+                                self.append_to_history(
+                                    room_id,
+                                    ChatMessage::tool(&tool_call.id, &msg),
+                                );
+                                continue;
+                            }
+
                             debug!(
                                 "Executing tool {} (call_id: {})",
                                 tool_call.function.name, tool_call.id
@@ -881,6 +944,26 @@ impl AgentHarness {
         };
         let ceiling = (model.model_context_length / 4 * 3).max(1024);
         requested.map(|tokens| tokens.clamp(1, ceiling))
+    }
+
+    /// Rebuild the request context after a tool round: fresh history view,
+    /// inline trim and orphaned-tool-call stripping.
+    async fn rebuild_messages(
+        &mut self,
+        room_id: &str,
+        system_prompt: &str,
+    ) -> Vec<ChatMessage> {
+        let mut messages = self
+            .memory
+            .build_context(room_id, system_prompt, None, None);
+        let max_ctx = *self.config.active_model().max_context_bytes as u64;
+        let before_trim = messages.len();
+        messages = self.trim_context(room_id, messages, max_ctx).await;
+        if messages.len() < before_trim {
+            self.memory.set_byte_pressure(room_id);
+        }
+        strip_orphaned_tool_calls(&mut messages);
+        messages
     }
 
     /// User-facing reply for a completion that cannot be used (truncated after
@@ -1858,6 +1941,82 @@ async fn load_secrets_from_webdav(webdav: Option<&WebDavClient>, room_dir: &str)
             None
         }
     }
+}
+
+/// Largest top-level field of a tool-call argument object, as
+/// `(name, serialized byte length)`.
+fn largest_arg_field(value: &serde_json::Value) -> Option<(String, usize)> {
+    value
+        .as_object()?
+        .iter()
+        .map(|(name, field)| {
+            let len = serde_json::to_string(field)
+                .map(|serialized| serialized.len())
+                .unwrap_or(0);
+            (name.clone(), len)
+        })
+        .max_by_key(|(_, len)| *len)
+}
+
+/// Pre-flight the raw arguments a model wrote for one tool call.
+///
+/// Returns an actionable error message (the call must not execute) when the
+/// document is over the tool's budget, is not a JSON object, or misses a
+/// required field. Those are the observable shapes of a tool-call argument
+/// serialization truncated by the output budget (issue #110).
+fn preflight_tool_arguments(tool: &dyn crate::tool::Tool, arguments: &str) -> Option<String> {
+    let raw_len = arguments.len();
+    let limit = tool.max_arg_bytes();
+    let parsed = serde_json::from_str::<serde_json::Value>(arguments);
+    let parsed_obj = parsed.as_ref().ok().and_then(|value| value.as_object());
+    let largest = parsed.as_ref().ok().and_then(largest_arg_field);
+
+    let mut problems: Vec<String> = Vec::new();
+    if raw_len > limit {
+        problems.push(format!(
+            "arguments are {raw_len} bytes, over the {limit} byte limit"
+        ));
+    }
+    match parsed.as_ref() {
+        Ok(serde_json::Value::Object(_)) => {}
+        Ok(_) => problems.push("arguments are not a JSON object".to_string()),
+        Err(e) => problems.push(format!("arguments are not valid JSON ({e})")),
+    }
+    if let Some(obj) = parsed_obj {
+        let required = tool
+            .parameters()
+            .get("required")
+            .and_then(|value| value.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let missing: Vec<String> = required
+            .iter()
+            .filter_map(|field| field.as_str())
+            .filter(|field| !obj.contains_key(*field))
+            .map(|field| format!("`{field}`"))
+            .collect();
+        if !missing.is_empty() {
+            problems.push(format!("missing required field(s) {}", missing.join(", ")));
+        }
+    }
+    if problems.is_empty() {
+        return None;
+    }
+
+    let mut message = format!(
+        "Tool not executed: `{}` {}",
+        tool.name(),
+        problems.join("; ")
+    );
+    if let Some((field, len)) = largest {
+        message.push_str(&format!(". Largest field `{field}` is {len} bytes"));
+    }
+    message.push_str(
+        ". Your tool call was probably truncated by the output budget. \
+         Split the payload into smaller calls, or write it to WebDAV with the \
+         `webdav` tool and pass `file_from_webdav` (or chunk it with `webdav_edit`).",
+    );
+    Some(message)
 }
 
 fn compute_webdav_dir(room_name: &str, room_fname: &str, is_dm: bool) -> String {
@@ -3518,5 +3677,325 @@ You can now see the image."#;
 
         assert_eq!(result, Some("Normal reply".to_string()));
         assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), 1, "LLM must be called for normal messages");
+    }
+
+    // ─── Issue #110: tool-argument budget & truncated tool calls ──────────
+
+    struct ArgBudgetTool {
+        params: serde_json::Value,
+        limit: usize,
+        executions: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl ArgBudgetTool {
+        fn new(params: serde_json::Value, limit: usize) -> Self {
+            Self {
+                params,
+                limit,
+                executions: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            }
+        }
+
+        fn executions_handle(&self) -> std::sync::Arc<std::sync::atomic::AtomicUsize> {
+            self.executions.clone()
+        }
+    }
+
+    #[async_trait]
+    impl Tool for ArgBudgetTool {
+        fn name(&self) -> &str {
+            "web_fetch"
+        }
+
+        fn description(&self) -> &str {
+            "test tool"
+        }
+
+        fn parameters(&self) -> serde_json::Value {
+            self.params.clone()
+        }
+
+        fn max_arg_bytes(&self) -> usize {
+            self.limit
+        }
+
+        async fn execute(&self, _arguments: &str) -> Result<String> {
+            self.executions
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok("executed".into())
+        }
+    }
+
+    fn web_fetch_params() -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "url": {"type": "string"},
+                "body_json": {"type": "object"}
+            },
+            "required": ["url"]
+        })
+    }
+
+    #[test]
+    fn test_preflight_rejects_oversized_argument_and_names_field() {
+        let tool = ArgBudgetTool::new(web_fetch_params(), crate::tool::DEFAULT_MAX_TOOL_ARG_BYTES);
+        let args = serde_json::json!({
+            "url": "https://example.com",
+            "body_json": {"body": "x".repeat(15_000)}
+        })
+        .to_string();
+
+        let message = preflight_tool_arguments(&tool, &args).expect("oversized args must fail");
+        assert!(message.contains("`web_fetch`"), "{message}");
+        assert!(message.contains("over the 8192 byte limit"), "{message}");
+        assert!(message.contains("`body_json`"), "{message}");
+        assert!(message.contains("file_from_webdav"), "{message}");
+    }
+
+    #[test]
+    fn test_preflight_rejects_missing_required_field() {
+        let tool = ArgBudgetTool::new(web_fetch_params(), crate::tool::DEFAULT_MAX_TOOL_ARG_BYTES);
+        let args = serde_json::json!({"body_json": {"body": "small"}}).to_string();
+
+        let message = preflight_tool_arguments(&tool, &args).expect("missing url must fail");
+        assert!(
+            message.contains("missing required field(s) `url`"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn test_preflight_accepts_valid_arguments() {
+        let tool = ArgBudgetTool::new(web_fetch_params(), crate::tool::DEFAULT_MAX_TOOL_ARG_BYTES);
+        let args = serde_json::json!({"url": "https://example.com"}).to_string();
+        assert!(preflight_tool_arguments(&tool, &args).is_none());
+    }
+
+    #[tokio::test]
+    async fn test_oversized_tool_argument_is_not_executed_and_reply_is_not_empty() {
+        let config = make_test_config();
+        let big_body = "x".repeat(15_000);
+        let oversized = serde_json::json!({
+            "url": "https://example.com",
+            "body_json": {"body": big_body}
+        })
+        .to_string();
+        let mock = MockProvider::new(vec![
+            CompletionResult {
+                text: None,
+                tool_calls: vec![ToolCall::new("call_big", "web_fetch", oversized)],
+                finish: FinishReason::ToolUse,
+                reasoning_content: None,
+                usage: None,
+            },
+            CompletionResult {
+                text: Some("✅ Done.".into()),
+                tool_calls: vec![],
+                finish: FinishReason::Stop,
+                reasoning_content: None,
+                usage: None,
+            },
+        ]);
+        let mut harness = AgentHarness::new(
+            config,
+            Box::new(mock),
+            None,
+            Arc::new(ImageCache::new()),
+            "@testbot",
+        );
+        let tool = ArgBudgetTool::new(web_fetch_params(), crate::tool::DEFAULT_MAX_TOOL_ARG_BYTES);
+        let executions = tool.executions_handle();
+        harness.register_tool(Box::new(tool));
+
+        let reply = harness
+            .process_message("room1", "general", "General", false, "user", "file issue", &[], &[])
+            .await
+            .unwrap()
+            .expect("turn must end with a reply");
+
+        assert_eq!(reply, "✅ Done.");
+        assert_eq!(
+            executions.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "oversized arguments must never reach the tool"
+        );
+        let room = harness.memory().get("room1").expect("room1 exists");
+        let tool_error = room
+            .history
+            .messages
+            .iter()
+            .find(|m| m.role == Role::Tool)
+            .expect("pre-flight error tool message");
+        let text = match &tool_error.content {
+            crate::types::MessageContent::Text(text) => text.clone(),
+            crate::types::MessageContent::Multipart(_) => String::new(),
+        };
+        assert!(text.contains("Tool not executed"), "{text}");
+        assert!(text.contains("file_from_webdav"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn test_truncated_tool_call_retries_then_refuses_execution() {
+        let config = make_test_config();
+        let truncated_call = || CompletionResult {
+            text: None,
+            tool_calls: vec![ToolCall::new(
+                "call_truncated",
+                "web_fetch",
+                r#"{"url":"https://example.com","body_json":{"body":"partial"#,
+            )],
+            finish: FinishReason::Length,
+            reasoning_content: None,
+            usage: None,
+        };
+        let mock = MockProvider::new(vec![
+            truncated_call(),
+            truncated_call(),
+            CompletionResult {
+                text: Some("Recovered after truncation.".into()),
+                tool_calls: vec![],
+                finish: FinishReason::Stop,
+                reasoning_content: None,
+                usage: None,
+            },
+        ]);
+        let requests = mock.requests_handle();
+        let mut harness = AgentHarness::new(
+            config,
+            Box::new(mock),
+            None,
+            Arc::new(ImageCache::new()),
+            "@testbot",
+        );
+        let tool = ArgBudgetTool::new(web_fetch_params(), crate::tool::DEFAULT_MAX_TOOL_ARG_BYTES);
+        let executions = tool.executions_handle();
+        harness.register_tool(Box::new(tool));
+
+        let reply = harness
+            .process_message("room1", "general", "General", false, "user", "file issue", &[], &[])
+            .await
+            .unwrap()
+            .expect("turn must end with a reply");
+
+        assert_eq!(reply, "Recovered after truncation.");
+        assert_eq!(
+            requests_snapshot(&requests).len(),
+            3,
+            "one initial attempt, one retry, one follow-up"
+        );
+        assert_eq!(
+            executions.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "a still-truncated tool call must never execute"
+        );
+        let room = harness.memory().get("room1").expect("room1 exists");
+        assert_eq!(
+            room.history
+                .messages
+                .iter()
+                .filter(|m| m.role == Role::Tool)
+                .count(),
+            1,
+            "the discarded retry must not persist a tool result"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_truncated_tool_call_without_retry_is_not_executed() {
+        let config_toml = r#"
+[rocketchat.server]
+url = "test.example.com"
+username = "bot"
+password = "secret"
+
+[model]
+default_provider = "mock"
+default_model = "chat"
+retry_on_truncation = false
+
+[[chat_providers]]
+name = "mock"
+api_key = "sk-mock"
+base_url = "https://mock.ai/v1"
+
+[chat_providers.models]
+chat = "mock-model"
+"#;
+        let config = AppConfig::from_toml(config_toml).unwrap();
+        let mock = MockProvider::new(vec![
+            CompletionResult {
+                text: None,
+                tool_calls: vec![ToolCall::new(
+                    "call_truncated",
+                    "web_fetch",
+                    r#"{"url":"https://example.com""#,
+                )],
+                finish: FinishReason::Length,
+                reasoning_content: None,
+                usage: None,
+            },
+            CompletionResult {
+                text: Some("Done without executing.".into()),
+                tool_calls: vec![],
+                finish: FinishReason::Stop,
+                reasoning_content: None,
+                usage: None,
+            },
+        ]);
+        let requests = mock.requests_handle();
+        let mut harness = AgentHarness::new(
+            config,
+            Box::new(mock),
+            None,
+            Arc::new(ImageCache::new()),
+            "@testbot",
+        );
+        let tool = ArgBudgetTool::new(web_fetch_params(), crate::tool::DEFAULT_MAX_TOOL_ARG_BYTES);
+        let executions = tool.executions_handle();
+        harness.register_tool(Box::new(tool));
+
+        let reply = harness
+            .process_message("room1", "general", "General", false, "user", "file issue", &[], &[])
+            .await
+            .unwrap()
+            .expect("turn must end with a reply");
+
+        assert_eq!(reply, "Done without executing.");
+        assert_eq!(requests_snapshot(&requests).len(), 2);
+        assert_eq!(
+            executions.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "retry disabled must still refuse to execute a truncated call"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_whitespace_only_completion_returns_non_empty_failure_reply() {
+        let config = make_test_config();
+        let whitespace = || CompletionResult {
+            text: Some("   \n\t ".into()),
+            tool_calls: vec![],
+            finish: FinishReason::Stop,
+            reasoning_content: None,
+            usage: None,
+        };
+        let mock = MockProvider::new(vec![whitespace(), whitespace()]);
+        let mut harness = AgentHarness::new(
+            config,
+            Box::new(mock),
+            None,
+            Arc::new(ImageCache::new()),
+            "@testbot",
+        );
+
+        let reply = harness
+            .process_message("room1", "general", "General", false, "user", "hi", &[], &[])
+            .await
+            .unwrap()
+            .expect("turn must end with a reply");
+
+        assert!(!reply.trim().is_empty());
+        assert!(reply.contains("incomplete response"), "{reply}");
     }
 }

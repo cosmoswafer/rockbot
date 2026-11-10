@@ -17,7 +17,7 @@ use tracing::debug;
 use webdav::{FileStat, LineIndex, LineOp, LineWindow, WebDavClient, WebDavConfig, WebDavPath};
 
 use crate::error::{Result, RockBotError};
-use crate::tool::Tool;
+use crate::tool::{LARGE_CONTENT_MAX_ARG_BYTES, Tool};
 use crate::validated::NonEmptyString;
 
 /// Limits mirrored from `[webdav]` in the config.
@@ -731,6 +731,10 @@ impl Tool for WebDavEditTool {
         "webdav_edit"
     }
 
+    fn max_arg_bytes(&self) -> usize {
+        LARGE_CONTENT_MAX_ARG_BYTES
+    }
+
     fn description(&self) -> &str {
         "Read and edit large UTF-8 text files (SVG, XML, JSON, code, logs) on the room's \
          WebDAV storage without loading them whole. Use 'stat' for size/etag, 'read' with \
@@ -1136,6 +1140,14 @@ fn apply_hunks(content: &str, hunks: &[Hunk]) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn webdav_edit_uses_large_content_arg_budget() {
+        let client = webdav::WebDavClient::new("https://example.com", "user", "pass").unwrap();
+        let tool = WebDavEditTool::new(client, WebDavEditLimits::default());
+        assert_eq!(tool.name(), "webdav_edit");
+        assert_eq!(tool.max_arg_bytes(), LARGE_CONTENT_MAX_ARG_BYTES);
+    }
 
     #[test]
     fn text_extension_covers_svg() {

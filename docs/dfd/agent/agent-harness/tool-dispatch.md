@@ -5,10 +5,17 @@
 Room context (`room_id` UUID + `webdav_dir` path key) is injected into
 stateful tools that need it (tools backed by WebDAV or room-scoped storage).
 Stateless tools (web search, fetch, vision, etc.) receive raw arguments
-without room context. The `ToolRegistry` maps tool names to implementations;
-calls are dispatched generically via `execute_by_name()`.
+without room context. Every call is first **pre-flighted** on the raw
+model-written arguments: `Tool::max_arg_bytes()` (8 KiB default; `webdav` /
+`webdav_edit` 64 KiB, `save_knowledge` 32 KiB) and the schema's `required`
+fields. An oversized or incomplete document is almost always a serialization
+truncated by the output budget (issue #110), so it is answered with an
+actionable error `ToolResult` and never executed. The `ToolRegistry` maps tool
+names to implementations; accepted calls are dispatched generically via
+`execute_by_name()`.
 
 **References:**
+- [Error Handling & Fallbacks](./level-2/error-handling.md) — pre-flight rejection, truncated tool-call completions
 - [Memory Reset — post-reply decision](../../memory/memory-reset/post-reply-decision.md) — `reset_memory` interception and the explicit-reset flag
 - [Secret Interception](../../interception/secret-interception/deep-traversal.md) — `secret:<key>` reference resolution for `web_fetch`
 - [Per-Room State Routing](./per-room-routing.md) — where `room_id` + `webdav_dir` come from
@@ -19,6 +26,8 @@ calls are dispatched generically via `execute_by_name()`.
 ```mermaid
 flowchart TD
     CALL[ToolCall]
+    PREFLIGHT{Over arg budget<br/>or required field missing?}
+    REJECT["Append actionable<br/>error ToolResult"]
     INJECT{Stateful?}
     ROOM_CTX[(RoomState<br/>room_id + webdav_dir)]
     REG[(ToolRegistry)]
@@ -30,7 +39,9 @@ flowchart TD
     EXEC(ExecuteToolByName)
     RESULT[ToolResult]
 
-    CALL -->|"tool name + args"| INJECT
+    CALL -->|"tool name + raw args"| PREFLIGHT
+    PREFLIGHT -->|"yes: no execution"| REJECT
+    PREFLIGHT -->|"no"| INJECT
     ROOM_CTX -->|"room_id + webdav_dir"| INJECT
     INJECT -->|"stateful: enriched args"| RESET
     INJECT -->|"stateless: raw args"| RESET
@@ -43,7 +54,9 @@ flowchart TD
     REG -->|"tool implementations"| EXEC
     SET_FLAG -->|"lightweight result"| RESULT
     EXEC -->|"formatted result"| RESULT
+    REJECT -->|"error result"| RESULT
 ```
+
 
 **Exception**: `reset_memory` is intercepted before `execute_by_name()`.
 Instead of running reset synchronously (which would clear history

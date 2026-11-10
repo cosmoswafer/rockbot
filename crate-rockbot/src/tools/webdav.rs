@@ -5,7 +5,7 @@ use tracing::{debug, warn};
 use webdav::{WebDavClient, WebDavPath};
 
 use crate::error::{Result, RockBotError};
-use crate::tool::Tool;
+use crate::tool::{LARGE_CONTENT_MAX_ARG_BYTES, Tool};
 use crate::validated::NonEmptyString;
 
 #[derive(Debug, Deserialize)]
@@ -281,6 +281,10 @@ impl Tool for WebDavTool {
         "webdav"
     }
 
+    fn max_arg_bytes(&self) -> usize {
+        LARGE_CONTENT_MAX_ARG_BYTES
+    }
+
     fn description(&self) -> &str {
         "Manage files on remote WebDAV storage (NextCloud). \
          Each room has its own file space — paths are automatically scoped. \
@@ -409,6 +413,7 @@ mod tests {
         let client = webdav::WebDavClient::new("https://example.com", "user", "pass").unwrap();
         let tool = WebDavTool::new(client);
         assert_eq!(tool.name(), "webdav");
+        assert_eq!(tool.max_arg_bytes(), LARGE_CONTENT_MAX_ARG_BYTES);
         assert!(tool.description().contains("WebDAV"));
 
         let params = tool.parameters();

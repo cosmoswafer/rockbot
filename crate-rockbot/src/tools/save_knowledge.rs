@@ -4,7 +4,7 @@ use webdav::WebDavClient;
 
 use crate::error::{Result, RockBotError};
 use crate::knowledge::{KnowledgeManager, SaveKnowledgeParams};
-use crate::tool::Tool;
+use crate::tool::{KNOWLEDGE_MAX_ARG_BYTES, Tool};
 
 pub struct SaveKnowledgeTool {
     webdav: WebDavClient,
@@ -26,6 +26,10 @@ fn split_tags(value: Option<&str>) -> Vec<String> {
 impl Tool for SaveKnowledgeTool {
     fn name(&self) -> &str {
         "save_knowledge"
+    }
+
+    fn max_arg_bytes(&self) -> usize {
+        KNOWLEDGE_MAX_ARG_BYTES
     }
 
     fn description(&self) -> &str {
@@ -102,6 +106,7 @@ mod tests {
         let webdav = webdav::WebDavClient::new("https://example.com", "user", "pass").unwrap();
         let tool = SaveKnowledgeTool::new(webdav);
         assert_eq!(tool.name(), "save_knowledge");
+        assert_eq!(tool.max_arg_bytes(), KNOWLEDGE_MAX_ARG_BYTES);
         assert!(tool.description().contains("Save a piece of knowledge"));
 
         let params = tool.parameters();

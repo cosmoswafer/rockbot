@@ -87,7 +87,15 @@ Stored in `Arc<Mutex<HashMap<String, GeneratedImage>>>` keyed by tool call_id.
 #### Registered Tools
 
 Tools are registered at startup via `ToolRegistry::register()`. Each tool
-implements the `Tool` trait (`name`, `description`, `parameters`, `execute`).
-The registry exposes `definitions()` for the LLM and dispatches calls via
-`execute_by_name()`. See individual tool DFDs under `tools/` for each tool's
-implementation.
+implements the `Tool` trait (`name`, `description`, `parameters`, `execute`,
+and `max_arg_bytes`). `max_arg_bytes()` defaults to
+`DEFAULT_MAX_TOOL_ARG_BYTES` (8 KiB); the designated large-content tools
+(`webdav`, `webdav_edit`) use `LARGE_CONTENT_MAX_ARG_BYTES` (64 KiB) and
+`save_knowledge` uses `KNOWLEDGE_MAX_ARG_BYTES` (32 KiB). The harness
+pre-flights every raw tool call against that budget and the schema's
+`required` list before dispatch, so a truncated serialization becomes an
+actionable error `ToolResult` instead of execution or a bare serde parse
+failure (issue #110). The registry exposes `definitions()` for the LLM and
+dispatches accepted calls via `execute_by_name()`. See individual tool DFDs
+under `tools/` for each tool's implementation.
+

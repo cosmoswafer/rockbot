@@ -1,6 +1,6 @@
 [package]
 name = "rockbot"
-version = "2.18.1"
+version = "2.19.0"
 edition = "2024"
 license = "MIT"
 rust-version = "1.96"
