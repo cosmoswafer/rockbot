@@ -128,11 +128,12 @@ if [[ "$REMOTE" == *://* ]]; then
 else
   BARE="${REMOTE#*@}"; HOSTPART="${BARE%%:*}"; GITEA_OWNER_REPO="${BARE#*:}"
 fi
-HOST="${HOSTPART%%:*}"
-GITEA_API="https://${HOST}/api/v1"
+GITEA_HOST="${HOSTPART%%:*}"
+GITEA_API="https://${GITEA_HOST}/api/v1"
 ```
 
-After this block: `$GITEA_API`, `$GITEA_OWNER_REPO`, and `$GITEA_TOKEN` are
+After this block: `$GITEA_API`, `$GITEA_HOST`, `$GITEA_OWNER_REPO`, and
+`$GITEA_TOKEN` are
 available. The snippets below assume it has already run. For the issue API,
 assignees, milestones and API failure modes, see the
 [`gitea-issues` skill](../gitea-issues/SKILL.md). For the status label
