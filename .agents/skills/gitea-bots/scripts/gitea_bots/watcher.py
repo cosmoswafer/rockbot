@@ -44,10 +44,29 @@ from .rules import (
     classify_comment,
     comments_have_stage2_marker,
     label_status,
+    strip_code_spans,
 )
 
 
 NOTIFICATION_MODEL_RE = re.compile(r"notification model: (\S+)")
+_ANY_HEADING_RE = re.compile(r"^#{1,6}[ \t]+\S.*$", re.MULTILINE)
+_SUMMARY_HEADING_RE = re.compile(r"^##[ \t]+Summary[ \t\r]*$", re.IGNORECASE)
+_CHECKBOX_RE = re.compile(r"^[ \t]*[-*+][ \t]+\[[ xX]\](?:[ \t]|$)", re.MULTILINE)
+
+
+def _summary_only(body: str) -> bool:
+    """True when the body has only a ``## Summary`` heading and no checklist.
+
+    A body carrying any other heading (``## Reproduction``, ``## Tasks``,
+    ``### Analysis``), a task checkbox, or fenced/indented examples that look
+    like sections is existing progress: the bot must not treat it as an
+    unprepared issue and must not auto-plan it.
+    """
+    text = strip_code_spans(body or "")
+    headings = _ANY_HEADING_RE.findall(text)
+    if len(headings) != 1 or not _SUMMARY_HEADING_RE.match(headings[0]):
+        return False
+    return not _CHECKBOX_RE.search(text)
 
 
 @dataclass
@@ -199,22 +218,28 @@ class Watcher:
         return bool(login) and issue.assigned_to(login)
 
     def _auto_plan_candidate(self, issue, auto_plan_at, comments) -> bool:
-        """Open Summary-only issue the bot is expected to plan, not yet planned.
+        """Open, unprepared, unplanned issue the bot is expected to plan.
 
-        Stage 3 is never inferred from this. Emitted at most once via
+        "Summary-only" is literal: any other ``##`` section, a ``## Tasks``
+        checklist, or an existing status label (``seeing`` / ``responded`` /
+        ``committed`` / …) means the issue already has progress, so it is not a
+        candidate. Stage 3 is never inferred from this. Emitted at most once via
         ``auto_plan_at`` in state.
         """
         if not self.config.auto_plan or auto_plan_at:
             return False
-        if issue.state != "open" or issue.has_tasks or not issue.has_summary:
+        if issue.state != "open" or issue.has_tasks or not _summary_only(issue.body):
             return False
         if not self._auto_plan_eligible(issue):
+            return False
+        if any(label_status(name) for name in issue.labels):
             return False
         return not comments_have_stage2_marker(comments)
 
     # ------------------------------------------------------------- process one
     def _process_issue(self, baseline, report_existing, issue, prev,
-                       window_start, window_epoch, catchup, reads=None):
+                       window_start, window_epoch, reads=None,
+                       suppress=False):
         """Return ``(snapshot, error)``; appends any events to ``self._events``."""
         num = issue.number
         if not isinstance(num, int):
@@ -251,10 +276,8 @@ class Watcher:
                 cid = int(comment.get("id") or 0)
                 created = comment.get("created_at") or ""
                 if had_prev and cid <= prev_last_id:
-                    # Already consumed; a state-schema upgrade re-surfaces
-                    # recent ones the old version could not deliver.
-                    if catchup and timestamp_in_window(created, window_start, window_epoch):
-                        new_comments.append(comment)
+                    # Already consumed. Only an explicit catch-up replay may
+                    # re-surface it; normal polls never go backwards.
                     continue
                 if not had_prev and not timestamp_in_window(created, window_start, window_epoch):
                     continue
@@ -289,14 +312,16 @@ class Watcher:
                         if login != self.config.self_login:
                             continue
                         if issue_planned:
-                            self._events.emit(
-                                f"REASSIGNED #{num} \"{issue.title}\" by "
-                                f"{issue.author} — {issue.html_url}", self.output)
+                            if not suppress:
+                                self._events.emit(
+                                    f"REASSIGNED #{num} \"{issue.title}\" by "
+                                    f"{issue.author} — {issue.html_url}", self.output)
                             reassign_emitted = True
                         elif not auto_plan_at and self._auto_plan_candidate(issue, "", comments):
-                            self._events.emit(
-                                f"AUTO PLAN #{num} \"{issue.title}\" by "
-                                f"{issue.author} — {issue.html_url}", self.output)
+                            if not suppress:
+                                self._events.emit(
+                                    f"AUTO PLAN #{num} \"{issue.title}\" by "
+                                    f"{issue.author} — {issue.html_url}", self.output)
                             auto_plan_at = now_utc()
                             auto_plan_emitted = True
                     # Publish-before-advance: the cursor moves only after the
@@ -312,7 +337,12 @@ class Watcher:
         # --- shape-based AUTO PLAN (#113/#115/#118) --------------------------
         if (not auto_plan_emitted and not reassign_emitted
                 and self._auto_plan_candidate(issue, auto_plan_at, comments)):
-            if not baseline or report_existing >= 1:
+            if suppress:
+                # The startup poll consumes old eligibility silently: no event,
+                # no worker, but remember it so later polls stay quiet.
+                auto_plan_at = now_utc()
+                auto_plan_emitted = True
+            elif not baseline or report_existing >= 1:
                 self._events.emit(
                     f"AUTO PLAN #{num} \"{issue.title}\" by {issue.author} — "
                     f"{issue.html_url}", self.output)
@@ -330,7 +360,9 @@ class Watcher:
         body_sha = body_mention_digest(body_paragraphs)
         body_mention_emitted = False
         if body_paragraphs and body_sha != prev_body_mention:
-            if baseline:
+            if suppress:
+                allowed = False
+            elif baseline:
                 # A fresh start reports existing issues, a silent baseline only
                 # records the digest for later polls.
                 allowed = report_existing >= 1
@@ -349,7 +381,9 @@ class Watcher:
                 body_mention_emitted = True
 
         # --- issue-level event ----------------------------------------------
-        if baseline:
+        if suppress:
+            pass
+        elif baseline:
             if report_existing >= 1 and not auto_plan_emitted:
                 self._events.emit(
                     f"NEW ISSUE #{num} [{issue.state}] \"{issue.title}\" by "
@@ -394,6 +428,8 @@ class Watcher:
 
         # --- comment-level events -------------------------------------------
         for comment in new_comments:
+            if suppress:
+                continue
             cid = int(comment.get("id") or 0)
             author = (comment.get("user") or {}).get("login") or "unknown"
             body = comment.get("body") or ""
@@ -428,11 +464,14 @@ class Watcher:
         return snapshot, False
 
     # ------------------------------------------------------------------ polling
-    def _poll_body(self, report_existing, notify_armed) -> PollResult:
+    def _poll_body(self, report_existing, notify_armed, startup=False) -> PollResult:
         self.inbox.ensure_dirs()
         state = self.state.load_or_init()
         baseline = self.state.is_baseline(state)
-        catchup = self.state.version(state) < EVENTS_VERSION
+        # A restart must never replay downtime. The first successful poll records
+        # the current state (snapshots, comment/assignee cursors) without
+        # emitting events; the explicit `catch-up.py` command is the opt-in.
+        suppress = startup and not baseline
         now = now_utc()
         baseline_state = "all" if report_existing >= 2 else "open"
         self._events = EventBuffer()
@@ -453,10 +492,6 @@ class Watcher:
             else:
                 last_poll = state.get("last_poll") or ""
                 since = shift_iso(last_poll, -120) or ""  # 120s overlap absorbs skew
-                if catchup:
-                    self.log.verbose(
-                        f"state schema is older than {EVENTS_VERSION} — catch-up "
-                        f"scan over the last {self.config.catchup_minutes}min")
                 if not since:
                     self.log.warn(
                         f"state last_poll is invalid ('{last_poll}') — re-baselining")
@@ -466,9 +501,6 @@ class Watcher:
                         "sort": "updated", "direction": "desc",
                     })
                 else:
-                    if catchup:
-                        since = (shift_iso(now, -(self.config.catchup_minutes * 60))
-                                 or "1970-01-01T00:00:00Z")
                     issues = self._fetch_issues({
                         "state": "all", "sort": "updated",
                         "direction": "asc", "since": since,
@@ -484,6 +516,11 @@ class Watcher:
 
         issues = [issue for issue in issues if not issue.is_pull_request()]
         scanned = len(issues)
+        if suppress:
+            self.log.log(
+                f"startup poll: recording {scanned} fetched issue(s) silently "
+                "(no replay; run 'catch-up.py replay' explicitly if needed)"
+            )
         updates = {}
         had_error = False
         issues_map = state.get("issues", {})
@@ -495,8 +532,8 @@ class Watcher:
             prev = issues_map.get(key) if key in issues_map else None
             snapshot, err = self._process_issue(
                 baseline, report_existing, issue, prev,
-                window_start, window_epoch, catchup,
-                reads.get(issue.number),
+                window_start, window_epoch,
+                reads.get(issue.number), suppress=suppress,
             )
             if err:
                 had_error = True
@@ -543,13 +580,13 @@ class Watcher:
         return PollResult(ok=True, scanned=scanned, event_count=event_count,
                           events_text=events_text, notify=pub["notify"])
 
-    def poll_once(self, report_existing, notify_armed):
+    def poll_once(self, report_existing, notify_armed, startup=False):
         if not self._poll_lock.acquire():
             self.log.warn(
                 f"another poll is already running (lock: {self._poll_lock.path})")
             return False, PollResult(ok=False)
         try:
-            result = self._poll_body(report_existing, notify_armed)
+            result = self._poll_body(report_existing, notify_armed, startup=startup)
         finally:
             self._poll_lock.release()
         # Notification is best-effort and post-lock: it must never hold or
@@ -734,8 +771,41 @@ class Watcher:
                 f"skipped: {skipped})"
             )
 
+    def catch_up(self, mode="scan", notify_armed=False, report_existing=0) -> int:
+        """Explicit, one-shot catch-up for the `catch-up.py` command.
+
+        ``replay`` re-runs one incremental poll over the stored ``last_poll``
+        window and publishes those events. ``scan`` runs the full open-set
+        AUTO PLAN scan. Both are opt-in and require the loop to be stopped:
+        a live watcher would interleave polls and notifications.
+        """
+        pid = ""
+        if self.config.pid_file.is_file():
+            pid = self.config.pid_file.read_text(encoding="utf-8").strip()
+        if self._pid_is_watcher(pid):
+            self.log.warn(
+                f"watcher is running (pid {pid}) — stop it before catch-up"
+            )
+            return 1
+        if mode == "replay":
+            ok, _ = self.poll_once(report_existing, notify_armed)
+            return 0 if ok else 1
+        if mode != "scan":
+            self.log.die(f"unknown catch-up mode: {mode} (use scan|replay)")
+        if not self._poll_lock.acquire():
+            self.log.warn(
+                f"another poll is already running (lock: {self._poll_lock.path}) "
+                "— stop the watcher before catch-up"
+            )
+            return 1
+        try:
+            self.catch_up_assigned("catch-up scan", notify_armed=notify_armed)
+        finally:
+            self._poll_lock.release()
+        return 0
+
     def scan_unplanned(self) -> int:
-        """Diagnostic: list plan-eligible, unplanned Summary-only issues."""
+        """Diagnostic: list plan-eligible, unprepared Summary-only issues."""
         self.inbox.ensure_dirs()
         if not self.config.self_login:
             self.log.die("cannot resolve the token user — set GITEA_BOTS_SELF")
@@ -748,7 +818,9 @@ class Watcher:
         for issue in issues:
             if issue.is_pull_request() or not self._auto_plan_eligible(issue):
                 continue
-            if not issue.has_tasks and not issue.has_summary:
+            if any(label_status(name) for name in issue.labels):
+                continue
+            if not issue.has_tasks and not _summary_only(issue.body):
                 continue
             try:
                 comments = self._fetch_comments(issue.number)
@@ -802,7 +874,10 @@ class Watcher:
                 self.log.warn(f"startup label reconcile failed (continuing): {exc}")
             first_poll_done = False
             while True:
-                ok, _ = self.poll_once(report_existing, notify_armed=True)
+                ok, _ = self.poll_once(
+                    report_existing, notify_armed=True,
+                    startup=not first_poll_done,
+                )
                 # Re-check the startup fingerprint every poll: a merged default
                 # or a GITEA_BOTS_* change is inactive until a restart (#152).
                 self._check_fingerprint()
@@ -811,11 +886,12 @@ class Watcher:
                         self.log.log("poll ok")
                     if not first_poll_done:
                         first_poll_done = True
-                        try:
-                            self.catch_up_assigned("startup auto-plan scan",
-                                                   notify_armed=True)
-                        except Exception as exc:
-                            self.log.warn(f"catch-up failed (continuing): {exc}")
+                        # Catch-up is never automatic: run `catch-up.py` as a
+                        # separate command when the backlog must be revisited.
+                        self.log.verbose(
+                            "startup poll recorded state silently; catch-up is "
+                            "a separate explicit command"
+                        )
                 else:
                     self.log.warn(f"poll failed — retrying in {self.config.interval}s")
                 time.sleep(self.config.interval)

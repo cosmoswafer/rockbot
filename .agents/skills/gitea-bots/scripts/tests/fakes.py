@@ -293,7 +293,6 @@ def make_config(state_dir, **overrides):
         all_comments=False,
         verbose=False,
         interval=5,
-        catchup_minutes=60,
     )
     for key, value in overrides.items():
         setattr(cfg, key, value)

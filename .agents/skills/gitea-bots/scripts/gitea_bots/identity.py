@@ -33,7 +33,6 @@ FINGERPRINT_CONFIG_FIELDS = (
     "log_file",
     "api_timeout",
     "interval",
-    "catchup_minutes",
     "all_comments",
     "auto_plan",
     "auto_plan_workers",

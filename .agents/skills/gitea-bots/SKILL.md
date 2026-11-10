@@ -10,6 +10,9 @@ This skill is deliberately thin. It owns the **plumbing**:
 
 - `scripts/watch-issues.py` — poll Gitea for issues and comments, record events
   in `./tmp/gitea-bots/`, and wake the agent.
+- `scripts/catch-up.py` — explicit, one-shot backlog catch-up (`scan` for a
+  full AUTO PLAN scan, `replay` for the downtime window). It reuses the same
+  `gitea_bots` modules as the watcher; the loop itself never catches up.
 - `set-status.py` / `sync-tasks.py` — issue status labels and the body task
   checklist.
 - The notification, worker and comment templates, and the hidden stage markers
@@ -56,8 +59,8 @@ more work on your own.
 ## Setup
 
 **Canonical implementation: Python.** The watcher and helpers are
-`watch-issues.py`, `set-status.py`, `sync-tasks.py`, `probe-live.py`,
-`probe-live-write.py` and `probe-e2e.py`, backed
+`watch-issues.py`, `catch-up.py`, `set-status.py`, `sync-tasks.py`,
+`probe-live.py`, `probe-live-write.py` and `probe-e2e.py`, backed
 by the `scripts/gitea_bots/` package. The status vocabulary and HTTP client are
 vendored in `scripts/issue_labels/`, so the tooling needs no sibling skill and
 no install step. They require Python 3.10+ and `requests` —
@@ -292,16 +295,20 @@ python3 .agents/skills/gitea-bots/scripts/watch-issues.py check
 # one-shot: also report existing open issues on a fresh baseline
 python3 .agents/skills/gitea-bots/scripts/watch-issues.py check --report-existing
 
-# background loop (nohup + PID file); reports existing open issues on first
-# start after a fresh baseline, then listens for changes
+# background loop (nohup + PID file); the baseline and every restart are
+# silent — pass --report-existing to announce existing open issues
 python3 .agents/skills/gitea-bots/scripts/watch-issues.py start --interval 20
 python3 .agents/skills/gitea-bots/scripts/watch-issues.py status
 python3 .agents/skills/gitea-bots/scripts/watch-issues.py stop
 
-# foreground loop (tmux/herdr, Ctrl-C to stop); same baseline-reporting default
+# explicit one-shot catch-up (stop the loop first); the loop never replays
+python3 .agents/skills/gitea-bots/scripts/catch-up.py scan    # full AUTO PLAN scan
+python3 .agents/skills/gitea-bots/scripts/catch-up.py replay  # downtime window
+
+# foreground loop (tmux/herdr, Ctrl-C to stop); same silent-baseline default
 python3 .agents/skills/gitea-bots/scripts/watch-issues.py loop --interval 20
-# add --no-report-existing to skip the baseline report, or --report-existing-all
-# to include closed issues in that report
+# add --report-existing to announce existing issues, or --report-existing-all
+# to include closed issues in that opt-in report
 
 # read / acknowledge pending events (what the agent consumes)
 python3 .agents/skills/gitea-bots/scripts/watch-issues.py inbox
@@ -352,7 +359,8 @@ while polling and release it before spawning notification sessions; notification
 children must never run `watch-issues.py` and must not inherit the poll lock. Do
 not run concurrent `check`/`loop`/`start` (or `scan-unplanned` as a competing
 poller) against the same `GITEA_BOTS_STATE_DIR` — only that loop may poll, read
-timeline/comments for state, and deliver events.
+timeline/comments for state, and deliver events. `catch-up.py` requires the loop
+to be stopped.
 
 All runtime state lives under `./tmp/gitea-bots/` (never `/tmp`):
 
@@ -409,14 +417,12 @@ batch files are no longer written — they exist only as a one-shot migration
 source.
 
 - The **first** poll is a baseline: it records existing issues and their latest
-  comment IDs. `start`/`loop` report existing **open** issues on that fresh
-  baseline by default (tagged with state, e.g. `[open]`), then continue polling
-  for changes. Plan-eligible Summary-only issues with no plan marker emit
-  `AUTO PLAN` instead of `NEW ISSUE` on that baseline/report (#118), so a fresh
-  start queues plans immediately. `check` keeps the baseline silent unless
-  `--report-existing` is passed. Use `--no-report-existing` to suppress the
-  report, or `--report-existing-all` to include closed issues; comments stay
-  silent.
+  comment IDs **silently**, for `start`, `loop` and `check` alike. Pass
+  `--report-existing` to emit `NEW ISSUE` for existing **open** issues (tagged
+  with state, e.g. `[open]`) and to let eligible Summary-only issues emit
+  `AUTO PLAN`; `--report-existing-all` includes closed issues. Comments stay
+  silent on the baseline. Without the flag a fresh start never replays or plans
+  the existing backlog.
 - On every `start`/`loop`, before the first poll, the watcher reconciles the
   status label of **every open issue assigned to the token user** (plus any open
   issue already carrying a status label) — `GITEA_BOTS_START_RECONCILE`, default
@@ -428,18 +434,33 @@ source.
   is the watcher's **only** write. The log line is `startup label reconcile:
   checked N issue(s), updated M, failed K`. Set `GITEA_BOTS_START_RECONCILE=0`
   to disable it.
-- **Startup catch-up (#118):** after the first successful poll, `start`/`loop`
-  scan the full paginated open set (not limited by `last_poll − 120 s`) and emit
-  `AUTO PLAN` once for every open plan-eligible, Summary-only issue with no
-  plan marker / no `## Tasks`. This catches issues that predate the watcher,
-  arrived while it was down, or fell outside the incremental window. Dedupe is
-  by `auto_plan_at` in the `issues` table; `scan-unplanned` uses the same
-  predicate and should report the same set.
+- **No automatic catch-up; `catch-up.py` is explicit.** A restart records the
+  current state silently: the first successful poll fetches what changed while
+  the watcher was down, emits no `NEW`/`UPDATED`/`DIRECTED`/`AUTO PLAN` events
+  for it, then continues from `now`. Nothing is replayed or auto-planned.
+  When the backlog really must be revisited, stop the loop and run
+  `scripts/catch-up.py`:
+  - `scan` (default) walks the full paginated open set (no `last_poll` window)
+    and emits `AUTO PLAN` once for every open plan-eligible, unprepared
+    Summary-only issue with no plan marker; dedupe is by `auto_plan_at`.
+  - `replay` runs one incremental poll over the stored `last_poll` window and
+    publishes the accumulated `NEW`/`UPDATED`/`DIRECTED` events.
+  Both require the watcher loop to be stopped (a live loop would interleave
+  polls and notifications). `scan` also takes `poll.lock`, so it refuses while
+  another poll is active. Add `--notify` to spawn the
+  usual notification/reply workers (otherwise events are printed and queued in
+  `pending.md` only). `scan-unplanned` is the read-only diagnostic for the same
+  scan predicate.
+- **Existing progress blocks AUTO PLAN:** an issue is a candidate only
+  when its body is literally `## Summary`-only — any other `##` section, a
+  `## Tasks` checklist, a stage-2 plan marker, or an existing status label
+  (`seeing`, `responded`, `committed`, …) means work has started and the bot
+  must not re-plan it. `scan-unplanned` applies the same rule.
 - **Body-only plans (#121, #128):** an issue whose plan was written straight
   into the body (`## Tasks`, no plan marker comment) is an anomaly. It is *not*
   an AUTO PLAN candidate (the checklist already exists), but `--reconcile`
   **does** derive `responded` for it so the status label is visible and sticky
-  across startup reconcile. The startup/catch-up scan and `scan-unplanned`
+  across startup reconcile. `catch-up.py scan` and `scan-unplanned`
   still log a `WARN` because the plan has no marker, and
   `set-status.py --reconcile` prints an informational `NOTE`. The marker
   comment is still recommended to make the plan canonical for marker checks.
@@ -454,7 +475,9 @@ source.
   (publish-before-advance).
 - Restarting never re-reports: issues dedupe by `updated_at`/field snapshot and
   comments by monotonic comment ID. A 120 s overlap absorbs clock skew. A
-  restart with existing state does not re-run the baseline report.
+  restart with existing state does not re-run the baseline report and never
+  replays events that accumulated while it was stopped; use `catch-up.py` for
+  that explicitly.
 - Incremental polls fetch issues updated since `last_poll − 120 s`, paginated
   (50/page, up to 20 pages), and fetch comments for every issue in that window.
   Comment IDs dedupe; this also catches a comment written in the same second as
@@ -479,12 +502,10 @@ source.
   it emits `DIRECTED COMMENT on #N (issue body)` instead of the noise line, so
   the request spawns a reply worker just like a comment (deduped by
   `body_mention_sha`, a digest of the mention paragraphs only).
-- `meta.version` in `state.db` carries the event schema version. When it is
-  older than the script's event schema, the next poll runs a **catch-up scan**
-  over the last `GITEA_BOTS_CATCHUP_MINUTES` (default 60) and re-surfaces recent
-  directed mentions — comment and issue-body — as `DIRECTED COMMENT (catch-up)`.
-  This recovers events a previous version recorded in state but had no way to
-  deliver.
+- `meta.version` in `state.db` carries the event schema version. A schema
+  upgrade does **not** replay automatically, and consumed comments are never
+  re-surfaced. If events may have accumulated while the loop was down, stop it
+  and run `catch-up.py replay`.
 - The background loop runs under `python -u` (unbuffered stdio), so
   `watcher.log` is line-buffered and survives a kill.
 
@@ -542,11 +563,10 @@ Useful environment variables:
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `GITEA_BOTS_INTERVAL` | `20` | poll interval in seconds (min 5) |
-| `GITEA_BOTS_CATCHUP_MINUTES` | `60` | catch-up window after a state-schema upgrade |
 | `GITEA_BOTS_STATE_DIR` | `./tmp/gitea-bots` | state directory |
 | `GITEA_BOTS_LOG` | `$STATE_DIR/watcher.log` | background log |
 | `GITEA_BOTS_ALL_COMMENTS` | `0` | `1` = report every new comment |
-| `GITEA_BOTS_AUTO_PLAN` | `1` | `0` = never auto-emit `AUTO PLAN`. When enabled, `start`/`loop` run a startup scan and polling emits `AUTO PLAN` at most once for an open plan-eligible Summary-only issue with no plan marker — including first-seen or a later assignment update. Plan-eligible means assigned to the token user; an unassigned issue never counts (#150). |
+| `GITEA_BOTS_AUTO_PLAN` | `1` | `0` = never auto-emit `AUTO PLAN`. When enabled, polling emits `AUTO PLAN` at most once for an open plan-eligible issue whose body is **`## Summary`-only**, has no plan marker, and carries no status label. Plan-eligible means assigned to the token user; an unassigned issue never counts (#150). The startup full scan is a separate `catch-up.py scan` command. |
 | `GITEA_BOTS_AUTO_PLAN_WORKERS` | `1` | `1` = spawn one pinned planning worker per poll for the batch's `AUTO PLAN` issues. Gated on `GITEA_BOTS_AUTO_PLAN`; `0` leaves `AUTO PLAN` as a notification the interactive session must act on. |
 | `GITEA_BOTS_START_RECONCILE` | `1` | `0` = do not reconcile status labels on startup. |
 | `GITEA_BOTS_SELF` | — | token user's login (skips `/user`; used for AUTO PLAN / `scan-unplanned` identity) |
@@ -929,11 +949,11 @@ is a stopgap until OpenCode provides first-class `task.*` tools/API defaults.
    restarting automatically (one-watcher rule). If
    `stale-check: unavailable` appears, restart the watcher once to record the
    fingerprint in `watcher.meta`.
-3. **No events on the first run** — `start`/`loop` report existing open issues
-   on a fresh baseline by default. `check` keeps the baseline silent unless
-   `--report-existing` is passed. Use `--no-report-existing` to suppress the
-   report, `--report-existing-all` to include closed issues, or `reset` to
-   force a fresh baseline.
+3. **No events on the first run** — this is the default: the baseline poll is
+   silent for `start`, `loop` and `check`. Pass `--report-existing` to announce
+   existing open issues (and let eligible Summary-only issues emit `AUTO PLAN`),
+   or `--report-existing-all` to include closed issues. A restart is silent too;
+   run `catch-up.py scan|replay` explicitly, and `reset` forces a fresh baseline.
 4. **A reply was not surfaced** — the body must at-mention the bot login
    outside code spans. That applies to comments **and** the issue body: a body
    at-mention is only surfaced when the mention paragraphs changed after the
@@ -982,11 +1002,12 @@ is a stopgap until OpenCode provides first-class `task.*` tools/API defaults.
     default) a notification instead shows up as a new archived session
     (`notify.log`). The notification child is spawned after the poll lock is
     released, with `close_fds=True`, so it can never inherit `poll.lock`.
-12. **An event appeared while the watcher was stopped or mid-upgrade** — bump
-    `GITEA_BOTS_CATCHUP_MINUTES` if needed; the next poll with an older state
-    schema re-surfaces the last window of directed mentions. Otherwise read the
-    issue/comments directly and handle the reply; the watcher is only a
-    notifier.
+12. **An event appeared while the watcher was stopped or mid-upgrade** — a
+    restart is silent and does not replay downtime; stop the loop and run
+    `catch-up.py replay` if you deliberately want the old `last_poll` window
+    re-published (or `catch-up.py scan` for the full AUTO PLAN scan). Otherwise
+    read the issue/comments directly and handle the reply; the watcher is only
+    a notifier.
 
 ### Checklist for a notification
 

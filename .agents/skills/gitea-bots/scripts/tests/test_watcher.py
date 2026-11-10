@@ -142,6 +142,106 @@ class WatcherTests(unittest.TestCase):
         h.watcher.check(1)
         self.assertNotIn("AUTO PLAN #2", h.stdout)
 
+    def test_auto_plan_requires_a_summary_only_body(self):
+        progressed = issue(
+            13, "Already analysed", assignees=["testbot"],
+            body="## Summary\n\nX.\n\n## Analysis\n\nA long analysis.\n",
+        )
+        self.h.client.issues = [progressed]
+        self.h.client.incremental_issues = []
+        self.h.watcher.check(0)
+        self.h.reset_output()
+        self.h.watcher.check(0)
+        self.assertNotIn("AUTO PLAN #13", self.h.stdout)
+
+    def test_auto_plan_skips_an_issue_with_a_status_label(self):
+        progressed = issue(
+            14, "Already responded", assignees=["testbot"],
+            labels=[{"name": "💬 responded"}],
+        )
+        self.h.client.issues = [progressed]
+        self.h.client.incremental_issues = []
+        self.h.watcher.check(0)
+        self.h.reset_output()
+        self.h.watcher.check(0)
+        self.assertNotIn("AUTO PLAN #14", self.h.stdout)
+
+    def test_auto_plan_skips_a_summary_body_with_a_checklist(self):
+        progressed = issue(
+            15, "Has acceptance criteria", assignees=["testbot"],
+            body="## Summary\n\nX.\n\n- [ ] ship it\n",
+        )
+        self.h.client.issues = [progressed]
+        self.h.client.incremental_issues = []
+        self.h.watcher.check(0)
+        self.h.reset_output()
+        self.h.watcher.check(0)
+        self.assertNotIn("AUTO PLAN #15", self.h.stdout)
+
+    # --- startup: no catch-up by default ------------------------------------
+    def test_startup_poll_does_not_replay_downtime_events(self):
+        self.h.client.issues = [issue(2, "Bot issue", assignees=["testbot"])]
+        self.h.client.incremental_issues = []
+        self.h.watcher.check(0)  # silent baseline
+        self.h.reset_output()
+        self.h.client.incremental_issues = [
+            issue(
+                2, "Bot issue", assignees=["testbot"],
+                labels=[{"name": "💬 responded"}],
+                updated_at="2026-11-08T00:05:00Z",
+            )
+        ]
+        self.h.client.comments[2] = [
+            comment(900, "@testbot old request from while down", "alice", 2)
+        ]
+
+        ok, poll = self.h.watcher.poll_once(0, False, startup=True)
+        self.assertTrue(ok)
+        self.assertEqual(poll.event_count, 0)
+        self.assertNotIn("UPDATED ISSUE", self.h.stdout)
+        self.assertNotIn("DIRECTED COMMENT", self.h.stdout)
+        self.assertNotIn("AUTO PLAN", self.h.stdout)
+
+        self.h.reset_output()
+        self.h.watcher.poll_once(0, False)
+        self.assertNotIn("UPDATED ISSUE #2", self.h.stdout)
+        self.assertNotIn("DIRECTED COMMENT", self.h.stdout)
+
+    def test_explicit_replay_reemits_downtime_events(self):
+        self.h.client.issues = [issue(2, "Bot issue", assignees=["testbot"])]
+        self.h.client.incremental_issues = []
+        self.h.watcher.check(0)  # silent baseline
+        self.h.reset_output()
+        self.h.client.incremental_issues = [
+            issue(2, "Bot issue", assignees=["testbot"])
+        ]
+        self.h.client.comments[2] = [
+            comment(901, "@testbot please plan this", "alice", 2)
+        ]
+
+        # `catch-up.py replay` is the explicit opt-in; startup=False does not
+        # suppress, so the accumulated comment is surfaced.
+        self.h.watcher.poll_once(0, False, startup=False)
+        self.assertIn("DIRECTED COMMENT", self.h.stdout)
+
+    def test_catch_up_scan_is_explicit(self):
+        self.h.client.issues = [
+            issue(10, "Assigned", assignees=["testbot"]),
+        ]
+        self.h.client.incremental_issues = []
+        self.h.watcher.check(0)  # silent baseline records it
+        self.h.reset_output()
+
+        self.assertEqual(self.h.watcher.catch_up("scan"), 0)
+        self.assertIn("AUTO PLAN #10", self.h.stdout)
+
+    def test_catch_up_refuses_while_the_watcher_runs(self):
+        self.h.watcher._pid_is_watcher = staticmethod(lambda pid: True)
+        self.h.config.pid_file.write_text("12345\n", encoding="utf-8")
+
+        self.assertEqual(self.h.watcher.catch_up("scan"), 1)
+        self.assertIn("stop it before catch-up", self.h.stderr)
+
     # --- AUTO PLAN eligibility (#150) --------------------------------------
     def test_polling_never_plans_unassigned_issues(self):
         self.h.client.issues = [
@@ -448,8 +548,8 @@ class WatcherTests(unittest.TestCase):
         self.assertIn("REASSIGNED #21", self.h.stdout)
         self.assertNotIn("AUTO PLAN #21", self.h.stdout)
 
-    # --- catch-up after a state-schema upgrade ------------------------------
-    def test_catchup_resurfaces_recent_directed_comment(self):
+    # --- no automatic catch-up after a state-schema upgrade ------------------
+    def test_schema_upgrade_does_not_resurface_consumed_comments(self):
         recent = shift_iso(now_utc(), -300)
         recent_plus = shift_iso(now_utc(), -240)
         self.h.state.write({
@@ -458,7 +558,6 @@ class WatcherTests(unittest.TestCase):
             "issues": _tracked(30, title="Mention me", assignees="testbot",
                                last_comment_id=4000),
         })
-        # prev updated_at must match the incremental issue to avoid a body/other event
         self.h.state._read()  # sanity: state is readable
         self.h.client.incremental_issues = [
             issue(30, "Mention me", assignees=["testbot"],
@@ -468,10 +567,7 @@ class WatcherTests(unittest.TestCase):
             comment(3999, "@testbot status?", "alice", 30, created_at=recent)
         ]
         self.h.watcher.check(0)
-        self.assertIn(
-            "DIRECTED COMMENT (catch-up) on #30 (comment 3999) by alice",
-            self.h.stdout,
-        )
+        self.assertNotIn("DIRECTED COMMENT", self.h.stdout)
 
     # --- diagnostics / state compatibility -----------------------------------
     def test_scan_unplanned(self):

@@ -3,8 +3,8 @@
 A dependency-light, high-cohesion / low-coupling Python implementation of the
 gitea-bots watcher tooling. This is the **only** implementation: the deprecated
 bash scripts and their black-box tests were removed in #155. Use the
-`watch-issues.py`, `set-status.py`, `sync-tasks.py`, `probe-live.py`,
-`probe-live-write.py` and `probe-e2e.py` entry points below.
+`watch-issues.py`, `catch-up.py`, `set-status.py`, `sync-tasks.py`,
+`probe-live.py`, `probe-live-write.py` and `probe-e2e.py` entry points below.
 
 The Python tooling uses the SQLite store `state.db`. A state directory created
 before #135 still has the flat files (`state.json`, `events.jsonl`, `pending/`,
@@ -30,6 +30,7 @@ points throughout.
 | Entry point | Purpose |
 | --- | --- |
 | `watch-issues.py` | Poll for issues / comments / human replies / mentions; `check`, `loop`, `start`, `stop`, `status`, `inbox`, `ack`, `reset`, `scan-unplanned` |
+| `catch-up.py` | Explicit one-shot catch-up (`scan` for the full AUTO PLAN scan, `replay` for the downtime window); the loop never catches up |
 | `set-status.py` | Apply or `--reconcile` the derived status label |
 | `sync-tasks.py` | Mirror a plan's `## Tasks` checklist into the issue body |
 | `probe-live.py` | Opt-in, read-only probe of the real Gitea API shapes (`-n/--issues N`, `--verbose`) |
@@ -86,6 +87,7 @@ cli.py  (composition root: builds Config -> components -> command handlers)
   +-- status.py    shared StatusManager + the workflow marker-aware derive
   +-- tasks.py     sync-tasks
   +-- watcher.py   polling + command verbs (writes only status labels)
+  +-- catchup.py   explicit one-shot catch-up (`scan` / `replay`)
   +-- live_probe.py  opt-in read-only real-server scenarios (no write paths)
   +-- write_probe.py opt-in write lifecycle on one dummy issue
   +-- e2e_probe.py   opt-in dummy issues -> real watcher -> state/labels -> cleanup
@@ -236,6 +238,15 @@ failed with a free-tier 429 instead of using the launching session's model
   fresh batch session, or the interactive session in `shared` mode) gets a
   delegate prompt: **report + `ack` only**, never do the work itself and never
   spawn a second worker. Disable with `GITEA_BOTS_SPAWN_WORKERS=0`.
+- **Startup is silent by default**: the first successful poll after
+  `start`/`loop` records the current snapshots, comment IDs and assignee
+  cursors without emitting events, so nothing that happened while the watcher
+  was down is replayed and no worker is spawned for it. Catch-up is a separate
+  one-shot command (`scripts/catch-up.py scan|replay`) that reuses this package
+  and refuses while `poll.lock` is held; baseline `--report-existing` remains an
+  explicit opt-in. AUTO PLAN additionally requires a literally
+  `## Summary`-only body; any other section, a status label or a plan marker
+  means existing progress.
 - **AUTO PLAN workers (#140)**: an `AUTO PLAN` event authorizes investigation
   and planning only, so the notifier spawns **one** extra pinned worker per
   poll for that batch's queued issue set (issues already covered by a human

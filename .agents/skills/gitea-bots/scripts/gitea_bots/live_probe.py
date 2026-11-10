@@ -43,9 +43,10 @@ from .rules import (
     comments_have_stage2_marker,
     has_bot_mention,
     is_bot_output,
+    label_status,
 )
 from .state import StateStore
-from .watcher import Watcher
+from .watcher import Watcher, _summary_only
 
 # A dedicated state dir keeps the probe away from a live watcher's
 # ./tmp/gitea-bots/ state (one-watcher rule).
@@ -244,8 +245,9 @@ class LiveProbe:
             for issue in self.issues
             if issue.state == "open"
             and issue.assigned_to(self.config.self_login)
-            and issue.has_summary
+            and _summary_only(issue.body)
             and not issue.has_tasks
+            and not any(label_status(name) for name in issue.labels)
             and not comments_have_stage2_marker(
                 self.comments.get(issue.number, [])
             )

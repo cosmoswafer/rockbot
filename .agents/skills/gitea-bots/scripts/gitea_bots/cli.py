@@ -37,7 +37,8 @@ commands:
                    background watcher holds the poll lock.
   loop (run)       Run the poll loop in the foreground (Ctrl-C stops it).
   start            Start the loop in the background (PID file + watcher.log).
-                   On the first baseline poll, reports existing open issues.
+                   The baseline poll is silent; pass --report-existing to
+                   announce existing issues.
   inbox            Print pending events the agent has not acknowledged.
   ack [batch-id]   Mark pending events as seen (oldest batch by default).
   status           Show whether the loop is running, plus state stats and the
@@ -46,15 +47,19 @@ commands:
   reset            Move state.db aside; the next poll re-baselines.
   scan-unplanned   List plan-eligible, unplanned Summary-only issues.
 
+Catch-up is a separate command: `catch-up.py scan|replay`. The loop itself
+never replays downtime.
+
 options:
   -i, --interval N          Poll interval in seconds (min 5, default 20).
   --report-existing         On the baseline poll, emit NEW ISSUE events for
-                            existing open issues (default for start/loop).
+                            existing open issues (opt-in; the default baseline
+                            is silent).
   --report-existing-all     Same, including closed issues.
-  --no-report-existing      Record the baseline silently.
+  --no-report-existing      Record the baseline silently (the default).
 
 environment (see the skill's SKILL.md for the full list):
-  GITEA_BOTS_INTERVAL, GITEA_BOTS_CATCHUP_MINUTES, GITEA_BOTS_STATE_DIR,
+  GITEA_BOTS_INTERVAL, GITEA_BOTS_STATE_DIR,
   GITEA_BOTS_LOG, GITEA_BOTS_ROOT, GITEA_BOTS_ALL_COMMENTS, GITEA_BOTS_SELF,
   GITEA_BOTS_AUTO_PLAN, GITEA_BOTS_START_RECONCILE,
   GITEA_BOTS_VERBOSE, GITEA_BOTS_NOTIFY, GITEA_BOTS_NOTIFY_SESSION_MODE
@@ -207,7 +212,10 @@ def main_watch(argv=None, script_path=None) -> int:
     elif args.no_report_existing:
         report_existing = 0
     if report_existing < 0:
-        report_existing = 1 if cmd in ("loop", "run", "start") else 0
+        # No-catch-up by default: a fresh start records the baseline silently.
+        # Existing issues (and their AUTO PLANs) are reported only when the
+        # operator passes --report-existing/--report-existing-all explicitly.
+        report_existing = 0
 
     try:
         config = Config.load(script_dir, script_path, logger, interval=args.interval)

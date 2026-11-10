@@ -46,7 +46,6 @@ class Config:
 
     # --- behaviour toggles ---
     interval: int = 20
-    catchup_minutes: int = 60
     all_comments: bool = False
     auto_plan: bool = True
     # #140: AUTO PLAN authorizes stage 2, so the notifier spawns one pinned
@@ -151,7 +150,6 @@ class Config:
             self_login=env.get("GITEA_BOTS_SELF", "") or "",
             api_timeout=_as_int(env.get("GITEA_BOTS_API_TIMEOUT"), 25),
             interval=_as_int(interval if interval is not None else env.get("GITEA_BOTS_INTERVAL"), 20),
-            catchup_minutes=_as_int(env.get("GITEA_BOTS_CATCHUP_MINUTES"), 60),
             all_comments=_flag(env.get("GITEA_BOTS_ALL_COMMENTS")),
             auto_plan=_flag(env.get("GITEA_BOTS_AUTO_PLAN"), True),
             auto_plan_workers=_flag(env.get("GITEA_BOTS_AUTO_PLAN_WORKERS"), True),
