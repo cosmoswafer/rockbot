@@ -52,23 +52,27 @@ class Notifier:
         self.log = logger
 
     # ------------------------------------------------------------------ model
-    def resolve_model(self):
+    def resolve_model(self, session=None, timeout: int = 20):
         """Return ``provider/model[#variant]`` for pinning spawned sessions.
 
         Prefers the explicit ``GITEA_BOTS_MODEL`` override, then reads the
         launching session's model from the OpenCode API. Returns ``None`` when
         neither is available (callers must then refuse model-less spawns).
+        ``session`` overrides the configured notify session for diagnostics.
         """
         override = (self.config.model or "").strip()
         if override:
             return override
-        session = self.config.notify_session
+        return self.model_for_session(session or self.config.notify_session, timeout)
+
+    def model_for_session(self, session, timeout: int = 20):
+        """Resolve ``provider/model[#variant]`` from one OpenCode session id."""
         if not session:
             return None
         try:
             proc = subprocess.run(
                 ["opencode", "api", "get", f"/api/session/{session}"],
-                capture_output=True, text=True, timeout=20, close_fds=True,
+                capture_output=True, text=True, timeout=timeout, close_fds=True,
             )
             data = json.loads(proc.stdout)
             model = (data.get("data") or {}).get("model") or {}

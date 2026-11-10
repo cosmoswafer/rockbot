@@ -47,6 +47,9 @@ from .rules import (
 )
 
 
+NOTIFICATION_MODEL_RE = re.compile(r"notification model: (\S+)")
+
+
 @dataclass
 class IssueReads:
     """Concurrently prefetched per-issue reads (#138).
@@ -862,6 +865,7 @@ class Watcher:
         if self.config.pid_file.is_file():
             pid = self.config.pid_file.read_text(encoding="utf-8").strip()
         running = self._pid_is_watcher(pid)
+        meta = self._read_meta()
         if running:
             self.output(f"watcher: running (pid {pid})")
             if not self.config.meta_file.is_file():
@@ -870,7 +874,6 @@ class Watcher:
                     "watcher to record its fingerprint)"
                 )
             else:
-                meta = self._read_meta()
                 drift = self._fingerprint_drift(meta)
                 if drift is None:
                     self.output(
@@ -884,12 +887,14 @@ class Watcher:
                         f"{', '.join(drift)} — run 'stop' then 'start' to apply "
                         "(commit-only changes are ignored)"
                     )
+            self.output(f"notification model: {self._reported_model(pid, meta)}")
         else:
             self.output("watcher: stopped")
             if pid:
                 self.output(
                     f"  stale pid file: {self.config.pid_file} (run 'stop' to clear)"
                 )
+            self.output(f"notification model: {self._reported_model('', meta)}")
 
         self.output(f"state: {self.state.path}")
         try:
@@ -1055,10 +1060,14 @@ class Watcher:
     def _write_meta(self) -> None:
         commit, mtime, path = self._script_identity()
         fingerprint = self._current_fingerprint().to_json()
+        try:
+            model = self.notifier.resolve_model(timeout=5) or ""
+        except Exception:  # diagnostic only, never block startup
+            model = ""
         content = (
             f"pid={os.getpid()}\nstarted_at={now_utc()}\n"
             f"script_commit={commit}\nscript_mtime={mtime}\nscript_path={path}\n"
-            f"fingerprint={fingerprint}\n"
+            f"model={model}\nfingerprint={fingerprint}\n"
         )
         try:
             self.config.meta_file.write_text(content, encoding="utf-8")
@@ -1075,6 +1084,80 @@ class Watcher:
         except OSError:
             pass
         return meta
+
+    # ------------------------------------------------------------ status: model
+    def _reported_model(self, pid: str, meta: dict) -> str:
+        """Best-effort notification model for ``status`` output.
+
+        Order: the model recorded in ``watcher.meta`` at start, the explicit
+        ``GITEA_BOTS_MODEL``, the running watcher's inherited launching session,
+        then the last ``notification model:`` line in ``watcher.log``. Never
+        prints the token; ``unresolved`` means no model-bearing session was
+        available (spawned sessions would be refused).
+        """
+        recorded = (meta.get("model") or "").strip()
+        if recorded:
+            return recorded
+        override = (self.config.model or "").strip()
+        if override:
+            return override
+        if pid:
+            model = self._model_from_pid_env(pid)
+            if model:
+                return model
+        logged = self._last_logged_model()
+        if logged:
+            return logged
+        return (
+            "unresolved (set GITEA_BOTS_MODEL or start the watcher from an "
+            "OpenCode session)"
+        )
+
+    def _model_from_pid_env(self, pid: str) -> str:
+        """Read the launching session id from a running watcher's environment."""
+        try:
+            raw = Path(f"/proc/{pid}/environ").read_bytes()
+        except OSError:
+            return ""
+        wanted = {
+            b"GITEA_BOTS_MODEL",
+            b"GITEA_BOTS_NOTIFY_SESSION",
+            b"OPENCODE_SESSION_ID",
+        }
+        env = {}
+        for item in raw.split(b"\0"):
+            key, _, value = item.partition(b"=")
+            if key in wanted:
+                env[key.decode()] = value.decode("utf-8", "replace")
+        override = env.get("GITEA_BOTS_MODEL", "").strip()
+        if override:
+            return override
+        session = (
+            env.get("GITEA_BOTS_NOTIFY_SESSION")
+            or env.get("OPENCODE_SESSION_ID", "")
+        ).strip()
+        if not session:
+            return ""
+        try:
+            return self.notifier.model_for_session(session, timeout=5) or ""
+        except Exception:  # diagnostics only
+            return ""
+
+    def _last_logged_model(self) -> str:
+        """Last resolved model recorded in the tail of watcher.log."""
+        try:
+            with open(self.config.effective_log_file, "rb") as fh:
+                fh.seek(0, os.SEEK_END)
+                size = fh.tell()
+                fh.seek(max(0, size - 65536))
+                tail = fh.read().decode("utf-8", errors="replace")
+        except OSError:
+            return ""
+        for line in reversed(tail.splitlines()):
+            match = NOTIFICATION_MODEL_RE.search(line)
+            if match:
+                return match.group(1)
+        return ""
 
     def _remove_pid(self) -> None:
         try:

@@ -136,8 +136,9 @@ Key design points:
 A loop loads `Config` and its modules once at startup, so a merged default or a
 `GITEA_BOTS_*` change stays inactive until a restart. `identity.py` captures a
 `Fingerprint` of the inputs that actually matter, and `watcher.meta` stores it
-alongside `pid` / `started_at` (plus informational `script_commit` /
-`script_mtime`):
+alongside `pid` / `started_at`, the resolved notification `model` (from
+`GITEA_BOTS_MODEL` or the launching session; empty when unresolved), and
+informational `script_commit` / `script_mtime`:
 
 - `files`: nanosecond mtimes of `watch-issues.py` and every `gitea_bots/*.py`,
   keyed by relative path;
@@ -152,6 +153,9 @@ changed `file:…` / `config:…`), then stays quiet until the inputs change aga
 It never restarts itself (one-watcher rule / `poll.lock`). `status` diffs the
 same values, so a doc-only commit no longer reports `STALE` while an env-only
 change does; a meta without a fingerprint reports `stale-check: unavailable`.
+`status` also prints `notification model:`: the meta value, else
+`GITEA_BOTS_MODEL`, else the running process's inherited session, else the last
+model line in `watcher.log`, else `unresolved`.
 
 ## Status labels (#133)
 

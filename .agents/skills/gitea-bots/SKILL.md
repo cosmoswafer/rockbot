@@ -362,7 +362,7 @@ All runtime state lives under `./tmp/gitea-bots/` (never `/tmp`):
 | `pending.md` | generated view of unacknowledged batches (`inbox` / `ack`) |
 | `legacy-json-<ts>/` | one-shot archive of the pre-SQLite flat files after migration (compatibility path retired 2027-01-01) |
 | `watcher.pid` | PID of the background loop (checked against `/proc/<pid>/cmdline`) |
-| `watcher.meta` | startup identity: `pid`, `started_at`, informational `script_commit` / `script_mtime`, and a `fingerprint` (code mtimes + effective `GITEA_BOTS_*` values). The loop warns when the fingerprint drifts; `status` diffs against it |
+| `watcher.meta` | startup identity: `pid`, `started_at`, the resolved `model` used for spawned sessions, informational `script_commit` / `script_mtime`, and a `fingerprint` (code mtimes + effective `GITEA_BOTS_*` values). The loop warns when the fingerprint drifts; `status` diffs against it |
 | `watcher.log` | background-loop output (append-only) |
 | `notify.log` | pinned spawned sessions (`fresh` notifications / reply workers) and their JSON output |
 | `poll.lock` | `flock` guarding state writes |
@@ -397,7 +397,14 @@ sqlite3 ./tmp/gitea-bots/state.db \
 ```
 
 `status` prints the DB path plus tracked-issue, pending-batch, event, and poll
-counts. `pending.md` stays the agent/human-facing view; `events.jsonl` and the
+counts, and a `notification model:` line naming the model spawned sessions use.
+That line is the value recorded in `watcher.meta` at start; for a watcher that
+predates that record it falls back to the running process's inherited
+`OPENCODE_SESSION_ID`, then to the last `notification model:` line in
+`watcher.log`, and finally prints `unresolved` (restart with
+`GITEA_BOTS_MODEL` set, or from the OpenCode session whose model workers should
+use, to fix it). **Always include this model name when reporting watcher
+status.** `pending.md` stays the agent/human-facing view; `events.jsonl` and the
 batch files are no longer written — they exist only as a one-shot migration
 source.
 
@@ -954,7 +961,9 @@ is a stopgap until OpenCode provides first-class `task.*` tools/API defaults.
    `GITEA_BOTS_NOTIFY_SESSION` for the default `fresh` mode). Look for
    `notification model: <provider/model>` in `watcher.log`; if the model cannot
    be resolved, no detached session is spawned and events stay in
-   `pending.md` — set `GITEA_BOTS_MODEL` as an explicit fallback. Events are
+   `pending.md` — set `GITEA_BOTS_MODEL` as an explicit fallback. `status`
+   prints the same model (or `unresolved`) so its absence is visible without
+   reading the log. Events are
    always still in `pending.md`; run `inbox`. Restart the loop after editing
    this script — a running loop keeps executing the version it started with.
    Pinned spawned sessions (`fresh` notifications / reply workers) write their

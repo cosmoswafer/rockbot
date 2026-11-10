@@ -178,6 +178,42 @@ class WatcherFingerprintTests(unittest.TestCase):
         self.assertIn("stale-check: unavailable", self.h.stdout)
         self.assertNotIn("STALE:", self.h.stdout)
 
+    # --- status: notification model -----------------------------------------
+    def test_meta_records_the_resolved_model(self):
+        self.h.config.model = "provider/model#variant"
+        self.h.watcher._write_meta()
+        raw = self.h.config.meta_file.read_text(encoding="utf-8")
+        self.assertIn("model=provider/model#variant", raw)
+        self.assertNotIn("test-token", raw)
+
+    def test_status_reports_the_model_recorded_in_meta(self):
+        self._set_running()
+        self.h.watcher._write_meta()
+        self._rewrite_meta(model="provider/model#variant")
+
+        self.h.watcher.status()
+        self.assertIn("notification model: provider/model#variant", self.h.stdout)
+
+    def test_status_falls_back_to_the_explicit_model_when_stopped(self):
+        self.h.config.model = "provider/explicit"
+
+        self.h.watcher.status()
+        self.assertIn("watcher: stopped", self.h.stdout)
+        self.assertIn("notification model: provider/explicit", self.h.stdout)
+
+    def test_status_falls_back_to_the_last_logged_model(self):
+        self.h.config.effective_log_file.write_text(
+            "notification model: provider/logged (session: ses_x)\n",
+            encoding="utf-8",
+        )
+
+        self.h.watcher.status()
+        self.assertIn("notification model: provider/logged", self.h.stdout)
+
+    def test_status_says_unresolved_when_no_model_is_known(self):
+        self.h.watcher.status()
+        self.assertIn("notification model: unresolved", self.h.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

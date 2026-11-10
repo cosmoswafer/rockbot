@@ -40,7 +40,8 @@ commands:
                    On the first baseline poll, reports existing open issues.
   inbox            Print pending events the agent has not acknowledged.
   ack [batch-id]   Mark pending events as seen (oldest batch by default).
-  status           Show whether the loop is running, plus state stats.
+  status           Show whether the loop is running, plus state stats and the
+                   resolved notification model for spawned sessions.
   stop             Stop the background loop (SIGTERM, then SIGKILL).
   reset            Move state.db aside; the next poll re-baselines.
   scan-unplanned   List plan-eligible, unplanned Summary-only issues.
