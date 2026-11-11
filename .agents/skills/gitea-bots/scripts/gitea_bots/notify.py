@@ -35,6 +35,7 @@ and never blocks the next poll. Spawned children use ``close_fds=True`` and
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
@@ -283,11 +284,16 @@ class Notifier:
         except OSError:
             self.log.warn("could not open notify.log — events remain in pending.md")
             return
+        # `opencode run` chdirs to $PWD (it prefers PWD over the real cwd), so a
+        # watcher started with `cwd=<repo>` but an inherited PWD from another
+        # repo would spawn workers in the wrong repository. Pin both.
+        env = dict(os.environ)
+        env["PWD"] = str(self.config.repo_root)
         try:
             subprocess.Popen(
                 cmd, stdin=subprocess.DEVNULL, stdout=logf,
-                stderr=subprocess.STDOUT, start_new_session=True,
-                close_fds=True,
+                stderr=subprocess.STDOUT, cwd=str(self.config.repo_root),
+                env=env, start_new_session=True, close_fds=True,
             )
         except OSError:
             self.log.warn(

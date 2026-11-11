@@ -123,6 +123,15 @@ class NotifierTests(unittest.TestCase):
         self.assertIn("only report the events and then ack", payload["text"])
         self.assertIn("spawned pinned reply worker", self.h.stdout)
 
+    def test_worker_spawn_pins_watched_repo_as_cwd_and_pwd(self):
+        # `opencode run` chdirs to $PWD, so a watcher started with a stale
+        # PWD from another repo must still spawn workers in its watched repo.
+        _, popen = self._notify(events_text=HUMAN_REPLY, self_login="testbot")
+        self.assertEqual(popen.call_count, 1)
+        kwargs = popen.call_args.kwargs
+        self.assertEqual(kwargs["cwd"], str(self.h.config.repo_root))
+        self.assertEqual(kwargs["env"]["PWD"], str(self.h.config.repo_root))
+
     def test_archived_workers_opt_in_hides_reply_worker(self):
         # #147: GITEA_BOTS_ARCHIVE_WORKERS=1 restores the old hidden worker.
         self.h.config.archive_workers = True
