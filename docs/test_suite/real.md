@@ -58,7 +58,7 @@ Tests connecting to live servers and APIs with real credentials. All `#[ignore]`
 
 **Helpers:** `workspace_root()`, `load_fal_config()`
 
-### `tests/image_gen_real.rs` — 4 tests
+### `tests/image_gen_real.rs` — 5 tests
 **Services:** fal.ai API (image provider), OpenRouter (image provider), NextCloud WebDAV
 **Config:** `config.toml` (`[[image_providers]]` with `name = "fal"` or `name = "openrouter"` + `[webdav]`) or `WEBDAV_*` env vars
 **Run:** `cargo test --test image_gen_real -- --ignored`
@@ -69,6 +69,7 @@ Tests connecting to live servers and APIs with real credentials. All `#[ignore]`
 | 2 | `test_image_gen_real_data_uri_handling` | Same setup as above but reads the test image `docs/test_suite/p0.png` (4x4 red square), base64-encodes it as a `data:` URI, and passes it in `image_urls` — exercises the `upload_data_uri` → provider CDN → img2img path. Validates that data URIs injected by the harness (per image-interception.md §2d) are correctly translated to provider CDN URLs by the tool. | fal.ai, WebDAV |
 | 3 | `test_openrouter_image_gen_seedream5flash` | Loads OpenRouter image provider config, creates `OpenRouterImageProvider` with `bytedance-seed/seedream-5-0-flash` (alias `seedream5flash`, issues #114/#119), calls `generate_image()` with a text-to-image prompt. Validates the returned bytes are non-empty and PNG format. Standalone — no WebDAV or ImageCache dependency. | OpenRouter |
 | 4 | `test_openrouter_image_gen_banana` | Loads OpenRouter image provider config, creates `OpenRouterImageProvider` with `google/gemini-nano-banana-2.1` (alias `banana`, issue #114), calls `generate_image()` with `image_size` + `size_tier` supplied. Validates the returned bytes are non-empty and PNG format. Standalone — no WebDAV or ImageCache dependency. | OpenRouter |
+| 5 | `test_openrouter_image_gen_minimaxh3` | Loads OpenRouter image provider config, creates `OpenRouterImageProvider` with `minimax/minimax-h3-image` (alias `minimaxh3`, issue #127), calls `generate_image()` with a text-to-image prompt. Validates the returned bytes are non-empty and PNG format. Standalone — no WebDAV or ImageCache dependency. | OpenRouter |
 
 **Helpers:** `workspace_root()`, `load_config()`, `load_image_provider()`, `load_webdav_config()`
 

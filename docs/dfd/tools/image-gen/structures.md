@@ -28,7 +28,7 @@ Per-model **wire-level traits** (issue #104, `ImageModelTraits`) cover quirks
 the OpenRouter image catalog does not advertise: the Ming Design model id
 (`inclusionai/ming-image-0.1-design`) is *self-sized* (the request builder drops
 `resolution` / `aspect_ratio`) and *text-to-image-only* (edit calls fail at the
-tool parse boundary). The `ming` alias itself is no longer in the eight-alias
+tool parse boundary). The `ming` alias itself is no longer in the manifest
 roster (#114), but the model-id-driven traits remain available. `FalSizeParam`
 covers the fal request-shape split (image_size object vs `aspect_ratio` ±
 `resolution`).
@@ -134,7 +134,7 @@ issue #104) — the canonical type consumed by both `ImageGenTool` and
 `OpenRouterImageProvider`, so tool behaviour and wire body can never disagree.
 The only marked model today is the Ming Design model id
 (`inclusionai/ming-image-0.1-design` — text-to-image only, model-chosen
-dimensions). The `ming` alias is not part of the eight-alias #114 roster. Both
+dimensions). The `ming` alias is not part of the manifest roster. Both
 traits default to `false`.
 
 | Field                 | Type   | Description                                                                 |

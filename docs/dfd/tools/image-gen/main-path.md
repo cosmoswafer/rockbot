@@ -25,7 +25,7 @@ id (`inclusionai/ming-image-0.1-design`) is **self-sized** (the provider omits
 `resolution` / `aspect_ratio`, the tool returns a one-line `note` instead) and
 **text-to-image-only** (an edit call carrying input images fails at the parse
 boundary with a clear `ToolCallParse` error before any provider request). The
-`ming` alias itself is not in the eight-alias #114 roster; the traits remain
+`ming` alias itself is not in the manifest roster; the traits remain
 model-id driven. `FalSizeParam` additionally selects the fal size-param shape
 per endpoint (`image_size` object vs `aspect_ratio`/`resolution`; see
 [model-provider-selection.md](level-2/model-provider-selection.md)).

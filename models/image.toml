@@ -10,11 +10,11 @@
 # an optional tier. The first route flagged `default`, else the first route,
 # is preferred; edit calls prefer routes with a dedicated `edit` slug.
 #
-# Verification (2026-11-05, roster #114): every OpenRouter slug checked against
+# Verification (2026-11-11, #127): every OpenRouter slug checked against
 # `GET /api/v1/images/models`; every fal slug checked against the fal model
 # registry (`https://fal.ai/api/models`). `edit = ""` means the route is
 # generate-only — it is not a broken reference.
-version = "2026-11-05.3"
+version = "2026-11-11.1"
 
 # ------------------------------- GPT Image -------------------------------
 
@@ -128,3 +128,19 @@ notes = "OpenRouter-only route. fal no longer serves this alias."
   provider = "openrouter"
   generate = "x-ai/grok-imagine-image-2.0"
   edit = "x-ai/grok-imagine-image-2.0"
+
+# --------------------------------- MiniMax -------------------------------
+
+[[model]]
+alias = "minimaxh3"
+label = "MiniMax H3 Image"
+family = "minimax"
+version = "3"
+ratios = ["16:9", "2:3", "1:1", "4:3", "3:4", "3:2"]
+tags = ["general", "editing"]
+notes = "Generation and editing in one slug (1-16 reference images). OpenRouter-only route."
+
+  [[model.route]]
+  provider = "openrouter"
+  generate = "minimax/minimax-h3-image"
+  edit = "minimax/minimax-h3-image"

@@ -16,10 +16,11 @@ qwenimage     = "qwen/qwen-image-2.1-turbo"
 qwen3         = "qwen/qwen-image-3-pro"
 seedream5flash = "bytedance-seed/seedream-5-0-flash"
 grok2         = "x-ai/grok-imagine-image-2.0"
+minimaxh3     = "minimax/minimax-h3-image"
 ```
 
 > `models/image.toml` is the canonical alias roster (#114); the table above is
-> the legacy config fallback. All five aliases are OpenRouter-only.
+> the legacy config fallback. All six aliases are OpenRouter-only.
 
 > **Note:** Since Gitea issue #84, `draw_path` **is** used: models present in
 > OpenRouter's image catalog (`GET {base_url}/images/models`) are generated via
@@ -227,6 +228,7 @@ Known working models (as of writing):
 | `qwen/qwen-image-3-pro` | `qwen3` — pro tier |
 | `bytedance-seed/seedream-5-0-flash` | `seedream5flash` — flash tier |
 | `x-ai/grok-imagine-image-2.0` | `grok2` |
+| `minimax/minimax-h3-image` | `minimaxh3` — generation + editing in one slug (1–16 reference images) |
 | `google/gemini-3.1-flash-image-preview` | Extended aspect ratios (`1:4`, `4:1`, `1:8`, `8:1`), `0.5K` resolution tier (not in the current roster) |
 | `black-forest-labs/flux.2-pro` | |
 | `black-forest-labs/flux.2-flex` | |

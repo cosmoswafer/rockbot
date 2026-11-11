@@ -511,6 +511,10 @@ fn image_default_models(kind: &str) -> HashMap<String, String> {
                 "bytedance-seed/seedream-5-0-flash".to_string(),
             );
             m.insert("grok2".to_string(), "x-ai/grok-imagine-image-2.0".to_string());
+            m.insert(
+                "minimaxh3".to_string(),
+                "minimax/minimax-h3-image".to_string(),
+            );
         }
         "fal" => {
             // Issue #114 roster: the two fal-only aliases.
@@ -936,6 +940,7 @@ default_provider = "openrouter"
             ("qwen3", "qwen/qwen-image-3-pro"),
             ("seedream5flash", "bytedance-seed/seedream-5-0-flash"),
             ("grok2", "x-ai/grok-imagine-image-2.0"),
+            ("minimaxh3", "minimax/minimax-h3-image"),
         ] {
             assert_eq!(
                 or.models.get(alias).map(|s| s.as_str()),

@@ -220,13 +220,14 @@ mod tests {
             "qwen3",
             "seedream5flash",
             "grok2",
+            "minimaxh3",
         ] {
             assert!(
                 catalog.entry(required).is_some(),
                 "manifest must define '{required}'"
             );
         }
-        assert_eq!(catalog.allowed_aliases().len(), 7, "roster is trimmed to 7 aliases");
+        assert_eq!(catalog.allowed_aliases().len(), 8, "roster is trimmed to 8 aliases");
         assert!(
             catalog.entry("seedream5pro").is_none(),
             "Seedream 5 Pro was dropped in #119"
@@ -256,6 +257,24 @@ mod tests {
             "qwen/qwen-image-2.1-turbo"
         );
         assert!(qwen.routes.iter().all(|r| r.provider_name == "openrouter"));
+        // minimaxh3: one OpenRouter slug serves both generation and editing.
+        let minimax = catalog.entry("minimaxh3").unwrap();
+        assert!(
+            minimax
+                .routes
+                .iter()
+                .all(|r| r.provider_name == "openrouter"),
+            "minimaxh3 is OpenRouter-only (#127)"
+        );
+        assert_eq!(
+            minimax.default_route().generate_model_id,
+            "minimax/minimax-h3-image"
+        );
+        assert_eq!(
+            minimax.default_route().edit_model_id.as_deref(),
+            Some("minimax/minimax-h3-image"),
+            "minimaxh3 exposes an edit slug (#127)"
+        );
     }
 
     #[test]
@@ -278,7 +297,14 @@ mod tests {
             .map(|e| e.alias.as_str())
             .collect();
         assert_eq!(fal_aliases, vec!["gptimage", "sunburst"]);
-        let openrouter_only = ["banana", "qwenimage", "qwen3", "seedream5flash", "grok2"];
+        let openrouter_only = [
+            "banana",
+            "qwenimage",
+            "qwen3",
+            "seedream5flash",
+            "grok2",
+            "minimaxh3",
+        ];
         for alias in openrouter_only {
             assert_eq!(
                 catalog.entry(alias).unwrap().default_route().provider_name,
