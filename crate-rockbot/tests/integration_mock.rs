@@ -4118,7 +4118,7 @@ async fn test_openrouter_image_gen_model_id_override_in_body() {
 
     let config = make_openrouter_image_config(&base);
     let provider =
-        OpenRouterImageProvider::new(&config, "bytedance-seed/seedream-5-0-flash").unwrap();
+        OpenRouterImageProvider::new(&config, "bytedance-seed/seedream-5-5").unwrap();
     let mut params = ImageGenParams::new("a sunset");
     params.model_id = Some("qwen/qwen-image-3-pro".into());
     let bytes = provider.generate_image(&params).await.unwrap();
@@ -4202,7 +4202,7 @@ fn test_image_gen_description_and_schema_derived_from_config() {
         ),
         test_entry(
             "seedream5flash",
-            "bytedance-seed/seedream-5-0-flash",
+            "bytedance-seed/seedream-5-5",
             None,
             "openrouter",
         ),
@@ -4231,7 +4231,7 @@ fn test_image_gen_description_and_schema_derived_from_config() {
     );
     assert!(
         desc.contains(
-            "seedream5flash (seedream5flash, openrouter:bytedance-seed/seedream-5-0-flash)"
+            "seedream5flash (seedream5flash, openrouter:bytedance-seed/seedream-5-5)"
         ),
         "desc: {desc}"
     );
@@ -4342,7 +4342,7 @@ async fn test_image_gen_routes_alias_to_its_own_provider_backend() {
     let base = mock_server.uri();
 
     let fal_model = "openai/gpt-image-2.6/flare/text-to-image";
-    let or_model = "bytedance-seed/seedream-5-0-flash";
+    let or_model = "bytedance-seed/seedream-5-5";
 
     // fal queue pipeline for the gptimage alias (expect(1) — only the fal
     // call may hit these endpoints).
@@ -4441,7 +4441,7 @@ async fn test_image_gen_catalog_spans_multiple_provider_entries() {
     or_cfg.models = HashMap::from([
         (
             "seedream5flash".to_string(),
-            "bytedance-seed/seedream-5-0-flash".to_string(),
+            "bytedance-seed/seedream-5-5".to_string(),
         ),
     ]);
 
@@ -4463,7 +4463,7 @@ async fn test_image_gen_catalog_spans_multiple_provider_entries() {
     );
     assert_eq!(
         catalog.resolve("seedream5flash"),
-        Some(("bytedance-seed/seedream-5-0-flash", "openrouter")),
+        Some(("bytedance-seed/seedream-5-5", "openrouter")),
         "openrouter entry's model must resolve with its provider"
     );
     assert_eq!(
@@ -4482,7 +4482,7 @@ async fn test_image_gen_catalog_spans_multiple_provider_entries() {
     assert!(
         desc.contains("flux (flux, fal:fal-ai/flux/schnell)")
             && desc.contains("gptimage (gptimage, fal:openai/gpt-image-2.6/flare/text-to-image)")
-            && desc.contains("seedream5flash (seedream5flash, openrouter:bytedance-seed/seedream-5-0-flash)"),
+            && desc.contains("seedream5flash (seedream5flash, openrouter:bytedance-seed/seedream-5-5)"),
         "description must enumerate all providers' models: {desc}"
     );
 }

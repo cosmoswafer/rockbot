@@ -1190,7 +1190,7 @@ mod tests {
                 ),
                 entry(
                     "seedream5flash",
-                    "bytedance-seed/seedream-5-0-flash",
+                    "bytedance-seed/seedream-5-5",
                     None,
                     "openrouter",
                 ),
@@ -1231,7 +1231,7 @@ mod tests {
                 ),
                 entry(
                     "seedream5flash",
-                    "bytedance-seed/seedream-5-0-flash",
+                    "bytedance-seed/seedream-5-5",
                     None,
                     "openrouter",
                 ),
@@ -1329,7 +1329,7 @@ mod tests {
         let _ = tool.execute(r#"{"prompt":"a cat","aspect_ratio":"1:1","model":"seedream5flash"}"#).await;
         assert_eq!(
             or_sink.lock().unwrap().as_ref().unwrap().model_id.as_deref(),
-            Some("bytedance-seed/seedream-5-0-flash"),
+            Some("bytedance-seed/seedream-5-5"),
             "openrouter-tagged alias must hit the openrouter backend"
         );
 
@@ -1340,7 +1340,7 @@ mod tests {
         let captured = or_captured.as_ref().unwrap();
         assert_eq!(
             captured.model_id.as_deref(),
-            Some("bytedance-seed/seedream-5-0-flash"),
+            Some("bytedance-seed/seedream-5-5"),
             "omitted alias adopts the default alias entry (mode-aware)"
         );
         assert_eq!(captured.prompt.as_str(), "a cat");
@@ -1359,7 +1359,7 @@ mod tests {
                 ),
                 entry(
                     "seedream5flash",
-                    "bytedance-seed/seedream-5-0-flash",
+                    "bytedance-seed/seedream-5-5",
                     None,
                     "openrouter",
                 ),
@@ -1397,7 +1397,7 @@ mod tests {
         let _ = tool.execute(r#"{"prompt":"recolor","aspect_ratio":"1:1","model":"seedream5flash","image_urls":["https://example.com/in.png"]}"#).await;
         assert_eq!(
             or_sink.lock().unwrap().as_ref().unwrap().model_id.as_deref(),
-            Some("bytedance-seed/seedream-5-0-flash"),
+            Some("bytedance-seed/seedream-5-5"),
             "alias without companion reuses the t2i id when editing (issue #100)"
         );
     }
@@ -1456,7 +1456,7 @@ mod tests {
         let desc = tool.description();
         assert!(
             desc.contains(
-                "seedream5flash (seedream5flash, openrouter:bytedance-seed/seedream-5-0-flash)"
+                "seedream5flash (seedream5flash, openrouter:bytedance-seed/seedream-5-5)"
             ),
             "desc: {desc}"
         );

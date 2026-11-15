@@ -257,6 +257,26 @@ mod tests {
             "qwen/qwen-image-2.1-turbo"
         );
         assert!(qwen.routes.iter().all(|r| r.provider_name == "openrouter"));
+        // seedream5flash: upgraded to Seedream 5.5 (#129); one OpenRouter slug
+        // serves both generation and editing, tier kept at flash.
+        let seedream = catalog.entry("seedream5flash").unwrap();
+        assert!(
+            seedream
+                .routes
+                .iter()
+                .all(|r| r.provider_name == "openrouter"),
+            "seedream5flash is OpenRouter-only (#114)"
+        );
+        assert_eq!(
+            seedream.default_route().generate_model_id,
+            "bytedance-seed/seedream-5-5"
+        );
+        assert_eq!(
+            seedream.default_route().edit_model_id.as_deref(),
+            Some("bytedance-seed/seedream-5-5"),
+            "seedream5flash exposes an edit slug (#129)"
+        );
+        assert_eq!(seedream.default_route().tier, ImageTier::Flash);
         // minimaxh3: one OpenRouter slug serves both generation and editing.
         let minimax = catalog.entry("minimaxh3").unwrap();
         assert!(

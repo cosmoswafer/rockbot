@@ -430,7 +430,7 @@ async fn test_image_gen_real_data_uri_handling() {
 }
 
 /// Verify the OpenRouter image provider with the surviving "seedream5flash"
-/// alias (bytedance-seed/seedream-5-0-flash, #114).
+/// alias (bytedance-seed/seedream-5-5, upgraded in #129; originally #114).
 /// Tests text-to-image generation only (no WebDAV, no ImageCache).
 /// Run manually: cargo test -p rockbot --test image_gen_real test_openrouter_image_gen_seedream5flash -- --ignored --nocapture
 #[ignore]
@@ -451,7 +451,7 @@ async fn test_openrouter_image_gen_seedream5flash() {
         .models
         .get("seedream5flash")
         .cloned()
-        .unwrap_or_else(|| "bytedance-seed/seedream-5-0-flash".into());
+        .unwrap_or_else(|| "bytedance-seed/seedream-5-5".into());
     eprintln!("Model alias: seedream5flash -> {}", model);
 
     let provider = match OpenRouterImageProvider::new(&provider_cfg, &model) {

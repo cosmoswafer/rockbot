@@ -1021,7 +1021,7 @@ mod tests {
             ),
             entry(
                 "seedream5flash",
-                "bytedance-seed/seedream-5-0-flash",
+                "bytedance-seed/seedream-5-5",
                 None,
                 "openrouter",
             ),
@@ -1029,7 +1029,7 @@ mod tests {
         let catalog = ImageModelCatalog::new(entries, "gptimage");
         assert_eq!(
             catalog.resolve("seedream5flash"),
-            Some(("bytedance-seed/seedream-5-0-flash", "openrouter"))
+            Some(("bytedance-seed/seedream-5-5", "openrouter"))
         );
         assert_eq!(
             catalog.resolve("gptimage"),
@@ -1051,7 +1051,7 @@ mod tests {
                 ),
                 entry(
                     "seedream5flash",
-                    "bytedance-seed/seedream-5-0-flash",
+                    "bytedance-seed/seedream-5-5",
                     None,
                     "openrouter",
                 ),
@@ -1066,11 +1066,11 @@ mod tests {
         // same-model editing: no companion → t2i id in both modes
         assert_eq!(
             catalog.resolve_for_mode("seedream5flash", true),
-            Some(("bytedance-seed/seedream-5-0-flash", "openrouter"))
+            Some(("bytedance-seed/seedream-5-5", "openrouter"))
         );
         assert_eq!(
             catalog.resolve_for_mode("seedream5flash", false),
-            Some(("bytedance-seed/seedream-5-0-flash", "openrouter"))
+            Some(("bytedance-seed/seedream-5-5", "openrouter"))
         );
     }
 
@@ -1120,7 +1120,7 @@ mod tests {
                 ),
                 entry(
                     "seedream5flash",
-                    "bytedance-seed/seedream-5-0-flash",
+                    "bytedance-seed/seedream-5-5",
                     None,
                     "openrouter",
                 ),

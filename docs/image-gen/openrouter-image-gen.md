@@ -14,7 +14,7 @@ draw_path = "/images"
 banana        = "google/gemini-nano-banana-2.1"
 qwenimage     = "qwen/qwen-image-2.1-turbo"
 qwen3         = "qwen/qwen-image-3-pro"
-seedream5flash = "bytedance-seed/seedream-5-0-flash"
+seedream5flash = "bytedance-seed/seedream-5-5"
 grok2         = "x-ai/grok-imagine-image-2.0"
 minimaxh3     = "minimax/minimax-h3-image"
 ```
@@ -226,7 +226,7 @@ Known working models (as of writing):
 | `google/gemini-nano-banana-2.1` | `banana` — Nano Banana 2.1 |
 | `qwen/qwen-image-2.1-turbo` | `qwenimage` — fast/turbo tier |
 | `qwen/qwen-image-3-pro` | `qwen3` — pro tier |
-| `bytedance-seed/seedream-5-0-flash` | `seedream5flash` — flash tier |
+| `bytedance-seed/seedream-5-5` | `seedream5flash` — Seedream 5.5, flash tier (#129); generation + editing in one slug |
 | `x-ai/grok-imagine-image-2.0` | `grok2` |
 | `minimax/minimax-h3-image` | `minimaxh3` — generation + editing in one slug (1–16 reference images) |
 | `google/gemini-3.1-flash-image-preview` | Extended aspect ratios (`1:4`, `4:1`, `1:8`, `8:1`), `0.5K` resolution tier (not in the current roster) |

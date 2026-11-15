@@ -508,7 +508,7 @@ fn image_default_models(kind: &str) -> HashMap<String, String> {
             m.insert("qwen3".to_string(), "qwen/qwen-image-3-pro".to_string());
             m.insert(
                 "seedream5flash".to_string(),
-                "bytedance-seed/seedream-5-0-flash".to_string(),
+                "bytedance-seed/seedream-5-5".to_string(),
             );
             m.insert("grok2".to_string(), "x-ai/grok-imagine-image-2.0".to_string());
             m.insert(
@@ -938,7 +938,7 @@ default_provider = "openrouter"
             ("banana", "google/gemini-nano-banana-2.1"),
             ("qwenimage", "qwen/qwen-image-2.1-turbo"),
             ("qwen3", "qwen/qwen-image-3-pro"),
-            ("seedream5flash", "bytedance-seed/seedream-5-0-flash"),
+            ("seedream5flash", "bytedance-seed/seedream-5-5"),
             ("grok2", "x-ai/grok-imagine-image-2.0"),
             ("minimaxh3", "minimax/minimax-h3-image"),
         ] {

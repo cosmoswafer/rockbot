@@ -34,7 +34,7 @@ How `ImageGenParams` fields map to each provider's API request body.
 
 ```json
 {
-  "model": "bytedance-seed/seedream-5-0-flash",
+  "model": "bytedance-seed/seedream-5-5",
   "modalities": ["image"],
   "image_config": {
     "aspect_ratio": "2:3",
@@ -61,7 +61,7 @@ How `ImageGenParams` fields map to each provider's API request body.
 - Preset maps to `aspect_ratio` (ratio string), not `image_size`.
 - `image_size: "4K"` is hardcoded — not configurable per-request.
 - `image_config` is nested at request top level, not inside `messages`.
-- Seedream ignores `output_format: "png"` and always returns JPEG.
+- `bytedance-seed/seedream-4.5` ignores `output_format: "png"` and always returns JPEG; Image API roster models respect it (Seedream 5.5 returns PNG, #129).
 - Upload file: 3-line no-op — returns `data:{mime};base64,{b64}`.
 - Single synchronous POST (no queue polling).
 
@@ -108,7 +108,7 @@ How `ImageGenParams` fields map to each provider's API request body.
 | Latency | 5–30s | 10–120s (queue wait) |
 | Image delivery | Base64 inline in response | CDN URL → download |
 | Data URI handling | Inline (no upload needed) | Pre-upload to CDN required |
-| Output format | `output_format` (seedream ignores) | `output_format` (respected) |
+| Output format | `output_format` (seedream-4.5 ignores) | `output_format` (respected) |
 | Auth | `Bearer {key}` | `Key {key}` |
 
 ## Tool Parameters (what LLM sees)
