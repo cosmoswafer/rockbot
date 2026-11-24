@@ -64,6 +64,11 @@ class LoadSettingsTests(unittest.TestCase):
         path.write_text(text, encoding="utf-8")
         return path
 
+    @staticmethod
+    def match(actual: str, expected: str) -> str:
+        """Compare a token without ever putting a real one in a failure message."""
+        return "match" if actual == expected else f"differ ({len(actual)} chars)"
+
     def test_dotenv_supplies_token_and_derivation(self):
         with tempfile.TemporaryDirectory() as tmp:
             cwd = Path(tmp)
@@ -72,9 +77,13 @@ class LoadSettingsTests(unittest.TestCase):
                 api="https://gitea.test/api/v1", repo="Atom/demo",
                 cwd=cwd, root=cwd, process_env={}
             )
-            self.assertEqual(settings.token, "from-file")
+            # Never assertEqual on the token itself: a failure here must not
+            # print whatever the real environment happens to hold.
+            self.assertEqual(self.match(settings.token, "from-file"), "match")
             self.assertEqual(settings.repo, "Atom/demo")
-            self.assertIn(str(cwd / ".env"), settings.env_files)
+            # An injected root is honoured — the real repository's .env is
+            # never read, so tests stay offline and secret-free.
+            self.assertEqual(settings.env_files, [str(cwd / ".env")])
 
     def test_process_environment_beats_the_dotenv_file(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -84,7 +93,7 @@ class LoadSettingsTests(unittest.TestCase):
                 api="https://gitea.test/api/v1", repo="Atom/demo",
                 cwd=cwd, root=cwd, process_env={"GITEA_TOKEN": "exported"}
             )
-            self.assertEqual(settings.token, "exported")
+            self.assertEqual(self.match(settings.token, "exported"), "match")
 
     def test_explicit_api_and_repo_overrides_are_used(self):
         with tempfile.TemporaryDirectory() as tmp:

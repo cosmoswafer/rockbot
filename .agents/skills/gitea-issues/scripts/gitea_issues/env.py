@@ -248,7 +248,6 @@ def load_settings(
     directory and the git toplevel.
     """
     cwd = Path(cwd or Path.cwd())
-    root = Path(root) if root else repo_root(cwd)
     process_env = (
         {k: v for k, v in os.environ.items() if v}
         if process_env is None
@@ -256,7 +255,8 @@ def load_settings(
     )
 
     remote_name = remote or process_env.get("GITEA_REMOTE") or "origin"
-    root = repo_root(cwd)
+    # An injected root wins: tests must not read the real repository's .env.
+    root = Path(root) if root else repo_root(cwd)
     files = env_file_candidates(
         cwd=cwd,
         root=root,
