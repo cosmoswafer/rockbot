@@ -1,168 +1,117 @@
 ---
 name: gitea-issues
-description: Use when working with Gitea issues: list, create, comment on and manage issues on the project's Gitea server. Includes curl diagnostics for the token, .env, API base, owner/repo and server access. The skill never closes issues on its own. It comments and lets a human close. It derives the server and repo from the git remote and reads the token from .env.
+description: "Use when working with Gitea issues: list, view, create, comment, edit, tick task checklists, apply labels and milestones, review a milestone, or call any raw issue endpoint. Ships a stdlib-Python CLI (scripts/gitea.py) plus bash/curl recipes and a read-only doctor; the server, owner/repo and token are derived from the git remote and .env, never hardcoded. Never closes an issue on its own initiative — it comments and lets a human close — and refuses `close` without --yes."
 license: CC0-1.0
+compatibility: "Python 3.8+ (standard library only — no pip, no requests) or git + curl + jq for the bash path. Needs GITEA_TOKEN in .env and an `origin` remote. No database, no project code."
 ---
 
 # gitea-issues — Gitea issue management
 
-## Setup — derive the server, API base and owner/repo from the git remote
-
-**Every** operation starts with this block. Never hardcode the host or the
-owner/repo path. They change per repository and per environment.
+Issues, comments, labels, milestones and the raw API, from one command:
 
 ```bash
-source .env >/dev/null 2>&1
-
-GITEA_REMOTE=$(git remote get-url origin)
-GITEA_REMOTE="${GITEA_REMOTE%.git}"  # strip trailing .git if present
-
-if [[ "$GITEA_REMOTE" == *://* ]]; then
-  # URL form: https://host/owner/repo or ssh://git@host:33022/owner/repo
-  GITEA_BARE="${GITEA_REMOTE#*://}"; GITEA_BARE="${GITEA_BARE#*@}"
-  GITEA_HOST="${GITEA_BARE%%/*}"; GITEA_OWNER_REPO="${GITEA_BARE#*/}"
-else
-  # scp-like form: git@host:owner/repo (no scheme, colon-separated)
-  GITEA_BARE="${GITEA_REMOTE#*@}"
-  GITEA_HOST="${GITEA_BARE%%:*}"; GITEA_OWNER_REPO="${GITEA_BARE#*:}"
-fi
-
-GITEA_HOST="${GITEA_HOST%%:*}"  # strip the SSH port — the API is served over HTTPS
-GITEA_API="https://${GITEA_HOST}/api/v1"
-
-echo "$GITEA_API/repos/$GITEA_OWNER_REPO"  # sanity line; never echoes the token
+python3 .agents/skills/gitea-issues/scripts/gitea.py <command> [options]
 ```
 
-After this block you have:
+Prefer the CLI over hand-written `curl`: every invocation re-reads `.env` and
+re-derives the server from the remote by itself, so the classic failure — a
+token that only existed in the shell where you set it — cannot happen. The bash
+and `curl` recipes stay in
+[references/curl-recipes.md](references/curl-recipes.md) for one-off requests,
+and `scripts/gitea-env.sh` is the sourceable setup for them.
 
-- `$GITEA_API` — API base. For the remote
-  `ssh://git@git.tokyofy.top:33022/Atom/rockbot.git` it is
-  `https://git.tokyofy.top/api/v1`. The SSH port `33022` is dropped.
-- `$GITEA_OWNER_REPO` — `owner/repo`, e.g. `Atom/rockbot`.
-- `$GITEA_TOKEN` — already in `.env`. Source it silently. Never print, log or
-  echo it.
+## Files in this skill
 
-The port in an SSH remote belongs to `git` only. The block drops it because
-the API uses HTTPS on port 443. If your Gitea serves HTTPS on another port,
-add the port yourself:
-`GITEA_API="https://${GITEA_HOST}:8443/api/v1"`.
+| Path                                     | What it is                                                                                           |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `scripts/gitea.py`                       | the CLI entry point (`--help` for the live list)                                                     |
+| `scripts/gitea_issues/`                  | its modules: `env`, `client`, `template`, `tasks`, `labels`, `milestones`, `issues`, `render`, `cli` |
+| `scripts/gitea-env.sh`                   | sourceable setup plus `gitea_get`/`gitea_post` helpers for the bash path                             |
+| `scripts/run-tests.py`, `scripts/tests/` | the offline suite (a routing fake, no network)                                                       |
+| `references/cli-reference.md`            | every command, argument and default                                                                  |
+| `references/curl-recipes.md`             | the no-Python path, recipe by recipe                                                                 |
+| `references/api-notes.md`                | endpoint rules, gotchas and troubleshooting in full                                                  |
 
-To reach another repo on the same server, override the path:
-`GITEA_OWNER_REPO=Atom/weasel`.
-
-Run the block in the same shell as the snippets below.
-
-## Diagnostics — run this before any write
-
-This read-only check prints what is wrong and what to do next. It never prints
-the token.
+## First move: check the setup
 
 ```bash
-echo "== gitea-issues diagnostics =="
-
-for tool in git curl jq; do
-  if command -v "$tool" >/dev/null 2>&1; then
-    echo "PASS  $tool: $(command -v "$tool")"
-  else
-    echo "FAIL  $tool is missing — install it before using this skill"
-  fi
-done
-
-if [ -f .env ]; then
-  echo "PASS  .env found at $PWD/.env"
-else
-  echo "FAIL  no .env at $PWD — create it with GITEA_TOKEN=..."
-fi
-
-if [ -n "${GITEA_TOKEN:-}" ]; then
-  echo "PASS  GITEA_TOKEN set (${#GITEA_TOKEN} characters; value hidden)"
-else
-  echo "FAIL  GITEA_TOKEN is empty — add GITEA_TOKEN=<token> to .env"
-fi
-
-echo "INFO  API=$GITEA_API  REPO=$GITEA_OWNER_REPO"
-
-HTTP=$(curl -s -o /dev/null -w '%{http_code}' \
-  -H "Authorization: token $GITEA_TOKEN" \
-  "$GITEA_API/repos/$GITEA_OWNER_REPO")
-
-case "$HTTP" in
-  200) echo "PASS  repo access: HTTP 200" ;;
-  401) echo "FAIL  HTTP 401 — token rejected; use the literal word 'token' in the header, not 'Bearer'" ;;
-  403) echo "FAIL  HTTP 403 — token lacks repository access or the needed scope" ;;
-  404) echo "FAIL  HTTP 404 — wrong host or owner/repo; check the origin remote" ;;
-  000) echo "FAIL  no response — DNS, TLS or network problem reaching $GITEA_HOST" ;;
-  *)   echo "FAIL  repo access: HTTP $HTTP" ;;
-esac
-
-curl -s -H "Authorization: token $GITEA_TOKEN" \
-  "$GITEA_API/repos/$GITEA_OWNER_REPO" \
-  | jq -r 'if .full_name then "PASS  repository: \(.full_name)" else "FAIL  repository: \(.message // "unexpected response")" end'
-
-# Optional: confirms the token user (needs read:user; a 403 here is not fatal)
-curl -s -H "Authorization: token $GITEA_TOKEN" \
-  "$GITEA_API/user" \
-  | jq -r 'if .login then "PASS  token user: \(.login)" else "WARN  token user: \(.message // "unavailable")" end'
+python3 .agents/skills/gitea-issues/scripts/gitea.py doctor
 ```
 
-If every line says `PASS`, the server, token, auth header and owner/repo are
-correct. A `WARN` on the last line only means the token lacks `read:user`; the
-issue endpoints still work. If any line says `FAIL`, fix it before writing.
+```text
+== gitea-issues diagnostics ==
+PASS  python 3.12.3 at /usr/bin/python3
+PASS  git: /usr/bin/git
+PASS  env file: /path/to/repo/.env
+PASS  GITEA_TOKEN: set (40 characters, value hidden)
+INFO  remote: origin https://git.example.com/team/repo.git
+INFO  api:    https://git.example.com/api/v1
+INFO  repo:   team/repo
+PASS  repo access: team/repo
+PASS  labels readable: 12 item(s)
+PASS  milestones readable: 2 item(s)
+WARN  token user: bot (inferred from the newest issue — the token has no read:user scope)
+```
 
-## Common operations
+Every `FAIL` names the fix. A `WARN` on the last line is harmless: issue
+endpoints work without `read:user`. The token value is never printed by any
+command.
 
-### List all open issues
+### Setup — how the connection is resolved
+
+| Thing        | Source                                         | Escape hatch                                            |
+| ------------ | ---------------------------------------------- | ------------------------------------------------------- |
+| API base     | `origin` remote host, HTTPS, port dropped      | `--api https://host:8443/api/v1`, `GITEA_API` in `.env` |
+| `owner/repo` | path part of the `origin` remote               | `--repo owner/repo`, `GITEA_OWNER_REPO`                 |
+| Token        | process env, then root `.env`, then cwd `.env` | `--env-file PATH`, `GITEA_ENV_FILE`                     |
+| Which remote | `origin`                                       | `--remote upstream`, `GITEA_REMOTE`                     |
+
+Never hardcode a host or an `owner/repo`. The SSH port in a remote belongs to
+git; the API is served over HTTPS.
+
+## Everyday commands
 
 ```bash
-curl -s \
-  -H "Authorization: token $GITEA_TOKEN" \
-  "$GITEA_API/repos/$GITEA_OWNER_REPO/issues?state=open" \
-  | jq '.[] | {number, title, state, comments, created_at}'
+Gitea=.agents/skills/gitea-issues/scripts/gitea.py
+
+python3 $Gitea list --limit 20                      # open issues, with task progress
+python3 $Gitea list --milestone v3.7.10 --label working --state open
+python3 $Gitea view 687 --comments                  # one issue, body and thread
+python3 $Gitea create --title "Ring: stale total" \
+    --summary "The ring keeps the old total after a delete." \
+    --task "Recompute on delete" --task "Add a regression test" \
+    --milestone v3.7.10 --label bug --related 615 --assign-me
+python3 $Gitea comment 687 --body-file ./tmp/note.md
+python3 $Gitea tasks 687                            # numbered checklist
+python3 $Gitea tasks 687 tick 1,3                   # tick specific tasks
+python3 $Gitea tasks 687 tick all --drop "Acceptance criteria"
+python3 $Gitea label status 687 responded committed # the shared status vocabulary
+python3 $Gitea milestone report v3.7.10             # progress across a milestone
+python3 $Gitea api GET repos/OWNER/REPO/issues/687/timeline   # anything uncovered
 ```
 
-### Get one issue
+Useful global flags: `--json` (stdout is pure JSON, safe to pipe), `--dry-run`
+(print the writes on stderr, send none), `-q/--quiet`, `--repo`, `--api`. Every
+command answers `<command> --help`, and
+[references/cli-reference.md](references/cli-reference.md) lists the whole
+surface: arguments, defaults, and the typical sequences. Exit codes: `0` ok, `1`
+failure, `2` bad usage, `3` the close guard refused.
 
-Gitea returns pull requests from this endpoint too. Add `&type=issues` to leave
-them out.
+| Command                                                                | What it does                                                                         |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `doctor`, `me`, `template`                                             | diagnostics; resolve the token user; print the issue body template                   |
+| `list`, `view`, `comments`                                             | read issues, filtered by state, label, milestone, assignee, author, text             |
+| `create`, `edit`, `comment`                                            | file an issue (template-checked), change fields/body/labels/assignees, add a comment |
+| `tasks N tick\|untick\|drop`                                           | rewrite the `- [ ]` checklist in the body — the only progress record Gitea has       |
+| `label list\|create\|add\|remove\|set\|show\|status\|clear\|bootstrap` | repo labels and issue labels, including the five status labels                       |
+| `milestone list\|latest\|create\|set\|unset\|issues\|report\|state`    | milestone lookup, creation, assignment, review                                       |
+| `close`, `reopen`                                                      | state changes — `close` needs `--yes`, see the policy below                          |
+| `api METHOD PATH`                                                      | raw call for endpoints the CLI does not wrap                                         |
 
-```bash
-curl -s \
-  -H "Authorization: token $GITEA_TOKEN" \
-  "$GITEA_API/repos/$GITEA_OWNER_REPO/issues/27" \
-  | jq '{number, title, state, body, comments, html_url}'
-```
+## The issue template (required for every new issue)
 
-### List with more filters
-
-```bash
-# All issues (including closed)
-curl -s \
-  -H "Authorization: token $GITEA_TOKEN" \
-  "$GITEA_API/repos/$GITEA_OWNER_REPO/issues?state=all&limit=50" \
-  | jq '.[] | {number, title, state, comments, updated_at}'
-
-# Issues with pagination (Gitea default is 30 per page)
-curl -s \
-  -H "Authorization: token $GITEA_TOKEN" \
-  "$GITEA_API/repos/$GITEA_OWNER_REPO/issues?state=open&page=1&limit=50" \
-  | jq '.[] | {number, title, state, comments, created_at}'
-```
-
-### Get the comments on an issue
-
-```bash
-curl -s \
-  -H "Authorization: token $GITEA_TOKEN" \
-  "$GITEA_API/repos/$GITEA_OWNER_REPO/issues/27/comments" \
-  | jq '.[] | {id, body, user: .user.login, created_at}'
-```
-
-### Create an issue
-
-**Create every new issue from the standard template below.** The `## Tasks`
-section is required. It is a Markdown task list (`- [ ]` items). Gitea renders
-it as a progress counter (e.g. `1/3`) in the issue list. Tick tasks as work
-lands.
+`create` refuses a body that breaks these rules unless you pass `--force`. Print
+the template with `template` (or `template --out ./tmp/issue.md`).
 
 ```markdown
 ## Summary
@@ -179,380 +128,135 @@ lands.
 - <!-- related issues / PRs (#123), files, screenshots, references -->
 ```
 
-Template rules:
+- `## Tasks` is **required**, with at least one `- [ ]` item. Gitea renders the
+  checklist as a progress counter (`2/5`) in the issue list, so the body _is_
+  the progress record — there is no checkbox API. One task is one commit or one
+  other reviewable change.
+- Tick a task by rewriting the body (`tasks N tick …`). Never edit the body by
+  hand when a plan tool owns it: where the `gitea-bots` skill exists, mirror a
+  plan with `sync-tasks.py <N> <plan-file>`.
+- **No `## Acceptance criteria` section.** Put observable conditions in
+  `## Tasks` as verifiable items. Acceptance criteria only copy the tasks and
+  add unworkable rows to the progress counter; the milestone review drops the
+  section anyway.
+- Headings may be translated (`## 待辦` for `## Tasks`); keep the checklist
+  syntax intact.
+- Omit `## Related` only when it adds nothing.
 
-- `## Tasks` is **required**. Add at least one `- [ ]` item. Break work into
-  small steps you can verify on their own. One task is one commit or one other
-  reviewable change.
-- Tick a task with `- [x]` when it is done. Edit the issue body to do this;
-  there is no checkbox API. The body is the only progress record until a human
-  closes the issue.
-- Do not invent filler tasks. For a pure question or investigation, make the
-  investigation steps the tasks.
-- You may translate the headings to match the issue language (e.g. `## 待辦`
-  for `## Tasks`). Keep the checklist syntax intact.
-- **Never add an `## Acceptance criteria` section.** Put observable conditions
-  in `## Tasks` as checklist items you can verify. Acceptance criteria copy the
-  tasks. They add non-work items to the Gitea progress counter. The milestone
-  review drops the section anyway. Omit `## Related` only when it adds nothing.
-- When a planning workflow drives the issue (for example the `gitea-bots`
-  skill, where it exists), copy the plan checklist into the body with that tool
-  (`sync-tasks.py <N> <plan-file>`). Do not edit the body by hand.
+## Hard rules
 
-Payload notes:
+- **Never close an issue on your own initiative.** A human decides when an issue
+  is done. Post a comment with what changed and let them close it. The CLI
+  enforces this: `close` exits `3` without `--yes`, and `--yes` is only for a
+  human's explicit request in this conversation.
+- **No auto-closing keywords in commits.** `close #415`, `fixes #415`,
+  `resolves #415` make Gitea close the issue on push. Reference work with the
+  plain `#<number>` form instead — Gitea links it either way:
 
-- **Assignees** take the token user's login. See "Get the current user".
-- **Milestone** uses the JSON key `milestone` with a numeric ID, e.g.
-  `"milestone": 61`. The API does **not** accept `milestone_id`. If you use it,
-  the milestone is dropped without an error.
+  ```text
+  feat(ring): recompute the total after a delete (#687)
+  ```
 
-For simple bodies without special characters, use inline JSON:
+  ```text
+  fix(camera): use server time, not the photo EXIF date
 
-```bash
-curl -s -X POST \
-  -H "Authorization: token $GITEA_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d "{\"title\":\"Issue title here\",\"body\":\"Issue body / description\",\"assignees\":[\"$GITEA_USER\"]}" \
-  "$GITEA_API/repos/$GITEA_OWNER_REPO/issues" \
-  | jq '{number, title, html_url}'
-```
+  Ref: #687
+  ```
 
-For templated bodies (backticks, quotes, newlines), write the Markdown to a
-file. Let `jq` build the JSON payload. You need no shell escaping:
+  `# 687`, `issue 687` and `Ref: 687` are **not** recognized — the `#` must
+  directly precede the number. One message may reference several issues.
+- **Never print the token.** The scripts read it silently and keep it out of
+  every message and error. Do not add `set -x` to the bash recipes, and never
+  `echo $GITEA_TOKEN`.
 
-```bash
-# 1. Write the issue body (standard template, with real content)
-cat > ./tmp/issue-body.md << 'MDEOF'
-## Summary
+## Milestone review
 
-Quick camera records are timestamped with the photo's EXIF date instead of the
-server time, so records from devices with wrong clocks land on bogus dates.
-
-## Tasks
-
-- [ ] Ignore EXIF DateTimeOriginal in the quick camera flow
-- [ ] Stamp new records with server submission time
-- [ ] Add a regression test
-
-## Related
-
-- #553
-MDEOF
-
-# 2. Build the JSON payload ($GITEA_USER from "Get the current user")
-jq -n \
-  --arg title "Quick camera: use server time, not photo EXIF" \
-  --rawfile body ./tmp/issue-body.md \
-  --arg user "$GITEA_USER" \
-  '{title: $title, body: $body, assignees: [$user], milestone: 61}' \
-  > ./tmp/issue.json
-
-# 3. Create the issue
-curl -s -X POST \
-  -H "Authorization: token $GITEA_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d @./tmp/issue.json \
-  "$GITEA_API/repos/$GITEA_OWNER_REPO/issues" \
-  | jq '{number, title, html_url}'
-```
-
-### Add a comment to an issue
+When asked to review a milestone (say `v3.7.10`):
 
 ```bash
-curl -s -X POST \
-  -H "Authorization: token $GITEA_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"body":"Comment text here"}' \
-  "$GITEA_API/repos/$GITEA_OWNER_REPO/issues/27/comments" \
-  | jq '{id, body, html_url}'
+python3 $Gitea milestone report v3.7.10   # per-issue checklist progress and labels
 ```
 
-### Close an issue (manual only)
+For each issue, decide whether the codebase implements it:
 
-Never close an issue automatically. Close it only when a human explicitly asks
-you to. A human normally closes the issue after reviewing the work. See
-"Closing issues".
+1. **Check for the implementation.** Grep the files and symbols named in
+   `## Tasks` / `## Related`, and look for the commit that landed it:
+   `git log --all --oneline --grep "<issue number>"`. Missing code means the
+   issue is not implemented.
+2. **Implemented → tick everything and drop the acceptance criteria.**
+   `tasks N tick all --drop "Acceptance criteria"`, then `comment N` pointing at
+   the commit(s) and the verification performed. A fully ticked body means
+   _implemented, ready for review, waiting to close_. Do **not** close it.
+3. **Review found problems → open a follow-up issue** that references the
+   original (`--related N`); do not reopen or silently widen the old one. A
+   human decides what happens to the original.
+4. **Not implemented → leave the boxes empty.** Say nothing beyond what the
+   empty checkboxes already show.
+
+Status labels while work moves (`label status`, shared with the `issue-labels`
+and `gitea-bots` skills): `seeing` → `responded` → `working` →
+`responded committed`. Filing an issue writes no label; `seeing` marks a real
+pickup.
+
+## API rules that bite
+
+The scripts already obey these; they matter when you hand-write a request. The
+full list, with symptoms and fixes, is in
+[references/api-notes.md](references/api-notes.md).
+
+- Auth header is `Authorization: token <value>` — the literal word `token`.
+  `Bearer` fails even with a valid token.
+- Milestones: the key is `milestone` with a **numeric ID**. `milestone_id` and
+  milestone names are ignored silently by `POST` and `PATCH`. `milestone: 0`
+  clears it.
+- Labels: an issue `PATCH` ignores `labels` silently. Use
+  `PUT /repos/{owner}/{repo}/issues/{n}/labels` with the **full** set of numeric
+  label IDs — it replaces, so keep the unrelated labels you read first.
+- The issues endpoint returns pull requests too (a PR has a non-null
+  `pull_request`). `list` hides them unless `--include-pulls`.
+- Repo slugs are case-sensitive (`WeightManagement-frontend` ≠
+  `weightmanagement-frontend`), and a missing token on a private repo answers
+  **404**, not 401.
+- Pagination: 30 per page by default; the CLI paginates with `--all`.
+
+## When Python is not available
+
+Use the bash path: source `scripts/gitea-env.sh` in the _same_ shell call as the
+`curl`, then call the helpers — they set `GITEA_API`, `GITEA_OWNER_REPO`,
+`GITEA_TOKEN` and define `gitea_get`, `gitea_post`, `gitea_patch`, `gitea_put`,
+`gitea_code`, `gitea_selfcheck`, `gitea_login`:
 
 ```bash
-curl -s -X PATCH \
-  -H "Authorization: token $GITEA_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"state":"closed"}' \
-  "$GITEA_API/repos/$GITEA_OWNER_REPO/issues/27" \
-  | jq '{number, title, state}'
+source .agents/skills/gitea-issues/scripts/gitea-env.sh
+gitea_get "/issues?state=open&limit=50" | jq '.[] | {number, title}'
 ```
 
-### Re-open an issue
+More recipes (create with a templated body, label writes, milestones, raw
+payloads) are in [references/curl-recipes.md](references/curl-recipes.md).
+
+## Testing these scripts
+
+The whole toolkit is covered by an offline suite — a routing fake replaces the
+network, so it asserts the exact payloads without touching a real tracker:
 
 ```bash
-curl -s -X PATCH \
-  -H "Authorization: token $GITEA_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"state":"open"}' \
-  "$GITEA_API/repos/$GITEA_OWNER_REPO/issues/27" \
-  | jq '{number, title, state}'
+python3 .agents/skills/gitea-issues/scripts/run-tests.py        # whole suite
+python3 .agents/skills/gitea-issues/scripts/run-tests.py -v
+python3 .agents/skills/gitea-issues/scripts/run-tests.py tests.test_cli
 ```
 
-### List milestones
+Run the suite after any change to `scripts/gitea_issues/`. For live checks,
+prefer read-only commands (`doctor`, `list`, `view`, `milestone report`) and
+`--dry-run` for writes, so nothing is posted to a real repository unless the
+user asked for it.
 
-```bash
-curl -s \
-  -H "Authorization: token $GITEA_TOKEN" \
-  "$GITEA_API/repos/$GITEA_OWNER_REPO/milestones" \
-  | jq '.[] | {id, title, state, open_issues, closed_issues}'
-```
+## Troubleshooting at a glance
 
-### Find the latest milestone
-
-```bash
-# Open milestones, newest first: "<created_at> <id> <title>"
-curl -s -H "Authorization: token $GITEA_TOKEN" \
-  "$GITEA_API/repos/$GITEA_OWNER_REPO/milestones?state=open" \
-  | jq -r '.[] | "\(.created_at) \(.id) \(.title)"' | sort -r | head -n1
-# Example output: 2026-08-11T12:11:16+08:00 61 v3.5.6
-
-# Or the milestone of the most recent open issue that has one
-curl -s -H "Authorization: token $GITEA_TOKEN" \
-  "$GITEA_API/repos/$GITEA_OWNER_REPO/issues?state=open&sort=created&direction=desc&limit=10" \
-  | jq -r '.[] | select(.milestone != null) | .milestone.title' | head -n1
-```
-
-### Create an issue with a milestone
-
-Pass `milestone` by numeric ID in the payload:
-
-```bash
-cat > ./tmp/issue.json << JSONEOF
-{
-  "title": "Issue title",
-  "body": "Issue body",
-  "assignees": ["$GITEA_USER"],
-  "milestone": 61
-}
-JSONEOF
-
-curl -s -X POST \
-  -H "Authorization: token $GITEA_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d @./tmp/issue.json \
-  "$GITEA_API/repos/$GITEA_OWNER_REPO/issues" \
-  | jq '{number, title, html_url, milestone: {id: .milestone.id, title: .milestone.title}}'
-```
-
-### Add or update an issue's milestone
-
-Gitea takes the numeric ID through the `milestone` field of `PATCH`:
-
-```bash
-ISSUE=418
-MILESTONE_ID=61
-
-curl -s -X PATCH \
-  -H "Authorization: token $GITEA_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d "{\"milestone\":$MILESTONE_ID}" \
-  "$GITEA_API/repos/$GITEA_OWNER_REPO/issues/$ISSUE" \
-  | jq '{number, title, milestone: {id: .milestone.id, title: .milestone.title}}'
-```
-
-### Get the current user (for assignees)
-
-`assignees` needs the token user's login. Prefer the `/user` endpoint.
-Issue-only tokens (scope `write:issue`, `write:repository`) get a 403 when they
-lack `read:user`. In that case, fall back to the creator of a recent issue. The
-token user filed the issues it created:
-
-```bash
-# Primary: /user endpoint (requires the read:user token scope)
-GITEA_USER=$(curl -s \
-  -H "Authorization: token $GITEA_TOKEN" \
-  "$GITEA_API/user" | jq -r '.login // empty')
-
-# Fallback: creator login of the most recent issue
-if [ -z "$GITEA_USER" ]; then
-  GITEA_USER=$(curl -s \
-    -H "Authorization: token $GITEA_TOKEN" \
-    "$GITEA_API/repos/$GITEA_OWNER_REPO/issues?state=all&limit=1" \
-    | jq -r '.[0].user.login // empty')
-fi
-
-echo "Current user: $GITEA_USER"
-```
-
-If you still do not know the login, create the issue without `assignees`. Read
-`user.login` from the response. Then PATCH the issue to add the assignee.
-
-## Troubleshooting — common failures
-
-These failures break operations without an error. Check the symptom before you
-escalate:
-
-1. **`{"message":"invalid username, password or token"}`** — the auth header is
-   wrong. Gitea expects `Authorization: token $GITEA_TOKEN`. Use the literal
-   word `token`, **not** `Bearer`. `Bearer` returns 401 / invalid-token even
-   with a valid token. Never substitute `Bearer` here.
-
-2. **`{"message":"not found"}` / `404 page not found`** — usually a wrong host.
-   `$GITEA_API` must come from the `origin` remote
-   (`git remote get-url origin`). Do **not** assume `gitea.com`. That is a
-   public instance and is almost never this project's server. If the clone used
-   the wrong remote URL, fix it first
-   (`git remote set-url origin <correct-url>`). Also confirm that
-   `$GITEA_OWNER_REPO` is `owner/repo`, not the bare repo name.
-
-3. **`user redirect does not exist`** — the casing or the owner in
-   `$GITEA_OWNER_REPO` is wrong (e.g. `WeightManagement-frontend` vs
-   `weightmanagement-frontend`). Gitea is case-sensitive on the repo slug. Copy
-   it verbatim from the web UI.
-
-4. **`token does not have at least one of required scope(s)`** — the token is
-   scoped to issues/repository only, so `read:user` endpoints such as `/user`
-   return 403. Use the fallback in "Get the current user". The repository and
-   issue endpoints still work.
-
-5. **Empty or unexpected response** — confirm that `.env` was sourced silently
-   (`source .env >/dev/null 2>&1`) and that `$GITEA_TOKEN` is non-empty. Print
-   the derived `$GITEA_API` and `$GITEA_OWNER_REPO` at the start of any script
-   to catch derivation mistakes early. Never print or log `$GITEA_TOKEN`
-   itself.
-
-Run this sanity check before any write operation:
-
-```bash
-echo "API=$GITEA_API  REPO=$GITEA_OWNER_REPO"
-curl -s -H "Authorization: token $GITEA_TOKEN" \
-  "$GITEA_API/repos/$GITEA_OWNER_REPO" | jq '.full_name // .message'
-```
-
-If the last line prints `owner/repo`, the server, the token and the auth format
-are all correct. Later calls will work.
-
-## Referencing issues in commit messages
-
-When a commit relates to a Gitea issue, reference it as `#<number>`, e.g. `#615`
-for issue 615. Gitea scans pushed commit messages for `#<number>` and links the
-commit to the issue. The commit appears in the issue timeline as
-"Referenced from …". The commit also shows the issue link. Always add the
-reference when work is tied to an issue.
-
-- **Correct:** `#615`, `Ref: #615`, `(#615)` — the number must directly follow
-  `#`, with no space.
-- **Wrong:** `Ref: 615`, `issue 615`, `# 615` — Gitea does not recognize these
-  as issue references, so no link is created.
-
-Example commit messages:
-
-```text
-feat: stamp quick camera records with server time (#615)
-```
-
-```text
-fix: ignore EXIF DateTimeOriginal in quick camera flow
-
-Ref: #615
-```
-
-Place it where you like: inline in the subject (often `(#615)`) or on its own
-`Ref: #<number>` line in the body. One message can reference many issues
-(`#615 #620`).
-
-Obey the auto-close rule below. Never put `close`, `closes`, `fixed`, `fix` or
-`resolves` before a reference.
-
-## Closing issues
-
-**Never close issues automatically.** A human decides when an issue is done. Do
-not close it yourself. Do not trigger Gitea's auto-close behavior:
-
-- **No auto-closing keywords in commit messages** — do not use `close`,
-  `closes`, `closed`, `fix`, `fixes` or `fixed` before an issue reference
-  (e.g. `close #415`). Gitea reads that as auto-close on push. Reference the
-  work with the plain `#<number>` form instead (e.g. `Ref: #615`). See
-  "Referencing issues in commit messages".
-- **No API calls to close automatically** — never PATCH an issue's `state` to
-  `closed` as part of finishing work. The manual close API is available in
-  "Close an issue (manual only)". Use it only when a human explicitly asks you
-  to close a specific issue.
-
-Instead, when the work is done:
-
-1. Run the project's own checks before you commit. Use its test or build task
-   (`cargo test`, `deno task check`, `npm test`, …) as defined in that repo's
-   conventions.
-2. Add a comment to the issue (see "Add a comment to an issue"). Describe the
-   work done: what changed, where, and any relevant commits, tests or
-   verification.
-3. Let a human review and close the issue.
-
-## Milestone review — mark implemented issues as ready for review
-
-When a human asks you to review a milestone (e.g. `v3.7.10`), check each issue.
-Decide whether the codebase implements it:
-
-1. **Check for the implementation.** Grep the files and symbols named in the
-   issue body (`## Tasks` / `## Related`). Search for the implementing commit
-   with `git log --all --oneline --grep "<issue number>"`. If the code or
-   change is missing, the issue is not implemented.
-
-2. **If implemented — tick all `## Tasks` and drop the acceptance criteria.**
-   PATCH the issue body (there is no checkbox API; the body is the only progress
-   record) so every task reads `- [x]`. Remove the `## Acceptance criteria`
-   section entirely. The human review itself is the acceptance check. Leftover
-   unticked boxes would read as unfinished work. Then add a comment that points
-   at the implementing commit(s) and the code-level verification done. A
-   fully-ticked Tasks section means: _implemented, ready for review, waiting to
-   close_. **Never close the issue yourself** (see "Closing issues"). A human
-   closes it after review.
-
-3. **If the review finds problems with implemented work — create a new issue.**
-   Do not reopen the original. Do not widen its scope without a word. Create a
-   new issue (standard template, see "Create an issue") that references the
-   original issue number. Let a human decide what to do with the old one.
-
-4. **If not implemented — leave the tasks unticked.** Say nothing beyond what
-   the empty checkboxes already show. Do not add "not done yet" comments.
-
-Quick reference for ticking a task in an issue body:
-
-```bash
-# 1. Fetch the current body, flip the task's checkbox, drop acceptance criteria
-curl -s -H "Authorization: token $GITEA_TOKEN" \
-  "$GITEA_API/repos/$GITEA_OWNER_REPO/issues/687" | jq -r '.body' > ./tmp/body.md
-sed -i 's/^- \[ \] Verify: edit the duration/- [x] Verify: edit the duration/' ./tmp/body.md
-sed -i '/^## Acceptance criteria/,/^## Related/{/^## Related/!d}' ./tmp/body.md
-
-# 2. PATCH the body back
-jq -n --rawfile body ./tmp/body.md '{body: $body}' > ./tmp/patch.json
-curl -s -X PATCH -H "Authorization: token $GITEA_TOKEN" \
-  -H "Content-Type: application/json" -d @./tmp/patch.json \
-  "$GITEA_API/repos/$GITEA_OWNER_REPO/issues/687" | jq '{number, state}'
-```
-
-## Usage notes
-
-- **Always** run the Setup block first. It derives `$GITEA_API` and
-  `$GITEA_OWNER_REPO` from the git remote and sources `.env` silently, so
-  `$GITEA_TOKEN` is available. Never hardcode server or repo names. Never read,
-  echo or log the token.
-- Write issues, comments and plans in plain language: common words, short
-  sentences, active voice, one word per meaning.
-- If `jq` is not installed, drop the `| jq ...` pipe. The raw JSON is still
-  readable.
-- The issues endpoint returns pull requests too. To tell them apart: a PR has a
-  non-null `pull_request` field. Use the `type=issues` query param to exclude
-  PRs (supported in newer Gitea versions).
-- Pagination: Gitea defaults to 30 items per page. Use `&limit=50` or `&page=N`
-  for more.
-- **Milestones take a numeric ID under the `milestone` key**. `milestone_id`
-  and milestone names are silently ignored, by both `POST` and `PATCH`.
-- **Complex bodies**: when the issue body holds special characters (backticks,
-  quotes, parentheses, newlines), write the Markdown body to a file and build
-  the payload with `jq -n --rawfile body ./tmp/issue-body.md`. Do not use
-  inline `-d '...'`. See "Create an issue".
-- **New issues always use the standard template**, including the required
-  `## Tasks` checklist and no `## Acceptance criteria`. Do not file empty
-  bodies, free-form prose, or tasks without checkboxes.
-- **Assignees** take valid Gitea usernames, not emails or display names. Use
-  "Get the current user" to obtain the token user's login. If the token lacks
-  the `read:user` scope, the `/user` endpoint fails. Use the fallback, or create
-  the issue without `assignees` and PATCH it afterward.
+| Symptom                                                 | Cause and fix                                                                                    |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `invalid username, password or token`                   | `Bearer` used instead of `Authorization: token …`                                                |
+| `404 page not found` / `not found`                      | wrong host or `owner/repo` — run `doctor`; fix the remote with `git remote set-url origin <url>` |
+| `user redirect does not exist`                          | wrong casing of the repo slug                                                                    |
+| `token does not have at least one of required scope(s)` | no `read:user`: `me` falls back to the newest issue's creator; assignees still work              |
+| bare `401`/`404` from bash snippets                     | the token was not in that shell — one `source …/gitea-env.sh` per call, or use the CLI           |
+| milestone or label silently unchanged                   | wrong key/type: see [references/api-notes.md](references/api-notes.md)                           |
